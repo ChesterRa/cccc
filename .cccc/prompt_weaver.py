@@ -32,7 +32,6 @@ def _calc_rules_hash(home: Path) -> str:
     for name in [
         "settings/cli_profiles.yaml",
         "settings/governance.yaml",
-        "settings/aux_helper.yaml",
         "settings/telegram.yaml",
         "settings/slack.yaml",
         "settings/discord.yaml",
@@ -43,13 +42,7 @@ def _calc_rules_hash(home: Path) -> str:
                 parts.append(fp.read_text(encoding="utf-8"))
             except Exception:
                 pass
-    state_fp = home / "state" / "aux_helper_state.json"
-    if state_fp.exists():
-        try:
-            parts.append(state_fp.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    payload = "\n".join(parts) + "\nGEN:3"  # bump suffix to invalidate older generations
+    payload = "\n".join(parts) + "\nGEN:4"  # bump suffix to invalidate older generations
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -82,23 +75,12 @@ def _is_im_enabled(home: Path) -> bool:
     return False
 
 def _aux_mode(home: Path) -> str:
-    conf_path = home/"settings"/"aux_helper.yaml"
+    conf_path = home/"settings"/"cli_profiles.yaml"
     conf = _read_yaml_or_json(conf_path) if conf_path.exists() else {}
-    mode_raw = "off"
-    triggers = conf.get("triggers") if isinstance(conf.get("triggers"), dict) else {}
-    mode_raw = str(triggers.get("mode") or "off").lower().strip()
-
-    state_fp = home/"state"/"aux_helper_state.json"
-    if state_fp.exists():
-        try:
-            state_obj = json.loads(state_fp.read_text(encoding="utf-8"))
-            if isinstance(state_obj, dict) and state_obj.get("mode"):
-                mode_raw = str(state_obj.get("mode")).lower().strip()
-        except Exception:
-            pass
-
-    if mode_raw in ("auto", "on", "key_nodes", "keynodes", "manual"):
-        return "auto"
+    aux_section = conf.get("aux") if isinstance(conf.get("aux"), dict) else {}
+    mode_raw = str(aux_section.get("mode") or "off").lower().strip()
+    if mode_raw in ("on", "auto", "key_nodes", "keynodes", "manual"):
+        return "on"
     return "off"
 
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
@@ -126,7 +108,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     to_peer = f"{base}/to_peer.md"
     patchf  = f"{base}/patch.diff"
     por_rel = por_path(home).as_posix()
-    aux_enabled = aux_mode in ("manual", "key_nodes")
+    aux_enabled = aux_mode == "on"
 
     ch1 = [
         "1) Who You Are · Collaborators · Purpose & Style",
@@ -144,16 +126,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     ]
     if aux_enabled:
         ch1 += [
-            "- On-demand helper: PeerC (Aux) — purpose & direction",
-            "  - Use Aux at the two ends only: top-level correction (sanity checks, alternative routes, assumption-killing) and bottom heavy-lifting (broad refactors, bulk edits, consistency fixes).",
-            "  - Invoke silently when useful (no prior announcement). Prefer offloading uncoupled tasks to Aux to protect attention for mid-layer decisions/integration. You own and integrate the outcome.",
+            "- On-demand helper: Aux (PeerC) - purpose & direction",
+            "  - Use Aux when a decoupled subtask or high-level sanity sweep is cheaper offloaded than done inline. You integrate the outcome.",
+            "  - Mode: on - orchestrator may issue FROM_SYSTEM reminders around key decisions; respond promptly and summarize outcomes for your peer.",
         ]
-        if aux_mode == "auto":
-            ch1.append("  - Mode: auto — orchestrator issues FROM_SYSTEM reminders around key decisions; you can also call Aux proactively for heavy lifts.")
     else:
         ch1 += [
             "- Aux availability",
-            "  - No third helper is connected right now. You and your peer handle top-level correction and heavy lifting directly; break work into reversible probes. Rules refresh automatically if Aux becomes available.",
+            "  - Aux is disabled for this run. You and your peer handle strategy checks and heavy lifting directly until you enable Aux.",
         ]
 
     ch2 = [
@@ -212,27 +192,18 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     ]
     if aux_enabled:
         ch3 += [
-            "- Using PeerC (Aux) — compact usage {#aux}",
-            "  - When: top-level sanity/alternatives/assumption-killing; bottom heavy-lifting/bulk/consistency.",
-            "  - How: invoke silently during execution; Aux may write your patch.diff or produce artifacts under .cccc/work/**; you integrate and own the outcome.",
-        ]
-        if aux_mode == "auto":
-            ch3.append("  - Mode: auto — expect FROM_SYSTEM reminders at contracts/sign-off moments; respond quickly and feed outcomes back to your peer.")
-        ch3 += [
-            "  - Non-interactive CLI examples (replace paths/prompts as needed; construt the paths/prompts as detailed as possible;):",
-            "    - gemini -p \"Write a Python function\" --yolo",
-            "    - echo \"Write fizzbuzz in Python\" | gemini",
-            "    - gemini -p \"@path/to/file.py Explain this code\" --yolo",
-            "    - gemini -p \"@package.json @src/index.js Check dependencies\" --yolo",
-            "    - gemini -p \"@project/ Summarize the system\" --yolo",
-            "    - Engineering prompts:",
-            "      - gemini -p \"@src/**/*.ts Generate minimal diffs to rename X to Y; preserve tests\" --yolo",
-            "      - gemini -p \"@project/ Ensure all READMEs reference 'cccc'; propose unified diffs only\" --yolo",
+            "- Using Aux (PeerC) - compact usage {#aux}",
+            "  - When: offload decoupled subplans or request high-level sanity checks that keep the main loop sharp.",
+            "  - How: invoke silently during execution; Aux may write diffs or artifacts under .cccc/work/**. You remain accountable for integration.",
+            "  - CLI quickstarts:",
+            '    - gemini -p "Write a Python function" --yolo',
+            '    - gemini -p "@path/to/file.py Explain this code" --yolo',
+            '    - gemini -p "@project/ Summarize the system" --yolo',
         ]
     else:
         ch3 += [
             "- Aux {#aux}",
-            "  - No Aux helper is available in this run. Use peer collaboration, POR updates, or targeted user questions to cover top-level review and bulk work.",
+            "  - Aux is disabled. Collaborate directly or escalate to the user when you need a second opinion.",
         ]
 
     ascii_rule = "  - Temporary constraint (PeerA only): content in to_user.md and to_peer.md must be ASCII-only (7-bit). Use plain ASCII punctuation." if is_peera else None
@@ -312,8 +283,8 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- Activation: orchestrator drops a bundle under .cccc/work/aux_sessions/<session-id>/ containing POR.md, notes.txt, peer_message.txt, and any extra context.",
         "- Rhythm: operate with the same evidence-first standards as the primary peers - small, testable moves and explicit next checks.",
     ]
-    if aux_mode == "auto":
-        ch1.append("- Mode: auto - orchestrator may summon you automatically around contract/sign-off moments. Treat those requests as high priority.")
+    if aux_mode == "on":
+        ch1.append("- Mode: on - orchestrator may summon you automatically around contract/sign-off moments. Treat those requests as high priority.")
     else:
         ch1.append("- Mode: off - you will only run when a peer explicitly invokes you. Stay ready for ad-hoc calls.")
 

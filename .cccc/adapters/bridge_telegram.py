@@ -618,108 +618,10 @@ def main():
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
-        # RFD watcher state with persistence to avoid resending on restart
-        def _rfd_seen_path() -> Path:
-            return HOME/"state"/"rfd-seen.json"
-        def _load_rfd_seen() -> set:
-            p = _rfd_seen_path()
-            try:
-                if p.exists():
-                    obj = json.loads(p.read_text(encoding='utf-8'))
-                    arr = obj.get('ids') or []
-                    return set(str(x) for x in arr)
-            except Exception:
-                pass
-            return set()
-        def _save_rfd_seen(ids: set):
-            p = _rfd_seen_path(); p.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                # Trim to last 2000 items to bound file size
-                arr = list(ids)[-2000:]
-                p.write_text(json.dumps({'ids': arr}, ensure_ascii=False, indent=2), encoding='utf-8')
-            except Exception:
-                pass
-
-        def watch_ledger_for_rfd():
-            ledger = HOME/"state"/"ledger.jsonl"
-            seen_rfd_ids = _load_rfd_seen()
-            baseline_done = False
-            window = 1000  # scan recent lines window
-            while True:
-                try:
-                    if ledger.exists():
-                        lines = ledger.read_text(encoding='utf-8').splitlines()[-window:]
-                        changed = False
-                        for line in lines:
-                            try:
-                                ev = json.loads(line)
-                            except Exception:
-                                continue
-                            kind = str(ev.get('kind') or '').lower()
-                            if kind != 'rfd':
-                                continue
-                            rid = str(ev.get('id') or '')
-                            if not rid:
-                                import hashlib
-                                rid = hashlib.sha1(line.encode('utf-8')).hexdigest()[:8]
-                            if rid in seen_rfd_ids:
-                                continue
-                            # On first run, baseline: mark existing RFDs as seen but do not send
-                            if not baseline_done:
-                                seen_rfd_ids.add(rid); changed = True
-                                continue
-                            # New RFD → send interactive card once
-                            text = ev.get('title') or ev.get('summary') or f"RFD {rid}"
-                            markup = {
-                                'inline_keyboard': [[
-                                    {'text': 'Approve', 'callback_data': f'rfd:{rid}:approve'},
-                                    {'text': 'Reject', 'callback_data': f'rfd:{rid}:reject'},
-                                    {'text': 'Ask More', 'callback_data': f'rfd:{rid}:askmore'},
-                                ]]
-                            }
-                            for chat_id in allow:
-                                tg_api('sendMessage', {
-                                    'chat_id': chat_id,
-                                    'text': f"[RFD] {text}",
-                                    'reply_markup': json.dumps(markup)
-                                }, timeout=15)
-                            _append_ledger({'kind':'bridge-rfd-card','id':rid})
-                            seen_rfd_ids.add(rid); changed = True
-                        if changed:
-                            _save_rfd_seen(seen_rfd_ids)
-                        baseline_done = True
-                except Exception:
-                    pass
-                time.sleep(2.0)
-
-        threading.Thread(target=watch_ledger_for_rfd, daemon=True).start()
-
-        # Outbox consumer (unified across bridges)
         try:
-            from adapters.outbox_consumer import OutboxConsumer  # type: ignore
-            # Respect reset_on_start from config (baseline|clear)
-            reset = str((cfg.get('outbound') or {}).get('reset_on_start') or cfg.get('reset_on_start') or 'baseline')
-            oc = OutboxConsumer(HOME, seen_name='telegram', reset_on_start=reset)
-            def _on_to_user(ev: Dict[str, Any]):
-                peer = str(ev.get('peer') or '')
-                text = str(ev.get('text') or '')
-                if not peer or not text:
-                    return
-                p = 'peerA' if peer.lower() in ('peera','peera') or peer=='PeerA' else 'peerB'
-                send_summary(p, text)
-            def _on_to_peer_summary(ev: Dict[str, Any]):
-                fromp = str(ev.get('from') or '')
-                text = str(ev.get('text') or '')
-                if not fromp or not text:
-                    return
-                sp = 'peerA' if fromp.lower() in ('peera','peera') or fromp=='PeerA' else 'peerB'
-                eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
-                if eff_show:
-                    send_peer_summary(sp, text)
             threading.Thread(target=lambda: oc.loop(_on_to_user, _on_to_peer_summary), daemon=True).start()
         except Exception as e:
             _append_ledger({'kind':'error','where':'telegram.outbox_consumer','error': str(e)})
-            # Fail fast: missing OutboxConsumer is a code/config error
             raise
         # Outbound files watcher state
         # Track attempts within this run only (avoid rapid duplicates if filesystem timestamps don't change)
@@ -952,22 +854,11 @@ def main():
             offset_path.parent.mkdir(parents=True, exist_ok=True)
             offset_path.write_text(json.dumps({"offset": off}), encoding='utf-8')
         for u in updates:
-            # Handle inline button callbacks (e.g., RFD approvals)
+            # Handle inline button callbacks (currently unused; just ack)
             if u.get('callback_query'):
                 cq = u['callback_query']
-                data = str(cq.get('data') or '')
-                cchat = ((cq.get('message') or {}).get('chat') or {})
-                cchat_id = int(cchat.get('id', 0) or 0)
                 try:
-                    if data.startswith('rfd:'):
-                        parts = data.split(':', 2)
-                        rid = parts[1] if len(parts) > 1 else ''
-                        decision = parts[2] if len(parts) > 2 else ''
-                        _append_ledger({'kind':'decision','rfd_id':rid,'decision':decision,'chat':cchat_id})
-                        tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id'), 'text': f'Decision recorded: {decision}'}, timeout=10)
-                        tg_api('sendMessage', {'chat_id': cchat_id, 'text': f"[RFD] {rid} → {decision}"}, timeout=15)
-                    else:
-                        tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id')}, timeout=10)
+                    tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id')}, timeout=10)
                 except Exception:
                     pass
                 continue
@@ -1028,6 +919,28 @@ def main():
                         reply = f"Command queued (id={req_id})."
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
                     _append_log(outlog, f"[cmd] passthrough peer={peer_key} chat={chat_id} req={req_id}")
+                continue
+
+            stripped = text.strip()
+            prompt = None
+            if stripped.lower().startswith('c:'):
+                prompt = stripped[2:].strip()
+            elif is_cmd(text, 'c'):
+                pieces = text.split(None, 1)
+                prompt = pieces[1].strip() if len(pieces) > 1 else ''
+            if prompt is not None:
+                if not prompt:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /c <prompt> or c: <prompt>'}, timeout=15)
+                    continue
+                result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='telegram', chat_id=chat_id)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Aux CLI executed.'
+                elif result:
+                    reply = result.get('message') or 'Aux CLI error.'
+                else:
+                    reply = f"Aux CLI request queued (id={req_id})."
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply[:3900]}, timeout=15)
+                _append_log(outlog, f"[cmd] aux-cli chat={chat_id} req={req_id}")
                 continue
 
             if is_cmd(text, 'focus'):
@@ -1330,151 +1243,11 @@ def main():
             if is_cmd(text, 'help'):
                 help_txt = (
                     "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; a! <cmd>/b! <cmd> passthrough to CLI;\n"
-                    "/focus [hint] 请求 PeerB 刷新 POR.md; /reset [compact|clear] 执行重置; /aux status|on|off; /review 触发第三体辅助提醒;\n"
+                    "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux status|on|off; /review trigger Aux reminder;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
-                    "/showpeers on|off toggle Peer↔Peer summary; /files [in|out] [N] list recent files; /file N view; /rfd list|show <id>."
+                    "/showpeers on|off toggle Peer<->Peer summary; /files [in|out] [N] list recent files; /file N view."
                 )
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
-            # /rfd list|show <id>
-            if re.match(r"^/rfd(?:@\S+)?\b", text.strip(), re.I):
-                try:
-                    cmd = text.strip().split()
-                    sub = cmd[1].lower() if len(cmd) > 1 else 'list'
-                except Exception:
-                    sub = 'list'
-                ledger = HOME/"state"/"ledger.jsonl"
-                entries = []
-                try:
-                    lines = ledger.read_text(encoding='utf-8').splitlines()[-500:]
-                    for ln in lines:
-                        try:
-                            ev = json.loads(ln)
-                            entries.append(ev)
-                        except Exception:
-                            pass
-                except Exception:
-                    entries = []
-                if sub == 'list':
-                    rfds = [e for e in entries if str(e.get('kind') or '').lower() == 'rfd'][-10:]
-                    if not rfds:
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'No RFD entries'}, timeout=15)
-                        continue
-                    lines = [f"{e.get('id') or '?'} | {e.get('title') or e.get('summary') or ''}" for e in rfds]
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
-                    continue
-                if sub == 'show':
-                    rid = cmd[2] if len(cmd) > 2 else ''
-                    if not rid:
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /rfd show <id>'}, timeout=15)
-                        continue
-                    # Find the RFD and latest decision
-                    rfd = None; decision = None
-                    for ev in entries:
-                        k = str(ev.get('kind') or '').lower()
-                        if k == 'rfd' and str(ev.get('id') or '') == rid:
-                            rfd = ev
-                        if k == 'decision' and str(ev.get('rfd_id') or '') == rid:
-                            decision = ev
-                    text_out = [f"RFD {rid}"]
-                    if rfd:
-                        text_out.append(f"title={rfd.get('title') or rfd.get('summary') or ''}")
-                        text_out.append(f"ts={rfd.get('ts')}")
-                    else:
-                        text_out.append('not found in tail')
-                    if decision:
-                        text_out.append(f"decision={decision.get('decision')} by chat={decision.get('chat')} ts={decision.get('ts')}")
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(text_out)}, timeout=15)
-                    continue
-            # /files and /file
-            if re.match(r"^/files(?:@\S+)?\b", text.strip(), re.I):
-                m = re.match(r"^/files(?:@\S+)?\s*(in|out)?\s*(\d+)?", text.strip(), re.I)
-                mode = (m.group(1).lower() if (m and m.group(1)) else 'in')
-                limit = int(m.group(2)) if (m and m.group(2)) else 10
-                base = inbound_dir if mode == 'in' else outbound_dir
-                items = []
-                for root, dirs, files in os.walk(base):
-                    for fn in files:
-                        if fn.endswith('.meta.json') or fn.endswith('.caption.txt'):
-                            continue
-                        fp = Path(root)/fn
-                        try:
-                            st = fp.stat()
-                            items.append((st.st_mtime, fp))
-                        except Exception:
-                            pass
-                items.sort(key=lambda x: x[0], reverse=True)
-                items = items[:max(1, min(limit, 50))]
-                lines=[f"Recent files ({ 'inbound' if mode=='in' else 'outbound' }, top {len(items)}):"]
-                map_paths=[str(p) for _,p in items]
-                # Save last listing map for /file N
-                rt = load_runtime(); lm = rt.get('last_files',{})
-                lm[str(chat_id)] = {'mode': mode, 'items': map_paths}
-                rt['last_files']=lm; save_runtime(rt)
-                for idx,(ts,fp) in enumerate(items, start=1):
-                    rel = os.path.relpath(fp, start=ROOT)
-                    try:
-                        size = fp.stat().st_size
-                    except Exception:
-                        size = 0
-                    lines.append(f"{idx}. {rel}  ({size} bytes)")
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
-                continue
-            if re.match(r"^/file(?:@\S+)?\s+\d+\b", text.strip(), re.I):
-                m = re.match(r"^/file(?:@\S+)?\s+(\d+)\b", text.strip(), re.I)
-                n = int(m.group(1)) if m else 0
-                rt = load_runtime(); lm = (rt.get('last_files') or {}).get(str(chat_id)) or {}
-                arr = lm.get('items') or []
-                if n<=0 or n>len(arr):
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Invalid index. Run /files, then /file N.'}, timeout=15)
-                    continue
-                fp = Path(arr[n-1])
-                info=[]
-                rel = os.path.relpath(fp, start=ROOT)
-                info.append(f"Path: {rel}")
-                try:
-                    st=fp.stat(); info.append(f"Size: {st.st_size} bytes  MTime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))}")
-                except Exception:
-                    pass
-                meta_fp = fp.with_suffix(fp.suffix+'.meta.json')
-                if meta_fp.exists():
-                    try:
-                        meta = json.loads(meta_fp.read_text(encoding='utf-8'))
-                        sha = meta.get('sha256'); mime = meta.get('mime'); cap = meta.get('caption')
-                        if sha: info.append(f"SHA256: {sha}")
-                        if mime: info.append(f"MIME: {mime}")
-                        if cap: info.append(f"Caption: {redact(cap)}")
-                    except Exception:
-                        pass
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(info)}, timeout=15)
-                continue
-            if re.match(r"^/showpeers(?:@\S+)?\s+(on|off)\b", text.strip(), re.I):
-                m = re.match(r"^/showpeers(?:@\S+)?\s+(on|off)\b", text.strip(), re.I)
-                val = m.group(1).lower() == 'on' if m else False
-                runtime = load_runtime(); runtime['show_peer_messages'] = bool(val); save_runtime(runtime)
-                show_peers = bool(val)
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Peer↔Peer summary set to: {'ON' if val else 'OFF'} (global)"}, timeout=15)
-                _append_log(outlog, f"[runtime] show_peer_messages={val}")
-                continue
-            if is_cmd(text, 'unsubscribe'):
-                if policy == 'open':
-                    cur = set(load_subs()); removed = chat_id in cur
-                    if removed:
-                        cur.discard(chat_id); save_subs(sorted(cur)); allow.discard(chat_id)
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Unsubscribed' if removed else 'Not subscribed'}, timeout=15)
-                    _append_log(outlog, f"[unsubscribe] chat={chat_id}")
-                    _append_ledger({"kind":"bridge-unsubscribe","chat":chat_id})
-                else:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Self-unsubscribe disabled; contact admin.'}, timeout=15)
-                continue
-            routes, body = _route_from_text(route_source, dr)
-            mid = _mid()
-            body2 = _wrap_user_if_needed(body)
-            payload = _wrap_with_mid(body2, mid)
-            _deliver_inbound(HOME, routes, payload, mid)
-            _append_log(outlog, f"[inbound] routes={routes} mid={mid} size={len(body)} chat={chat_id}")
-            _append_ledger({"kind":"bridge-inbound","from":"telegram","chat":chat_id,"routes":routes,"mid":mid,"chars":len(body)})
-        time.sleep(0.5)
-
 if __name__ == '__main__':
     main()

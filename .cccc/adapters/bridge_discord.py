@@ -338,6 +338,26 @@ def main():
                 _log(f"[cmd] focus ch={message.channel.id} req={req_id}")
                 return
 
+            if stripped.lower().startswith('c:') or re.match(r'^/?c\b', stripped, re.I):
+                if stripped.lower().startswith('c:'):
+                    prompt = stripped[2:].strip()
+                else:
+                    parts = stripped.split(None, 1)
+                    prompt = parts[1].strip() if len(parts) > 1 else ''
+                if not prompt:
+                    await _send_reply('Usage: /c <prompt> or c: <prompt>')
+                    return
+                result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='discord', channel=str(message.channel.id))
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Aux CLI executed.'
+                elif result:
+                    reply = result.get('message') or 'Aux CLI error.'
+                else:
+                    reply = f"Aux CLI request queued (id={req_id})."
+                await _send_reply(reply[:3500])
+                _log(f"[cmd] aux-cli ch={message.channel.id} req={req_id}")
+                return
+
             if re.match(r'^/?reset\b', stripped, re.I):
                 parts = stripped.split()
                 mode = parts[1].lower() if len(parts) > 1 else ''

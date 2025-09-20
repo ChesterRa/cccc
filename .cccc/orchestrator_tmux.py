@@ -26,7 +26,7 @@ SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
 # Aux helper state
-AUX_MODES = {"off", "auto"}
+AUX_MODES = {"off", "on"}
 AUX_WORK_ROOT_NAME = "aux_sessions"
 
 # ---------- REV state helpers (lightweight) ----------
@@ -1088,16 +1088,6 @@ def read_yaml(p: Path) -> Dict[str,Any]:
             d[k.strip()] = v.strip().strip('"\'')
         return d
 
-# helper for lightweight YAML write without introducing hard dependency at call sites
-def write_yaml(p: Path, obj: Dict[str, Any]) -> None:
-    try:
-        import yaml  # type: ignore
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(yaml.safe_dump(obj, allow_unicode=False, sort_keys=False), encoding="utf-8")
-    except Exception:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(obj, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-
 # Removed legacy file reader helper; config is loaded via read_yaml at startup.
 
 # ---------- ledger & policies ----------
@@ -1136,109 +1126,6 @@ def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
             return False
     return True
 
-# ---------- RFD helpers ----------
-def _ledger_tail(home: Path, keep: int = 400) -> List[Dict[str,Any]]:
-    p = home/"state"/"ledger.jsonl"
-    if not p.exists():
-        return []
-    try:
-        lines = p.read_text(encoding="utf-8").splitlines()[-keep:]
-        out=[]
-        for ln in lines:
-            try: out.append(json.loads(ln))
-            except Exception: pass
-        return out
-    except Exception:
-        return []
-
-def _ledger_has_rfd(home: Path, rid: str) -> bool:
-    rid = str(rid or '').strip()
-    if not rid: return False
-    for ev in _ledger_tail(home):
-        if str(ev.get('kind') or '').lower() == 'rfd' and str(ev.get('id') or '') == rid:
-            return True
-    return False
-
-def _ledger_has_decision_approved(home: Path, rid: str) -> bool:
-    rid = str(rid or '').strip()
-    if not rid: return False
-    for ev in _ledger_tail(home):
-        if str(ev.get('kind') or '').lower() == 'decision' and str(ev.get('rfd_id') or '') == rid:
-            dec = str(ev.get('decision') or '').lower()
-            if dec in ('approve','approved','yes','ok','allow','accept'):
-                return True
-    return False
-
-def _ensure_rfd_logged(home: Path, rid: str, title: str, summary: str = ""):
-    if not _ledger_has_rfd(home, rid):
-        log_ledger(home, {"kind": "rfd", "id": rid, "title": title, "summary": summary})
-
-def _paths_match_patterns(paths: List[str], patterns: List[str]) -> bool:
-    for p in paths:
-        for pat in patterns:
-            if fnmatch.fnmatch(p, pat):
-                return True
-    return False
-
-def _rfd_id_for_large(paths: List[str], lines: int) -> str:
-    import hashlib
-    basis = ",".join(paths) + f"|{lines}"
-    return f"rfd-large-{hashlib.sha1(basis.encode('utf-8')).hexdigest()[:8]}"
-
-def _rfd_id_for_protected(paths: List[str]) -> str:
-    import hashlib
-    basis = ",".join(paths)
-    return f"rfd-prot-{hashlib.sha1(basis.encode('utf-8')).hexdigest()[:8]}"
-
-def _maybe_emit_rfd_from_to_peer(home: Path, who: str, text: str):
-    try:
-        import yaml  # type: ignore
-        obj = yaml.safe_load(text)
-        if isinstance(obj, dict):
-            intent = str(obj.get('intent') or '').strip().lower()
-            _type = str(obj.get('type') or '').strip().lower()
-            if intent == 'rfd' or _type == 'rfd':
-                rid = str(obj.get('id') or '').strip()
-                title = str(obj.get('title') or obj.get('summary') or '')
-                if not title:
-                    tasks = obj.get('tasks') or []
-                    if isinstance(tasks, list) and tasks:
-                        t0 = tasks[0]
-                        if isinstance(t0, dict):
-                            title = str(t0.get('desc') or '')
-                if not rid:
-                    import hashlib
-                    rid = 'rfd-msg-' + hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8]
-                _ensure_rfd_logged(home, rid, title or f"RFD from {who}")
-    except Exception:
-        pass
-
-def _rfd_gate_check(home: Path, policies: Dict[str,Any], patch: str, lines: int) -> Tuple[bool, Optional[str]]:
-    """Return (allowed, reject_reason_or_None). Applies RFD gates for large diff and protected paths.
-    If rejected due to RFD requirement, also emits an RFD event to the ledger.
-    """
-    gates = (policies.get('rfd') or {}).get('gates') or {}
-    prot = gates.get('protected_paths') or []
-    large_requires = bool(gates.get('large_diff_requires_rfd', False))
-    max_lines = int((policies.get('patch_queue') or {}).get('max_diff_lines', 150))
-    paths = extract_paths_from_patch(patch)
-    # Protected paths gate
-    if prot and _paths_match_patterns(paths, prot):
-        rid = _rfd_id_for_protected(paths)
-        if _ledger_has_decision_approved(home, rid):
-            return True, None
-        _ensure_rfd_logged(home, rid, "Protected path change approval", f"paths={paths}")
-        return False, f"rfd-required-protected-path:{rid}"
-    # Large diff gate (allows override via decision)
-    if lines > max_lines:
-        if not large_requires:
-            return False, f"too-many-lines:{lines}>{max_lines}"
-        rid = _rfd_id_for_large(paths, lines)
-        if _ledger_has_decision_approved(home, rid):
-            return True, None
-        _ensure_rfd_logged(home, rid, "Large diff line-count approval", f"lines={lines}")
-        return False, f"rfd-required-large-diff:{rid}"
-    return True, None
 
 
 def try_lint():
@@ -1366,7 +1253,7 @@ def list_repo_files(policies: Dict[str,Any], limit:int=200)->str:
 
 def context_blob(policies: Dict[str,Any], phase: str) -> str:
     return (f"# PHASE: {phase}\n# REPO FILES (partial):\n{list_repo_files(policies)}\n\n"
-            f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'rfd':policies.get('rfd',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
+            f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
 
 
 # ---------- watcher ----------
@@ -1624,16 +1511,6 @@ def main(home: Path):
         _request_por_refresh(f"reset-{mode_norm}", force=True)
         return "Manual clear notice issued"
 
-    aux_conf_path = settings/"aux_helper.yaml"
-    aux_conf = read_yaml(aux_conf_path) if aux_conf_path.exists() else {}
-
-    helper_conf = (aux_conf.get("helper") or {}) if isinstance(aux_conf.get("helper"), dict) else {}
-    aux_command = str(helper_conf.get("command") or "").strip()
-    rate_limit_per_minute = int(aux_conf.get("rate_limit_per_minute") or 2)
-    if rate_limit_per_minute <= 0:
-        rate_limit_per_minute = 1
-    aux_min_interval = 60.0 / rate_limit_per_minute
-
     conversation_cfg = governance_cfg.get("conversation") if isinstance(governance_cfg.get("conversation"), dict) else {}
     reset_cfg = conversation_cfg.get("reset") if isinstance(conversation_cfg.get("reset"), dict) else {}
     conversation_reset_policy = str(reset_cfg.get("policy") or "compact").strip().lower()
@@ -1644,89 +1521,15 @@ def main(home: Path):
     except Exception:
         conversation_reset_interval = 0
 
-    triggers_conf = aux_conf.get("triggers") if isinstance(aux_conf.get("triggers"), dict) else {}
-    mode_raw = str(triggers_conf.get("mode") or "off").lower().strip()
-    if mode_raw in ("auto", "on", "key_nodes", "keynodes", "manual"):
-        aux_mode = "auto"
-    else:
-        aux_mode = "off"
-
-    def _maybe_configure_aux() -> None:
-        nonlocal aux_conf, helper_conf, aux_command, aux_mode, rate_limit_per_minute, aux_min_interval
-        if not sys.stdin.isatty():
-            return
-        missing_config = not aux_conf_path.exists()
-        no_command = not aux_command
-        mode_disabled = aux_mode == "off"
-        if not (missing_config or no_command or mode_disabled):
-            return
-        print("\n[Aux] Auxiliary helper (PeerC) is not fully configured.")
-        print("[Aux] You can enable it now to offload decoupled tasks and high-level reviews.")
-        ans = read_console_line("Enable Aux now? [y/N]: ").strip().lower()
-        if ans not in {"y", "yes"}:
-            print("[Aux] Continuing with Aux disabled. You can run /aux on later.")
-            return
-        command = read_console_line("Command to invoke Aux (default: gemini): ").strip()
-        if not command:
-            command = "gemini"
-        rate_input = read_console_line("Max reminders per minute (default: 2): ").strip()
-        try:
-            rate_val = int(rate_input) if rate_input else 2
-        except Exception:
-            rate_val = 2
-        if rate_val <= 0:
-            rate_val = 2
-        aux_conf = {
-            "triggers": {"mode": "auto"},
-            "helper": {"command": command},
-            "rate_limit_per_minute": rate_val,
-        }
-        write_yaml(aux_conf_path, aux_conf)
-        helper_conf = aux_conf["helper"]
-        aux_command = command
-        rate_limit_per_minute = rate_val
-        aux_min_interval = 60.0 / rate_limit_per_minute
-        aux_mode = "auto"
-        print(f"[Aux] Enabled with command '{aux_command}' (rate {rate_limit_per_minute}/min).")
-
-    _maybe_configure_aux()
-
     default_reset_mode = conversation_reset_policy if conversation_reset_policy in ("compact", "clear") else "compact"
 
-    def _aux_state_path() -> Path:
-        return state/"aux_helper_state.json"
-
-    def _load_aux_state() -> Dict[str, Any]:
-        path = _aux_state_path()
-        if not path.exists():
-            return {}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    def _persist_aux_state():
-        payload = json.dumps({"mode": aux_mode}, ensure_ascii=False, indent=2)
-        path = _aux_state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(payload, encoding="utf-8")
-
-    state_conf = _load_aux_state()
-    if isinstance(state_conf.get("mode"), str):
-        mode_raw = state_conf.get("mode").lower().strip()
-        if mode_raw in ("auto", "on", "key_nodes", "keynodes", "manual"):
-            aux_mode = "auto"
-        elif mode_raw in ("off", "disabled"):
-            aux_mode = "off"
+    aux_mode = "off"
 
     aux_last_reason = ""
     aux_last_reminder: Dict[str, float] = {"PeerA": 0.0, "PeerB": 0.0}
     AUX_TRIGGER_INTENTS = {"shape", "review", "contract", "release", "final", "accept"}
     aux_work_root = home/"work"/AUX_WORK_ROOT_NAME
     aux_work_root.mkdir(parents=True, exist_ok=True)
-
-    _persist_aux_state()
 
     def _aux_snapshot() -> Dict[str, Any]:
         return {
@@ -1781,6 +1584,19 @@ def main(home: Path):
         except Exception:
             return None
 
+    def _run_aux_cli(prompt: str) -> Tuple[int, str, str, str]:
+        safe_prompt = prompt.replace('"', '\\"')
+        template = aux_command_template or 'gemini -p "{prompt}" --yolo'
+        if "{prompt}" in template:
+            command = template.replace("{prompt}", safe_prompt)
+        else:
+            command = f"{template} {safe_prompt}"
+        try:
+            proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=str(Path.cwd()))
+            return proc.returncode, proc.stdout, proc.stderr, command
+        except Exception as exc:
+            return 1, "", str(exc), command
+
     def _send_aux_reminder(reason: str, peers: Optional[List[str]] = None, *, stage: str = "manual", payload: Optional[str] = None, source_peer: Optional[str] = None):
         nonlocal aux_last_reason
         bundle_path = _prepare_aux_bundle(reason, stage, source_peer, payload)
@@ -1811,7 +1627,7 @@ def main(home: Path):
         return "analysis"
 
     def _maybe_trigger_aux_from_payload(peer_label: str, payload: str):
-        if aux_mode != "auto" or not payload.strip():
+        if aux_mode != "on" or not payload.strip():
             return
         try:
             import yaml  # type: ignore
@@ -1837,13 +1653,107 @@ def main(home: Path):
         _send_aux_reminder(reason, stage=stage, payload=payload, source_peer=peer_label)
 
 
-    cli_profiles = read_yaml(settings/"cli_profiles.yaml")
+    cli_profiles_path = settings/"cli_profiles.yaml"
+    cli_profiles = read_yaml(cli_profiles_path)
+
+    def _rewrite_aux_mode_block(src: str, new_mode: str) -> Tuple[str, bool]:
+        lines = src.splitlines()
+        inside = False
+        aux_indent = ""
+        inserted = False
+        rewritten: List[str] = []
+        for line in lines:
+            if not inside:
+                rewritten.append(line)
+                m = re.match(r"^(\s*)aux\s*:", line)
+                if m:
+                    inside = True
+                    aux_indent = m.group(1)
+                continue
+            stripped = line.strip()
+            # Determine whether we've exited the aux block (next top-level or sibling key)
+            if stripped and not line.startswith(aux_indent + "  "):
+                if not inserted:
+                    rewritten.append(f"{aux_indent}  mode: {new_mode}")
+                    inserted = True
+                rewritten.append(line)
+                inside = False
+                continue
+            if stripped.startswith("mode:"):
+                comment = ""
+                comment_idx = line.find('#')
+                if comment_idx != -1:
+                    comment = line[comment_idx:]
+                new_line = f"{aux_indent}  mode: {new_mode}"
+                if comment:
+                    if not comment.startswith(" "):
+                        new_line += " "
+                    new_line += comment
+                rewritten.append(new_line)
+                inserted = True
+            else:
+                rewritten.append(line)
+        if inside and not inserted:
+            rewritten.append(f"{aux_indent}  mode: {new_mode}")
+        new_text = "\n".join(rewritten)
+        if src.endswith("\n") and not new_text.endswith("\n"):
+            new_text += "\n"
+        return new_text, new_text != src
+
+    def _persist_aux_mode(new_mode: str):
+        canonical = "on" if new_mode in {"on", "auto", "key_nodes", "manual"} else "off"
+        aux_section = cli_profiles.get("aux")
+        if not isinstance(aux_section, dict):
+            aux_section = {}
+            cli_profiles["aux"] = aux_section
+        aux_section["mode"] = canonical
+        try:
+            original = cli_profiles_path.read_text(encoding="utf-8")
+        except Exception:
+            return
+        updated, changed = _rewrite_aux_mode_block(original, canonical)
+        if not changed:
+            return
+        tmp = cli_profiles_path.with_suffix('.tmp')
+        tmp.write_text(updated, encoding='utf-8')
+        tmp.replace(cli_profiles_path)
     profileA = cli_profiles.get("peerA", {})
     profileB = cli_profiles.get("peerB", {})
     delivery_conf = cli_profiles.get("delivery", {})
     delivery_mode = cli_profiles.get("delivery_mode", {}) if isinstance(cli_profiles.get("delivery_mode", {}), dict) else {}
     modeA = (delivery_mode.get('peerA') or 'tmux').lower()
     modeB = (delivery_mode.get('peerB') or 'tmux').lower()
+    aux_conf = cli_profiles.get("aux", {}) if isinstance(cli_profiles.get("aux", {}), dict) else {}
+    aux_command_template = str(aux_conf.get("invoke_command") or 'gemini -p "{prompt}" --yolo').strip()
+    aux_command = aux_command_template
+    rate_limit_per_minute = int(aux_conf.get("rate_limit_per_minute") or 2)
+    if rate_limit_per_minute <= 0:
+        rate_limit_per_minute = 1
+    aux_min_interval = 60.0 / rate_limit_per_minute
+    mode_raw = str(aux_conf.get("mode") or "off").lower().strip()
+    if mode_raw in ("on", "auto"):
+        aux_mode = "on"
+    else:
+        aux_mode = "off"
+    if mode_raw not in ("on", "off"):
+        _persist_aux_mode(aux_mode)
+
+    try:
+        interactive = sys.stdin.isatty()
+    except Exception:
+        interactive = False
+    if interactive:
+        print(f"[AUX] Current mode: {aux_mode} (persisted in {cli_profiles_path.name}). Press Enter to keep.")
+        ans = read_console_line("> Aux mode [on/off/Enter=keep]: ").strip().lower()
+        if ans in ("on", "auto", "key_nodes", "manual"):
+            aux_mode = "on"
+            _persist_aux_mode(aux_mode)
+            print("[AUX] Mode set to on")
+        elif ans == "off":
+            aux_mode = "off"
+            _persist_aux_mode(aux_mode)
+            print("[AUX] Mode set to off")
+
     # Merge input_mode per peer if provided
     imodes = cli_profiles.get("input_mode", {}) if isinstance(cli_profiles.get("input_mode", {}), dict) else {}
     if imodes.get("peerA"):
@@ -2055,13 +1965,11 @@ def main(home: Path):
                         cmd_display = aux_command or "-"
                         result = {"ok": True, "message": f"Aux status: mode={aux_mode}, command={cmd_display}, last_reason={last}"}
                     elif action in ("on", "off", "auto", "key_nodes", "manual"):
-                        new_mode = action
-                        if new_mode in ("on", "key_nodes", "manual"):
-                            new_mode = "auto"
+                        new_mode = "on" if action in ("on", "auto", "key_nodes", "manual") else "off"
                         if new_mode not in AUX_MODES:
-                            raise ValueError("mode must be off/auto")
+                            raise ValueError("mode must be off/on")
                         aux_mode = new_mode
-                        _persist_aux_state()
+                        _persist_aux_mode(new_mode)
                         write_status(deliver_paused)
                         result = {"ok": True, "message": f"Aux mode set to {aux_mode}"}
                     elif action == "reminder":
@@ -2070,6 +1978,22 @@ def main(home: Path):
                         result = {"ok": True, "message": f"Aux reminder triggered ({stage})"}
                     else:
                         raise ValueError("unsupported aux action")
+                elif command == "aux_cli":
+                    prompt_text = str(args.get("prompt") or "").strip()
+                    if not prompt_text:
+                        result = {"ok": False, "message": "Aux CLI prompt is empty."}
+                    else:
+                        rc, out, err, cmd_line = _run_aux_cli(prompt_text)
+                        summary_lines = [f"[Aux CLI] exit={rc}", f"command: {cmd_line}"]
+                        if out:
+                            summary_lines.append("stdout:\n" + out.strip())
+                        if err:
+                            summary_lines.append("stderr:\n" + err.strip())
+                        summary = "\n".join(summary_lines)
+                        # Limit message length to avoid IM overflow
+                        if len(summary) > 3500:
+                            summary = summary[:3490] + "..."
+                        result = {"ok": rc == 0, "message": summary, "returncode": rc}
                 elif command == "review":
                     _send_aux_reminder("manual-review")
                     result = {"ok": True, "message": "Aux review reminder triggered"}
@@ -2333,7 +2257,7 @@ def main(home: Path):
         )
         if INSIGHT_REMINDER not in self_check_text:
             self_check_text = self_check_text.rstrip("\n") + "\n" + INSIGHT_REMINDER
-        if aux_mode == "auto":
+        if aux_mode == "on":
             aux_prompts = (
                 "Note: Could Aux take over any task right now? Just trigger Aux for any task in which you think it would be helpful.\n"
                 " Does POR or your latest output need an Aux sanity check? If yes, schedule Aux review and note what must be verified."
@@ -2846,47 +2770,39 @@ def main(home: Path):
                             payload = ""
                     except Exception:
                         pass
-                    # If to_peer expresses RFD intent, log kind:rfd (so bridge can send a card)
-                    _maybe_emit_rfd_from_to_peer(home, "PeerA", payload)
-                    # If to_peer contains a unified diff, try to apply it (avoid “discuss diff but not land”)
+                    # If to_peer contains a unified diff, try to apply it (avoid "discuss diff but not land")
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
                         print_block("PeerA inline patch", "Preflight …")
                         lines = count_changed_lines(inline)
-                        allowed, reason = _rfd_gate_check(home, policies, inline, lines)
-                        if allowed:
-                            ok,err = git_apply_check(inline)
-                            if ok:
-                                ok2,err2 = git_apply(inline)
-                                if ok2:
-                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply inline patch (mailbox)")
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-commit-inline","lines":lines,"tests_ok":tests_ok})
-                                    standby = (
-                                        "<FROM_SYSTEM>\n"
-                                        "Patch applied. Please standby and await the next instruction.\n"
-                                        "</FROM_SYSTEM>\n"
-                                    )
-                                    _send_handoff("System", "PeerA", standby)
-                                    _send_handoff("System", "PeerB", standby)
-                                    # Clear original to_peer.md to avoid re-applying inline patch
-                                    try:
-                                        (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
-                                    except Exception:
-                                        pass
-                                    # Emit a summary event for bridges (so external channels are informed)
-                                    try:
-                                        outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
-                                    except Exception:
-                                        pass
-                                else:
-                                    print("[PATCH] Apply failed:\n"+err2.strip())
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                        ok,err = git_apply_check(inline)
+                        if ok:
+                            ok2,err2 = git_apply(inline)
+                            if ok2:
+                                try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply inline patch (mailbox)")
+                                log_ledger(home, {"from":"PeerA","kind":"patch-commit-inline","lines":lines,"tests_ok":tests_ok})
+                                standby = (
+                                    "<FROM_SYSTEM>\n"
+                                    "Patch applied. Please standby and await the next instruction.\n"
+                                    "</FROM_SYSTEM>\n"
+                                )
+                                _send_handoff("System", "PeerA", standby)
+                                _send_handoff("System", "PeerB", standby)
+                                try:
+                                    (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
+                                except Exception:
+                                    pass
+                                try:
+                                    outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                                except Exception:
+                                    pass
+                                payload = ""
                             else:
-                                print("[PATCH] Preflight failed:\n"+err.strip())
-                                log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                                print("[PATCH] Apply failed:\n"+err2.strip())
+                                log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                         else:
-                            # Record rejections due to RFD/policy reasons
-                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
+                            print("[PATCH] Preflight failed:\n"+err.strip())
+                            log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
                     _maybe_trigger_aux_from_payload("PeerA", payload)
@@ -2933,31 +2849,27 @@ def main(home: Path):
                         patch = norm
                         print_block("PeerA patch", "Preflight …")
                         lines = count_changed_lines(patch)
-                        allowed, reason = _rfd_gate_check(home, policies, patch, lines)
-                        if allowed:
-                            # Path allowlist check
-                            paths = extract_paths_from_patch(patch)
-                            if not allowed_by_policies(paths, policies):
-                                log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
-                            else:
-                                ok,err = git_apply_check(patch)
-                                if not ok:
-                                    print("[PATCH] Preflight failed:\n"+err.strip())
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
-                                else:
-                                    ok2,err2 = git_apply(patch)
-                                    if not ok2:
-                                        print("[PATCH] Apply failed:\n"+err2.strip())
-                                        log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
-                                    else:
-                                        try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
-                                        log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                                mbox_counts["peerA"]["patch"] += 1
-                                _ack_receiver("PeerA", events["peerA"].get("patch"))
-                                last_event_ts["PeerA"] = time.time()
+                        allowed, reason = True, None
+                        # Path allowlist check
+                        paths = extract_paths_from_patch(patch)
+                        if not allowed_by_policies(paths, policies):
+                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
                         else:
-                            print(f"[POLICY] Patch requires RFD approval: {reason}")
-                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
+                            ok,err = git_apply_check(patch)
+                            if not ok:
+                                print("[PATCH] Preflight failed:\n"+err.strip())
+                                log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                            else:
+                                ok2,err2 = git_apply(patch)
+                                if not ok2:
+                                    print("[PATCH] Apply failed:\n"+err2.strip())
+                                    log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                else:
+                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
+                                    log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
+                            mbox_counts["peerA"]["patch"] += 1
+                            _ack_receiver("PeerA", events["peerA"].get("patch"))
+                            last_event_ts["PeerA"] = time.time()
                 # PeerB events
                 if events["peerB"].get("to_user"):
                     # Removed soft REV reminder in favor of hard gate on to_peer
@@ -2987,40 +2899,34 @@ def main(home: Path):
                             payload = ""
                     except Exception:
                         pass
-                    _maybe_emit_rfd_from_to_peer(home, "PeerB", payload)
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
                         print_block("PeerB inline patch", "Preflight …")
                         lines = count_changed_lines(inline)
-                        allowed, reason = _rfd_gate_check(home, policies, inline, lines)
-                        if allowed:
-                            ok,err = git_apply_check(inline)
-                            if ok:
-                                ok2,err2 = git_apply(inline)
-                                if ok2:
-                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply inline patch (mailbox)")
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-commit-inline","lines":lines,"tests_ok":tests_ok})
-                                    standby = ("<FROM_SYSTEM>\nPatch applied. Please standby and await the next instruction.\n</FROM_SYSTEM>\n")
-                                    _send_handoff("System", "PeerA", standby)
-                                    _send_handoff("System", "PeerB", standby)
-                                    # Clear original to_peer.md
-                                    try:
-                                        (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
-                                    except Exception:
-                                        pass
-                                    # Emit a summary event
-                                    try:
-                                        outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
-                                    except Exception:
-                                        pass
-                                else:
-                                    print("[PATCH] Apply failed:\n"+err2.strip())
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                        ok,err = git_apply_check(inline)
+                        if ok:
+                            ok2,err2 = git_apply(inline)
+                            if ok2:
+                                try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply inline patch (mailbox)")
+                                log_ledger(home, {"from":"PeerB","kind":"patch-commit-inline","lines":lines,"tests_ok":tests_ok})
+                                standby = ("<FROM_SYSTEM>\nPatch applied. Please standby and await the next instruction.\n</FROM_SYSTEM>\n")
+                                _send_handoff("System", "PeerA", standby)
+                                _send_handoff("System", "PeerB", standby)
+                                try:
+                                    (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
+                                except Exception:
+                                    pass
+                                try:
+                                    outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                                except Exception:
+                                    pass
+                                payload = ""
                             else:
-                                print("[PATCH] Preflight failed:\n"+err.strip())
-                                log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                                print("[PATCH] Apply failed:\n"+err2.strip())
+                                log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                         else:
-                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
+                            print("[PATCH] Preflight failed:\n"+err.strip())
+                            log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
                         _maybe_trigger_aux_from_payload("PeerB", payload)
@@ -3066,30 +2972,25 @@ def main(home: Path):
                         patch = norm
                         print_block("PeerB patch", "Preflight …")
                         lines = count_changed_lines(patch)
-                        allowed, reason = _rfd_gate_check(home, policies, patch, lines)
-                        if allowed:
-                            paths = extract_paths_from_patch(patch)
-                            if not allowed_by_policies(paths, policies):
-                                log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
-                            else:
-                                ok,err = git_apply_check(patch)
-                                if not ok:
-                                    print("[PATCH] Preflight failed:\n"+err.strip())
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
-                                else:
-                                    ok2,err2 = git_apply(patch)
-                                    if not ok2:
-                                        print("[PATCH] Apply failed:\n"+err2.strip())
-                                        log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
-                                    else:
-                                        try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
-                                        log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                                mbox_counts["peerB"]["patch"] += 1
-                                _ack_receiver("PeerB", events["peerB"].get("patch"))
-                                last_event_ts["PeerB"] = time.time()
+                        paths = extract_paths_from_patch(patch)
+                        if not allowed_by_policies(paths, policies):
+                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
                         else:
-                            print(f"[POLICY] Patch requires RFD approval: {reason}")
-                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
+                            ok,err = git_apply_check(patch)
+                            if not ok:
+                                print("[PATCH] Preflight failed:\n"+err.strip())
+                                log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                            else:
+                                ok2,err2 = git_apply(patch)
+                                if not ok2:
+                                    print("[PATCH] Apply failed:\n"+err2.strip())
+                                    log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                else:
+                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
+                                    log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
+                            mbox_counts["peerB"]["patch"] += 1
+                            _ack_receiver("PeerB", events["peerB"].get("patch"))
+                            last_event_ts["PeerB"] = time.time()
                 # Persist index
                 mbox_idx.save()
                 # Refresh status for panel
@@ -3120,7 +3021,7 @@ def main(home: Path):
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
-            print("  /aux status|on|off|auto → inspect or set Aux availability")
+            print("  /aux status|on|off      → inspect or set Aux availability")
             print("  /review                → request Aux review bundle")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
@@ -3130,6 +3031,24 @@ def main(home: Path):
         except Exception:
             pass
         continue
+
+        if line.lower().startswith("c:") or line.lower().startswith("/c"):
+            if line.lower().startswith("c:"):
+                prompt_text = line[2:].strip()
+            else:
+                prompt_text = line[2:].lstrip(" :").strip()
+            if not prompt_text:
+                print("[AUX] Usage: c: <prompt>  or  /c <prompt>")
+                continue
+            rc, out, err, cmd_line = _run_aux_cli(prompt_text)
+            print(f"[AUX] command: {cmd_line}")
+            print(f"[AUX] exit={rc}")
+            if out:
+                print(out.rstrip())
+            if err:
+                print("[AUX][stderr]")
+                print(err.rstrip())
+            continue
 
         if line == "/refresh":
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
@@ -3158,14 +3077,12 @@ def main(home: Path):
             parts = line.split()
             sub = parts[1].lower() if len(parts) > 1 else "status"
             if sub in ("on", "off", "auto", "key_nodes", "manual"):
-                new_mode = sub
-                if new_mode in ("on", "key_nodes", "manual"):
-                    new_mode = "auto"
+                new_mode = "on" if sub in ("on", "auto", "key_nodes", "manual") else "off"
                 if new_mode not in AUX_MODES:
-                    print("[AUX] Modes: off | auto")
+                    print("[AUX] Modes: off | on")
                     continue
                 aux_mode = new_mode
-                _persist_aux_state()
+                _persist_aux_mode(new_mode)
                 write_status(deliver_paused)
                 print(f"[AUX] Mode set to {aux_mode}")
             elif sub == "status":
@@ -3173,7 +3090,7 @@ def main(home: Path):
                 last = aux_last_reason or "-"
                 print(f"[AUX] mode={aux_mode} command={cmd_display} last_reason={last}")
             else:
-                print("[AUX] Usage: /aux status|on|off|auto")
+                print("[AUX] Usage: /aux status|on|off")
             continue
         if line == "/pause":
             deliver_paused = True

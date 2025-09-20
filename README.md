@@ -8,18 +8,18 @@ Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7
 
 - Dual‑AI Autonomy: peers continuously plan → build → critique → refine. They don’t wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (diff/tests/logs/benchmarks).
 - Agent‑as‑a‑Service (AaaS): agents are long‑running services with a mailbox contract, not ad‑hoc prompts. They keep rhythm, produce evidence, and integrate with IM (Telegram/Slack/Discord via bridges; Teams outbound planned) without coupling core logic to any single transport.
-- IM Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, one‑tap RFD decisions, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
+- IM Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, clear decision summaries, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
 - Builder–Critic Synergy: peers challenge CLAIMs with COUNTERs and converge via verifiable EVIDENCE. In practice this beats single‑model quality on complex, multi‑day tasks.
 - tmux Transparency: dual panes (PeerA/PeerB) + compact status panel. You can peek, nudge, or inject text without disrupting flows—and without a GUI.
-- Governance at the Core (RFD): protected areas and irreversible changes raise Request‑For‑Decision cards in chat; approvals are written to a ledger and unlock execution.
+- Governance at the Core: protected areas and irreversible changes are surfaced in chat with explicit context; approvals are logged in the ledger once participants agree.
 - Team‑level Efficiency: one always‑on bot concentrates orchestration and approvals for the whole team. You reduce duplicated “per‑seat” sessions and still retain control.
 
 ## What You Get
 
 - Evidence‑first loop: tiny diffs/tests/logs; only green changes commit.
 - Single‑branch queue: preflight `git apply` → (optional) lint/tests → commit.
-- RFD closed loop: generate cards, gate protected paths/large diffs, unlock on decision.
-- AaaS integration: explicit routing; `/status`, `/queue`, `/locks`, `/rfd list|show`, `/showpeers on|off`, file send/receive with meta. Bridges mirror events; orchestrator remains transport‑agnostic.
+- Decision loop: surface context, discuss options, log the agreed outcome.
+- AaaS integration: explicit routing; `/status`, `/queue`, `/locks`, `/showpeers on|off`, file send/receive with meta. Bridges mirror events; orchestrator remains transport‑agnostic.
 - Ledger: append‑only `.cccc/state/ledger.jsonl` (patch/test/log/decision) for audit.
 
 ## Requirements
@@ -118,14 +118,15 @@ That’s it. You can refine policies later.
 - Control & passthrough
   - `/focus [hint]` asks PeerB to refresh `.cccc/state/POR.md`
   - `/reset compact|clear` issues manual compact/clear; `/review` triggers the aux reminder flow
-  - `/aux status|on|off` inspects or toggles the optional third agent
+  - `/aux status|on|off` inspects or toggles the optional third agent; the choice is persisted to `.cccc/settings/cli_profiles.yaml`
+  - `/c <prompt>` (or `c: <prompt>`) runs the Aux GEMINI CLI with your prompt and returns the output
   - `a! <command>` / `b! <command>` sends a raw CLI command to PeerA/PeerB (non-interactive; advanced)
 - File exchange
   - Outbound (AIs → IM): save files to `.cccc/work/upload/outbound/` (flat)
   - Routing: either a `<name>.route` sidecar with `a|b|both`, or the first line of `<name>.caption.txt` starts with `a:`/`b:`/`both:` (the prefix is removed from the caption)
   - ACK: on success, a `<name>.sent.json` sidecar is written
   - Inbound (IM → AIs): bridge writes `<FROM_USER>` with sidecar meta; peers act on it
-- Governance: RFD cards in chat with Approve/Reject; decisions go to the ledger and unlock execution.
+- Governance: peers surface decisions in chat; once resolved, the outcome is logged to the ledger and work continues.
 
 ## A Typical Session (End‑to‑End, ~3 minutes)
 
@@ -147,13 +148,13 @@ Goal: ship a small, reversible change with dual‑AI collaboration.
 - Telegram posts a concise summary (debounced); peers stay quiet unless blocked.
 - If you need files (screenshots/spec PDFs), drop them to the bot with a caption; peers act on the inbound block with meta.
 
-RFD is not required here. It triggers automatically only for protected areas or when you explicitly ask for a decision.
+No automatic decision prompts fire here; peers simply note the choices and ask for user guidance when needed.
 
 ## Recommended Stack (Pragmatic & Stable)
 
 - AI CLIs: Claude Code (MAX Plan) + Codex CLI (PRO Plan) for robust, sustained workloads.
 - Orchestrator: this project, with tmux for long‑lived panes and a compact panel.
-- Transport & Governance: Telegram for team‑wide visibility, quick RFD decisions, and file exchange.
+- Transport & Governance: Telegram for team-wide visibility, quick status sharing, and file exchange.
 
 ## Folder Layout (after `cccc init`)
 
@@ -165,7 +166,7 @@ RFD is not required here. It triggers automatically only for protected areas or 
   adapters/outbox_consumer.py    # Shared Outbox reader (to_user/to_peer_summary)
   settings/
     cli_profiles.yaml            # tmux/paste/type behavior; echo; idle regexes; self‑check
-    policies.yaml                # patch queue size; allowlist; RFD gates
+    policies.yaml                # patch queue size; allowlist; legacy gates (RFD disabled by default)
     governance.yaml              # POR/reset cadence; future governance knobs
     telegram.yaml                # token/autostart/allowlist/routing/files
     slack.yaml                   # app/bot tokens, channels, routing/files
@@ -353,12 +354,12 @@ files:
 
 **Where to put my project brief/policies?**
 - Put your project scope/brief in `PROJECT.md` (repo root). The orchestrator injects it into the runtime SYSTEM so both peers align.
-- RFD/protected paths live in `.cccc/settings/policies.yaml`.
+- Protected path patterns live in `.cccc/settings/policies.yaml` (auto gating disabled by default).
 
 **“This environment is externally managed” during install/build?**
 - Use a venv or pipx for publishing; avoid system Python for `pip install` of tools like build/twine.
 
-**RFD card not shown?**
+**Decision log not shown?**
 - Confirm ledger has `kind:rfd`; check bridge logs; verify gates and to_peer YAML format.
 
 ## Security & Privacy
@@ -369,7 +370,7 @@ files:
 
 ## Roadmap (Selected)
 
-- Role‑based approvals; multi‑sign gates; richer RFD templates with default options/expiry
+- Role-based approvals; multi-sign gates; richer decision templates with default options/expiry
 - Artifact previews in chat; repro snippets; CI/CD hooks for release/rollback cards
 - Optional safety scanners (ClamAV/DLP) for inbound files; Slack/Mattermost bridges
 

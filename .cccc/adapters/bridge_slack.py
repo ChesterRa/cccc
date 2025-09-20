@@ -621,6 +621,26 @@ def main():
                 _append_log(f"[cmd] focus ch={ch} req={req_id}")
                 return
 
+            if command_text.strip().lower().startswith('c:') or re.match(r'^/?c\b', command_text, re.I):
+                if command_text.strip().lower().startswith('c:'):
+                    prompt = command_text.strip()[2:].strip()
+                else:
+                    pieces = command_text.split(None, 1)
+                    prompt = pieces[1].strip() if len(pieces) > 1 else ''
+                if not prompt:
+                    _send_reply('Usage: /c <prompt> or c: <prompt>')
+                    return
+                result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='slack', channel=ch)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Aux CLI executed.'
+                elif result:
+                    reply = result.get('message') or 'Aux CLI error.'
+                else:
+                    reply = f"Aux CLI request queued (id={req_id})."
+                _send_reply(reply[:3500])
+                _append_log(f"[cmd] aux-cli ch={ch} req={req_id}")
+                return
+
             if re.match(r'^/?reset\b', command_text, re.I):
                 parts = command_text.split()
                 mode = parts[1].lower() if len(parts) > 1 else ''

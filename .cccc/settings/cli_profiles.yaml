@@ -1,3 +1,8 @@
+aux:
+  mode: off
+  invoke_command: 'gemini -p "{prompt}" --yolo'
+  rate_limit_per_minute: 2
+
 peerA:
   prompt_regex: "(?mi)^\\s*(?:claude|assistant|a:|>)\\s*$"   # Adjust to your PeerA CLI prompt if needed
   busy_regexes: []                                           # Usually not required for LLM shells
