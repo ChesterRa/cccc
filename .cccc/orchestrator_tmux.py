@@ -2501,7 +2501,7 @@ def main(home: Path, session_name: Optional[str] = None):
                                     outbox_write(home, {
                                         "type": "to_user",
                                         "peer": "System",
-                                        "text": f"⚠️ {peer_label} crashed {AUTO_RESTART_MAX_ATTEMPTS} times in {AUTO_RESTART_WINDOW_SEC//60} minutes. Auto-restart disabled. Please investigate crash logs and restart manually with /restart {peer_label.lower()}."
+                                        "text": f"🚨 {peer_label} crashed {AUTO_RESTART_MAX_ATTEMPTS} times in {AUTO_RESTART_WINDOW_SEC//60} minutes. Auto-restart disabled. Please investigate crash logs and restart manually with /restart {peer_label.lower()}."
                                     })
                                 except Exception:
                                     pass

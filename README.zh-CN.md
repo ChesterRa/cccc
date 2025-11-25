@@ -1,6 +1,6 @@
 # CCCC Pair — 双AI自主协作编排器
 
-[English](README.md) | **中文**
+[English](README.md) | **中文** | [日本語](README.ja.md)
 
 两个AI作为平等的伙伴**自主协作、自动推进任务**——你设定目标，它们自己沟通、规划、实现、互相review。你通过TUI或聊天工具随时掌控全局，但不需要持续介入。
 

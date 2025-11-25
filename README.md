@@ -1,6 +1,6 @@
 # CCCC Pair — Modern Multi-Agent Orchestrator
 
-**English** | [中文](README.zh-CN.md)
+**English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
 
 Two always-on AI peers co-drive your repository as equals. They plan, build, critique, and converge through evidence — not just talk. You stay in control via an interactive TUI or your team chat.
 

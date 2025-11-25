@@ -482,9 +482,6 @@ class CCCCSetupApp:
             complete_while_typing=True,
         )
         # Status panel removed - all info now in bottom footer
-        # Track last message timestamp for grouping
-        self.last_message_time: float = 0
-        self.last_message_sender: str = ''
         self.message_count: int = 0
 
         # Create the application
@@ -1370,7 +1367,7 @@ class CCCCSetupApp:
             self.btn_provider.text = self._get_provider_summary()
 
         if self.error_msg:
-            self.error_label.text = f'⚠️  {self.error_msg}'
+            self.error_label.text = f'🚨  {self.error_msg}'
         else:
             self.error_label.text = ''
 
@@ -2072,39 +2069,36 @@ class CCCCSetupApp:
 
     def _write_timeline(self, text: str, msg_type: str = 'info', silent: bool = False) -> None:
         """
-        Append message with clean compact formatting (no ANSI codes, pure text).
-        
-        Format: HH:MM 🤖 SENDER │ Message content
-                               │ Continuation lines
+        Append message with two-line header format for clean alignment.
+
+        Format:
+            HH:MM 🤖 SENDER
+            │ Message content
+            │ Continuation lines
 
         Args:
-            text: Message content  
+            text: Message content
             msg_type: system/peerA/peerB/user/error/info/success/warning/debug
             silent: If True, don't increment message count
         """
-        current_time = time.time()
         timestamp = time.strftime('%H:%M')
 
         # Sender config: (icon, label) - no colors, pure text
+        # NOTE: All icons should be East Asian Width = W (Wide) to avoid
+        # prompt_toolkit width miscalculation. VS16 emoji (⚙️, ℹ️, ⚠️) are problematic.
         sender_config = {
             'system': ('🔧', 'SYS'),
-            'peerA': ('🤖', self.config.peerA.upper() if hasattr(self.config, 'peerA') else 'PEERA'),
-            'peerB': ('⚙️', self.config.peerB.upper() if hasattr(self.config, 'peerB') else 'PEERB'),
+            'peerA': ('🤖', self.config.peerA if hasattr(self.config, 'peerA') else 'PeerA'),
+            'peerB': ('🔩', self.config.peerB if hasattr(self.config, 'peerB') else 'PeerB'),
             'user': ('👤', 'YOU'),
             'error': ('❌', 'ERR'),
-            'info': ('ℹ️', 'INF'),
+            'info': ('💡', 'INF'),
             'success': ('✅', 'OK'),
-            'warning': ('⚠️', 'WRN'),
+            'warning': ('🚨', 'WRN'),
             'debug': ('🔍', 'DBG'),
         }
 
         icon, label = sender_config.get(msg_type, ('•', msg_type.upper()[:3]))
-
-        # Check if same sender within 30s (compact mode)
-        compact = (
-            self.last_message_sender == msg_type and
-            current_time - self.last_message_time < 30
-        )
 
         lines = []
 
@@ -2123,27 +2117,14 @@ class CCCCSetupApp:
                 line = line[split_point:].lstrip()
             text_lines.append(line)
 
-        # Format message (compact or full)
-        if compact:
-            # Same sender continuation: omit timestamp
-            for i, text_line in enumerate(text_lines):
-                if i == 0:
-                    lines.append(f'      {icon} │ {text_line}')
-                else:
-                    lines.append(f'        │ {text_line}')
-        else:
-            # New sender or time gap: show full header
-            if self.timeline.text:
-                lines.append('')  # Blank line between groups
-            for i, text_line in enumerate(text_lines):
-                if i == 0:
-                    lines.append(f'{timestamp} {icon} {label:6s} │ {text_line}')
-                else:
-                    lines.append(f'               │ {text_line}')
-
-        # Update tracking
-        self.last_message_sender = msg_type
-        self.last_message_time = current_time
+        # Format message - two-line header format
+        # Line 1: header (timestamp + icon + label)
+        # Line 2+: content (│ at column 0 for perfect alignment)
+        if self.timeline.text:
+            lines.append('')  # Blank line between messages
+        lines.append(f'{timestamp} {icon} {label}')  # Header line
+        for text_line in text_lines:
+            lines.append(f'│ {text_line}')  # Content lines, │ at column 0
 
         # Append to timeline
         formatted = '\n'.join(lines) + '\n'
@@ -2848,8 +2829,6 @@ class CCCCSetupApp:
             # Clear timeline with minimal message
             self.timeline.text = ''
             self.message_count = 0
-            self.last_message_time = 0
-            self.last_message_sender = ''
             self._write_timeline("Screen cleared", 'system')
             self._write_timeline("Type /help for commands", 'info')
 
