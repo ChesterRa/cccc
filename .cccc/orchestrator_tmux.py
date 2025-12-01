@@ -1389,9 +1389,10 @@ def main(home: Path, session_name: Optional[str] = None):
             tmux("set-option","-g","alternate-screen","on")
     except Exception:
         pass
-    # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
-    tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
-    tmux("bind-key","-n","WheelDownPane","send-keys","-M")
+    # Enable mouse wheel scroll: pass to app when in alternate screen (TUI), else use tmux copy-mode
+    # This allows prompt_toolkit TUI to receive scroll events while preserving tmux scrollback for other panes
+    tmux("bind-key", "-n", "WheelUpPane", "if-shell", "-Ft=", "#{alternate_on}", "send-keys -M", "copy-mode -e")
+    tmux("bind-key", "-n", "WheelDownPane", "send-keys", "-M")
     print(f"[INFO] Using tmux session: {session} (left-top=TUI / left-bottom=orchestrator log / right=PeerA+PeerB)")
     print(f"[INFO] pane map: left_top={left_top} left_bot={left_bot} PeerA(top)={paneA} PeerB(bottom)={paneB}")
     try:
@@ -1411,8 +1412,6 @@ def main(home: Path, session_name: Optional[str] = None):
     # Launch TUI (minimal, robust quoting) using the same interpreter; env inherits from tmux
     cmd_tui = f"{py} -u {tui_py} --home {shlex.quote(str(home))}"
     tmux_respawn_pane(left_top, cmd_tui)
-    # Disable tmux mouse interception for TUI pane, let mouse events pass to prompt_toolkit
-    tmux("set-option", "-p", "-t", left_top, "mouse", "off")
     # Launch orchestrator log tail in left-bottom pane
     try:
         logp = shlex.quote(str(state/"orchestrator.log"))

@@ -49,6 +49,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,101 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.shortcuts import radiolist_dialog
 from asyncio import create_task
+
+
+def get_clipboard_image(save_dir: Path) -> Optional[str]:
+    """Check clipboard for image and save to file if found (macOS only).
+
+    Returns the saved file path if an image was found, None otherwise.
+    """
+    import sys
+    if sys.platform != 'darwin':
+        return None
+
+    try:
+        # Check if clipboard contains image data using osascript
+        check_script = '''
+        tell application "System Events"
+            try
+                set clipboardInfo to (clipboard info)
+                repeat with i in clipboardInfo
+                    if (first item of i) is «class PNGf» then
+                        return "PNG"
+                    else if (first item of i) is «class TIFF» then
+                        return "TIFF"
+                    end if
+                end repeat
+            end try
+        end tell
+        return "NONE"
+        '''
+        result = subprocess.run(
+            ['osascript', '-e', check_script],
+            capture_output=True, text=True, timeout=5
+        )
+        clip_type = result.stdout.strip()
+
+        if clip_type not in ('PNG', 'TIFF'):
+            return None
+
+        # Create save directory if needed
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate unique filename
+        timestamp = int(time.time() * 1000)
+        filename = f"clipboard_{timestamp}.png"
+        filepath = save_dir / filename
+
+        # Save clipboard image using osascript
+        save_script = f'''
+        set saveFile to POSIX file "{filepath}"
+        try
+            set imageData to the clipboard as «class PNGf»
+            set fileRef to open for access saveFile with write permission
+            write imageData to fileRef
+            close access fileRef
+            return "OK"
+        on error
+            try
+                close access saveFile
+            end try
+            return "ERROR"
+        end try
+        '''
+        result = subprocess.run(
+            ['osascript', '-e', save_script],
+            capture_output=True, text=True, timeout=10
+        )
+
+        if result.stdout.strip() == 'OK' and filepath.exists():
+            return str(filepath)
+        return None
+
+    except Exception:
+        return None
+
+
+def parse_message_images(msg: str) -> Tuple[str, List[str]]:
+    """Parse message for image paths prefixed with @.
+
+    Returns (cleaned_message, list_of_image_paths).
+    Example: "hello @/path/to/img.png world" -> ("hello  world", ["/path/to/img.png"])
+    """
+    import re
+    images = []
+    # Match @/path/to/file.ext (common image extensions)
+    pattern = r'@(/[^\s]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff))'
+
+    def replace_match(m):
+        path = m.group(1)
+        if Path(path).exists():
+            images.append(path)
+            return ''  # Remove from message
+        return m.group(0)  # Keep original if file doesn't exist
+
+    cleaned = re.sub(pattern, replace_match, msg, flags=re.IGNORECASE)
+    cleaned = ' '.join(cleaned.split())  # Normalize whitespace
+    return cleaned, images
 
 
 class CommandCompleter(Completer):
@@ -2521,14 +2617,20 @@ class CCCCSetupApp:
             else:
                 self._write_timeline("Usage: /aux <prompt>", 'error')
 
-        # Message sending commands (keep existing logic)
+        # Message sending commands (with image support)
         elif text.startswith('/a '):
             msg = text[3:].strip()
             if msg:
-                self._write_timeline(f"You > PeerA: {msg}", 'user')
+                # Parse for image paths
+                cleaned_msg, images = parse_message_images(msg)
+                display_msg = msg if not images else f"{cleaned_msg} [+{len(images)} image(s)]"
+                self._write_timeline(f"You > PeerA: {display_msg}", 'user')
                 try:
                     with cmds.open('a', encoding='utf-8') as f:
-                        cmd = {"type": "a", "args": {"text": msg}, "source": "tui", "ts": ts}
+                        args = {"text": cleaned_msg if cleaned_msg else "Please see the attached image(s)."}
+                        if images:
+                            args["images"] = images
+                        cmd = {"type": "a", "args": args, "source": "tui", "ts": ts}
                         f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
                         f.flush()
                     self._write_timeline("Sent to PeerA", 'success')
@@ -2540,10 +2642,16 @@ class CCCCSetupApp:
         elif text.startswith('/b '):
             msg = text[3:].strip()
             if msg:
-                self._write_timeline(f"You > PeerB: {msg}", 'user')
+                # Parse for image paths
+                cleaned_msg, images = parse_message_images(msg)
+                display_msg = msg if not images else f"{cleaned_msg} [+{len(images)} image(s)]"
+                self._write_timeline(f"You > PeerB: {display_msg}", 'user')
                 try:
                     with cmds.open('a', encoding='utf-8') as f:
-                        cmd = {"type": "b", "args": {"text": msg}, "source": "tui", "ts": ts}
+                        args = {"text": cleaned_msg if cleaned_msg else "Please see the attached image(s)."}
+                        if images:
+                            args["images"] = images
+                        cmd = {"type": "b", "args": args, "source": "tui", "ts": ts}
                         f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
                         f.flush()
                     self._write_timeline("Sent to PeerB", 'success')
@@ -2555,10 +2663,16 @@ class CCCCSetupApp:
         elif text.startswith('/both '):
             msg = text[6:].strip()
             if msg:
-                self._write_timeline(f"You > Both: {msg}", 'user')
+                # Parse for image paths
+                cleaned_msg, images = parse_message_images(msg)
+                display_msg = msg if not images else f"{cleaned_msg} [+{len(images)} image(s)]"
+                self._write_timeline(f"You > Both: {display_msg}", 'user')
                 try:
                     with cmds.open('a', encoding='utf-8') as f:
-                        cmd = {"type": "both", "args": {"text": msg}, "source": "tui", "ts": ts}
+                        args = {"text": cleaned_msg if cleaned_msg else "Please see the attached image(s)."}
+                        if images:
+                            args["images"] = images
+                        cmd = {"type": "both", "args": args, "source": "tui", "ts": ts}
                         f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
                         f.flush()
                     self._write_timeline("Sent to both peers", 'success')
@@ -2916,6 +3030,30 @@ class CCCCSetupApp:
             buffer = self.input_field.buffer
             pos = buffer.cursor_position
             buffer.text = buffer.text[:pos]
+
+        # Ctrl+V paste image from clipboard
+        @kb.add('c-v', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))
+        def paste_clipboard_image(event) -> None:
+            """Check clipboard for image and insert path if found"""
+            # Save images to system temp directory (auto-cleaned by OS)
+            import tempfile
+            save_dir = Path(tempfile.gettempdir()) / "cccc_clipboard_images"
+            image_path = get_clipboard_image(save_dir)
+            if image_path:
+                # Insert image path at cursor position
+                buffer = self.input_field.buffer
+                buffer.insert_text(f"@{image_path}")
+                self._write_timeline(f"Image saved: {image_path}", 'success')
+            else:
+                # No image in clipboard, let default paste behavior handle text
+                # Try to get text from clipboard using pbpaste
+                try:
+                    result = subprocess.run(['pbpaste'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0 and result.stdout:
+                        buffer = self.input_field.buffer
+                        buffer.insert_text(result.stdout)
+                except Exception:
+                    pass
 
         # Ctrl+R reverse search
         @kb.add('c-r', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))

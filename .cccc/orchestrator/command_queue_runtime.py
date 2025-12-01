@@ -153,17 +153,27 @@ def make(ctx: Dict[str, Any]):
                         try:
                             if ctype in ('a','b','both','send'):
                                 text = str(args.get('text') or obj.get('text') or '').strip()
-                                if not text:
+                                images = args.get('images') or []
+                                if not text and not images:
                                     ok, msg = False, 'empty text'
                                 else:
+                                    # Build message content with optional image references
+                                    content_parts = []
+                                    if text:
+                                        content_parts.append(text)
+                                    if images:
+                                        # Append image file paths as references for Claude Code to process
+                                        for img_path in images:
+                                            content_parts.append(f"\n[Image: {img_path}]")
+                                    full_content = ''.join(content_parts)
                                     if ctype == 'a' or target in ('a','peera','peer_a'):
-                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
                                     elif ctype == 'b' or target in ('b','peerb','peer_b'):
-                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
                                     else:
-                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                    ok, msg = True, 'sent'
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
+                                    ok, msg = True, 'sent' + (f' with {len(images)} image(s)' if images else '')
                             elif ctype in ('pause','resume'):
                                 deliver_paused = (ctype == 'pause')
                                 write_status(deliver_paused)
