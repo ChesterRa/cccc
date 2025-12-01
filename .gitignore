@@ -44,5 +44,10 @@
 /cccc_scaffold/
 
 # Optional: keep repo minimal (docs/tests can be reintroduced later)
-/docs/
+# Keep docs/*.md for README links, ignore subdirectories
+/docs/_drafts/
+/docs/archive/
+/docs/releases/
+/docs/por/
+/docs/schemas/
 /tests/

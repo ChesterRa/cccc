@@ -55,8 +55,8 @@
 ### 零配置TUI
 
 - **交互式设置**：首次启动显示Setup面板，↑↓选择、Enter确认，不用编辑配置文件
-- **实时Timeline**：滚动查看所有对话流，PeerA/PeerB/System/You的消息一目了然
-- **状态面板**：实时显示handoff计数、self-check进度、Foreman状态
+- **实时Timeline**：滚动查看所有对话流，PeerA/PeerB/System/You的消息一目了然；消息宽度自动适配终端大小
+- **状态面板**：实时显示handoff计数、self-check进度、Foreman状态；暂停时显示醒目的PAUSED提示
 - **命令补全**：Tab自动补全，Ctrl+R搜索历史，标准快捷键全支持
 
 ### 证据驱动工作流
@@ -84,16 +84,35 @@
 
 **IM 聊天命令**：
 
-| 平台 | 命令 | 说明 |
-|------|------|------|
-| 全平台 | `a: <消息>` / `b: <消息>` / `both: <消息>` | 路由到Peer |
-| 全平台 | `a! <命令>` / `b! <命令>` | CLI直通（无包装直接输入） |
-| 全平台 | `aux: <提示>` 或 `/aux <提示>` | 调用Aux执行一次 |
-| 仅Telegram | `/pa` `/pb` `/pboth` | 群组中的直通命令 |
-| 仅Telegram | `/help` `/whoami` `/status` `/subscribe` `/verbose` | 元命令和设置 |
-| 仅Telegram | `/focus` `/reset` `/foreman` `/restart` | 控制命令 |
+**消息路由**（全平台）：
+- `a: <消息>` / `b: <消息>` / `both: <消息>` — 路由到Peer
 
-> Slack 和 Discord 命令支持较少，建议使用前缀语法（`a:`、`a!`、`aux:`）以确保全平台兼容。
+**CLI直通**（全平台）：
+- `a! <命令>` / `b! <命令>` — 无包装直接输入CLI
+
+**Telegram 命令**（斜杠前缀）：
+- `/a` `/b` `/both` — 路由别名
+- `/pa` `/pb` `/pboth` — 直通别名（群组友好）
+- `/aux <提示>` — 调用Aux执行一次
+- `/foreman on|off|status|now` — 控制Foreman
+- `/restart peera|peerb|both` — 重启Peer CLI
+- `/pause` `/resume` — 暂停/恢复投递
+- `/status` — 显示系统状态
+- `/verbose on|off` — 开关详细输出
+- `/whoami` `/subscribe` `/unsubscribe` — 订阅管理
+- `/help` — 显示命令帮助
+
+**Slack / Discord 命令**（叹号前缀）：
+- `!aux <提示>` — 调用Aux执行一次
+- `!foreman on|off|status|now` — 控制Foreman
+- `!restart peera|peerb|both` — 重启Peer CLI
+- `!pause` `!resume` — 暂停/恢复投递
+- `!status` — 显示系统状态
+- `!verbose on|off` — 开关详细输出
+- `!subscribe` `!unsubscribe` — 订阅管理
+- `!help` — 显示命令帮助
+
+> **说明**：Telegram 使用 `/` 前缀（原生机器人命令）。Slack/Discord 使用 `!` 前缀（避免平台命令拦截）。
 
 ---
 
@@ -162,7 +181,7 @@ CCCC不绑定特定AI，任何角色都可以使用以下任一CLI：
 | **Codex CLI** | [github.com/openai/codex](https://github.com/openai/codex) |
 | **Gemini CLI** | [github.com/google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) |
 | **Factory Droid** | [factory.ai](https://factory.ai/) |
-| **OpenCode** | [github.com/opencode-ai/opencode](https://github.com/opencode-ai/opencode) |
+| **OpenCode** | [opencode.ai/docs](https://opencode.ai/docs/) |
 | **Kilocode** | [kilo.ai/docs/cli](https://kilo.ai/docs/cli) |
 | **GitHub Copilot** | [github.com/features/copilot/cli](https://github.com/features/copilot/cli) |
 | **Augment Code** | [docs.augmentcode.com/cli](https://docs.augmentcode.com/cli/overview) |
@@ -244,18 +263,18 @@ cccc run
 
 | 命令 | 作用 |
 |------|------|
+| `/help` | 显示完整命令列表 |
 | `/a <消息>` | 发送给PeerA |
 | `/b <消息>` | 发送给PeerB |
 | `/both <消息>` | 同时发送给两个Peer |
-| `/pause` | 暂停handoff循环 |
-| `/resume` | 恢复handoff循环 |
-| `/refresh` | 刷新系统提示词 |
+| `/pause` | 暂停handoff投递（消息保存到inbox但不立即发送） |
+| `/resume` | 恢复handoff投递（发送NUDGE处理积压消息） |
+| `/restart peera\|peerb\|both` | 重启Peer CLI进程 |
+| `/quit` | 退出CCCC（分离tmux） |
 | `/setup` | 打开/关闭设置面板 |
-| `/foreman on\|off\|status\|now` | 控制Foreman |
+| `/foreman on\|off\|status\|now` | 控制Foreman（如已启用） |
 | `/aux <提示>` | 调用Aux执行一次性任务 |
-| `/verbose on\|off` | 开关详细输出 |
-| `/help` | 查看所有命令 |
-| `/quit` | 退出 |
+| `/verbose on\|off` | 开关Peer摘要 + Foreman抄送 |
 
 **自然语言路由**（不用斜杠也行）：
 ```
@@ -263,6 +282,32 @@ a: 帮我review这个PR的安全性
 b: 跑一下完整的测试套件
 both: 我们来规划下一个milestone
 ```
+
+### 跨平台命令对照表
+
+| 分类 | 命令 | TUI | Telegram | Slack | Discord |
+|------|------|-----|----------|-------|---------|
+| **路由** | 发送给PeerA | `/a` | `/a` 或 `a:` | `a:` | `a:` |
+| | 发送给PeerB | `/b` | `/b` 或 `b:` | `b:` | `b:` |
+| | 发送给两者 | `/both` | `/both` 或 `both:` | `both:` | `both:` |
+| **直通** | CLI到PeerA | — | `a!` 或 `/pa` | `a!` | `a!` |
+| | CLI到PeerB | — | `b!` 或 `/pb` | `b!` | `b!` |
+| | CLI到两者 | — | `/pboth` | — | — |
+| **控制** | 暂停投递 | `/pause` | `/pause` | `!pause` | `!pause` |
+| | 恢复投递 | `/resume` | `/resume` | `!resume` | `!resume` |
+| | 重启Peer | `/restart` | `/restart` | `!restart` | `!restart` |
+| | 退出 | `/quit` | — | — | — |
+| **操作** | Foreman控制 | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
+| | 运行Aux | `/aux` | `/aux` | `!aux` | `!aux` |
+| | 详细模式 | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
+| **订阅** | 获取chat ID | — | `/whoami` | — | — |
+| | 订阅 | — | `/subscribe` | `!subscribe` | `!subscribe` |
+| | 取消订阅 | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
+| **工具** | 显示状态 | — | `/status` | `!status` | `!status` |
+| | 显示帮助 | `/help` | `/help` | `!help` | `!help` |
+| | 设置面板 | `/setup` | — | — | — |
+
+> **图例**：`/cmd` = 斜杠前缀，`!cmd` = 叹号前缀，`x:` = 冒号路由，`x!` = 直通，— = 不支持
 
 ---
 
@@ -356,6 +401,25 @@ FOREMAN_TASK.md                 # Foreman任务定义
 3. 查看 `.cccc/state/orchestrator.log` 查看运行日志
 4. 运行 `cccc doctor` 检查环境
 
+### 如何重置状态开始新任务？
+
+使用 `cccc reset` 清理运行时状态，从头开始：
+
+```bash
+# 基本重置：清理 state/mailbox/logs/work，删除 POR/SUBPOR 文件
+cccc reset
+
+# 归档模式：先把 POR/SUBPOR 移到带时间戳的归档目录，再清理
+cccc reset --archive
+```
+
+适用场景：
+- 完成上一个任务后，开始全新的任务
+- 清理积压的inbox消息和运行时状态
+- 重置POR/SUBPOR文件，重新开始规划
+
+> **注意**：如果编排器正在运行，会提示确认。建议先运行 `cccc kill`。
+
 ---
 
 ## 更多信息
@@ -374,4 +438,4 @@ FOREMAN_TASK.md                 # Foreman任务定义
 
 ## License
 
-MIT
+Apache 2.0

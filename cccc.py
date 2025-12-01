@@ -104,6 +104,9 @@ def main():
     # Utility subcommands (M2.1/M2.2)
     p_clean = sub.add_parser("clean", help="Purge .cccc/{mailbox,work,logs,state}/ runtime artifacts")
 
+    p_reset = sub.add_parser("reset", help="Reset runtime state for new task (clear state/mailbox/logs/work)")
+    p_reset.add_argument("--archive", action="store_true", help="Archive docs/por/ before reset")
+
     p_doctor = sub.add_parser("doctor", help="Environment check (git/tmux/python/telegram)")
     p_doctor.add_argument("what", nargs="?", default="all", choices=["all","roles"], help="Subset to check: all|roles (default: all)")
     p_roles = sub.add_parser("roles", help="Show roles/actors/commands and availability (same as: doctor roles)")
@@ -184,6 +187,89 @@ def main():
                     print(f"[CLEAN] Purged {d}")
             except Exception as e:
                 print(f"[CLEAN] Failed to purge {d}: {e}")
+
+    def _cmd_reset(archive: bool = False):
+        """Reset runtime state for new task. Optionally archive POR/SUBPOR."""
+        # Safety check: warn if orchestrator session is running
+        session_file = home / "state" / "session.json"
+        if session_file.exists():
+            try:
+                session_data = json.loads(session_file.read_text(encoding='utf-8'))
+                session_name = str(session_data.get('session') or '').strip()
+                if session_name:
+                    # Check if tmux session exists (using session name as socket)
+                    result = subprocess.run(
+                        ["tmux", "-L", session_name, "has-session", "-t", session_name],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                    if result.returncode == 0:
+                        print(f"[WARN] Orchestrator session '{session_name}' is running.")
+                        print("       Consider running `cccc kill` first to avoid conflicts.")
+                        try:
+                            confirm = input("Continue anyway? (y/N): ").strip().lower()
+                            if confirm != 'y':
+                                print("[RESET] Aborted.")
+                                return
+                        except (EOFError, KeyboardInterrupt):
+                            print("\n[RESET] Aborted.")
+                            return
+            except Exception:
+                pass  # Ignore errors reading session state
+
+        # Handle POR/SUBPOR: archive (--archive) or delete (default)
+        por_dir = Path.cwd() / "docs" / "por"
+        if por_dir.exists():
+            por_md = por_dir / "POR.md"
+            subpor_dirs = [d for d in por_dir.iterdir() if d.is_dir() and d.name.startswith('T') and d.name != 'archive']
+
+            if archive:
+                # Archive mode: move to timestamped archive directory
+                timestamp = time.strftime('%Y%m%d-%H%M%S')
+                archive_dir = por_dir / "archive" / timestamp
+                try:
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    if por_md.exists():
+                        shutil.move(str(por_md), str(archive_dir / "POR.md"))
+                        print(f"[RESET] Archived POR.md")
+                    for subdir in subpor_dirs:
+                        try:
+                            shutil.move(str(subdir), str(archive_dir / subdir.name))
+                            print(f"[RESET] Archived {subdir.name}")
+                        except Exception as e:
+                            print(f"[RESET] Failed to archive {subdir.name}: {e}")
+                except Exception as e:
+                    print(f"[RESET] Failed to create archive: {e}")
+            else:
+                # Default mode: delete POR/SUBPOR directly
+                if por_md.exists():
+                    try:
+                        por_md.unlink()
+                        print(f"[RESET] Deleted POR.md")
+                    except Exception as e:
+                        print(f"[RESET] Failed to delete POR.md: {e}")
+                for subdir in subpor_dirs:
+                    try:
+                        shutil.rmtree(subdir)
+                        print(f"[RESET] Deleted {subdir.name}")
+                    except Exception as e:
+                        print(f"[RESET] Failed to delete {subdir.name}: {e}")
+
+        # Clear runtime directories (same as clean, but with different messaging)
+        cleared = []
+        for d in (home/"mailbox", home/"work", home/"logs", home/"state"):
+            try:
+                if d.exists():
+                    shutil.rmtree(d)
+                    cleared.append(d.name)
+            except Exception as e:
+                print(f"[RESET] Failed to purge {d}: {e}")
+
+        if cleared:
+            print(f"[RESET] Cleared: {', '.join(cleared)}")
+        else:
+            print("[RESET] Nothing to clear (directories already empty).")
+
+        print("[RESET] Done. Run `cccc run` to start fresh.")
 
     def _cmd_doctor(what: str = "all"):
         print("[DOCTOR] Starting checks…")
@@ -493,6 +579,8 @@ def main():
 
     if args.cmd == 'clean':
         _cmd_clean(); return
+    if args.cmd == 'reset':
+        _cmd_reset(archive=bool(getattr(args, 'archive', False))); return
     if args.cmd == 'doctor':
         _cmd_doctor(getattr(args,'what','all')); return
     if args.cmd == 'roles':

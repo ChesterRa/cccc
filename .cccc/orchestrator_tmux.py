@@ -1477,7 +1477,7 @@ def main(home: Path, session_name: Optional[str] = None):
                 pass
 
     def _process_im_commands():
-        nonlocal aux_mode
+        nonlocal aux_mode, deliver_paused
         try:
             files = sorted(im_command_dir.glob("*.json"))
         except Exception:
@@ -1566,6 +1566,26 @@ def main(home: Path, session_name: Optional[str] = None):
                         results.append(f"PeerB: {'✓' if success else '✗'}")
                     msg = f"Restart {target}: {', '.join(results)}"
                     result = {"ok": True, "message": msg}
+                elif command == "pause":
+                    deliver_paused = True
+                    deliver_paused_box['v'] = True
+                    write_status(deliver_paused)
+                    result = {"ok": True, "message": "Handoff paused. Messages will be saved to inbox but not delivered."}
+                elif command == "resume":
+                    deliver_paused = False
+                    deliver_paused_box['v'] = False
+                    write_status(deliver_paused)
+                    # Check inbox and send NUDGE if there are pending messages
+                    try:
+                        for label in ('PeerA', 'PeerB'):
+                            inbox = _inbox_dir(home, label)
+                            if inbox.exists() and any(inbox.iterdir()):
+                                pane = paneA if label == 'PeerA' else paneB
+                                prof = profileA if label == 'PeerA' else profileB
+                                nudge_api.maybe_send_nudge(home, label, pane, prof, force=True)
+                    except Exception:
+                        pass
+                    result = {"ok": True, "message": "Handoff resumed."}
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
@@ -2175,6 +2195,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'system_refresh_every': SYSTEM_REFRESH_EVERY,
         'processed_dir': _processed_dir,
         'processed_retention': PROCESSED_RETENTION,
+        'deliver_paused_box': deliver_paused_box,
     }
     # Helper to get actor name for a peer
     def _get_peer_actor(peer: str) -> str:
@@ -2569,6 +2590,8 @@ def main(home: Path, session_name: Optional[str] = None):
             'cleanup_bridges': _cleanup_bridges,
             # restart function for /restart command
             'restart_peer': restart_peer,
+            # needed for /resume to send NUDGE for pending inbox messages
+            'maybe_send_nudge': nudge_api.maybe_send_nudge,
         }
         cq = make_cq(cq_ctx)
         upd = cq.consume(max_items=20)

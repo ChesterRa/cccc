@@ -16,16 +16,22 @@ try:
 except Exception:
     fcntl = None  # type: ignore
 
+ROOT = Path.cwd()
+HOME = ROOT/".cccc"
+# Ensure we can import modules from .cccc BEFORE importing from common.*
+if str(HOME) not in sys.path:
+    sys.path.insert(0, str(HOME))
+
 try:
     from common.config import read_config as _read_config  # type: ignore
 except Exception:
     _read_config = None
 
-ROOT = Path.cwd()
-HOME = ROOT/".cccc"
-# Ensure we can import modules from .cccc (single-source preamble via prompt_weaver)
-if str(HOME) not in sys.path:
-    sys.path.insert(0, str(HOME))
+try:
+    from common.status_format import format_status_for_im, format_help_for_im  # type: ignore
+except Exception:
+    format_status_for_im = None  # type: ignore
+    format_help_for_im = None  # type: ignore
 
 def read_yaml(p: Path) -> Dict[str, Any]:
     if _read_config is not None:
@@ -1102,15 +1108,11 @@ def main():
                 continue
 
             stripped = text.strip()
-            prompt = None
-            if stripped.lower().startswith('aux:'):
-                prompt = stripped[4:].strip()
-            elif is_cmd(text, 'aux'):
+            if is_cmd(text, 'aux'):
                 pieces = text.split(None, 1)
                 prompt = pieces[1].strip() if len(pieces) > 1 else ''
-            if prompt is not None:
                 if not prompt:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux <prompt> or aux: <prompt>'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux <prompt>'}, timeout=15)
                     continue
                 result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='telegram', chat_id=chat_id)
                 if result and result.get('ok'):
@@ -1121,55 +1123,6 @@ def main():
                     reply = f"Aux CLI request queued (id={req_id})."
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': reply[:3900]}, timeout=15)
                 _append_log(outlog, f"[cmd] aux-cli chat={chat_id} req={req_id}")
-                continue
-
-            if is_cmd(text, 'focus'):
-                parts = text.split(None, 1)
-                hint = parts[1] if len(parts) > 1 else ''
-                result, req_id = _enqueue_im_command('focus', {'raw': hint}, source='telegram', chat_id=chat_id)
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'POR refresh requested.'
-                elif result:
-                    reply = f"POR refresh error: {result.get('message')}"
-                else:
-                    reply = f"POR refresh queued (id={req_id})."
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
-                _append_log(outlog, f"[cmd] focus chat={chat_id} req={req_id}")
-                continue
-
-            if is_cmd(text, 'reset'):
-                parts = text.split()
-                mode = parts[1].lower() if len(parts) > 1 else 'compact'
-                if mode not in ('compact', 'clear'):
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /reset compact|clear'}, timeout=15)
-                else:
-                    result, req_id = _enqueue_im_command('reset', {'mode': mode}, source='telegram', chat_id=chat_id)
-                    if result and result.get('ok'):
-                        reply = result.get('message') or f'Reset {mode} triggered.'
-                    elif result:
-                        reply = f"Reset error: {result.get('message')}"
-                    else:
-                        reply = f"Reset request queued (id={req_id})."
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
-                    _append_log(outlog, f"[cmd] reset mode={mode} chat={chat_id} req={req_id}")
-                continue
-
-            if is_cmd(text, 'aux'):
-                # Runtime Aux on/off toggles are removed. Keep UX explicit.
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Aux toggles are not supported. Use /aux-cli "<prompt>" for a one-off helper run, or /review.'}, timeout=15)
-                _append_log(outlog, f"[cmd] aux toggles unsupported chat={chat_id}")
-                continue
-
-            if is_cmd(text, 'review'):
-                result, req_id = _enqueue_im_command('review', {}, source='telegram', chat_id=chat_id)
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'Review reminder sent.'
-                elif result:
-                    reply = f"Review error: {result.get('message')}"
-                else:
-                    reply = f"Review request queued (id={req_id})."
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
-                _append_log(outlog, f"[cmd] review chat={chat_id} req={req_id}")
                 continue
 
             # Foreman control: /foreman on|off|now|status
@@ -1236,22 +1189,67 @@ def main():
                 _append_log(outlog, f"[cmd] restart target={target} chat={chat_id} req={req_id}")
                 continue
 
+            # Pause/Resume handoff delivery: /pause, /resume
+            if is_cmd(text, 'pause'):
+                result, req_id = _enqueue_im_command('pause', {}, source='telegram', chat_id=chat_id, wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Pause request queued.')
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"⏸ {reply}"}, timeout=15)
+                _append_log(outlog, f"[cmd] pause chat={chat_id} req={req_id}")
+                continue
+
+            if is_cmd(text, 'resume'):
+                result, req_id = _enqueue_im_command('resume', {}, source='telegram', chat_id=chat_id, wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Resume request queued.')
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"▶️ {reply}"}, timeout=15)
+                _append_log(outlog, f"[cmd] resume chat={chat_id} req={req_id}")
+                continue
+
             # Meta commands (must be before require_mention/require_explicit checks)
             if is_cmd(text, 'help'):
-                help_txt = (
-                    "Routing: a:/b:/both: or /a /b /both → deliver to peers;\n"
-                    "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
-                    "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
-                    "/restart peera|peerb|both restart PEER agent CLI; /foreman on|off|now|status control background scheduler;\n"
-                    "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
-                    "/verbose on|off toggle Peer<->Peer summary and Foreman CC; /files [in|out] [N] list recent files; /file N view."
-                )
+                if format_help_for_im:
+                    help_txt = format_help_for_im('/')
+                else:
+                    help_txt = (
+                        "/a /b /both - send to peers\n"
+                        "/pause /resume - delivery control\n"
+                        "/status - system status\n"
+                        "/subscribe /unsubscribe - opt in/out"
+                    )
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
 
             if is_cmd(text, 'whoami'):
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id}"}, timeout=15)
                 _append_log(outlog, f"[meta] whoami chat={chat_id}")
+                continue
+
+            # Unsubscribe for already-subscribed users
+            if is_cmd(text, 'unsubscribe'):
+                cur = set(load_subs()); removed = chat_id in cur
+                if removed:
+                    cur.discard(chat_id); save_subs(sorted(cur)); allow.discard(chat_id)
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Unsubscribed' if removed else 'Not subscribed'}, timeout=15)
+                _append_log(outlog, f"[unsubscribe] chat={chat_id}{' (noop)' if not removed else ''}")
+                _append_ledger({"kind":"bridge-unsubscribe","chat":chat_id,"removed":removed})
+                continue
+
+            # Status command (read-only, allowed without routing prefix)
+            if is_cmd(text, 'status'):
+                if format_status_for_im:
+                    status_text = format_status_for_im(HOME / "state")
+                else:
+                    # Fallback if import failed
+                    st_path = HOME/"state"/"status.json"
+                    try:
+                        st = json.loads(st_path.read_text(encoding='utf-8')) if st_path.exists() else {}
+                    except Exception:
+                        st = {}
+                    paused = st.get('paused', False)
+                    reset = st.get('reset') or {}
+                    total = reset.get('handoffs_total', 0)
+                    status_text = f"{'Paused' if paused else 'Running'} | handoffs: {total}"
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': status_text}, timeout=15)
+                _append_log(outlog, f"[cmd] status chat={chat_id}")
                 continue
 
             # Enforce mention in group if configured
@@ -1455,68 +1453,6 @@ def main():
                 except Exception:
                     pass
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Verbose set to: {'ON' if val else 'OFF'} (peer summaries + Foreman CC)"}, timeout=15)
-                continue
-            if is_cmd(text, 'status'):
-                st_path = HOME/"state"/"status.json"
-                try:
-                    st = json.loads(st_path.read_text(encoding='utf-8')) if st_path.exists() else {}
-                except Exception:
-                    st = {}
-                phase = st.get('phase'); paused = st.get('paused')
-                counts = st.get('mailbox_counts') or {}
-                a = counts.get('peerA') or {}; b = counts.get('peerB') or {}
-                por = st.get('por') or {}
-                # Default to business-domain POR path when status payload lacks it
-                por_path = por.get('path') or 'docs/por/POR.md'
-                por_updated = por.get('updated_at') or '-'
-                por_summary = (por.get('summary') or '')
-                coach = st.get('aux') or {}
-                reset = st.get('reset') or {}
-                lines = [
-                    f"Phase: {phase}  Paused: {paused}",
-                    f"peerA to_user:{a.get('to_user',0)} to_peer:{a.get('to_peer',0)}",
-                    f"peerB to_user:{b.get('to_user',0)} to_peer:{b.get('to_peer',0)}",
-                    f"POR: {por_path}",
-                    f"POR.updated: {por_updated}",
-                ]
-                if por_summary:
-                    lines.append(f"POR.summary: {por_summary}")
-                if reset:
-                    policy = reset.get('policy') or '-'
-                    interval = reset.get('interval_handoffs')
-                    eff = reset.get('interval_effective')
-                    lines.append(f"Reset.policy: {policy} (default={reset.get('default_mode') or '-'})")
-                    if interval:
-                        lines.append(f"Reset.interval: {interval} handoffs (effective {eff or interval})")
-                if coach:
-                    lines.append(f"Aux.mode: {coach.get('mode','off')} (cmd: {(coach.get('command') or '-')})")
-                    if coach.get('last_reason'):
-                        lines.append(f"Aux.last: {coach.get('last_reason')}")
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
-                continue
-            if is_cmd(text, 'queue'):
-                q_path = HOME/"state"/"queue.json"; qA=qB=0; inflA=inflB=False
-                try:
-                    q = json.loads(q_path.read_text(encoding='utf-8')) if q_path.exists() else {}
-                    qA = int(q.get('peerA') or 0); qB = int(q.get('peerB') or 0)
-                    infl = q.get('inflight') or {}; inflA = bool(infl.get('peerA')); inflB = bool(infl.get('peerB'))
-                except Exception:
-                    pass
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Queue: PeerA={qA} inflight={inflA} | PeerB={qB} inflight={inflB}"}, timeout=15)
-                continue
-            if is_cmd(text, 'locks'):
-                l_path = HOME/"state"/"locks.json"
-                try:
-                    l = json.loads(l_path.read_text(encoding='utf-8')) if l_path.exists() else {}
-                    locks = l.get('inbox_seq_locks') or []
-                    infl = l.get('inflight') or {}
-                    lines=[
-                        f"InboxSeqLocks: {', '.join(locks) if locks else 'none'}",
-                        f"Inflight: PeerA={bool(infl.get('peerA'))} PeerB={bool(infl.get('peerB'))}",
-                    ]
-                except Exception:
-                    lines=["No locks info"]
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
                 continue
             # Default: route conversational text to peers via mailbox
             if route_source:

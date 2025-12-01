@@ -183,6 +183,13 @@ def make(ctx: Dict[str, Any]):
         text_with_mid = ctx['wrap_with_mid'](payload, mid)
         try:
             seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
+
+            # Check if handoff is paused: message is saved to inbox but NUDGE is skipped
+            if ctx.get('deliver_paused_box', {}).get('v', False):
+                ctx['inflight'][receiver_label] = None
+                log_ledger(home, {"from": sender_label, "kind": "handoff-paused", "to": receiver_label, "mid": mid, "seq": seq, "chars": len(payload)})
+                return  # Skip NUDGE, message is safely in inbox
+
             if nudge_text and nudge_text.strip():
                 if receiver_label == 'PeerA':
                     ctx['maybe_send_nudge'](home, 'PeerA', ctx['paneA'], ctx['profileA'], custom_text=nudge_text, force=True)

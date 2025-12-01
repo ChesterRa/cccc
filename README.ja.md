@@ -55,8 +55,8 @@
 ### ゼロコンフィグTUI
 
 - **インタラクティブセットアップ**：初回起動時にSetupパネルを表示、↑↓で選択・Enterで確定、設定ファイルの編集不要
-- **リアルタイムTimeline**：すべての会話フローをスクロール表示、PeerA/PeerB/System/Youのメッセージが一目瞭然
-- **ステータスパネル**：handoffカウント、self-check進捗、Foremanステータスをリアルタイム表示
+- **リアルタイムTimeline**：すべての会話フローをスクロール表示、PeerA/PeerB/System/Youのメッセージが一目瞭然；メッセージ幅はターミナルサイズに自動適応
+- **ステータスパネル**：handoffカウント、self-check進捗、Foremanステータスをリアルタイム表示；一時停止時には目立つPAUSED表示
 - **コマンド補完**：Tab自動補完、Ctrl+R履歴検索、標準ショートカット完全対応
 
 ### エビデンス駆動ワークフロー
@@ -84,16 +84,35 @@
 
 **IMチャットコマンド**：
 
-| プラットフォーム | コマンド | 説明 |
-|------------------|----------|------|
-| 全プラットフォーム | `a: <メッセージ>` / `b: <メッセージ>` / `both: <メッセージ>` | Peerにルーティング |
-| 全プラットフォーム | `a! <コマンド>` / `b! <コマンド>` | CLIパススルー（ラッパーなしで直接入力） |
-| 全プラットフォーム | `aux: <プロンプト>` または `/aux <プロンプト>` | Auxを1回実行 |
-| Telegramのみ | `/pa` `/pb` `/pboth` | グループ向けパススルーコマンド |
-| Telegramのみ | `/help` `/whoami` `/status` `/subscribe` `/verbose` | メタコマンドと設定 |
-| Telegramのみ | `/focus` `/reset` `/foreman` `/restart` | コントロールコマンド |
+**メッセージルーティング**（全プラットフォーム）：
+- `a: <メッセージ>` / `b: <メッセージ>` / `both: <メッセージ>` — Peerにルーティング
 
-> SlackとDiscordのコマンドサポートは限定的です。全プラットフォーム互換性のためにプレフィックス構文（`a:`、`a!`、`aux:`）の使用を推奨します。
+**CLIパススルー**（全プラットフォーム）：
+- `a! <コマンド>` / `b! <コマンド>` — ラッパーなしで直接CLI入力
+
+**Telegramコマンド**（スラッシュプレフィックス）：
+- `/a` `/b` `/both` — ルーティングエイリアス
+- `/pa` `/pb` `/pboth` — パススルーエイリアス（グループ向け）
+- `/aux <プロンプト>` — Auxを1回実行
+- `/foreman on|off|status|now` — Foremanを制御
+- `/restart peera|peerb|both` — Peer CLIを再起動
+- `/pause` `/resume` — 配信を一時停止/再開
+- `/status` — システムステータスを表示
+- `/verbose on|off` — 詳細出力をオン/オフ
+- `/whoami` `/subscribe` `/unsubscribe` — サブスクリプション管理
+- `/help` — コマンドヘルプを表示
+
+**Slack / Discordコマンド**（感嘆符プレフィックス）：
+- `!aux <プロンプト>` — Auxを1回実行
+- `!foreman on|off|status|now` — Foremanを制御
+- `!restart peera|peerb|both` — Peer CLIを再起動
+- `!pause` `!resume` — 配信を一時停止/再開
+- `!status` — システムステータスを表示
+- `!verbose on|off` — 詳細出力をオン/オフ
+- `!subscribe` `!unsubscribe` — サブスクリプション管理
+- `!help` — コマンドヘルプを表示
+
+> **注意**：Telegramは `/` プレフィックス（ネイティブボットコマンド）を使用。Slack/Discordは `!` プレフィックス（プラットフォームコマンド干渉を回避）を使用。
 
 ---
 
@@ -162,7 +181,7 @@ CCCCは特定のAIに縛られません。どのロールも以下のいずれ�
 | **Codex CLI** | [github.com/openai/codex](https://github.com/openai/codex) |
 | **Gemini CLI** | [github.com/google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) |
 | **Factory Droid** | [factory.ai](https://factory.ai/) |
-| **OpenCode** | [github.com/opencode-ai/opencode](https://github.com/opencode-ai/opencode) |
+| **OpenCode** | [opencode.ai/docs](https://opencode.ai/docs/) |
 | **Kilocode** | [kilo.ai/docs/cli](https://kilo.ai/docs/cli) |
 | **GitHub Copilot** | [github.com/features/copilot/cli](https://github.com/features/copilot/cli) |
 | **Augment Code** | [docs.augmentcode.com/cli](https://docs.augmentcode.com/cli/overview) |
@@ -244,18 +263,18 @@ TUI入力欄で使用（Tabで補完可能）：
 
 | コマンド | 機能 |
 |----------|------|
+| `/help` | 完全なコマンドリストを表示 |
 | `/a <メッセージ>` | PeerAに送信 |
 | `/b <メッセージ>` | PeerBに送信 |
 | `/both <メッセージ>` | 両方のPeerに同時送信 |
-| `/pause` | handoffループを一時停止 |
-| `/resume` | handoffループを再開 |
-| `/refresh` | システムプロンプトを更新 |
+| `/pause` | handoff配信を一時停止（メッセージはinboxに保存） |
+| `/resume` | handoff配信を再開（保留中にNUDGE送信） |
+| `/restart peera\|peerb\|both` | Peer CLIプロセスを再起動 |
+| `/quit` | CCCCを終了（tmuxをデタッチ） |
 | `/setup` | 設定パネルを開く/閉じる |
-| `/foreman on\|off\|status\|now` | Foremanを制御 |
+| `/foreman on\|off\|status\|now` | Foremanを制御（有効な場合） |
 | `/aux <プロンプト>` | Auxを呼び出して一度だけタスクを実行 |
-| `/verbose on\|off` | 詳細出力のオン/オフ |
-| `/help` | すべてのコマンドを表示 |
-| `/quit` | 終了 |
+| `/verbose on\|off` | Peer要約 + Foreman CCをオン/オフ |
 
 **自然言語ルーティング**（スラッシュなしでもOK）：
 ```
@@ -263,6 +282,32 @@ a: このPRのセキュリティをレビューして
 b: 完全なテストスイートを実行して
 both: 次のマイルストーンを計画しよう
 ```
+
+### クロスプラットフォームコマンド対照表
+
+| カテゴリ | コマンド | TUI | Telegram | Slack | Discord |
+|----------|----------|-----|----------|-------|---------|
+| **ルーティング** | PeerAに送信 | `/a` | `/a` または `a:` | `a:` | `a:` |
+| | PeerBに送信 | `/b` | `/b` または `b:` | `b:` | `b:` |
+| | 両方に送信 | `/both` | `/both` または `both:` | `both:` | `both:` |
+| **パススルー** | CLIをPeerAに | — | `a!` または `/pa` | `a!` | `a!` |
+| | CLIをPeerBに | — | `b!` または `/pb` | `b!` | `b!` |
+| | CLIを両方に | — | `/pboth` | — | — |
+| **制御** | 配信を一時停止 | `/pause` | `/pause` | `!pause` | `!pause` |
+| | 配信を再開 | `/resume` | `/resume` | `!resume` | `!resume` |
+| | Peerを再起動 | `/restart` | `/restart` | `!restart` | `!restart` |
+| | 終了 | `/quit` | — | — | — |
+| **操作** | Foreman制御 | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
+| | Auxを実行 | `/aux` | `/aux` | `!aux` | `!aux` |
+| | 詳細モード | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
+| **サブスクリプション** | chat IDを取得 | — | `/whoami` | — | — |
+| | サブスクライブ | — | `/subscribe` | `!subscribe` | `!subscribe` |
+| | サブスクライブ解除 | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
+| **ユーティリティ** | ステータス表示 | — | `/status` | `!status` | `!status` |
+| | ヘルプ表示 | `/help` | `/help` | `!help` | `!help` |
+| | 設定パネル | `/setup` | — | — | — |
+
+> **凡例**：`/cmd` = スラッシュプレフィックス、`!cmd` = 感嘆符プレフィックス、`x:` = コロンルーティング、`x!` = パススルー、— = 非対応
 
 ---
 
@@ -355,6 +400,25 @@ FOREMAN_TASK.md                 # Foremanタスク定義
 2. `.cccc/state/ledger.jsonl` を確認してイベントログを参照
 3. `.cccc/state/orchestrator.log` を確認してランタイムログを参照
 4. `cccc doctor` を実行して環境をチェック
+
+### 新しいタスクのために状態をリセットするには？
+
+`cccc reset` を使用してランタイム状態をクリアし、最初からやり直します：
+
+```bash
+# 基本リセット：state/mailbox/logs/workをクリアし、POR/SUBPORファイルを削除
+cccc reset
+
+# アーカイブモード：POR/SUBPORをタイムスタンプ付きアーカイブに移動してからクリア
+cccc reset --archive
+```
+
+使用シナリオ：
+- 前のタスクを完了し、まったく新しいタスクを開始する場合
+- 蓄積したinboxメッセージとランタイム状態をクリアする場合
+- POR/SUBPORファイルをリセットして計画をやり直す場合
+
+> **注意**：オーケストレーターが実行中の場合、確認が求められます。先に `cccc kill` を実行することをお勧めします。
 
 ---
 

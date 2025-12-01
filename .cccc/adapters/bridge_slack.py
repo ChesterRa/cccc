@@ -18,6 +18,12 @@ except Exception:
 ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
 
+try:
+    from common.status_format import format_status_for_im, format_help_for_im  # type: ignore
+except Exception:
+    format_status_for_im = None  # type: ignore
+    format_help_for_im = None  # type: ignore
+
 def read_yaml(p: Path) -> Dict[str, Any]:
     # Back-compat shim: delegate to common config reader
     try:
@@ -97,22 +103,13 @@ def _acquire_singleton_lock(name: str = "slack-bridge"):
 
 def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
     t = (text or '').strip()
-    # Support ASCII and fullwidth colon after explicit key
+    # Support ASCII and fullwidth colon after explicit key: a:/b:/both:
     m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
     if m:
         kind = m.group(1).lower(); t = t[m.end():]
         if kind == 'a':
             return ['peerA'], t
         if kind == 'b':
-            return ['peerB'], t
-        return ['peerA','peerB'], t
-    # Slash commands typed as plain text
-    m2 = re.match(r"^/(a|b|both)(?:@\S+)?\s+", t, re.I)
-    if m2:
-        cmd = m2.group(1).lower(); t = t[m2.end():]
-        if cmd == 'a':
-            return ['peerA'], t
-        if cmd == 'b':
             return ['peerB'], t
         return ['peerA','peerB'], t
     if default_route == 'a': return ['peerA'], t
@@ -620,28 +617,60 @@ def main():
                     _append_log(f"[cmd] passthrough peer={peer_key} ch={ch} req={req_id}")
                 return
 
-            if re.match(r'^/?focus\b', command_text, re.I):
-                parts = command_text.split(None, 1)
-                hint = parts[1] if len(parts) > 1 else ''
-                result, req_id = _enqueue_im_command('focus', {'raw': hint}, source='slack', channel=ch)
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'POR refresh requested.'
-                elif result:
-                    reply = f"POR refresh error: {result.get('message')}"
-                else:
-                    reply = f"POR refresh queued (id={req_id})."
-                _send_reply(reply)
-                _append_log(f"[cmd] focus ch={ch} req={req_id}")
+            # Pause/Resume handoff delivery: !pause, !resume
+            if re.match(r'^!pause\b', command_text, re.I):
+                result, req_id = _enqueue_im_command('pause', {}, source='slack', channel=ch, wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Pause request queued.')
+                _send_reply(f"⏸ {reply}")
+                _append_log(f"[cmd] pause ch={ch} req={req_id}")
                 return
 
-            if command_text.strip().lower().startswith('aux:') or re.match(r'^/?aux\b', command_text, re.I):
-                if command_text.strip().lower().startswith('aux:'):
-                    prompt = command_text.strip()[4:].strip()
+            if re.match(r'^!resume\b', command_text, re.I):
+                result, req_id = _enqueue_im_command('resume', {}, source='slack', channel=ch, wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Resume request queued.')
+                _send_reply(f"▶️ {reply}")
+                _append_log(f"[cmd] resume ch={ch} req={req_id}")
+                return
+
+            # Help command: !help
+            if re.match(r'^!help\b', command_text, re.I):
+                if format_help_for_im:
+                    help_txt = format_help_for_im('!')
                 else:
-                    pieces = command_text.split(None, 1)
-                    prompt = pieces[1].strip() if len(pieces) > 1 else ''
+                    help_txt = (
+                        "!a !b !both - send to peers\n"
+                        "!pause !resume - delivery control\n"
+                        "!status - system status\n"
+                        "!subscribe !unsubscribe - opt in/out"
+                    )
+                _send_reply(help_txt)
+                _append_log(f"[cmd] help ch={ch}")
+                return
+
+            # Status command: !status
+            if re.match(r'^!status\b', command_text, re.I):
+                if format_status_for_im:
+                    status_text = format_status_for_im(HOME / "state")
+                else:
+                    # Fallback if import failed
+                    st_path = HOME/"state"/"status.json"
+                    try:
+                        st = json.loads(st_path.read_text(encoding='utf-8')) if st_path.exists() else {}
+                    except Exception:
+                        st = {}
+                    paused = st.get('paused', False)
+                    reset = st.get('reset') or {}
+                    total = reset.get('handoffs_total', 0)
+                    status_text = f"{'Paused' if paused else 'Running'} | handoffs: {total}"
+                _send_reply(status_text)
+                _append_log(f"[cmd] status ch={ch}")
+                return
+
+            if re.match(r'^!aux\b', command_text, re.I):
+                pieces = command_text.split(None, 1)
+                prompt = pieces[1].strip() if len(pieces) > 1 else ''
                 if not prompt:
-                    _send_reply('Usage: /aux <prompt> or aux: <prompt>')
+                    _send_reply('Usage: !aux <prompt>')
                     return
                 result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='slack', channel=ch)
                 if result and result.get('ok'):
@@ -654,46 +683,11 @@ def main():
                 _append_log(f"[cmd] aux-cli ch={ch} req={req_id}")
                 return
 
-            if re.match(r'^/?reset\b', command_text, re.I):
-                parts = command_text.split()
-                mode = parts[1].lower() if len(parts) > 1 else ''
-                if mode and mode not in ('compact','clear'):
-                    _send_reply('Usage: /reset compact|clear')
-                else:
-                    args = {} if not mode else {'mode': mode}
-                    result, req_id = _enqueue_im_command('reset', args, source='slack', channel=ch)
-                    if result and result.get('ok'):
-                        reply = result.get('message') or f"Reset {mode or 'default'} triggered."
-                    elif result:
-                        reply = f"Reset error: {result.get('message')}"
-                    else:
-                        reply = f"Reset request queued (id={req_id})."
-                    _send_reply(reply)
-                    _append_log(f"[cmd] reset mode={mode or 'default'} ch={ch} req={req_id}")
-                return
-
-            if re.match(r'^/?aux\b', command_text, re.I):
-                _send_reply('Aux toggles are not supported. Use /aux-cli "<prompt>" for a one-off helper run, or /review.')
-                _append_log(f"[cmd] aux toggles unsupported ch={ch}")
-                return
-
-            if re.match(r'^/?review\b', command_text, re.I):
-                result, req_id = _enqueue_im_command('review', {}, source='slack', channel=ch)
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'Review reminder sent.'
-                elif result:
-                    reply = f"Review error: {result.get('message')}"
-                else:
-                    reply = f"Review request queued (id={req_id})."
-                _send_reply(reply)
-                _append_log(f"[cmd] review ch={ch} req={req_id}")
-                return
-
-            if re.match(r'^/?foreman\b', command_text, re.I):
+            if re.match(r'^!foreman\b', command_text, re.I):
                 parts = command_text.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
                 if action not in ('on','off','enable','disable','start','stop','status','now'):
-                    _send_reply('Usage: /foreman on|off|now|status')
+                    _send_reply('Usage: !foreman on|off|now|status')
                     return
                 if action == 'status':
                     try:
@@ -741,11 +735,11 @@ def main():
                 _append_log(f"[cmd] foreman ch={ch} req={req_id} action={action}")
                 return
 
-            if re.match(r'^/?restart\b', command_text, re.I):
+            if re.match(r'^!restart\b', command_text, re.I):
                 parts = command_text.split()
                 target = parts[1].lower() if len(parts) > 1 else 'both'
                 if target not in ('peera', 'peerb', 'both', 'a', 'b'):
-                    _send_reply('Usage: /restart peera|peerb|both')
+                    _send_reply('Usage: !restart peera|peerb|both')
                     return
                 result, req_id = _enqueue_im_command('restart', {'target': target}, source='slack', channel=ch)
                 if result and result.get('ok'):
@@ -758,17 +752,14 @@ def main():
                 _append_log(f"[cmd] restart ch={ch} req={req_id} target={target}")
                 return
 
-            # Routing prefixes only; ignore general chatter without explicit route (support fullwidth colon & /a forms)
-            has_prefix = bool(
-                re.search(r"^\s*(a|b|both)[:：]", stripped, re.I) or
-                re.search(r"^\s*/(a|b|both)(?:@\S+)?\s+", stripped, re.I)
-            )
+            # Routing prefixes only; ignore general chatter without explicit route (support fullwidth colon)
+            has_prefix = bool(re.search(r"^\s*(a|b|both)[:：]", stripped, re.I))
             # Ignore self/bot messages to avoid echo loops
             if event.get('bot_id') or (BOT_USER_ID and user == BOT_USER_ID):
                 return
-            # Subscribe/Unsubscribe commands (plain text, not Slash Commands)
+            # Subscribe/Unsubscribe commands (with ! prefix for consistency)
             low = text.strip().lower()
-            if low in ("subscribe","sub"):
+            if low in ("!subscribe","!sub"):
                 with SUBS_LOCK:
                     if ch not in SUBS:
                         SUBS.append(ch); save_subs(SUBS)
@@ -779,8 +770,8 @@ def main():
                 # Flush any pending to_user messages now that we have a channel
                 _flush_pending()
                 return
-            # Runtime toggle: verbose on|off
-            msp = re.match(r"^\s*/?verbose\s+(on|off)\b", low)
+            # Runtime toggle: !verbose on|off
+            msp = re.match(r"^\s*!verbose\s+(on|off)\b", low)
             if msp:
                 val = (msp.group(1) == 'on')
                 rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -813,7 +804,7 @@ def main():
                 except Exception:
                     pass
                 return
-            if low in ("unsubscribe","unsub"):
+            if low in ("!unsubscribe","!unsub"):
                 with SUBS_LOCK:
                     SUBS2 = [x for x in SUBS if x != ch]
                     if len(SUBS2) != len(SUBS):

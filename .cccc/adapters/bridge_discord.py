@@ -17,6 +17,12 @@ except Exception:
 ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
 
+try:
+    from common.status_format import format_status_for_im, format_help_for_im  # type: ignore
+except Exception:
+    format_status_for_im = None  # type: ignore
+    format_help_for_im = None  # type: ignore
+
 def read_yaml(p: Path) -> Dict[str, Any]:
     # Back-compat shim to centralized config loader
     try:
@@ -100,22 +106,13 @@ def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
     t = (text or '').strip()
     # Strip leading mention (e.g., <@1234567890>) if present
     t = re.sub(r"^\s*<@!?\d+>\s+", "", t)
-    # Support ASCII / fullwidth colon with explicit key capture
+    # Support ASCII / fullwidth colon with explicit key capture: a:/b:/both:
     m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
     if m:
         kind = m.group(1).lower(); t = t[m.end():]
         if kind == 'a':
             return ['peerA'], t
         if kind == 'b':
-            return ['peerB'], t
-        return ['peerA','peerB'], t
-    # Slash commands typed as plain text
-    m2 = re.match(r"^/(a|b|both)(?:@\S+)?\s+", t, re.I)
-    if m2:
-        cmd = m2.group(1).lower(); t = t[m2.end():]
-        if cmd == 'a':
-            return ['peerA'], t
-        if cmd == 'b':
             return ['peerB'], t
         return ['peerA','peerB'], t
     if default_route == 'a': return ['peerA'], t
@@ -351,28 +348,60 @@ def main():
                     _log(f"[cmd] passthrough peer={peer_key} ch={message.channel.id} req={req_id}")
                 return
 
-            if re.match(r'^/?focus\b', stripped, re.I):
-                parts = stripped.split(None, 1)
-                hint = parts[1] if len(parts) > 1 else ''
-                result, req_id = _enqueue_im_command('focus', {'raw': hint}, source='discord', channel=str(message.channel.id))
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'POR refresh requested.'
-                elif result:
-                    reply = f"POR refresh error: {result.get('message')}"
-                else:
-                    reply = f"POR refresh queued (id={req_id})."
-                await _send_reply(reply)
-                _log(f"[cmd] focus ch={message.channel.id} req={req_id}")
+            # Pause/Resume handoff delivery: !pause, !resume
+            if re.match(r'^!pause\b', stripped, re.I):
+                result, req_id = _enqueue_im_command('pause', {}, source='discord', channel=str(message.channel.id), wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Pause request queued.')
+                await _send_reply(f"⏸ {reply}")
+                _log(f"[cmd] pause ch={message.channel.id} req={req_id}")
                 return
 
-            if stripped.lower().startswith('aux:') or re.match(r'^/?aux\b', stripped, re.I):
-                if stripped.lower().startswith('aux:'):
-                    prompt = stripped[4:].strip()
+            if re.match(r'^!resume\b', stripped, re.I):
+                result, req_id = _enqueue_im_command('resume', {}, source='discord', channel=str(message.channel.id), wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Resume request queued.')
+                await _send_reply(f"▶️ {reply}")
+                _log(f"[cmd] resume ch={message.channel.id} req={req_id}")
+                return
+
+            # Help command: !help
+            if re.match(r'^!help\b', stripped, re.I):
+                if format_help_for_im:
+                    help_txt = format_help_for_im('!')
                 else:
-                    parts = stripped.split(None, 1)
-                    prompt = parts[1].strip() if len(parts) > 1 else ''
+                    help_txt = (
+                        "!a !b !both - send to peers\n"
+                        "!pause !resume - delivery control\n"
+                        "!status - system status\n"
+                        "!subscribe !unsubscribe - opt in/out"
+                    )
+                await _send_reply(help_txt)
+                _log(f"[cmd] help ch={message.channel.id}")
+                return
+
+            # Status command: !status
+            if re.match(r'^!status\b', stripped, re.I):
+                if format_status_for_im:
+                    status_text = format_status_for_im(HOME / "state")
+                else:
+                    # Fallback if import failed
+                    st_path = HOME/"state"/"status.json"
+                    try:
+                        st = json.loads(st_path.read_text(encoding='utf-8')) if st_path.exists() else {}
+                    except Exception:
+                        st = {}
+                    paused = st.get('paused', False)
+                    reset = st.get('reset') or {}
+                    total = reset.get('handoffs_total', 0)
+                    status_text = f"{'Paused' if paused else 'Running'} | handoffs: {total}"
+                await _send_reply(status_text)
+                _log(f"[cmd] status ch={message.channel.id}")
+                return
+
+            if re.match(r'^!aux\b', stripped, re.I):
+                parts = stripped.split(None, 1)
+                prompt = parts[1].strip() if len(parts) > 1 else ''
                 if not prompt:
-                    await _send_reply('Usage: /aux <prompt> or aux: <prompt>')
+                    await _send_reply('Usage: !aux <prompt>')
                     return
                 result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='discord', channel=str(message.channel.id))
                 if result and result.get('ok'):
@@ -385,46 +414,11 @@ def main():
                 _log(f"[cmd] aux-cli ch={message.channel.id} req={req_id}")
                 return
 
-            if re.match(r'^/?reset\b', stripped, re.I):
-                parts = stripped.split()
-                mode = parts[1].lower() if len(parts) > 1 else ''
-                if mode and mode not in ('compact','clear'):
-                    await _send_reply('Usage: /reset compact|clear')
-                else:
-                    args = {} if not mode else {'mode': mode}
-                    result, req_id = _enqueue_im_command('reset', args, source='discord', channel=str(message.channel.id))
-                    if result and result.get('ok'):
-                        reply = result.get('message') or f"Reset {mode or 'default'} triggered."
-                    elif result:
-                        reply = f"Reset error: {result.get('message')}"
-                    else:
-                        reply = f"Reset request queued (id={req_id})."
-                    await _send_reply(reply)
-                    _log(f"[cmd] reset mode={mode or 'default'} ch={message.channel.id} req={req_id}")
-                return
-
-            if re.match(r'^/?aux\b', stripped, re.I):
-                await _send_reply('Aux toggles are not supported. Use /aux-cli "<prompt>" for a one-off helper run, or /review.')
-                _log(f"[cmd] aux toggles unsupported ch={message.channel.id}")
-                return
-
-            if re.match(r'^/?review\b', stripped, re.I):
-                result, req_id = _enqueue_im_command('review', {}, source='discord', channel=str(message.channel.id))
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'Review reminder sent.'
-                elif result:
-                    reply = f"Review error: {result.get('message')}"
-                else:
-                    reply = f"Review request queued (id={req_id})."
-                await _send_reply(reply)
-                _log(f"[cmd] review ch={message.channel.id} req={req_id}")
-                return
-
-            if re.match(r'^/?foreman\b', stripped, re.I):
+            if re.match(r'^!foreman\b', stripped, re.I):
                 parts = stripped.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
                 if action not in ('on','off','enable','disable','start','stop','status','now'):
-                    await _send_reply('Usage: /foreman on|off|now|status')
+                    await _send_reply('Usage: !foreman on|off|now|status')
                     return
                 if action == 'status':
                     try:
@@ -472,11 +466,11 @@ def main():
                 _log(f"[cmd] foreman ch={message.channel.id} req={req_id} action={action}")
                 return
 
-            if re.match(r'^/?restart\b', stripped, re.I):
+            if re.match(r'^!restart\b', stripped, re.I):
                 parts = stripped.split()
                 target = parts[1].lower() if len(parts) > 1 else 'both'
                 if target not in ('peera', 'peerb', 'both', 'a', 'b'):
-                    await _send_reply('Usage: /restart peera|peerb|both')
+                    await _send_reply('Usage: !restart peera|peerb|both')
                     return
                 result, req_id = _enqueue_im_command('restart', {'target': target}, source='discord', channel=str(message.channel.id))
                 if result and result.get('ok'):
@@ -489,14 +483,13 @@ def main():
                 _log(f"[cmd] restart ch={message.channel.id} req={req_id} target={target}")
                 return
 
-            # Require routing prefixes to avoid forwarding general chatter (support fullwidth colon & mentions)
-            has_prefix = bool(re.search(r"^\s*(a[:：]|b[:：]|both[:：])", stripped, re.I) or
-                               re.search(r"^\s*/(a|b|both)(?:@\S+)?\s+", stripped, re.I))
+            # Require routing prefixes to avoid forwarding general chatter (support fullwidth colon)
+            has_prefix = bool(re.search(r"^\s*(a[:：]|b[:：]|both[:：])", stripped, re.I))
             if not has_prefix:
-                if low not in ('subscribe','sub','unsubscribe','unsub','verbose on','verbose off') and not message.attachments:
+                if low not in ('!subscribe','!sub','!unsubscribe','!unsub','!verbose on','!verbose off') and not message.attachments:
                     # Drop chatter without explicit prefix; keep logs quiet in normal operation
                     return
-            if low in ('subscribe','sub'):
+            if low in ('!subscribe','!sub'):
                 try:
                     with SUBS_LOCK:
                         if message.channel.id not in SUBS:
@@ -520,7 +513,7 @@ def main():
                 except Exception:
                     pass
                 return
-            if low in ('verbose on','verbose off'):
+            if low in ('!verbose on','!verbose off'):
                 val = (low.endswith('on'))
                 rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -552,7 +545,7 @@ def main():
                 except Exception:
                     pass
                 return
-            if low in ('unsubscribe','unsub'):
+            if low in ('!unsubscribe','!unsub'):
                 try:
                     with SUBS_LOCK:
                         SUBS2 = [x for x in SUBS if x != message.channel.id]

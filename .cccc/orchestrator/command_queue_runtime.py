@@ -168,6 +168,22 @@ def make(ctx: Dict[str, Any]):
                                 deliver_paused = (ctype == 'pause')
                                 write_status(deliver_paused)
                                 ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
+                                # On resume: check inbox and send NUDGE if there are pending messages
+                                if ctype == 'resume':
+                                    maybe_send_nudge = ctx.get('maybe_send_nudge')
+                                    if maybe_send_nudge:
+                                        for label in ('PeerA', 'PeerB'):
+                                            try:
+                                                inbox = _inbox_dir(home, label)
+                                                if inbox.exists() and any(inbox.iterdir()):
+                                                    pane = paneA if label == 'PeerA' else paneB
+                                                    prof = profileA if label == 'PeerA' else profileB
+                                                    maybe_send_nudge(home, label, pane, prof, force=True)
+                                            except Exception:
+                                                pass
+                                # Send TUI reply for feedback
+                                if obj.get('source') == 'tui':
+                                    _write_tui_reply(ctype, ok, msg)
                             elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
                                 ok, msg = _inject_full_system()
                             elif ctype in ('restart',):

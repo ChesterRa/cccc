@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.3.19"
+version = "0.3.22"
 description = "Autonomous dual-AI orchestration runtime delivering evidence-first, small-step software execution with tmux-managed peers, governed handoffs, and IM bridge integration"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 authors = [
   { name = "ChesterRa", email = "ra@ike.ba" }
 ]
-license = { file = "LICENSE" }
+license = { text = "Apache-2.0" }
 keywords = ["orchestrator","tmux","ai","rfd","pair","collaboration"]
 dependencies = [
   "PyYAML>=6.0",

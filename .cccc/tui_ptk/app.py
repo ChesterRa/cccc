@@ -8,7 +8,7 @@ Meets 2025 CLI standards for usability, aesthetics, and functionality.
 Core Features:
   • Setup: Elegant actor configuration with visual hierarchy
   • Runtime: Real-time collaborative CLI with Timeline, Input, Status
-  • Commands: /a, /b, /both, /help, /pause, /resume, /refresh, /quit, /foreman, /c, /review, /focus, /verbose on|off
+  • Commands: /a, /b, /both, /help, /pause, /resume, /restart, /quit, /foreman, /aux, /verbose on|off
 
 UI/UX Excellence:
   • Modern 256-color scheme with semantic colors (success/warning/error/info)
@@ -62,7 +62,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import (
     Layout, HSplit, VSplit, Window, Float, FloatContainer,
-    FormattedTextControl, Dimension
+    FormattedTextControl, Dimension, ScrollablePane
 )
 from prompt_toolkit.widgets import (
     TextArea, Button, Dialog, RadioList, Label, Frame
@@ -80,19 +80,19 @@ class CommandCompleter(Completer):
         super().__init__()
         # Define available commands with descriptions (console removed; TUI/IM are primary)
         self.commands = [
+            # Routing
+            ('/a', 'Send to PeerA'),
+            ('/b', 'Send to PeerB'),
+            ('/both', 'Send to both peers'),
             # Basic control
             ('/help', 'Show help'),
             ('/pause', 'Pause handoff'),
             ('/resume', 'Resume handoff'),
-            ('/refresh', 'Refresh system prompt'),
+            ('/restart', 'Restart peer CLI (peera|peerb|both)'),
             ('/quit', 'Quit CCCC'),
-            # Foreman
+            # Operations
             ('/foreman', 'Foreman control (on|off|status|now)'),
-            # Aux
-            ('/c', 'Run Aux helper'),
-            ('/review', 'Request Aux review'),
-            # Focus and filter
-            ('/focus', 'Focus PeerB'),
+            ('/aux', 'Run Aux helper'),
             ('/verbose', 'Verbose on|off'),
         ]
 
@@ -331,7 +331,7 @@ def _load_yaml(home: Path, rel_path: str) -> Dict[str, Any]:
 
 
 def create_header() -> Window:
-    """Professional 2025 CLI header with ASCII art, version, and branding"""
+    """Professional 2025 CLI header with ASCII art and integrated branding"""
     # Get CCCC version from package metadata
     try:
         from importlib.metadata import version as get_version
@@ -339,28 +339,22 @@ def create_header() -> Window:
     except Exception:
         version = 'unknown'
 
+    # Premium header with ASCII logo and right-aligned branding
     text = [
-        ('class:title', '\n'),
-        ('class:title', '   ╔═══════════════════════════════════════════════════════════════╗\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '           ██████╗  ██████╗  ██████╗  ██████╗'), ('class:title', '                ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '           ██╔════╝ ██╔════╝ ██╔════╝ ██╔════╝'), ('class:title', '               ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '           ██║      ██║      ██║      ██║     '), ('class:title', '               ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '           ██║      ██║      ██║      ██║     '), ('class:title', '               ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '           ╚██████╗ ╚██████╗ ╚██████╗ ╚██████╗'), ('class:title', '               ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '            ╚═════╝  ╚═════╝  ╚═════╝  ╚═════╝'), ('class:title', '               ║\n'),
-        ('class:title', '   ║                                                               ║\n'),
-        ('class:title', '   ║  '), ('class:success.bold', '     CLI x CLI Co-Creation'), ('class:title', ' · Multi-Agent Orchestrator        ║\n'),
-        ('class:title', '   ╚═══════════════════════════════════════════════════════════════╝\n'),
-        ('', '\n'),
-        ('class:info', '   Version: '), ('class:value', f'{version}'),
-        ('', '\n'),
-        ('class:section', '   ─' * 17 + '\n'),
-        ('class:hint', '   ⌨  Tab/↑↓: navigate  ·  Enter: select/confirm  ·  Esc: cancel\n'),
-        ('class:section', '   ─' * 17 + '\n'),
+        ('class:title', '   ╔══════════════════════════════════════════════════════════════════╗\n'),
+        ('class:title', '   ║                                                                  ║\n'),
+        ('class:title', '   ║      ██████╗  ██████╗  ██████╗  ██████╗                          ║\n'),
+        ('class:title', '   ║     ██╔════╝ ██╔════╝ ██╔════╝ ██╔════╝                          ║\n'),
+        ('class:title', '   ║     ██║      ██║      ██║      ██║         '), ('class:success.bold', 'Pair Orchestrator'), ('class:title', '     ║\n'),
+        ('class:title', '   ║     ██║      ██║      ██║      ██║         '), ('class:hint', 'CLI × CLI Co-Creation'), ('class:title', ' ║\n'),
+        ('class:title', '   ║     ╚██████╗ ╚██████╗ ╚██████╗ ╚██████╗                          ║\n'),
+        ('class:title', '   ║      ╚═════╝  ╚═════╝  ╚═════╝  ╚═════╝                          ║\n'),
+        ('class:title', '   ║                                                   '), ('class:value', f'v{version}'), ('class:title', '        ║\n'),
+        ('class:title', '   ╚══════════════════════════════════════════════════════════════════╝'),
     ]
     return Window(
         content=FormattedTextControl(text),
-        height=Dimension(min=16, max=18),
+        height=Dimension(preferred=10),
         dont_extend_height=True
     )
 
@@ -465,7 +459,7 @@ class CCCCSetupApp:
             read_only=True,
             focusable=True,
             focus_on_click=True,  # Enable click-to-focus for mouse events
-            wrap_lines=False
+            wrap_lines=True  # Enable auto-wrap as fallback for dynamic width handling
         )
         
         # Add custom mouse wheel handler for scrolling
@@ -532,7 +526,6 @@ class CCCCSetupApp:
             if hasattr(self.root, 'content'):
                 self.root.content = HSplit([
                     create_header(),
-                    Window(height=1),
                     self.setup_content,
                 ])
 
@@ -732,7 +725,6 @@ class CCCCSetupApp:
         self.root = FloatContainer(
             content=HSplit([
                 create_header(),
-                Window(height=1),
                 self.setup_content,
             ]),
             floats=[]
@@ -804,6 +796,7 @@ class CCCCSetupApp:
             'button': 'bg:#21262d #c9d1d9',             # Default: Elevated gray
             'button.focused': 'bg:#238636 #ffffff bold', # Focused: GitHub green
             'button.arrow': '#8b949e',                  # Arrow indicators
+            'button-frame': '#58a6ff',                  # Frame around action buttons
             
             # Radio list - Clear selection and proper visibility
             'radio-list': '#c9d1d9',                    # Container - high contrast
@@ -996,11 +989,6 @@ class CCCCSetupApp:
         items = [
             self.error_label,
 
-            # Dual interaction system header and instructions
-            create_section_header('Configuration Setup • Dual Interaction System'),
-            Label(text='↑↓ Navigate Options  ←→ Change Values  Enter: Details  Tab: Buttons', style='class:hint'),
-            Window(height=1),
-
             # Core agents
             create_section_header('Core Agents'),
             VSplit([
@@ -1103,13 +1091,26 @@ class CCCCSetupApp:
 
         items.extend([
             Window(height=1),
-            Label(text='─' * 40, style='class:section'),  # Flexible separator
+            # Navigation hints
+            Window(
+                content=FormattedTextControl([
+                    ('class:section', '─' * 72 + '\n'),
+                    ('class:hint', '   ↑↓ Navigate    ←→ Change Value    Enter Details    Tab Cycle Buttons\n'),
+                    ('class:section', '─' * 72),
+                ]),
+                height=3,
+                dont_extend_height=True
+            ),
             Window(height=1),
+            # Action buttons (left-aligned with small indent, adapts to narrow windows)
             VSplit([
-                btn_confirm,
-                Window(width=2),
-                btn_quit,
-            ], padding=1),
+                Window(width=18),  # Small fixed left margin
+                Frame(btn_confirm, style='class:button-frame'),
+                Window(width=4),  # Gap between buttons
+                Frame(btn_quit, style='class:button-frame'),
+                Window(),  # Flexible right padding
+            ]),
+            Window(height=1),
         ])
 
         # Initialize value cycling methods after UI is built
@@ -1119,7 +1120,8 @@ class CCCCSetupApp:
         except Exception:
             pass  # Ignore errors in value cycling setup
 
-        return HSplit(items)
+        # Wrap in ScrollablePane for small terminal support
+        return ScrollablePane(HSplit(items))
 
     def _update_navigation_items(self) -> None:
         """Update navigation items list based on current mode"""
@@ -1583,7 +1585,6 @@ class CCCCSetupApp:
                 self.setup_content = self._build_setup_panel()
                 self.root.content = HSplit([
                     create_header(),
-                    Window(height=1),
                     self.setup_content,
                 ])
                 # Update buttons list after mode change
@@ -2102,8 +2103,14 @@ class CCCCSetupApp:
 
         lines = []
 
-        # Wrap text at 100 chars for readability
-        max_width = 100
+        # Dynamic wrap width based on terminal size
+        # Reserve some margin for scrollbar (2) and line prefix "│ " (2) and safety margin (4)
+        try:
+            term_width = shutil.get_terminal_size(fallback=(120, 40)).columns
+            max_width = max(40, term_width - 8)  # Minimum 40, subtract margins
+        except Exception:
+            max_width = 100  # Fallback to reasonable default
+
         text_lines = []
         for line in text.split('\n'):
             if not line:
@@ -2397,6 +2404,9 @@ class CCCCSetupApp:
 
         row3 = f"Mailbox: {mailbox_str} │ Active: {active_handoffs} handoffs │ Last: {last_activity_str}"
 
+        # Check if handoff is paused
+        is_paused = status_data.get('paused', False)
+
         # === Build formatted text with proper styling ===
         text = []
         # Optional row 0: warnings banner when present
@@ -2405,6 +2415,15 @@ class CCCCSetupApp:
             text.extend([
                 ('class:warning', '⚠ Dependencies: '),
                 ('class:warning', warn_line),
+                ('', '\n')
+            ])
+        # PAUSED status banner (prominent display when handoff is paused)
+        if is_paused:
+            text.extend([
+                ('class:warning', '⏸ HANDOFF PAUSED'),
+                ('class:info', ' - messages saved to inbox but not delivered. Use '),
+                ('class:success', '/resume'),
+                ('class:info', ' to continue.'),
                 ('', '\n')
             ])
         text.extend([
@@ -2441,22 +2460,13 @@ class CCCCSetupApp:
             self._write_timeline("Control:", 'info')
             self._write_timeline("  /pause              Pause handoff", 'info')
             self._write_timeline("  /resume             Resume handoff", 'info')
-            self._write_timeline("  /refresh            Refresh system prompt", 'info')
+            self._write_timeline("  /restart            Restart peer CLI (peera|peerb|both)", 'info')
             self._write_timeline("  /quit               Quit CCCC (exit all processes)", 'info')
             self._write_timeline("", 'info')
-            self._write_timeline("Foreman:", 'info')
-            self._write_timeline("  /foreman on         Enable Foreman", 'info')
-            self._write_timeline("  /foreman off        Disable Foreman", 'info')
-            self._write_timeline("  /foreman status     Show Foreman status", 'info')
-            self._write_timeline("  /foreman now        Run Foreman immediately", 'info')
-            self._write_timeline("", 'info')
-            self._write_timeline("Aux:", 'info')
+            self._write_timeline("Operations:", 'info')
+            self._write_timeline("  /foreman on|off|status|now   Control background scheduler", 'info')
             self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
-            self._write_timeline("  /review             Request Aux review", 'info')
-            self._write_timeline("", 'info')
-            self._write_timeline("Other:", 'info')
-            self._write_timeline("  /focus [hint]       Focus PeerB", 'info')
-            self._write_timeline("  /verbose on|off     Toggle peer summaries + Foreman CC", 'info')
+            self._write_timeline("  /verbose on|off     Toggle peer summaries", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
             self._write_timeline("  Ctrl+T              Focus timeline (enable mouse scroll)", 'info')
@@ -2477,8 +2487,6 @@ class CCCCSetupApp:
             self._write_cmd_to_queue("pause", {}, "Pause command sent")
         elif text == '/resume':
             self._write_cmd_to_queue("resume", {}, "Resume command sent")
-        elif text in ('/refresh', '/sys-refresh'):
-            self._write_cmd_to_queue("sys-refresh", {}, "Refresh command sent")
         elif text.startswith('/restart '):
             target = text[9:].strip().lower()
             if target in ('peera', 'peerb', 'both', 'a', 'b'):
@@ -2488,8 +2496,6 @@ class CCCCSetupApp:
         elif text == '/quit' or text == 'q':
             self._write_timeline("Shutting down CCCC...", 'system')
             self._quit_app()
-        elif text == '/review':
-            self._write_cmd_to_queue("aux", {"action": "review"}, "Review request sent")
 
         # Foreman commands
         elif text.startswith('/foreman '):
@@ -2506,11 +2512,6 @@ class CCCCSetupApp:
                 self._write_cmd_to_queue("verbose", {"value": arg}, f"Verbose {arg} sent")
             else:
                 self._write_timeline("Usage: /verbose on|off", 'error')
-
-        # Focus with optional hint
-        elif text.startswith('/focus'):
-            hint = text[6:].strip() if len(text) > 6 else ""
-            self._write_cmd_to_queue("focus", {"hint": hint}, "Focus command sent")
 
         # Aux command with prompt
         elif text.startswith('/aux '):
