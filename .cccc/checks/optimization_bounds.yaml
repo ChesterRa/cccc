@@ -1,0 +1,58 @@
+# CCCC Self-Optimization Parameter Bounds Configuration
+# Prevents automatic optimization from going out of bounds, all automatic adjustments must be within this range
+
+bounds:
+  # Message Delivery
+  delivery.main_loop_tick_seconds:
+    min: 1.0
+    max: 10.0
+    step: 0.5
+
+  delivery.ack_timeout_seconds:
+    min: 20
+    max: 120
+    step: 10
+
+  delivery.paste_max_wait_seconds:
+    min: 3
+    max: 15
+    step: 1
+
+  delivery.nudge_resend_seconds:
+    min: 60
+    max: 600
+    step: 30
+
+  # Message Filtering
+  handoff_filter.cooldown_seconds:
+    min: 5
+    max: 60
+    step: 5
+
+  handoff_filter.min_chars:
+    min: 20
+    max: 200
+    step: 10
+
+  handoff_filter.min_words:
+    min: 3
+    max: 20
+    step: 1
+
+  handoff_filter.redundant_similarity_threshold:
+    min: 0.7
+    max: 0.95
+    step: 0.05
+
+# Auto-Apply Strategy
+auto_apply:
+  enabled: false  # Disabled by default, requires manual enabling
+  require_approval: true  # Requires human approval
+  max_changes_per_cycle: 1  # Maximum 1 change auto-applied per cycle
+  cooldown_hours: 4  # At least 4 hours between auto-applies
+
+# Rollback Strategy
+rollback:
+  enabled: true
+  observation_cycles: 2  # Observe 2 cycles
+  degradation_threshold: 0.2  # Trigger rollback if metrics degrade by more than 20%
