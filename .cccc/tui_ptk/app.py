@@ -1613,8 +1613,9 @@ class CCCCSetupApp:
         # Self-optimization toggle button (ON/OFF)
         def toggle_self_opt():
             self.config.self_opt_enabled = not self.config.self_opt_enabled
+            self.btn_self_opt.text = '[●] ON ' if self.config.self_opt_enabled else '[○] OFF'
             self._refresh_ui()
-            
+
         btn_self_opt = Button(
             text='[●] ON ' if self.config.self_opt_enabled else '[○] OFF',
             handler=toggle_self_opt,
@@ -1677,7 +1678,7 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('Self-Opt', 4)),
                 btn_self_opt,
                 Window(width=2),
-                Label(text='Auto performance detection & optimization suggestions', style='class:hint'),
+                Label(text='Auto performance detection & optimization suggestions[beta]', style='class:hint'),
             ], padding=1),
             Window(height=1),
 
