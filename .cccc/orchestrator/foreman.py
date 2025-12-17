@@ -29,8 +29,34 @@ def make(ctx: Dict[str, Any]):
 
     def _load_foreman_conf() -> Dict[str, Any]:
         p = _foreman_conf_path()
+        
+        # Default configuration
+        default_conf = {
+            "enabled": False,
+            "interval_seconds": 900,
+            "agent": "reuse_aux",
+            "prompt_path": "./FOREMAN_TASK.md",
+            "cc_user": True,
+            "max_run_seconds": 900,
+            # Self-optimization detection config (default: disabled)
+            "self_optimization": {
+                "enabled": False,           # Enable self-optimization detection
+                "run_mode": "after_task",  # When to run: after_task | before_task | standalone
+                "quick_mode": False,        # Skip baseline learning for faster execution
+                "min_interval_hours": 0.5  # Minimum interval between runs (hours)
+            }
+        }
+        
         if not p.exists():
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
+            # Auto-create default config file on first run
+            try:
+                import yaml  # type: ignore
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(yaml.safe_dump(default_conf, allow_unicode=True, sort_keys=False), encoding='utf-8')
+            except Exception:
+                pass  # If creation fails, just return defaults
+            return default_conf
+            
         try:
             import yaml  # type: ignore
             d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
@@ -38,9 +64,31 @@ def make(ctx: Dict[str, Any]):
             d.setdefault("agent", "reuse_aux"); d.setdefault("prompt_path", "./FOREMAN_TASK.md")
             d.setdefault("cc_user", True); d.setdefault("max_run_seconds", 900)
             d.setdefault("allowed", d.get("enabled", False))
+            # Merge self-optimization defaults if not present in config file
+            if "self_optimization" not in d:
+                d["self_optimization"] = {}
+            d["self_optimization"].setdefault("enabled", False)           # Default: disabled
+            d["self_optimization"].setdefault("run_mode", "after_task")  # Default: run after foreman task
+            d["self_optimization"].setdefault("quick_mode", False)        # Default: full mode with baseline learning
+            d["self_optimization"].setdefault("min_interval_hours", 0.5)  # Default: 30 minutes minimum interval
             return d
         except Exception:
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900, "allowed": False}
+            return {
+                "enabled": False,
+                "interval_seconds": 900,
+                "agent": "reuse_aux",
+                "prompt_path": "./FOREMAN_TASK.md",
+                "cc_user": True,
+                "max_run_seconds": 900,
+                "allowed": False,
+                # Fallback self-optimization config if YAML parsing fails
+                "self_optimization": {
+                    "enabled": False,
+                    "run_mode": "after_task",
+                    "quick_mode": False,
+                    "min_interval_hours": 0.5
+                }
+            }
 
     def _save_foreman_conf(conf: Dict[str, Any]):
         try:
@@ -173,6 +221,135 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             pass
 
+    def _maybe_run_self_optimization(opt_conf: Dict[str, Any], work_dir: Path):
+        """
+        Execute self-optimization detection if conditions are met.
+        
+        This function runs the self_optimize.py script to analyze system performance
+        and generate optimization suggestions. It respects minimum interval settings
+        to avoid excessive executions.
+        
+        Args:
+            opt_conf: self_optimization config from foreman.yaml
+            work_dir: Current foreman work directory
+        """
+        try:
+            # 1. Check minimum interval to avoid running too frequently
+            min_hours = float(opt_conf.get('min_interval_hours', 1))
+            last_run_file = state / "self_opt_last_run.txt"
+            
+            if last_run_file.exists():
+                try:
+                    last_ts_str = last_run_file.read_text(encoding='utf-8').strip()
+                    last_ts = float(last_ts_str)
+                    hours_since = (time.time() - last_ts) / 3600.0
+                    if hours_since < min_hours:
+                        log_ledger(home, {
+                            "from": "system",
+                            "kind": "self-opt-skip",
+                            "reason": f"too_soon_{hours_since:.1f}h"
+                        })
+                        return
+                except Exception:
+                    pass
+            
+            # 2. Build command to execute self_optimize.py
+            script_path = home / "checks" / "self_optimize.py"
+            if not script_path.exists():  # Skip if script not found
+                return
+                
+            cmd = [sys.executable, str(script_path)]
+            if opt_conf.get('quick_mode', False):
+                cmd.append('--quick')  # Skip baseline learning for faster execution
+            cmd.append('--json')  # Request structured JSON output for parsing
+            
+            # 3. Execute self-optimization script
+            log_ledger(home, {
+                "from": "system",
+                "kind": "self-opt-start",
+                "quick": opt_conf.get('quick_mode', False)
+            })
+            
+            result = subprocess.run(
+                cmd,
+                cwd=home.parent,  # Run from project root
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout to prevent hanging
+            )
+            
+            # 4. Record last run timestamp for interval tracking
+            last_run_file.write_text(str(time.time()), encoding='utf-8')
+            
+            # 5. Process results and log to ledger
+            if result.returncode == 0:
+                try:
+                    # Parse JSON output for metrics
+                    output_data = json.loads(result.stdout)
+                    anomaly_count = output_data.get('anomaly_count', 0)
+                    config_diff = output_data.get('config_differences', 0)
+                    
+                    log_ledger(home, {
+                        "from": "system",
+                        "kind": "self-opt-complete",
+                        "anomaly_count": anomaly_count,
+                        "config_differences": config_diff
+                    })
+                    
+                    # Auto-forward peer_directive.md if anomalies detected
+                    directive_path = home / "work" / "foreman" / "diagnosis" / "peer_directive.md"
+                    if directive_path.exists() and anomaly_count > 0:
+                        try:
+                            directive_content = directive_path.read_text(encoding='utf-8')
+                            # Copy to foreman's to_peer.md for auto-dispatch
+                            to_peer_path = home / "mailbox" / "foreman" / "to_peer.md"
+                            to_peer_path.parent.mkdir(parents=True, exist_ok=True)
+                            to_peer_path.write_text(directive_content, encoding='utf-8')
+                            log_ledger(home, {
+                                "from": "system",
+                                "kind": "self-opt-directive-forwarded",
+                                "anomaly_count": anomaly_count
+                            })
+                        except Exception:
+                            pass
+                    
+                    # Notify user if significant config differences detected (>30%)
+                    if config_diff > 0:
+                        try:
+                            proposals_path = home / "work" / "foreman" / "diagnosis" / "optimization_proposals.yaml"
+                            if proposals_path.exists():
+                                # This will be visible in foreman output
+                                log_ledger(home, {
+                                    "from": "system",
+                                    "kind": "self-opt-proposals-available",
+                                    "config_differences": config_diff,
+                                    "path": str(proposals_path)
+                                })
+                        except Exception:
+                            pass
+                            
+                except json.JSONDecodeError:
+                    pass
+            else:
+                log_ledger(home, {
+                    "from": "system",
+                    "kind": "self-opt-error",
+                    "rc": result.returncode,
+                    "stderr": result.stderr[:200] if result.stderr else ""
+                })
+                
+        except subprocess.TimeoutExpired:
+            log_ledger(home, {
+                "from": "system",
+                "kind": "self-opt-timeout"
+            })
+        except Exception as err:
+            log_ledger(home, {
+                "from": "system",
+                "kind": "self-opt-exception",
+                "error": str(err)[:200]
+            })
+
     def _run_foreman_once(conf: Dict[str, Any]):
         prompt, out_dir = _compose_foreman_prompt(conf)
         _ensure_foreman_task(conf)
@@ -182,6 +359,18 @@ def make(ctx: Dict[str, Any]):
         lock = state/"foreman.lock"
         rc = 1
         argv: List[str] = []
+        
+        # Self-optimization detection: before_task mode
+        # Run inspection BEFORE foreman task execution (Task 0)
+        try:
+            self_opt_conf = conf.get('self_optimization', {})
+            if self_opt_conf.get('enabled', False):
+                run_mode = self_opt_conf.get('run_mode', 'after_task')
+                if run_mode == 'before_task':
+                    _maybe_run_self_optimization(self_opt_conf, Path(out_dir))
+        except Exception:
+            pass
+        
         try:
             try:
                 st = _foreman_load_state() or {}
@@ -313,6 +502,21 @@ def make(ctx: Dict[str, Any]):
             try:
                 if lock.exists():
                     lock.unlink()
+            except Exception:
+                pass
+            
+            # Self-optimization detection integration
+            # Runs performance analysis and generates optimization suggestions
+            try:
+                self_opt_conf = conf.get('self_optimization', {})
+                if self_opt_conf.get('enabled', False):
+                    run_mode = self_opt_conf.get('run_mode', 'after_task')
+                    # Current implementation: only 'after_task' mode is supported
+                    # - after_task: Run detection after foreman task completes (recommended)
+                    # - before_task: Reserved (not implemented)
+                    # - standalone: Reserved (not implemented)
+                    if run_mode == 'after_task':
+                        _maybe_run_self_optimization(self_opt_conf, Path(out_dir))
             except Exception:
                 pass
 
