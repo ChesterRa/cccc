@@ -145,12 +145,20 @@ def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = Fa
 
     # 1. Load ledger
     print("📊 Loading historical data...")
-    records = load_ledger(ledger_path, max_records=2000)
-
-    if len(records) < 20:
-        print(f"⚠️ Insufficient data ({len(records)} records), skipping analysis")
-        results['baseline_status'] = 'insufficient_data'
-        return results
+    records = load_ledger(ledger_path, max_records=500)
+    
+    if not records or len(records) < 10:
+        print("⚠️ Insufficient data ({} records), skipping analysis".format(len(records)))
+        # Return minimal valid result instead of None
+        return {
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'baseline_status': 'insufficient_data',
+            'adaptive_analysis': {'anomalies': [], 'insights': []},
+            'static_analysis': {'analysis': {}, 'proposals': []},
+            'config_differences': [],
+            'actions_taken': [],
+            'peer_directive': None,
+        }
 
     # 2. Check/update baseline
     baseline = load_baseline(baseline_path)
@@ -311,6 +319,18 @@ def main():
         sys.exit(1)
 
     results = run_self_optimization(home, quick=args.quick, auto_apply=args.apply)
+
+    # Handle case when results is None (e.g., insufficient data)
+    if results is None:
+        results = {
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'baseline_status': 'insufficient_data',
+            'adaptive_analysis': {'anomalies': [], 'insights': []},
+            'static_analysis': {'analysis': {}, 'proposals': []},
+            'config_differences': [],
+            'actions_taken': [],
+            'peer_directive': None,
+        }
 
     if args.json:
         # Clean non-serializable content

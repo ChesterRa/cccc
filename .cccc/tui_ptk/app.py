@@ -555,6 +555,7 @@ class SetupConfig:
     peerB: str = ''
     aux: str = 'none'
     foreman: str = 'none'
+    self_opt_enabled: bool = False  # Self-optimization detection toggle
     mode: str = 'tmux'
     tg_token: str = ''
     tg_chat: str = ''
@@ -1099,13 +1100,21 @@ class CCCCSetupApp:
             elif config_name == 'mode':
                 # Interaction modes (wecom is beta)
                 return ['tmux', 'telegram', 'slack', 'discord', 'wecom']
+            elif config_name == 'self_opt':
+                # Self-optimization toggle (boolean as list)
+                return [True, False]
             else:
                 return []
 
         def cycle_config_value(config_name: str, direction: int = 1) -> None:
             """Cycle config value forward (1) or backward (-1)"""
             choices = get_value_choices(config_name)
-            current_value = getattr(self.config, config_name, None)
+
+            # Special handling for self_opt which uses self_opt_enabled attribute
+            if config_name == 'self_opt':
+                current_value = self.config.self_opt_enabled
+            else:
+                current_value = getattr(self.config, config_name, None)
 
             if not choices:
                 return
@@ -1120,8 +1129,9 @@ class CCCCSetupApp:
             new_index = (current_index + direction) % len(choices)
             new_value = choices[new_index]
 
-            # Update config
-            setattr(self.config, config_name, new_value)
+            # Update config (self_opt handled separately below)
+            if config_name != 'self_opt':
+                setattr(self.config, config_name, new_value)
 
             # Update button text - use direct button reference
             button = None
@@ -1147,6 +1157,12 @@ class CCCCSetupApp:
                 button = self.btn_mode
                 required = False
                 none_ok = False
+            elif config_name == 'self_opt':
+                # Handle self_opt toggle (boolean)
+                self.config.self_opt_enabled = new_value
+                self.btn_self_opt.text = '[●] ON ' if new_value else '[○] OFF'
+                self._refresh_ui()
+                return  # Early return since we handle everything here
 
             if button:
                 if config_name == 'mode':
@@ -1479,6 +1495,13 @@ class CCCCSetupApp:
         # Load foreman
         foreman_data = _load_yaml(self.home, 'settings/foreman.yaml')
         self.config.foreman = str(foreman_data.get('agent') or 'none')
+        
+        # Load self-optimization setting
+        self_opt = foreman_data.get('self_optimization', {})
+        if isinstance(self_opt, dict):
+            self.config.self_opt_enabled = bool(self_opt.get('enabled', False))
+        else:
+            self.config.self_opt_enabled = False
 
         # Load IM configurations
         # Telegram
@@ -1586,6 +1609,20 @@ class CCCCSetupApp:
         self.btn_mode = btn_mode
         self.btn_confirm = btn_confirm
         self.btn_quit = btn_quit
+        
+        # Self-optimization toggle button (ON/OFF)
+        def toggle_self_opt():
+            self.config.self_opt_enabled = not self.config.self_opt_enabled
+            self._refresh_ui()
+            
+        btn_self_opt = Button(
+            text='[●] ON ' if self.config.self_opt_enabled else '[○] OFF',
+            handler=toggle_self_opt,
+            width=20,
+            left_symbol='',
+            right_symbol=''
+        )
+        self.btn_self_opt = btn_self_opt
 
         # Map config names to buttons for easy access
         self.config_buttons = {
@@ -1593,11 +1630,13 @@ class CCCCSetupApp:
             'peerB': btn_peerB,
             'aux': btn_aux,
             'foreman': btn_foreman,
+            'self_opt': btn_self_opt,  # Add self-opt to navigation
             'mode': btn_mode
         }
 
         # Build initial buttons list (will be updated dynamically)
-        self.buttons = [btn_peerA, btn_peerB, btn_aux, btn_foreman, btn_mode]
+        # Include self_opt button for keyboard navigation
+        self.buttons = [btn_peerA, btn_peerB, btn_aux, btn_foreman, btn_self_opt, btn_mode]
         self._update_navigation_items()
 
         # Clean, minimal layout with dual interaction system
@@ -1634,12 +1673,18 @@ class CCCCSetupApp:
                 Window(width=2),
                 self.foreman_hint_label,
             ], padding=1),
+            VSplit([
+                Window(width=10, content=self._create_focused_label('Self-Opt', 4)),
+                btn_self_opt,
+                Window(width=2),
+                Label(text='Auto performance detection & optimization suggestions', style='class:hint'),
+            ], padding=1),
             Window(height=1),
 
             # Interaction mode
             create_section_header('Mode'),
             VSplit([
-                Window(width=10, content=self._create_focused_label('Connect', 4)),
+                Window(width=10, content=self._create_focused_label('Connect', 5)),
                 btn_mode,
                 Window(width=2),
                 Label(text='Interaction mode (tmux / Telegram / Slack / Discord / WeCom[beta])', style='class:hint'),
@@ -1764,6 +1809,7 @@ class CCCCSetupApp:
             {'type': 'button', 'name': 'peerB', 'widget': self.btn_peerB},
             {'type': 'button', 'name': 'aux', 'widget': self.btn_aux},
             {'type': 'button', 'name': 'foreman', 'widget': self.btn_foreman},
+            {'type': 'button', 'name': 'self_opt', 'widget': self.btn_self_opt},
             {'type': 'button', 'name': 'mode', 'widget': self.btn_mode},
         ])
 
@@ -2746,6 +2792,16 @@ class CCCCSetupApp:
         foreman_config.setdefault('max_run_seconds', 900)       # Max duration per run
         foreman_config.setdefault('prompt_path', './FOREMAN_TASK.md')
         foreman_config.setdefault('cc_user', True)              # Copy output to user
+        
+        # Self-optimization config (preserve existing or create from TUI toggle)
+        if 'self_optimization' not in foreman_config:
+            foreman_config['self_optimization'] = {}
+        # Update enabled flag from TUI toggle
+        foreman_config['self_optimization']['enabled'] = self.config.self_opt_enabled
+        # Set defaults for other fields if not present
+        foreman_config['self_optimization'].setdefault('run_mode', 'before_task')
+        foreman_config['self_optimization'].setdefault('quick_mode', False)
+        foreman_config['self_optimization'].setdefault('min_interval_hours', 0.5)
         
         if self.config.foreman and self.config.foreman != 'none':
             foreman_config['agent'] = self.config.foreman
@@ -3902,6 +3958,11 @@ class CCCCSetupApp:
                             self._show_actor_dialog('aux')
                         elif current_config == 'foreman':
                             self._show_foreman_dialog()
+                        elif current_config == 'self_opt':
+                            # Toggle self-optimization on/off
+                            self.config.self_opt_enabled = not self.config.self_opt_enabled
+                            self.btn_self_opt.text = '[●] ON ' if self.config.self_opt_enabled else '[○] OFF'
+                            self._refresh_ui()
                         elif current_config == 'mode':
                             self._show_mode_dialog()
             except Exception:
