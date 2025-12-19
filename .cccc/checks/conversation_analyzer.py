@@ -578,6 +578,105 @@ def generate_foreman_task_proposal(insights: ConversationInsights, current_task_
     return "\n".join(lines)
 
 
+def extract_foreman_insights(home: Path) -> List[Dict[str, Any]]:
+    """Extract insight blocks from latest foreman output.
+    
+    Scans foreman work directories for the most recent stdout.txt,
+    parses ```insight blocks and Item() structures.
+    
+    Returns:
+        List of extracted insights with type, content, and timestamp
+    """
+    insights = []
+    foreman_work = home / 'work' / 'foreman'
+    
+    if not foreman_work.exists():
+        return insights
+    
+    # Find latest foreman output directory (format: YYYYMMDD-HHMMSS)
+    try:
+        output_dirs = sorted(
+            [d for d in foreman_work.iterdir() if d.is_dir() and re.match(r'\d{8}-\d{6}', d.name)],
+            key=lambda x: x.name,
+            reverse=True
+        )
+    except Exception:
+        return insights
+    
+    if not output_dirs:
+        return insights
+    
+    # Get the most recent output directory
+    latest_dir = output_dirs[0]
+    stdout_file = latest_dir / 'stdout.txt'
+    
+    if not stdout_file.exists():
+        return insights
+    
+    try:
+        content = stdout_file.read_text(encoding='utf-8', errors='replace')
+    except Exception:
+        return insights
+    
+    # Extract ```insight blocks
+    insight_pattern = r'```\s*insight\s*\n([\s\S]*?)```'
+    for match in re.finditer(insight_pattern, content, re.IGNORECASE):
+        insight_text = match.group(1).strip()
+        # Parse insight lines (format: key: value)
+        for line in insight_text.split('\n'):
+            line = line.strip()
+            if ':' in line:
+                key, value = line.split(':', 1)
+                insights.append({
+                    'type': 'insight',
+                    'key': key.strip(),
+                    'value': value.strip(),
+                    'source_dir': latest_dir.name
+                })
+    
+    # Extract Item() outcomes and risks
+    item_pattern = r'Item\(([^)]+)\):\s*([^\n]+)'
+    to_peer_match = re.search(r'<TO_PEER>([\s\S]*?)</TO_PEER>', content)
+    if to_peer_match:
+        to_peer_content = to_peer_match.group(1)
+        
+        for match in re.finditer(item_pattern, to_peer_content):
+            label = match.group(1).strip()
+            title = match.group(2).strip()
+            
+            # Extract Outcome
+            outcome_match = re.search(
+                rf'Item\({re.escape(label)}\)[^\n]*\n[^\n]*Outcome:\s*([^;]+)',
+                to_peer_content
+            )
+            outcome = outcome_match.group(1).strip() if outcome_match else ''
+            
+            # Extract Risk
+            risk_match = re.search(
+                rf'Risk\([^)]*\):\s*([^\n]+)',
+                to_peer_content[match.end():]
+            )
+            risk = risk_match.group(1).strip()[:100] if risk_match else ''
+            
+            # Extract Next
+            next_match = re.search(
+                rf'Next:\s*([^\n]+)',
+                to_peer_content[match.end():]
+            )
+            next_step = next_match.group(1).strip()[:100] if next_match else ''
+            
+            insights.append({
+                'type': 'item',
+                'label': label,
+                'title': title[:80],
+                'outcome': outcome[:100],
+                'risk': risk,
+                'next': next_step,
+                'source_dir': latest_dir.name
+            })
+    
+    return insights
+
 def update_foreman_task(task_path: Path, insights: ConversationInsights, home: Path = None, backup: bool = True) -> Dict[str, Any]:
     """Update FOREMAN_TASK.md with optimization suggestions
     
@@ -655,7 +754,36 @@ def update_foreman_task(task_path: Path, insights: ConversationInsights, home: P
             low_success_lines.append(f"- Suggested: {pattern.common_next_steps[0][:80]}...")
         low_success_lines.append("")
     
-    if not standing_work_lines and not focus_area_lines and not low_success_lines:
+    # Extract latest foreman patrol findings
+    patrol_findings_lines = []
+    if home:
+        foreman_insights = extract_foreman_insights(home)
+        
+        # Group by type
+        insight_items = [i for i in foreman_insights if i['type'] == 'insight']
+        item_items = [i for i in foreman_insights if i['type'] == 'item']
+        
+        if foreman_insights:
+            source_dir = foreman_insights[0].get('source_dir', 'unknown')
+            patrol_findings_lines.append(f"*Last patrol: {source_dir}*\n")
+            
+            # Add insights
+            if insight_items:
+                patrol_findings_lines.append("**Insights:**")
+                for ins in insight_items[:5]:
+                    patrol_findings_lines.append(f"- **{ins['key']}**: {ins['value'][:80]}...")
+                patrol_findings_lines.append("")
+            
+            # Add item summaries
+            if item_items:
+                patrol_findings_lines.append("**Task Findings:**")
+                for item in item_items[:3]:
+                    patrol_findings_lines.append(f"- **{item['label']}**: {item['outcome'][:60]}..." if item['outcome'] else f"- **{item['label']}**: {item['title'][:60]}...")
+                    if item.get('next'):
+                        patrol_findings_lines.append(f"  - Next: {item['next'][:60]}...")
+                patrol_findings_lines.append("")
+    
+    if not standing_work_lines and not focus_area_lines and not low_success_lines and not patrol_findings_lines:
         result['status'] = 'no_changes'
         result['reason'] = 'No significant patterns found'
         return result
@@ -679,6 +807,11 @@ def update_foreman_task(task_path: Path, insights: ConversationInsights, home: P
         new_sections.append("\n".join(low_success_lines))
         result['changes'].append(f'Added {len(low_success_tasks[:5])} low success task diagnosis')
     
+    if patrol_findings_lines:
+        new_sections.append("\n\n## Latest patrol findings (auto-generated)\n")
+        new_sections.append("\n".join(patrol_findings_lines))
+        result['changes'].append(f'Added patrol findings from latest run')
+    
     new_section_text = "".join(new_sections)
     
     # Remove old auto-generated sections if they exist
@@ -696,6 +829,11 @@ def update_foreman_task(task_path: Path, insights: ConversationInsights, home: P
     )
     cleaned_content = re.sub(
         r'\n## Low success tasks \(auto-generated\)\n[\s\S]*?(?=\n## |$)',
+        '',
+        cleaned_content
+    )
+    cleaned_content = re.sub(
+        r'\n## Latest patrol findings \(auto-generated\)\n[\s\S]*?(?=\n## |$)',
         '',
         cleaned_content
     )
@@ -731,7 +869,20 @@ def run_conversation_analysis(home: Path, auto_update: bool = False) -> Dict[str
     files = load_conversation_files(mailbox_path)
     
     if len(files) < 5:
-        print(f"⚠️ Insufficient data ({len(files)} messages), skipping analysis")
+        print(f"⚠️ Insufficient conversation data ({len(files)} messages)")
+        # Even with insufficient data, try to extract foreman insights
+        if auto_update:
+            current_task_path = home.parent / 'FOREMAN_TASK.md'
+            foreman_insights = extract_foreman_insights(home)
+            if foreman_insights:
+                print(f"📋 Found {len(foreman_insights)} foreman insights, updating task file...")
+                # Create minimal insights for update
+                empty_insights = ConversationInsights()
+                empty_insights.analyzed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_result = update_foreman_task(current_task_path, empty_insights, home)
+                if update_result['status'] == 'success':
+                    print(f"   ✅ Updated patrol findings in FOREMAN_TASK.md")
+                    return {'status': 'partial_update', 'message_count': len(files), 'foreman_insights': len(foreman_insights)}
         return {'status': 'insufficient_data', 'message_count': len(files)}
     
     # 2. Parse messages
