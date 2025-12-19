@@ -296,18 +296,6 @@ def generate_optimization_proposals(analysis: Dict) -> List[Dict]:
             'priority': 'high'
         })
 
-    # Message quality
-    quality = analysis['message_quality']
-    if quality['drop_rate'] > 0.25:
-        proposals.append({
-            'target': 'policies.yaml',
-            'param': 'handoff_filter.cooldown_seconds',
-            'current': 15,
-            'suggested': 10,
-            'issue': f"Message drop rate {quality['drop_rate']:.1%}",
-            'priority': 'medium'
-        })
-
     return proposals
 
 
