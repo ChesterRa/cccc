@@ -257,7 +257,7 @@ def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = Fa
     if CONVERSATION_ANALYSIS_AVAILABLE:
         print("\n💬 Analyzing conversation history (core optimization)...")
         try:
-            conv_result = run_conversation_analysis(home)
+            conv_result = run_conversation_analysis(home, auto_update=True)  # Auto-update FOREMAN_TASK.md
             results['conversation_analysis'] = conv_result
             
             if conv_result.get('status') == 'success':
