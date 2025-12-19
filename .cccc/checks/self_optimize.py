@@ -3,11 +3,15 @@
 """
 CCCC Self-Optimization Entry Script
 
-Integrates adaptive learning and performance analysis to execute a complete self-optimization inspection workflow.
+Integrates adaptive learning, performance analysis, and **conversation analysis** 
+to execute a complete self-optimization inspection workflow.
+
+Core improvement: Optimize FOREMAN_TASK.md via AI conversation analysis, not just config tuning.
 
 Usage:
     python .cccc/checks/self_optimize.py              # Full inspection
     python .cccc/checks/self_optimize.py --quick      # Quick inspection (skip learning)
+    python .cccc/checks/self_optimize.py --task       # Focus on task optimization (conversation analysis)
     python .cccc/checks/self_optimize.py --apply      # Inspection and auto-apply suggestions
 """
 
@@ -29,6 +33,13 @@ from analyze_performance import (
     analyze_system_health, generate_optimization_proposals,
     format_report, format_peer_directive
 )
+
+# Conversation analysis module (core: learn from dialogue content instead of param tuning)
+try:
+    from conversation_analyzer import run_conversation_analysis
+    CONVERSATION_ANALYSIS_AVAILABLE = True
+except ImportError:
+    CONVERSATION_ANALYSIS_AVAILABLE = False
 
 
 def load_current_config(settings_path: Path) -> Dict[str, Any]:
@@ -69,7 +80,6 @@ def compare_thresholds(current: Dict, suggested: Dict) -> List[Dict]:
 
     mappings = {
         'ack_timeout_seconds': ('delivery', 'ack_timeout_seconds'),
-        'cooldown_seconds': ('handoff_filter', 'cooldown_seconds'),
         'min_chars': ('handoff_filter', 'min_chars'),
     }
 
@@ -125,14 +135,22 @@ def generate_optimization_yaml(differences: List[Dict], output_path: Path):
             json.dump(proposals, f, indent=2, ensure_ascii=False)
 
 
-def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = False) -> Dict:
-    """Run self-optimization workflow"""
+def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = False, task_focus: bool = False) -> Dict:
+    """Run self-optimization workflow
+    
+    Args:
+        home: .cccc directory path
+        quick: Quick mode (skip baseline update)
+        auto_apply: Auto-apply suggestions (not implemented)
+        task_focus: Focus on task optimization (conversation analysis, skip config tuning)
+    """
     results = {
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'baseline_status': 'unknown',
         'adaptive_analysis': None,
         'static_analysis': None,
         'config_differences': [],
+        'conversation_analysis': None,  # Conversation analysis results
         'actions_taken': [],
         'peer_directive': None,
     }
@@ -219,23 +237,48 @@ def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = Fa
     static_report = format_report(static_analysis, static_proposals)
     (output_dir / 'latest.md').write_text(static_report, encoding='utf-8')
 
-    # 5. Compare current configuration with suggestions
-    print("⚙️ Comparing configuration differences...")
-    current_config = load_current_config(settings_path)
-    config_diffs = compare_thresholds(current_config, adaptive_result.get('adaptive_thresholds', {}))
-    results['config_differences'] = config_diffs
+    # 5. Compare current configuration with suggestions (skip in task_focus mode)
+    if not task_focus:
+        print("⚙️ Comparing configuration differences...")
+        current_config = load_current_config(settings_path)
+        config_diffs = compare_thresholds(current_config, adaptive_result.get('adaptive_thresholds', {}))
+        results['config_differences'] = config_diffs
 
-    if config_diffs:
-        print(f"   Found {len(config_diffs)} configuration differences")
-        proposal_path = output_dir / 'optimization_proposals.yaml'
-        generate_optimization_yaml(config_diffs, proposal_path)
-        results['actions_taken'].append('generated_proposals')
+        if config_diffs:
+            print(f"   Found {len(config_diffs)} configuration differences")
+            proposal_path = output_dir / 'optimization_proposals.yaml'
+            generate_optimization_yaml(config_diffs, proposal_path)
+            results['actions_taken'].append('generated_proposals')
+    else:
+        config_diffs = []
+        results['config_differences'] = []
+    
+    # 6. Conversation analysis (core: learn from dialogue to optimize FOREMAN_TASK.md)
+    if CONVERSATION_ANALYSIS_AVAILABLE:
+        print("\n💬 Analyzing conversation history (core optimization)...")
+        try:
+            conv_result = run_conversation_analysis(home)
+            results['conversation_analysis'] = conv_result
+            
+            if conv_result.get('status') == 'success':
+                results['actions_taken'].append('conversation_analysis')
+                print(f"   Task patterns: {conv_result.get('task_pattern_count', 0)}")
+                print(f"   Suggestions: {conv_result.get('suggestion_count', 0)}")
+                print(f"   Report: {conv_result.get('proposal_path', '')}")
+        except Exception as e:
+            print(f"   Conversation analysis failed: {e}")
+            results['conversation_analysis'] = {'status': 'error', 'error': str(e)}
+    else:
+        print("\n⚠️ Conversation analysis module unavailable, skipping task optimization")
 
-    # 6. Generate Peer directive
+    # 7. Generate Peer directive
     all_anomalies = adaptive_result.get('anomalies', [])
     high_priority_static = [p for p in static_proposals if p.get('priority') == 'high']
+    conv_suggestions = []
+    if results.get('conversation_analysis', {}).get('status') == 'success':
+        conv_suggestions = results['conversation_analysis'].get('suggestions', []) or []
 
-    if all_anomalies or high_priority_static:
+    if all_anomalies or high_priority_static or conv_suggestions:
         print("📝 Generating Peer directive...")
 
         directive_lines = [
@@ -264,7 +307,22 @@ def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = Fa
                     directive_lines.append(f"   - Suggestion: {p['action']}")
             directive_lines.append("")
 
-        if config_diffs:
+        # Conversation analysis suggestions (core value)
+        if conv_suggestions:
+            directive_lines.append("### 💡 FOREMAN_TASK Optimization Suggestions (from conversation analysis)")
+            for sug in conv_suggestions[:3]:  # Show at most 3
+                sug_type = sug.get('type', '')
+                if sug_type == 'high_frequency_task':
+                    directive_lines.append(f"- **High-frequency task**: `{sug.get('label')}` appeared {sug.get('frequency')} times, consider adding to Standing work")
+                elif sug_type == 'recurring_risk':
+                    directive_lines.append(f"- **Recurring risk**: `{sug.get('theme')}` appeared {sug.get('count')} times, consider adding to patrol checklist")
+                elif sug_type == 'focus_areas':
+                    areas = sug.get('areas', [])[:3]
+                    directive_lines.append(f"- **Change hotspots**: {', '.join(areas)}")
+            directive_lines.append(f"\nDetailed report: `.cccc/work/foreman/diagnosis/task_optimization_proposal.md`")
+            directive_lines.append("")
+
+        if config_diffs and not task_focus:
             directive_lines.append("### Configuration Optimization Suggestions")
             directive_lines.append("The following configurations do not match project characteristics:")
             for diff in config_diffs[:3]:  # Show at most 3
@@ -275,6 +333,7 @@ def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = Fa
         directive_lines.extend([
             "---",
             "Full reports:",
+            "- **Task optimization**: `.cccc/work/foreman/diagnosis/task_optimization_proposal.md`",
             "- Adaptive analysis: `.cccc/work/foreman/diagnosis/adaptive_analysis.md`",
             "- Static analysis: `.cccc/work/foreman/diagnosis/latest.md`",
             "",
@@ -287,14 +346,17 @@ def run_self_optimization(home: Path, quick: bool = False, auto_apply: bool = Fa
         results['peer_directive'] = str(directive_path)
         results['actions_taken'].append('generated_peer_directive')
 
-    # 7. Summary
+    # 8. Summary
     print("\n" + "=" * 50)
     print("📋 Self-optimization inspection completed")
     print("=" * 50)
     print(f"   Baseline status: {results['baseline_status']}")
     print(f"   Adaptive anomalies: {len(adaptive_result.get('anomalies', []))}")
     print(f"   Static issues: {len(static_proposals)}")
-    print(f"   Configuration differences: {len(config_diffs)}")
+    if not task_focus:
+        print(f"   Configuration differences: {len(config_diffs)}")
+    conv_status = results.get('conversation_analysis', {}).get('status', 'N/A')
+    print(f"   Conversation analysis: {conv_status}")
     print(f"   Actions taken: {', '.join(results['actions_taken']) or 'None'}")
 
     if results['peer_directive']:
@@ -307,6 +369,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description='CCCC Self-Optimization Inspection')
     parser.add_argument('--quick', action='store_true', help='Quick mode (skip baseline update)')
+    parser.add_argument('--task', action='store_true', help='Focus on task optimization (conversation analysis, skip config tuning)')
     parser.add_argument('--apply', action='store_true', help='Auto-apply suggestions (not yet implemented)')
     parser.add_argument('--json', action='store_true', help='Output in JSON format')
     args = parser.parse_args()
@@ -318,7 +381,7 @@ def main():
         print("Error: .cccc directory not found", file=sys.stderr)
         sys.exit(1)
 
-    results = run_self_optimization(home, quick=args.quick, auto_apply=args.apply)
+    results = run_self_optimization(home, quick=args.quick, auto_apply=args.apply, task_focus=args.task)
 
     # Handle case when results is None (e.g., insufficient data)
     if results is None:
@@ -334,11 +397,19 @@ def main():
 
     if args.json:
         # Clean non-serializable content
+        conv_analysis = results.get('conversation_analysis', {}) or {}
         clean_results = {
             'timestamp': results['timestamp'],
             'baseline_status': results['baseline_status'],
             'anomaly_count': len(results.get('adaptive_analysis', {}).get('anomalies', [])),
             'config_differences': len(results.get('config_differences', [])),
+            # Conversation analysis results (core value)
+            'conversation_analysis': {
+                'status': conv_analysis.get('status', 'N/A'),
+                'task_pattern_count': conv_analysis.get('task_pattern_count', 0),
+                'suggestion_count': conv_analysis.get('suggestion_count', 0),
+                'proposal_path': conv_analysis.get('proposal_path', ''),
+            },
             'actions_taken': results['actions_taken'],
             'peer_directive': results['peer_directive'],
         }

@@ -364,10 +364,6 @@ def analyze_with_baseline(records: List[Dict], baseline: ProjectBaseline) -> Dic
             'suggested': max(30, round(baseline.handoff_latency.p95 * 1.5)),
             'reason': f"Based on P95 latency {baseline.handoff_latency.p95}s calculated"
         },
-        'cooldown_seconds': {
-            'suggested': max(5, round(baseline.handoff_interval.p50 * 0.3)),
-            'reason': f"Based on median interval {baseline.handoff_interval.p50}s calculated"
-        },
         'min_chars': {
             'suggested': max(20, round(baseline.message_length.p50 * 0.1)),
             'reason': f"Based on median message length {baseline.message_length.p50} calculated"

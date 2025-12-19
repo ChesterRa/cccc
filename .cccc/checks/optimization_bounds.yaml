@@ -24,11 +24,6 @@ bounds:
     step: 30
 
   # Message Filtering
-  handoff_filter.cooldown_seconds:
-    min: 5
-    max: 60
-    step: 5
-
   handoff_filter.min_chars:
     min: 20
     max: 200
@@ -46,13 +41,13 @@ bounds:
 
 # Auto-Apply Strategy
 auto_apply:
-  enabled: false  # Disabled by default, requires manual enabling
-  require_approval: true  # Requires human approval
-  max_changes_per_cycle: 1  # Maximum 1 change auto-applied per cycle
-  cooldown_hours: 4  # At least 4 hours between auto-applies
+  enabled: false # Disabled by default, requires manual enabling
+  require_approval: true # Requires human approval
+  max_changes_per_cycle: 1 # Maximum 1 change auto-applied per cycle
+  cooldown_hours: 4 # At least 4 hours between auto-applies
 
 # Rollback Strategy
 rollback:
   enabled: true
-  observation_cycles: 2  # Observe 2 cycles
-  degradation_threshold: 0.2  # Trigger rollback if metrics degrade by more than 20%
+  observation_cycles: 2 # Observe 2 cycles
+  degradation_threshold: 0.2 # Trigger rollback if metrics degrade by more than 20%
