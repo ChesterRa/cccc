@@ -43,6 +43,7 @@ try:  # package import (python -m .cccc.orchestrator_tmux)
     from .orchestrator.foreman import make as make_foreman
     from .orchestrator.launcher import make as make_launcher
     from .orchestrator.keepalive import make as make_keepalive
+    from .orchestrator.api_error_recovery import make as make_api_error_recovery
 except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
     from orchestrator.tmux_layout import (
         tmux, tmux_session_exists, tmux_new_session, tmux_respawn_pane,
@@ -70,6 +71,7 @@ except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
     from orchestrator.foreman import make as make_foreman
     from orchestrator.launcher import make as make_launcher
     from orchestrator.keepalive import make as make_keepalive
+    from orchestrator.api_error_recovery import make as make_api_error_recovery
 from common.config import load_profiles, ensure_env_vars, is_single_peer_mode
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text, is_sentinel_text
 
@@ -2301,6 +2303,20 @@ def main(home: Path, session_name: Optional[str] = None):
             print(f"[RESTART] {peer_label} restart failed: {e}")
             return False
 
+    # Initialize API error recovery module
+    api_error_ctx = {
+        'home': home,
+        'tmux': tmux,
+        'log_ledger': log_ledger,
+        'outbox_write': outbox_write,
+        'count_recent_restarts': count_recent_restarts,
+        'restart_peer': restart_peer,
+        'auto_restart_enabled': AUTO_RESTART_ENABLED,
+        'auto_restart_max_attempts': AUTO_RESTART_MAX_ATTEMPTS,
+        'auto_restart_window_sec': AUTO_RESTART_WINDOW_SEC,
+    }
+    api_error_api = make_api_error_recovery(api_error_ctx)
+
     # Tmux alive check: only check every N loops to minimize overhead
     _tmux_check_counter = 0
     _tmux_check_interval = 10  # Check every 10 loops (e.g., every 20 seconds if loop is 2s)
@@ -2418,6 +2434,12 @@ def main(home: Path, session_name: Optional[str] = None):
                                     })
                                 except Exception:
                                     pass
+                    else:
+                        # Pane is alive - check for API errors via module
+                        try:
+                            api_error_api.check_and_recover(peer_label, pane)
+                        except Exception:
+                            pass
                 except Exception:
                     # Silently continue if health check fails
                     pass
