@@ -2483,6 +2483,8 @@ def main(home: Path, session_name: Optional[str] = None):
             'restart_peer': restart_peer,
             # needed for /resume to send NUDGE for pending inbox messages
             'maybe_send_nudge': nudge_api.maybe_send_nudge,
+            # foreman scheduler for /foreman commands
+            'foreman_scheduler': foreman_scheduler,
         }
         cq = make_cq(cq_ctx)
         upd = cq.consume(max_items=20)

@@ -664,7 +664,16 @@ class TaskManager:
             Sketch markdown string or None
         """
         context = self.load_context()
-        return context.get('sketch')
+        sketch = context.get('sketch')
+        if sketch is None:
+            return None
+        if isinstance(sketch, str):
+            return sketch
+        # Handle dict/list from YAML - convert to readable string
+        if isinstance(sketch, dict):
+            import json
+            return json.dumps(sketch, indent=2, ensure_ascii=False)
+        return str(sketch)
 
     # =========================================================================
     # Presence Operations

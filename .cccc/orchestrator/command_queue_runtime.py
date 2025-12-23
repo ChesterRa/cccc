@@ -454,7 +454,13 @@ def make(ctx: Dict[str, Any]):
                                             status = "enabled" if enabled else "disabled"
                                             ok, msg = True, f"Foreman is {status}"
                                         elif sub == 'now':
-                                            ok, msg = True, "Foreman immediate run requested"
+                                            # Use foreman_scheduler API for proper execution
+                                            _foreman_sched = ctx.get('foreman_scheduler')
+                                            if _foreman_sched:
+                                                result = _foreman_sched.command('now', origin='tui')
+                                                ok, msg = result.get('ok', False), result.get('message', 'unknown')
+                                            else:
+                                                ok, msg = False, "Foreman scheduler not available"
                                         else:
                                             ok, msg = False, f"Unknown foreman action: {sub}"
                                         
