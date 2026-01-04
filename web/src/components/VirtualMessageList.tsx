@@ -72,17 +72,19 @@ export function VirtualMessageList({
         prevMessageCountRef.current = newCount;
 
         if (newCount > prevCount && isAtBottomRef.current) {
-            // Small delay to let virtualizer update
-            requestAnimationFrame(() => {
+            // Use setTimeout to avoid flushSync warning during React lifecycle
+            setTimeout(() => {
                 scrollToBottom();
-            });
+            }, 0);
         }
     }, [messages.length, scrollToBottom]);
 
     // Initial scroll to bottom
     useEffect(() => {
         if (messages.length > 0) {
-            scrollToBottom();
+            setTimeout(() => {
+                scrollToBottom();
+            }, 0);
         }
     }, []);
 
@@ -91,9 +93,9 @@ export function VirtualMessageList({
         prevMessageCountRef.current = messages.length;
         isAtBottomRef.current = true;
         if (messages.length > 0) {
-            requestAnimationFrame(() => {
+            setTimeout(() => {
                 virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-            });
+            }, 0);
         }
     }, [groupId, virtualizer]);
 
