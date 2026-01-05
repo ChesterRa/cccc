@@ -52,6 +52,17 @@ export const VirtualMessageList = memo(function VirtualMessageList({
       : {}),
   });
 
+  // Wrap measureElement to avoid flushSync warning during React render
+  const measureElement = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) {
+        // Defer measurement to next microtask to avoid flushSync during render
+        queueMicrotask(() => virtualizer.measureElement(node));
+      }
+    },
+    [virtualizer]
+  );
+
   // Check if scrolled to bottom
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
@@ -192,7 +203,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                 <div
                   key={message.id || virtualRow.index}
                   data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
+                  ref={measureElement}
                   style={{
                     position: "absolute",
                     top: 0,
