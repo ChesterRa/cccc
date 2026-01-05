@@ -149,10 +149,19 @@ export default function App() {
   // Keep refs in sync
   useEffect(() => {
     activeTabRef.current = activeTab;
-    // 进入 chat tab 时清理未读计数
+    // 进入 chat tab 时清理未读计数并滚动到底部
     if (activeTab === "chat") {
       setChatUnreadCount(0);
       setShowScrollButton(false);
+      // 延迟滚动，等待 hidden 类移除后虚拟列表重新计算
+      const timer = setTimeout(() => {
+        const container = eventContainerRef.current;
+        if (container) {
+          container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+        }
+        chatAtBottomRef.current = true;
+      }, 50);
+      return () => clearTimeout(timer);
     }
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
 
@@ -492,7 +501,7 @@ export default function App() {
             />
           )}
 
-          {/* Tab Content */}
+          {/* Tab Content - 使用 CSS 隐藏而非条件渲染，避免重新挂载导致的闪烁 */}
           <div
             ref={contentRef}
             className={`flex-1 min-h-0 flex flex-col overflow-hidden transition-opacity duration-150 ${
@@ -501,7 +510,8 @@ export default function App() {
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
-            {activeTab === "chat" ? (
+            {/* Chat Tab - 始终挂载，通过 CSS 控制显示 */}
+            <div className={`flex-1 min-h-0 flex flex-col ${activeTab !== "chat" ? "hidden" : ""}`}>
               <ChatTab
                 isDark={isDark}
                 isSmallScreen={isSmallScreen}
@@ -556,7 +566,9 @@ export default function App() {
                   setToText(toText ? toText + ", " + token : token)
                 }
               />
-            ) : (
+            </div>
+            {/* Agent Tab - 仅在选中 agent 时显示 */}
+            {activeTab !== "chat" && (
               <ActorTab
                 actor={currentActor}
                 groupId={selectedGroupId}

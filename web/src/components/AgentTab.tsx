@@ -10,6 +10,9 @@ import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, Rocket
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
+// Delay before showing terminal after connection (allows backlog replay to complete without visible scrolling)
+const TERMINAL_SHOW_DELAY_MS = 150;
+
 // WebSocket reconnect configuration (moved outside component to avoid recreation)
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
@@ -54,6 +57,9 @@ export function AgentTab({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  // Hide terminal during initial backlog replay to avoid visible scrolling
+  const [terminalReady, setTerminalReady] = useState(false);
+  const terminalReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Best-effort terminal query responder state (per mounted actor tab).
   // Some runtimes (notably opencode) emit terminal *queries* that xterm.js doesn't answer (e.g. OSC 4 palette).
@@ -295,6 +301,17 @@ export function AgentTab({
         // Reset responder state on each successful (re)connect.
         terminalReplyStateRef.current = { osc4Idx: new Set<string>(), osc10Sent: false, osc11Sent: false };
 
+        // Delay showing terminal to let backlog replay complete (avoids visible scrolling)
+        if (terminalReadyTimeoutRef.current) {
+          clearTimeout(terminalReadyTimeoutRef.current);
+        }
+        setTerminalReady(false);
+        terminalReadyTimeoutRef.current = setTimeout(() => {
+          if (!disposed) {
+            setTerminalReady(true);
+          }
+        }, TERMINAL_SHOW_DELAY_MS);
+
         // Send initial resize
         const term = terminalRef.current;
         if (term) {
@@ -476,6 +493,10 @@ export function AgentTab({
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      if (terminalReadyTimeoutRef.current) {
+        clearTimeout(terminalReadyTimeoutRef.current);
+        terminalReadyTimeoutRef.current = null;
+      }
       if (disposable) disposable.dispose();
       if (resizeDisposable) resizeDisposable.dispose();
       if (wsRef.current) {
@@ -488,6 +509,7 @@ export function AgentTab({
         wsRef.current = null;
       }
       setConnectionStatus('disconnected');
+      setTerminalReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isDark 由单独 effect 处理，onStatusChange 变化不应触发重连
   }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
@@ -574,7 +596,16 @@ export function AgentTab({
         ) : isRunning ? (
           // PTY agent - show terminal
           // contain: layout paint isolates layout/paint calculations to prevent jitter when terminal content updates
-          <div ref={termRef} className="h-full w-full" style={{ contain: 'layout paint', overflow: 'hidden' }} />
+          // opacity transition hides initial backlog replay scrolling
+          <div
+            ref={termRef}
+            className="h-full w-full transition-opacity duration-100"
+            style={{
+              contain: 'layout paint',
+              overflow: 'hidden',
+              opacity: terminalReady ? 1 : 0,
+            }}
+          />
         ) : (
           // Stopped agent
           <div className="flex flex-col items-center justify-center h-full text-slate-500 dark:text-slate-400 p-8">

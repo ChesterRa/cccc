@@ -115,8 +115,11 @@ export function ChatComposer({
     const val = e.target.value;
     setComposerText(val);
     const target = e.target;
-    target.style.height = "auto";
-    target.style.height = Math.min(target.scrollHeight, 140) + "px";
+    // 使用 requestAnimationFrame 避免 forced reflow
+    requestAnimationFrame(() => {
+      target.style.height = "auto";
+      target.style.height = Math.min(target.scrollHeight, 140) + "px";
+    });
 
     // 检测 @ 提及
     const lastAt = val.lastIndexOf("@");

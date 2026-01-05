@@ -58,16 +58,10 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     }, []);
 
-    // Scroll to bottom - 多次调用确保虚拟列表完全滚动到底部
-    const scrollToBottom = useCallback((retries = 2) => {
+    // Scroll to bottom - 使用单次滚动避免抖动
+    const scrollToBottom = useCallback(() => {
         if (messages.length > 0) {
-            virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-            // 虚拟列表可能需要多次滚动，因为底部元素首次渲染时尺寸未知
-            if (retries > 0) {
-                requestAnimationFrame(() => {
-                    scrollToBottom(retries - 1);
-                });
-            }
+            virtualizer.scrollToIndex(messages.length - 1, { align: "end", behavior: "auto" });
         }
     }, [messages.length, virtualizer]);
 
@@ -168,6 +162,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                             height: `${virtualizer.getTotalSize()}px`,
                             width: "100%",
                             position: "relative",
+                            contain: "strict",
                         }}
                     >
                         {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -211,8 +206,8 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                                 : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
                                 }`}
                             onClick={() => {
-                                scrollToBottom(3); // 使用 virtualizer 滚动，多次重试确保到底部
-                                onScrollButtonClick(); // 通知父组件更新状态
+                                scrollToBottom();
+                                onScrollButtonClick();
                             }}
                             aria-label="Scroll to bottom"
                         >

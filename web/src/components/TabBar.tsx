@@ -18,9 +18,11 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
 
   // Auto-scroll active tab into view
   useEffect(() => {
-    if (activeTabRef.current && tabBarRef.current) {
-      const container = tabBarRef.current;
-      const tab = activeTabRef.current;
+    if (!activeTabRef.current || !tabBarRef.current) return;
+    const container = tabBarRef.current;
+    const tab = activeTabRef.current;
+    // 使用 requestAnimationFrame 避免 forced reflow
+    requestAnimationFrame(() => {
       const containerRect = container.getBoundingClientRect();
       const tabRect = tab.getBoundingClientRect();
 
@@ -29,7 +31,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
       } else if (tabRect.right > containerRect.right) {
         container.scrollLeft += tabRect.right - containerRect.right + 16;
       }
-    }
+    });
   }, [activeTab]);
 
   return (
