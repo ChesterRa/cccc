@@ -163,7 +163,7 @@ export function AgentTab({
     // Ensure focus works consistently across browsers (and prevents the inactive cursor style).
     const onPointerDown = () => term.focus();
     term.element?.addEventListener("mousedown", onPointerDown);
-    term.element?.addEventListener("touchstart", onPointerDown);
+    term.element?.addEventListener("touchstart", onPointerDown, { passive: true });
 
     const copySelection = async (): Promise<boolean> => {
       try {
