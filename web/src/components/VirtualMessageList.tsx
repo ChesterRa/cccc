@@ -16,6 +16,7 @@ export interface VirtualMessageListProps {
     onScrollButtonClick: () => void;
     chatUnreadCount: number;
     onScrollChange?: (isAtBottom: boolean) => void;
+    initialScrollTop?: number; // 用于恢复滚动位置
 }
 
 export const VirtualMessageList = memo(function VirtualMessageList({
@@ -30,19 +31,23 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     onScrollButtonClick,
     chatUnreadCount,
     onScrollChange,
+    initialScrollTop,
 }: VirtualMessageListProps) {
     const parentRef = useRef<HTMLDivElement | null>(null);
 
-    const prevMessageCountRef = useRef(messages.length);
+    const prevMessageCountRef = useRef(0); // 初始为 0，确保首次有消息时能触发滚动
     const isAtBottomRef = useRef(true);
     const didInitialScrollRef = useRef(false);
     const scrollTimeoutRef = useRef<number | null>(null);
 
+    // eslint-disable-next-line react-hooks/incompatible-library
     const virtualizer = useVirtualizer({
         count: messages.length,
         getScrollElement: () => parentRef.current,
         estimateSize: () => 120,
         overscan: 5,
+        // 只有当有保存的滚动位置时才使用 initialOffset
+        ...(initialScrollTop && initialScrollTop > 0 ? { initialOffset: initialScrollTop } : {}),
     });
 
     // Check if scrolled to bottom
@@ -53,10 +58,16 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     }, []);
 
-    // Scroll to bottom
-    const scrollToBottom = useCallback(() => {
+    // Scroll to bottom - 多次调用确保虚拟列表完全滚动到底部
+    const scrollToBottom = useCallback((retries = 2) => {
         if (messages.length > 0) {
             virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+            // 虚拟列表可能需要多次滚动，因为底部元素首次渲染时尺寸未知
+            if (retries > 0) {
+                requestAnimationFrame(() => {
+                    scrollToBottom(retries - 1);
+                });
+            }
         }
     }, [messages.length, virtualizer]);
 
@@ -76,11 +87,8 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         }, 0);
     }, [cancelScheduledScroll]);
 
-    const scheduleScrollToBottom = useCallback((opts?: { requireAtBottom?: boolean }) => {
-        scheduleScroll(() => {
-            if (opts?.requireAtBottom && !isAtBottomRef.current) return;
-            scrollToBottom();
-        });
+    const scheduleScrollToBottom = useCallback(() => {
+        scheduleScroll(() => scrollToBottom());
     }, [scheduleScroll, scrollToBottom]);
 
     // Handle scroll events
@@ -96,18 +104,27 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         const newCount = messages.length;
         prevMessageCountRef.current = newCount;
 
+        // 在此刻捕获 isAtBottom 状态，不要在异步回调中再检查
+        // 因为 virtualizer 重新渲染可能导致短暂的滚动事件改变 isAtBottomRef
         if (newCount > prevCount && isAtBottomRef.current) {
-            scheduleScrollToBottom({ requireAtBottom: true });
+            scheduleScrollToBottom();
         }
     }, [messages.length, scheduleScrollToBottom]);
 
-    // Initial scroll to bottom (first time we have messages)
+    // Initial scroll to bottom (only when no initialOffset is provided)
     useEffect(() => {
         if (didInitialScrollRef.current) return;
         if (messages.length <= 0) return;
         didInitialScrollRef.current = true;
-        scheduleScrollToBottom();
-    }, [messages.length, scheduleScrollToBottom]);
+        // 如果有 initialScrollTop，virtualizer 的 initialOffset 已处理
+        // 否则滚动到底部
+        if (!initialScrollTop || initialScrollTop <= 0) {
+            scheduleScrollToBottom();
+        } else {
+            // 更新 isAtBottom 状态
+            isAtBottomRef.current = checkIsAtBottom();
+        }
+    }, [messages.length, scheduleScrollToBottom, initialScrollTop, checkIsAtBottom]);
 
     // When switching groups, default to showing the latest messages.
     // Important: do NOT depend on messages.length here, otherwise every new message would
@@ -193,7 +210,10 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                                 ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"
                                 : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
                                 }`}
-                            onClick={onScrollButtonClick}
+                            onClick={() => {
+                                scrollToBottom(3); // 使用 virtualizer 滚动，多次重试确保到底部
+                                onScrollButtonClick(); // 通知父组件更新状态
+                            }}
                             aria-label="Scroll to bottom"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

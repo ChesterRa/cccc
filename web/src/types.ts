@@ -22,12 +22,38 @@ export type GroupDoc = {
   state?: "active" | "idle" | "paused";
 };
 
+// 事件附件类型
+export type EventAttachment = {
+  kind?: string;
+  path?: string;
+  title?: string;
+  bytes?: number;
+  mime_type?: string;
+};
+
+// 聊天消息数据类型
+export type ChatMessageData = {
+  text?: string;
+  to?: string[];
+  quote_text?: string;
+  attachments?: EventAttachment[];
+};
+
+// 聊天已读数据类型
+export type ChatReadData = {
+  actor_id?: string;
+  event_id?: string;
+};
+
+// 事件数据联合类型
+export type LedgerEventData = ChatMessageData | ChatReadData | Record<string, unknown>;
+
 export type LedgerEvent = {
   id?: string;
   ts?: string;
   kind?: string;
   by?: string;
-  data?: any;
+  data?: LedgerEventData;
   _read_status?: Record<string, boolean>;
 };
 

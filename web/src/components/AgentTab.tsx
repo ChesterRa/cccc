@@ -1,5 +1,6 @@
+/* eslint-disable no-control-regex */
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Actor, getRuntimeColor, RUNTIME_INFO } from "../types";
@@ -238,6 +239,7 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDark 变化由单独 effect 处理，避免主题切换时重建终端
   }, [isHeadless, isRunning]);
 
   // Connect WebSocket when visible and running (with auto-reconnect).
@@ -305,7 +307,7 @@ export function AgentTab({
 
         // Prefer the terminal's current theme (keeps replies consistent even after theme toggles).
         const fallback = getTerminalTheme(isDark);
-        const theme = (terminalRef.current.options.theme || fallback) as any;
+        const theme: ITheme = terminalRef.current.options.theme || fallback;
 
         const bg = (typeof theme.background === "string" ? theme.background : fallback.background) as string;
         const fg = (typeof theme.foreground === "string" ? theme.foreground : fallback.foreground) as string;
@@ -427,7 +429,7 @@ export function AgentTab({
         }
       };
 
-      ws.onerror = (error) => {
+      ws.onerror = (_error) => {
         // onclose will be called after onerror, reconnect logic is handled there
       };
 
@@ -487,6 +489,7 @@ export function AgentTab({
       }
       setConnectionStatus('disconnected');
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDark 由单独 effect 处理，onStatusChange 变化不应触发重连
   }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)

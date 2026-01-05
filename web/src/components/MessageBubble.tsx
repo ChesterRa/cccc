@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { LedgerEvent, Actor, getActorAccentColor } from "../types";
+import { LedgerEvent, Actor, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 
@@ -29,21 +29,24 @@ export const MessageBubble = memo(function MessageBubble({
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
-    const quoteText = ev.data?.quote_text;
-    const attachments = Array.isArray(ev.data?.attachments) ? (ev.data.attachments as any[]) : [];
-    const blobAttachments = attachments
-        .filter((a) => a && typeof a === "object")
+
+    // 类型守卫：将 data 作为 ChatMessageData 处理
+    const msgData = ev.data as ChatMessageData | undefined;
+    const quoteText = msgData?.quote_text;
+    const rawAttachments: EventAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
+    const blobAttachments = rawAttachments
+        .filter((a): a is EventAttachment => a != null && typeof a === "object")
         .map((a) => ({
-            kind: String((a as any).kind || "file"),
-            path: String((a as any).path || ""),
-            title: String((a as any).title || ""),
-            bytes: Number((a as any).bytes || 0),
-            mime_type: String((a as any).mime_type || ""),
+            kind: String(a.kind || "file"),
+            path: String(a.path || ""),
+            title: String(a.title || ""),
+            bytes: Number(a.bytes || 0),
+            mime_type: String(a.mime_type || ""),
         }))
         .filter((a) => a.path.startsWith("state/blobs/"));
 
     const readStatus = ev._read_status;
-    const recipients = ev.data?.to as string[] | undefined;
+    const recipients = msgData?.to;
     const visibleReadStatusEntries = readStatus
         ? actors
             .map((a) => String(a.id || ""))

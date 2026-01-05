@@ -1,7 +1,7 @@
 import { GroupMeta } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
-import { CloseIcon, FolderIcon, PlusIcon } from "../Icons";
+import { CloseIcon, FolderIcon } from "../Icons";
 
 export interface GroupSidebarProps {
   groups: GroupMeta[];

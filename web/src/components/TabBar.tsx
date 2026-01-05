@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { Actor, getRuntimeColor } from "../types";
+import { Actor } from "../types";
 import { classNames } from "../utils/classNames";
 
 interface TabBarProps {

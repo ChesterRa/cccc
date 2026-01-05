@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Theme } from "../types";
 
 const THEME_STORAGE_KEY = "cccc-theme";
@@ -37,33 +37,34 @@ function applyTheme(theme: Theme) {
   }
 }
 
+// 订阅系统主题变化
+function subscribeToSystemTheme(callback: () => void) {
+  const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  mediaQuery.addEventListener("change", callback);
+  return () => mediaQuery.removeEventListener("change", callback);
+}
+
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(getStoredTheme);
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(
-    () => (getStoredTheme() === "system" ? getSystemTheme() : getStoredTheme() as "light" | "dark")
+  
+  // 使用 useSyncExternalStore 订阅系统主题变化
+  const systemTheme = useSyncExternalStore(
+    subscribeToSystemTheme,
+    getSystemTheme,
+    () => "dark" as const
+  );
+
+  // 使用 useMemo 计算 resolvedTheme，避免在 effect 中 setState
+  const resolvedTheme = useMemo<"light" | "dark">(
+    () => (theme === "system" ? systemTheme : theme),
+    [theme, systemTheme]
   );
 
   // Apply theme on mount and when theme changes
   useEffect(() => {
     applyTheme(theme);
-    setResolvedTheme(theme === "system" ? getSystemTheme() : theme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
-
-  // Listen for system theme changes
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    
-    const handleChange = () => {
-      if (theme === "system") {
-        applyTheme("system");
-        setResolvedTheme(getSystemTheme());
-      }
-    };
-
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [theme]);
+  }, [theme, systemTheme]);
 
   const setTheme = useCallback((newTheme: Theme) => {
     setThemeState(newTheme);

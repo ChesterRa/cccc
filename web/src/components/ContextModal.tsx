@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiJson } from "../api";
+import { apiJson } from "../services/api";
 import { GroupContext, ProjectMdInfo } from "../types";
 import { classNames } from "../utils/classNames";
 

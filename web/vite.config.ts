@@ -19,6 +19,13 @@ export default defineConfig({
         entryFileNames: "assets/index.js",
         chunkFileNames: "assets/chunk-[name].js",
         assetFileNames: "assets/[name][extname]",
+        // 将大型依赖单独打包，避免单个 chunk 过大
+        manualChunks: {
+          // xterm 终端库 (~400KB) - 单独打包避免 AgentTab chunk 过大
+          xterm: ["@xterm/xterm", "@xterm/addon-fit"],
+          // React 核心
+          "react-vendor": ["react", "react-dom"],
+        },
       },
     },
   },

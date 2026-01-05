@@ -1,4 +1,3 @@
-import { classNames } from "../utils/classNames";
 
 interface IconProps {
   className?: string;

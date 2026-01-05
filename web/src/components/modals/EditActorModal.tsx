@@ -1,6 +1,5 @@
 import { RuntimeInfo, SupportedRuntime, SUPPORTED_RUNTIMES, RUNTIME_INFO } from "../../types";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
-import { classNames } from "../../utils/classNames";
 
 export interface EditActorModalProps {
   isOpen: boolean;
