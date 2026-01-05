@@ -35,8 +35,10 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
   return (
     <div
       ref={tabBarRef}
-      className={`flex items-center gap-2 px-4 border-b overflow-x-auto ${isDark ? "bg-slate-900 border-slate-800" : "bg-white border-gray-100" // Cleaner background
-        }`}
+      className={classNames(
+        "flex items-center gap-1.5 px-3 py-1.5 overflow-x-auto border-b sticky top-0 z-10 backdrop-blur-md",
+        isDark ? "border-white/5 bg-slate-900/70" : "border-black/5 bg-white/70"
+      )}
       style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
       role="tablist"
       aria-label="Navigation tabs"
@@ -46,29 +48,27 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
         ref={activeTab === "chat" ? activeTabRef : null}
         onClick={() => onTabChange("chat")}
         className={classNames(
-          "relative flex items-center gap-2 px-3 py-3 text-sm font-medium whitespace-nowrap transition-colors",
+          "relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all rounded-lg",
           activeTab === "chat"
-            ? isDark ? "text-white" : "text-gray-900"
-            : isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-500 hover:text-gray-700"
+            ? isDark ? "bg-white/10 text-white" : "bg-black/5 text-gray-900"
+            : isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
         )}
         role="tab"
         aria-selected={activeTab === "chat"}
       >
         <span>Chat</span>
         {unreadChatCount > 0 && (
-          <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+          <span className={classNames(
+            "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+            isDark ? "bg-cyan-500/20 text-cyan-300" : "bg-cyan-100 text-cyan-700"
+          )}>
             {unreadChatCount}
           </span>
-        )}
-        {/* Active Line Indicator */}
-        {activeTab === "chat" && (
-          <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full ${isDark ? "bg-blue-500" : "bg-blue-600"
-            }`} />
         )}
       </button>
 
       {/* Separator */}
-      <div className={`w-px h-4 flex-shrink-0 ${isDark ? "bg-slate-800" : "bg-gray-200"}`} />
+      <div className={`w-px h-4 flex-shrink-0 ${isDark ? "bg-white/10" : "bg-black/8"}`} />
 
       {/* Agent Tabs */}
       {actors.map((actor) => {
@@ -81,10 +81,10 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             ref={isActive ? activeTabRef : null}
             onClick={() => onTabChange(actor.id)}
             className={classNames(
-              "relative flex items-center gap-2 px-3 py-3 text-sm font-medium whitespace-nowrap transition-colors",
+              "relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all rounded-lg",
               isActive
-                ? isDark ? "text-white" : "text-gray-900"
-                : isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-500 hover:text-gray-700"
+                ? isDark ? "bg-white/10 text-white" : "bg-black/5 text-gray-900"
+                : isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
             )}
             role="tab"
             aria-selected={isActive}
@@ -92,16 +92,20 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             {/* Run Indicator */}
             <span
               className={classNames(
-                "w-1.5 h-1.5 rounded-full",
-                isRunning ? "bg-emerald-500" : isDark ? "bg-slate-700" : "bg-gray-300"
+                "w-2 h-2 rounded-full transition-all",
+                isRunning 
+                  ? "bg-emerald-500" 
+                  : isDark ? "bg-slate-600" : "bg-gray-300"
               )}
             />
 
             <span>{actor.id}</span>
 
             {actor.role === "foreman" && (
-              <span className={`text-[9px] px-1 py-0.5 rounded ${isDark ? "bg-amber-900/30 text-amber-500" : "bg-amber-50 text-amber-600"
-                }`}>
+              <span className={classNames(
+                "text-[9px] px-1.5 py-0.5 rounded",
+                isDark ? "bg-amber-500/20 text-amber-400" : "bg-amber-100 text-amber-600"
+              )}>
                 F
               </span>
             )}
@@ -109,17 +113,12 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             {(actor.unread_count ?? 0) > 0 && (
               <span
                 className={classNames(
-                  "text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm",
-                  isDark ? "bg-indigo-500" : "bg-indigo-600"
+                  "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+                  isDark ? "bg-indigo-500/20 text-indigo-300" : "bg-indigo-100 text-indigo-700"
                 )}
               >
                 {actor.unread_count}
               </span>
-            )}
-
-            {isActive && (
-              <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full ${isDark ? "bg-blue-500" : "bg-blue-600"
-                }`} />
             )}
           </button>
         );
@@ -130,17 +129,15 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
           onClick={onAddAgent}
           disabled={!canAddAgent}
           className={classNames(
-            "ml-2 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-30 whitespace-nowrap",
-            actors.length === 0
-              ? "bg-blue-600 text-white border-blue-500 hover:bg-blue-500"
-              : isDark
-                ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-                : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+            "ml-1 flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all disabled:opacity-30 whitespace-nowrap border",
+            isDark 
+              ? "border-white/10 text-slate-300 hover:bg-white/5" 
+              : "border-black/10 text-gray-600 hover:bg-black/5"
           )}
           title={actors.length === 0 ? "Add your first agent (foreman)" : "Add agent"}
           aria-label="Add agent"
         >
-          <span className="text-base leading-none">+</span>
+          <span className="text-sm leading-none">+</span>
           <span className="hidden sm:inline">Add</span>
         </button>
       )}

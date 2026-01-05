@@ -1267,13 +1267,43 @@ export default function App() {
           : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
       }`}
     >
-      {/* Subtle accent glow to add depth (kept light for mobile performance). */}
+      {/* Liquid Glass Background - Animated gradient orbs */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {/* Primary cyan orb */}
+        <div
+          className={`absolute -top-32 -left-32 w-96 h-96 rounded-full liquid-blob ${
+            isDark
+              ? "bg-gradient-to-br from-cyan-500/20 via-cyan-600/10 to-transparent"
+              : "bg-gradient-to-br from-cyan-400/25 via-cyan-500/15 to-transparent"
+          }`}
+          style={{ filter: 'blur(60px)' }}
+        />
+        {/* Secondary purple orb */}
+        <div
+          className={`absolute top-1/4 -right-24 w-80 h-80 rounded-full liquid-blob ${
+            isDark
+              ? "bg-gradient-to-bl from-purple-500/15 via-indigo-600/10 to-transparent"
+              : "bg-gradient-to-bl from-purple-400/20 via-indigo-500/10 to-transparent"
+          }`}
+          style={{ filter: 'blur(50px)', animationDelay: '-3s' }}
+        />
+        {/* Tertiary blue orb */}
+        <div
+          className={`absolute -bottom-20 left-1/3 w-72 h-72 rounded-full liquid-blob ${
+            isDark
+              ? "bg-gradient-to-tr from-blue-500/12 via-sky-600/8 to-transparent"
+              : "bg-gradient-to-tr from-blue-400/15 via-sky-500/10 to-transparent"
+          }`}
+          style={{ filter: 'blur(45px)', animationDelay: '-5s' }}
+        />
+      </div>
+
+      {/* Subtle noise texture overlay for glass depth */}
       <div
-        className={`pointer-events-none absolute inset-0 ${
-          isDark
-            ? "bg-[radial-gradient(900px_600px_at_15%_-10%,rgba(56,189,248,0.16),transparent_60%),radial-gradient(700px_520px_at_95%_0%,rgba(168,85,247,0.12),transparent_55%),radial-gradient(1000px_640px_at_60%_115%,rgba(59,130,246,0.10),transparent_60%)]"
-            : "bg-[radial-gradient(900px_600px_at_15%_-10%,rgba(59,130,246,0.12),transparent_60%),radial-gradient(800px_520px_at_95%_0%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_640px_at_60%_115%,rgba(99,102,241,0.08),transparent_60%)]"
-        }`}
+        className="pointer-events-none absolute inset-0 opacity-[0.015]"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+        }}
       />
 
       <div className="relative h-full grid grid-cols-1 md:grid-cols-[280px_1fr] transition-all duration-300">
@@ -1291,7 +1321,7 @@ export default function App() {
         />
 
         {/* Main content */}
-        <main className={`h-full flex flex-col overflow-hidden ${isDark ? "bg-slate-950/25" : "bg-white/75"}`}>
+        <main className={`h-full flex flex-col overflow-hidden backdrop-blur-sm ${isDark ? "bg-slate-950/40" : "bg-white/60"}`}>
           <AppHeader
             isDark={isDark}
             theme={theme}

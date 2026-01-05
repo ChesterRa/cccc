@@ -2,6 +2,17 @@ import { Actor, GroupDoc, Theme } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { ThemeToggleCompact } from "../ThemeToggle";
+import { 
+  ClipboardIcon, 
+  RocketIcon, 
+  PlayIcon, 
+  PauseIcon, 
+  StopIcon, 
+  SettingsIcon, 
+  EditIcon,
+  MoreIcon,
+  MenuIcon 
+} from "../Icons";
 
 export interface AppHeaderProps {
   isDark: boolean;
@@ -46,23 +57,18 @@ export function AppHeader({
 }: AppHeaderProps) {
   return (
     <header
-      className={`flex-shrink-0 border-b backdrop-blur z-20 px-4 h-14 flex items-center justify-between gap-3 transition-colors ${
-        isDark ? "border-slate-800/50 bg-slate-900/80" : "border-gray-200 bg-white/80"
-      }`}
+      className="flex-shrink-0 z-20 px-4 h-14 flex items-center justify-between gap-3 glass-header"
     >
       <div className="flex items-center gap-3 min-w-0">
         <button
-          className={`md:hidden p-2 -ml-2 rounded-lg transition-colors ${
-            isDark ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
-          }`}
+          className={classNames(
+            "md:hidden p-2 -ml-2 rounded-xl transition-all glass-btn",
+            isDark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
+          )}
           onClick={onOpenSidebar}
           aria-label="Open sidebar"
         >
-          <div className="space-y-1">
-            <div className="w-4 h-0.5 bg-current"></div>
-            <div className="w-4 h-0.5 bg-current"></div>
-            <div className="w-4 h-0.5 bg-current"></div>
-          </div>
+          <MenuIcon size={18} />
         </button>
 
         <div className="min-w-0 flex flex-col">
@@ -87,16 +93,14 @@ export function AppHeader({
         {selectedGroupId && (
           <button
             className={classNames(
-              "hidden sm:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors",
-              isDark
-                ? "border-slate-700 bg-slate-800/60 text-slate-200 hover:bg-slate-800"
-                : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
+              "hidden sm:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
+              isDark ? "text-slate-200" : "text-gray-700"
             )}
             onClick={onOpenGroupEdit}
             title="Edit group"
             aria-label="Edit group"
           >
-            ✏️
+            <EditIcon size={14} />
           </button>
         )}
       </div>
@@ -108,69 +112,74 @@ export function AppHeader({
           <button
             onClick={onOpenContext}
             disabled={!selectedGroupId}
-            className={`p-2 rounded-xl transition-colors ${
-              isDark ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-gray-400 hover:text-gray-900 hover:bg-gray-100"
-            }`}
+            className={classNames(
+              "p-2 rounded-xl transition-all glass-btn",
+              isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
+            )}
             title="Context (Clipboard)"
           >
             <span className="sr-only">Context</span>
-            📋
+            <ClipboardIcon size={18} />
           </button>
 
-          <div className={`w-px h-4 mx-1 ${isDark ? "bg-slate-800" : "bg-gray-200"}`} />
+          <div className={`w-px h-4 mx-1 ${isDark ? "bg-white/10" : "bg-black/10"}`} />
 
           <button
             onClick={onStartGroup}
             disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
-            className={`p-2 rounded-xl transition-colors ${
-              isDark ? "text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10" : "text-emerald-600 hover:bg-emerald-50"
-            }`}
+            className={classNames(
+              "p-2 rounded-xl transition-all",
+              isDark 
+                ? "text-emerald-400 hover:bg-emerald-500/15 glass-btn" 
+                : "text-emerald-600 hover:bg-emerald-50/80 glass-btn"
+            )}
             title="Launch All Agents"
           >
             <span className="sr-only">Launch</span>
-            🚀
+            <RocketIcon size={18} />
           </button>
 
           {groupDoc?.state === "paused" ? (
             <button
               onClick={() => void onSetGroupState("active")}
               disabled={!selectedGroupId || busy === "group-state"}
-              className={`p-2 rounded-xl transition-colors ${
-                isDark ? "text-amber-400 hover:bg-amber-500/10" : "text-amber-600 hover:bg-amber-50"
-              }`}
+              className={classNames(
+                "p-2 rounded-xl transition-all glass-btn",
+                isDark ? "text-amber-400" : "text-amber-600"
+              )}
               title="Resume Delivery"
             >
               <span className="sr-only">Resume</span>
-              ▶
+              <PlayIcon size={18} />
             </button>
           ) : (
             <button
               onClick={() => void onSetGroupState("paused")}
               disabled={!selectedGroupId || busy === "group-state"}
-              className={`p-2 rounded-xl transition-colors ${
-                isDark
-                  ? "text-slate-400 hover:text-amber-300 hover:bg-amber-500/10"
-                  : "text-gray-400 hover:text-amber-600 hover:bg-amber-50"
-              }`}
+              className={classNames(
+                "p-2 rounded-xl transition-all glass-btn",
+                isDark ? "text-slate-400 hover:text-amber-300" : "text-gray-400 hover:text-amber-600"
+              )}
               title="Pause Delivery"
             >
               <span className="sr-only">Pause</span>
-              ⏸
+              <PauseIcon size={18} />
             </button>
           )}
 
           <button
             onClick={onStopGroup}
             disabled={!selectedGroupId || busy === "group-stop"}
-            className={`p-2 rounded-xl transition-colors ${
-              isDark ? "text-slate-400 hover:text-rose-400 hover:bg-rose-500/10" : "text-gray-400 hover:text-rose-600 hover:bg-rose-50"
-            }`}
+            className={classNames(
+              "p-2 rounded-xl transition-all glass-btn",
+              isDark ? "text-slate-400 hover:text-rose-400" : "text-gray-400 hover:text-rose-600"
+            )}
             title="Stop All Agents"
           >
             <span className="sr-only">Stop</span>
-            ⏹
+            <StopIcon size={18} />
           </button>
-          <div className={`w-px h-4 mx-1 ${isDark ? "bg-slate-800" : "bg-gray-200"}`} />
+          <div className={`w-px h-4 mx-1 ${isDark ? "bg-white/10" : "bg-black/10"}`} />
         </div>
 
         <div className="hidden sm:block">
@@ -180,25 +189,24 @@ export function AppHeader({
         <button
           onClick={onOpenSettings}
           disabled={!selectedGroupId}
-          className={`hidden sm:flex p-2 rounded-lg transition-colors ${
-            isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-          }`}
+          className={classNames(
+            "hidden sm:flex p-2 rounded-xl transition-all glass-btn",
+            isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
+          )}
           title="Settings"
         >
-          ⚙️
+          <SettingsIcon size={18} />
         </button>
 
         <button
           className={classNames(
-            "sm:hidden flex items-center justify-center w-8 h-8 rounded-lg transition-colors",
-            isDark ? "text-slate-400 hover:bg-slate-800" : "text-gray-400 hover:bg-gray-100"
+            "sm:hidden flex items-center justify-center w-8 h-8 rounded-xl transition-all glass-btn",
+            isDark ? "text-slate-400" : "text-gray-400"
           )}
           onClick={onOpenMobileMenu}
           title="Menu"
         >
-          <span className="text-lg leading-none transform rotate-90" aria-hidden="true">
-            ⋯
-          </span>
+          <MoreIcon size={18} />
         </button>
       </div>
 
@@ -206,15 +214,22 @@ export function AppHeader({
       {errorMsg && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 animate-slide-up">
           <div
-            className={`rounded-xl border px-4 py-2.5 text-sm flex items-center gap-3 shadow-xl ${
+            className={classNames(
+              "rounded-2xl px-4 py-2.5 text-sm flex items-center gap-3 glass-modal",
               isDark
-                ? "border-rose-500/30 bg-rose-950/90 text-rose-300 backdrop-blur-md"
-                : "border-rose-200 bg-white/90 text-rose-700 backdrop-blur-md"
-            }`}
+                ? "border-rose-500/20 text-rose-300"
+                : "border-rose-200/50 text-rose-700"
+            )}
             role="alert"
           >
             <span>{errorMsg}</span>
-            <button className="opacity-70 hover:opacity-100" onClick={onDismissError}>
+            <button 
+              className={classNames(
+                "p-1 rounded-lg transition-all glass-btn",
+                isDark ? "text-rose-400" : "text-rose-600"
+              )} 
+              onClick={onDismissError}
+            >
               ×
             </button>
           </div>

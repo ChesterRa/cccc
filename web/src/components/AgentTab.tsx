@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Actor, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
+import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -556,7 +557,7 @@ export function AgentTab({
         {isHeadless ? (
           // Headless agent - show status
           <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-400 p-8">
-            <div className="text-4xl mb-4">🤖</div>
+            <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Headless Agent</div>
             <div className="text-sm text-center max-w-md">
               This agent runs without a terminal. It communicates via MCP tools and the inbox system.
@@ -574,7 +575,7 @@ export function AgentTab({
         ) : (
           // Stopped agent
           <div className="flex flex-col items-center justify-center h-full text-slate-500 dark:text-slate-400 p-8">
-            <div className="text-4xl mb-4">⏹</div>
+            <div className="mb-4"><TerminalIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Agent Not Running</div>
             <div className="text-sm text-center max-w-md mb-4">
               Click Launch to start this agent's terminal session.
@@ -582,10 +583,11 @@ export function AgentTab({
             <button
               onClick={onLaunch}
               disabled={isBusy}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
               aria-label="Launch agent"
             >
-              {isBusy ? "Launching..." : "▶ Launch Agent"}
+              <PlayIcon size={16} />
+              {isBusy ? "Launching..." : "Launch Agent"}
             </button>
           </div>
         )}
@@ -607,7 +609,7 @@ export function AgentTab({
               )}
               aria-label="Quit agent"
             >
-              <span>⏹</span> Quit
+              <StopIcon size={16} /> Quit
             </button>
             <button
               onClick={sendInterrupt}
@@ -630,7 +632,7 @@ export function AgentTab({
               )}
               aria-label="Relaunch agent"
             >
-              <span>🔄</span> Relaunch
+              <RefreshIcon size={16} /> Relaunch
             </button>
           </>
         ) : (
@@ -641,7 +643,7 @@ export function AgentTab({
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm disabled:opacity-50 min-h-[44px] transition-colors"
               aria-label="Launch agent"
             >
-              <span>▶</span> Launch
+              <PlayIcon size={16} /> Launch
             </button>
             <button
               onClick={onEdit}
@@ -652,7 +654,7 @@ export function AgentTab({
               )}
               aria-label="Edit agent configuration"
             >
-              <span>✏️</span> Edit
+              <EditIcon size={16} /> Edit
             </button>
           </>
         )}
@@ -670,7 +672,7 @@ export function AgentTab({
           )}
           aria-label={`Open inbox${unreadCount > 0 ? `, ${unreadCount} unread messages` : ""}`}
         >
-          <span>📥</span> Inbox
+          <InboxIcon size={16} /> Inbox
           {unreadCount > 0 && (
             <span
               className={classNames(
@@ -694,7 +696,7 @@ export function AgentTab({
           title={isRunning ? "Stop the agent before removing" : "Remove agent"}
           aria-label="Remove agent"
         >
-          <span>🗑</span> Remove
+          <TrashIcon size={16} /> Remove
         </button>
       </div>
     </div>

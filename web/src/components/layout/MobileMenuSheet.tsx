@@ -1,6 +1,18 @@
 import { Actor, GroupDoc } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
+import {
+  SearchIcon,
+  ClipboardIcon,
+  SettingsIcon,
+  SunIcon,
+  MoonIcon,
+  EditIcon,
+  PlayIcon,
+  StopIcon,
+  PauseIcon,
+  CloseIcon,
+} from "../Icons";
 
 export interface MobileMenuSheetProps {
   isOpen: boolean;
@@ -44,22 +56,19 @@ export function MobileMenuSheet({
   return (
     <div className="fixed inset-0 z-50 sm:hidden animate-fade-in">
       <div
-        className={isDark ? "absolute inset-0 bg-black/60 backdrop-blur-sm" : "absolute inset-0 bg-black/40 backdrop-blur-sm"}
+        className="absolute inset-0 glass-overlay"
         onClick={onClose}
         aria-hidden="true"
       />
 
       <div
-        className={classNames(
-          "absolute bottom-0 left-0 right-0 rounded-t-3xl border shadow-2xl animate-slide-up transform transition-transform",
-          isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
-        )}
+        className="absolute bottom-0 left-0 right-0 rounded-t-3xl glass-modal animate-slide-up transform transition-transform"
         role="dialog"
         aria-modal="true"
         aria-label="Menu"
       >
         <div className="flex justify-center pt-3 pb-1" onClick={onClose}>
-          <div className={`w-12 h-1.5 rounded-full opacity-50 ${isDark ? "bg-slate-600" : "bg-gray-300"}`} />
+          <div className={`w-12 h-1.5 rounded-full ${isDark ? "bg-white/20" : "bg-black/15"}`} />
         </div>
 
         <div className="px-6 pb-4 flex items-center justify-between gap-3">
@@ -83,12 +92,12 @@ export function MobileMenuSheet({
           <button
             onClick={onClose}
             className={classNames(
-              "p-2 rounded-full transition-colors",
-              isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              "p-2 rounded-full transition-colors glass-btn",
+              isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
             )}
             aria-label="Close menu"
           >
-            <div className="text-2xl leading-none">×</div>
+            <CloseIcon size={20} />
           </button>
         </div>
 
@@ -101,8 +110,8 @@ export function MobileMenuSheet({
 
           <button
             className={classNames(
-              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-              isDark ? "bg-slate-800/80 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+              isDark ? "text-slate-200" : "text-gray-800"
             )}
             onClick={() => {
               onClose();
@@ -110,17 +119,15 @@ export function MobileMenuSheet({
             }}
             disabled={!selectedGroupId}
           >
-            <span className="text-lg" aria-hidden="true">
-              🔍
-            </span>
+            <SearchIcon size={18} />
             <span>Search Messages</span>
           </button>
 
           <div className="grid grid-cols-2 gap-2">
             <button
               className={classNames(
-                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-                isDark ? "bg-slate-800/80 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+                isDark ? "text-slate-200" : "text-gray-800"
               )}
               onClick={() => {
                 onClose();
@@ -128,16 +135,14 @@ export function MobileMenuSheet({
               }}
               disabled={!selectedGroupId}
             >
-              <span className="text-lg" aria-hidden="true">
-                📋
-              </span>
+              <ClipboardIcon size={18} />
               <span>Context</span>
             </button>
 
             <button
               className={classNames(
-                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-                isDark ? "bg-slate-800/80 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+                isDark ? "text-slate-200" : "text-gray-800"
               )}
               onClick={() => {
                 onClose();
@@ -145,30 +150,26 @@ export function MobileMenuSheet({
               }}
               disabled={!selectedGroupId}
             >
-              <span className="text-lg" aria-hidden="true">
-                ⚙️
-              </span>
+              <SettingsIcon size={18} />
               <span>Settings</span>
             </button>
           </div>
 
           <button
             className={classNames(
-              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-              isDark ? "bg-slate-800/80 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+              isDark ? "text-slate-200" : "text-gray-800"
             )}
             onClick={onToggleTheme}
           >
-            <span className="text-lg" aria-hidden="true">
-              {isDark ? "☀️" : "🌙"}
-            </span>
+            {isDark ? <SunIcon size={18} /> : <MoonIcon size={18} />}
             <span>{isDark ? "Light Mode" : "Dark Mode"}</span>
           </button>
 
           <button
             className={classNames(
-              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-              isDark ? "bg-slate-800/80 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+              isDark ? "text-slate-200" : "text-gray-800"
             )}
             onClick={() => {
               onClose();
@@ -176,38 +177,39 @@ export function MobileMenuSheet({
             }}
             disabled={!selectedGroupId}
           >
-            <span className="text-lg" aria-hidden="true">
-              ✎
-            </span>
+            <EditIcon size={18} />
             <span>Edit Group Details</span>
           </button>
 
-          <div className={classNames("h-px my-3 mx-2", isDark ? "bg-slate-800" : "bg-gray-200")} />
+          <div className={classNames("h-px my-3 mx-2", isDark ? "bg-white/10" : "bg-black/10")} />
 
           <div className="grid grid-cols-2 gap-2">
             <button
               className={classNames(
-                "w-full flex flex-col items-center justify-center gap-1 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50",
+                "w-full flex flex-col items-center justify-center gap-2 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50",
                 isDark
-                  ? "bg-emerald-900/30 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-900/50"
-                  : "bg-emerald-50 border border-emerald-100 text-emerald-700 hover:bg-emerald-100"
+                  ? "glass-btn-accent text-emerald-300"
+                  : "glass-btn-accent text-emerald-700"
               )}
+              style={{
+                '--glass-accent-bg': isDark ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.1)',
+                '--glass-accent-border': isDark ? 'rgba(16, 185, 129, 0.25)' : 'rgba(16, 185, 129, 0.2)',
+                '--glass-accent-glow': isDark ? '0 0 20px rgba(16, 185, 129, 0.15)' : '0 0 16px rgba(16, 185, 129, 0.1)',
+              } as React.CSSProperties}
               onClick={() => {
                 onClose();
                 onStartGroup();
               }}
               disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
             >
-              <span className="text-xl" aria-hidden="true">
-                ▶
-              </span>
+              <PlayIcon size={20} />
               <span>Launch All</span>
             </button>
 
             <button
               className={classNames(
-                "w-full flex flex-col items-center justify-center gap-1 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                "w-full flex flex-col items-center justify-center gap-2 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50 glass-btn",
+                isDark ? "text-slate-300" : "text-gray-600"
               )}
               onClick={() => {
                 onClose();
@@ -215,9 +217,7 @@ export function MobileMenuSheet({
               }}
               disabled={!selectedGroupId || busy === "group-stop"}
             >
-              <span className="text-xl" aria-hidden="true">
-                ⏹
-              </span>
+              <StopIcon size={20} />
               <span>Quit All</span>
             </button>
           </div>
@@ -227,25 +227,28 @@ export function MobileMenuSheet({
               className={classNames(
                 "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
                 isDark
-                  ? "bg-amber-900/30 border border-amber-500/20 text-amber-300 hover:bg-amber-900/50"
-                  : "bg-amber-50 border border-amber-100 text-amber-700 hover:bg-amber-100"
+                  ? "glass-btn-accent text-amber-300"
+                  : "glass-btn-accent text-amber-700"
               )}
+              style={{
+                '--glass-accent-bg': isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
+                '--glass-accent-border': isDark ? 'rgba(245, 158, 11, 0.25)' : 'rgba(245, 158, 11, 0.2)',
+                '--glass-accent-glow': isDark ? '0 0 20px rgba(245, 158, 11, 0.15)' : '0 0 16px rgba(245, 158, 11, 0.1)',
+              } as React.CSSProperties}
               onClick={() => {
                 onClose();
                 void onSetGroupState("active");
               }}
               disabled={!selectedGroupId || busy === "group-state"}
             >
-              <span className="text-lg" aria-hidden="true">
-                ▶
-              </span>
+              <PlayIcon size={18} />
               <span>Resume Message Delivery</span>
             </button>
           ) : (
             <button
               className={classNames(
-                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+                isDark ? "text-slate-300" : "text-gray-600"
               )}
               onClick={() => {
                 onClose();
@@ -253,9 +256,7 @@ export function MobileMenuSheet({
               }}
               disabled={!selectedGroupId || busy === "group-state"}
             >
-              <span className="text-lg" aria-hidden="true">
-                ⏸
-              </span>
+              <PauseIcon size={18} />
               <span>Pause Message Delivery</span>
             </button>
           )}

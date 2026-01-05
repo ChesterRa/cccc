@@ -5,7 +5,7 @@
 @tailwind utilities;
 
 /* ============================================
-   CCCC Web UI - Theme System
+   CCCC Web UI - Theme System with Liquid Glass
    ============================================ */
 
 /* CSS Custom Properties for theming */
@@ -16,6 +16,23 @@
   --color-bg-tertiary: #f1f5f9;
   --color-bg-elevated: #ffffff;
   --color-bg-overlay: rgba(0, 0, 0, 0.5);
+  
+  /* Liquid Glass Light Theme */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-hover: rgba(255, 255, 255, 0.85);
+  --glass-bg-active: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-border-subtle: rgba(0, 0, 0, 0.06);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --glass-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.12), 0 4px 16px rgba(0, 0, 0, 0.06);
+  --glass-glow: 0 0 0 1px rgba(255, 255, 255, 0.8) inset, 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  --glass-blur: 20px;
+  --glass-blur-lg: 40px;
+  
+  /* Accent glass for buttons */
+  --glass-accent-bg: rgba(6, 182, 212, 0.12);
+  --glass-accent-border: rgba(6, 182, 212, 0.25);
+  --glass-accent-glow: 0 0 20px rgba(6, 182, 212, 0.15);
   
   --color-border-primary: #e2e8f0;
   --color-border-secondary: #cbd5e1;
@@ -64,6 +81,23 @@
   --color-bg-tertiary: #1e293b; /* Slate-800 */
   --color-bg-elevated: #0f172a;
   --color-bg-overlay: rgba(0, 0, 0, 0.7);
+  
+  /* Liquid Glass Dark Theme */
+  --glass-bg: rgba(15, 23, 42, 0.75);
+  --glass-bg-hover: rgba(30, 41, 59, 0.85);
+  --glass-bg-active: rgba(30, 41, 59, 0.95);
+  --glass-border: rgba(148, 163, 184, 0.12);
+  --glass-border-subtle: rgba(148, 163, 184, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --glass-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --glass-glow: 0 0 0 1px rgba(148, 163, 184, 0.1) inset, 0 1px 0 rgba(148, 163, 184, 0.15) inset;
+  --glass-blur: 20px;
+  --glass-blur-lg: 40px;
+  
+  /* Accent glass for buttons */
+  --glass-accent-bg: rgba(34, 211, 238, 0.1);
+  --glass-accent-border: rgba(34, 211, 238, 0.2);
+  --glass-accent-glow: 0 0 24px rgba(34, 211, 238, 0.12);
   
   --color-border-primary: #1e293b;
   --color-border-secondary: #334155;
@@ -417,5 +451,196 @@ select,
 
 .safe-area-inset-top {
   padding-top: env(safe-area-inset-top, 0);
+}
+
+/* ============================================
+   Liquid Glass Design System
+   ============================================ */
+
+/* Base glass panel */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-glow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass:hover {
+  background: var(--glass-bg-hover);
+}
+
+.glass-lg {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow-lg), var(--glass-glow);
+}
+
+/* Glass card variant */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  background: var(--glass-bg-hover);
+  box-shadow: var(--glass-shadow-lg);
+  transform: translateY(-1px);
+}
+
+/* Glass button - simplified */
+.glass-btn {
+  background: transparent;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-btn:hover {
+  background: var(--glass-bg-hover);
+}
+
+.glass-btn:active {
+  background: var(--glass-bg-active);
+}
+
+/* Accent glass button - simplified */
+.glass-btn-accent {
+  background: var(--glass-accent-bg);
+  border: 1px solid var(--glass-accent-border);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-btn-accent:hover {
+  background: rgba(6, 182, 212, 0.2);
+}
+
+.dark .glass-btn-accent:hover {
+  background: rgba(34, 211, 238, 0.18);
+}
+
+/* Glass input */
+.glass-input {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid var(--glass-border-subtle);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02) inset;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-input:focus {
+  background: var(--glass-bg-active);
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15), var(--glass-accent-glow);
+}
+
+/* Glass modal/sheet */
+.glass-modal {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow-lg);
+}
+
+/* Glass sidebar */
+.glass-sidebar {
+  background: linear-gradient(
+    135deg,
+    var(--glass-bg) 0%,
+    rgba(255, 255, 255, 0.65) 100%
+  );
+  backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
+  border-right: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-glow);
+}
+
+.dark .glass-sidebar {
+  background: linear-gradient(
+    135deg,
+    rgba(15, 23, 42, 0.8) 0%,
+    rgba(15, 23, 42, 0.7) 100%
+  );
+}
+
+/* Glass header - simplified */
+.glass-header {
+  background: transparent;
+  border-bottom: 1px solid var(--glass-border-subtle);
+}
+
+/* Liquid shimmer animation */
+@keyframes liquid-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.liquid-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: liquid-shimmer 3s ease-in-out infinite;
+}
+
+.dark .liquid-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(148, 163, 184, 0.08) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+}
+
+/* Liquid blob animation for background */
+@keyframes liquid-morph {
+  0%, 100% {
+    border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+  }
+  50% {
+    border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%;
+  }
+}
+
+.liquid-blob {
+  animation: liquid-morph 8s ease-in-out infinite;
+}
+
+/* Glow effect - disabled for cleaner look */
+.glow-pulse {
+  /* animation removed for cleaner UI */
+}
+
+/* Smooth transition for all interactive elements */
+.glass-transition {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Glass overlay for modals */
+.glass-overlay {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.dark .glass-overlay {
+  background: rgba(0, 0, 0, 0.5);
 }
 
