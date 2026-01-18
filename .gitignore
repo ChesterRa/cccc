@@ -53,7 +53,7 @@
 
 # Local agent guide (not committed)
 AGENTS.md
-
+.claude/skills
 .shared/
 .agent/
 .codex/

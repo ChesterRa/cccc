@@ -304,6 +304,12 @@ def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
     token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
     if not token:
         return None
+
+    # Skip auth for static UI assets (frontend code is public, only protect API)
+    path = str(request.url.path or "")
+    if path.startswith("/ui/") or path == "/ui":
+        return None
+
     auth = str(request.headers.get("authorization") or "").strip()
     if auth == f"Bearer {token}":
         return None
@@ -443,20 +449,25 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def _auth(request: Request, call_next):  # type: ignore[no-untyped-def]
         token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
-        q = str(request.query_params.get("token") or "").strip()
 
         blocked = _require_token_if_configured(request)
         if blocked is not None:
             return blocked
 
         resp = await call_next(request)
-        if token and q and q == token and str(request.cookies.get("cccc_web_token") or "").strip() != token:
+        # Set cookie on any successful auth if not already set (enables WebSocket auth)
+        if token and str(request.cookies.get("cccc_web_token") or "").strip() != token:
+            # Detect real protocol: env override > proxy header > request scheme
+            # Set CCCC_WEB_SECURE=1 when behind HTTPS proxy that doesn't send X-Forwarded-Proto
+            force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")
+            forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").strip().lower()
+            actual_scheme = "https" if force_secure else (forwarded_proto if forwarded_proto in ("http", "https") else str(getattr(request.url, "scheme", "") or "").lower())
             resp.set_cookie(
                 key="cccc_web_token",
                 value=token,
                 httponly=True,
-                samesite="lax",
-                secure=str(getattr(request.url, "scheme", "") or "").lower() == "https",
+                samesite="none" if actual_scheme == "https" else "lax",
+                secure=actual_scheme == "https",
                 path="/",
             )
         return resp

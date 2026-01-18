@@ -5,6 +5,18 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      // Z-index scale for consistent layering
+      // Usage: z-base, z-header, z-dropdown, z-sidebar, z-modal, z-overlay, z-tooltip, z-max
+      zIndex: {
+        'base': '10',      // Sticky elements, basic UI
+        'header': '20',    // App header
+        'dropdown': '30',  // Dropdown menus, popover
+        'sidebar': '40',   // Sidebar, secondary notifications
+        'modal': '50',     // Modal dialogs
+        'overlay': '60',   // Full-screen overlays (drag-drop)
+        'tooltip': '200',  // Floating tooltips
+        'max': '9999',     // Maximum priority (rare)
+      },
       colors: {
         // Semantic colors using CSS variables
         bg: {

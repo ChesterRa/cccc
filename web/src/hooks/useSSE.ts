@@ -139,7 +139,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       eventSourceRef.current = null;
     }
 
-    const es = new EventSource(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`);
+    const es = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`));
     es.addEventListener("ledger", (e) => {
       const msg = e as MessageEvent;
       try {

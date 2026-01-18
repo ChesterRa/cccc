@@ -15,6 +15,50 @@ import type {
   IMPlatform,
 } from "../types";
 
+// ============ Token management ============
+
+// Extract and cache token from URL for dev mode (Vite doesn't proxy /ui/ to backend)
+let cachedToken: string | null = null;
+
+function getAuthToken(): string | null {
+  if (cachedToken !== null) return cachedToken || null;
+
+  // Check URL param first
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get("token");
+  if (urlToken) {
+    cachedToken = urlToken;
+    // Store in sessionStorage for page refreshes (dev mode only)
+    try { sessionStorage.setItem("cccc_dev_token", urlToken); } catch {}
+    return urlToken;
+  }
+
+  // Fallback to sessionStorage (for dev mode page refreshes)
+  try {
+    const stored = sessionStorage.getItem("cccc_dev_token");
+    if (stored) {
+      cachedToken = stored;
+      return stored;
+    }
+  } catch {}
+
+  cachedToken = "";
+  return null;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Build URL with token query param (for EventSource which doesn't support headers)
+export function withAuthToken(url: string): string {
+  const token = getAuthToken();
+  if (!token) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
+}
+
 // ============ Base types & helpers ============
 
 export type ApiResponse<T> =
@@ -33,6 +77,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
       ...init,
       headers: {
         "content-type": "application/json",
+        ...getAuthHeaders(),
         ...(init?.headers || {}),
       },
     });
@@ -67,6 +112,7 @@ export async function apiForm<T>(path: string, form: FormData, init?: RequestIni
       method: init?.method || "POST",
       body: form,
       headers: {
+        ...getAuthHeaders(),
         ...(init?.headers || {}),
       },
     });

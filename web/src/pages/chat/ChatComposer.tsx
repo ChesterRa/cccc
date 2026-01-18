@@ -87,7 +87,7 @@ export function ChatComposer({
   onAppendRecipientToken,
 }: ChatComposerProps) {
   const chipBaseClass =
-    "flex-shrink-0 whitespace-nowrap text-[11px] px-3 rounded-full border transition-all flex items-center justify-center font-medium";
+    "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
 
   // Get display name for reply target
   const replyByDisplayName = useMemo(() => {
@@ -292,7 +292,7 @@ export function ChatComposer({
   return (
     <footer
       className={classNames(
-        "flex-shrink-0 border-t px-4 py-3 safe-area-inset-bottom transition-colors",
+        "flex-shrink-0 border-t px-3 sm:px-4 py-2.5 sm:py-3 safe-area-bottom-compact transition-colors",
         isDark ? "border-white/5 bg-slate-950/90 backdrop-blur-md" : "border-black/5 bg-white/95 backdrop-blur-md"
       )}
     >
@@ -325,9 +325,9 @@ export function ChatComposer({
       )}
 
       {/* Recipient Selector Row */}
-      <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2.5">
-        <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
-          <div className={classNames("text-[10px] font-bold uppercase tracking-wider flex-shrink-0", isDark ? "text-slate-500" : "text-gray-400")}>To</div>
+      <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0 opacity-50", isDark ? "text-slate-400" : "text-gray-500")}>To</div>
 
           {/* Group Selector - Styled to match buttons */}
           <div className="relative flex-shrink-0">
@@ -359,7 +359,7 @@ export function ChatComposer({
 
           {/* Recipients List - Scrollable horizontally on mobile */}
           <div className={classNames(
-            "flex items-center gap-1.5 min-w-0 transition-opacity",
+            "flex items-center gap-1 sm:gap-1.5 min-w-0 transition-opacity",
             recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
           )}>
             {/* Special tokens */}
@@ -369,7 +369,7 @@ export function ChatComposer({
                 <button
                   key={tok}
                   className={classNames(
-                    "h-8", // Fixed height
+                    "h-7 sm:h-8", // Fixed height, smaller on mobile
                     chipBaseClass,
                     active
                       ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
@@ -394,7 +394,7 @@ export function ChatComposer({
                 <button
                   key={id}
                   className={classNames(
-                    "h-8", // Fixed height
+                    "h-7 sm:h-8", // Fixed height, smaller on mobile
                     chipBaseClass,
                     active
                       ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
@@ -456,7 +456,7 @@ export function ChatComposer({
       )}
 
       {/* Main Input Area - Perfectly Centered for Better Alignment */}
-      <div className="flex gap-2.5 relative items-center">
+      <div className="flex gap-2 sm:gap-2.5 relative items-center">
         <input
           ref={fileInputRef}
           type="file"
@@ -472,7 +472,7 @@ export function ChatComposer({
         {/* Attachment Button */}
         <button
           className={classNames(
-            "w-11 h-11 rounded-2xl flex items-center justify-center transition-all flex-shrink-0 shadow-sm border group",
+            "w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
             isDark
               ? "bg-slate-900 border-white/5 text-slate-400 hover:text-white hover:bg-slate-800"
               : "bg-white border-black/5 text-gray-500 hover:text-gray-900 hover:bg-gray-50"
@@ -481,7 +481,7 @@ export function ChatComposer({
           disabled={!selectedGroupId || busy === "send" || isCrossGroup}
           title={fileDisabledReason}
         >
-          <AttachmentIcon size={20} className="group-active:scale-90 transition-transform" />
+          <AttachmentIcon size={18} className="sm:w-5 sm:h-5 group-active:scale-90 transition-transform" />
         </button>
 
         {/* Text Area Wrapper */}
@@ -489,7 +489,7 @@ export function ChatComposer({
           <textarea
             ref={composerRef}
             className={classNames(
-              "w-full rounded-2xl border px-4 py-2.5 text-sm resize-none min-h-[44px] max-h-[160px] transition-all",
+              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition-all",
               "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center",
               isDark
                 ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/40 focus:border-blue-500/50"
@@ -541,7 +541,7 @@ export function ChatComposer({
         {/* Importance Toggle - Modern Icon-based toggle */}
         <button
           className={classNames(
-            "w-11 h-11 rounded-2xl flex items-center justify-center transition-all flex-shrink-0 shadow-sm border group",
+            "w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
             isAttention
               ? isDark
                 ? "bg-amber-500/20 border-amber-500/30 text-amber-500"
@@ -554,13 +554,13 @@ export function ChatComposer({
           disabled={busy === "send" || !selectedGroupId}
           title="Mark as important (requires acknowledgement)"
         >
-          <AlertIcon size={20} className={classNames("transition-transform group-active:scale-95", isAttention ? "animate-pulse" : "opacity-60")} />
+          <AlertIcon size={18} className={classNames("sm:w-5 sm:h-5 transition-transform group-active:scale-95", isAttention ? "animate-pulse" : "opacity-60")} />
         </button>
 
         {/* Send button - Using icon for modern feel */}
         <button
           className={classNames(
-            "w-11 h-11 sm:w-20 rounded-2xl flex items-center justify-center transition-all flex-shrink-0 shadow-sm disabled:opacity-50",
+            "w-10 h-10 sm:w-20 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-50",
             busy === "send" || !canSend
               ? isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
               : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 group active:scale-95"
@@ -570,10 +570,10 @@ export function ChatComposer({
           aria-label="Send message"
         >
           {busy === "send" ? (
-            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
             <>
-              <SendIcon size={20} className="sm:hidden" />
+              <SendIcon size={18} className="sm:hidden" />
               <span className="hidden sm:inline font-bold">Send</span>
             </>
           )}

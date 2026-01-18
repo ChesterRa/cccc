@@ -1246,6 +1246,126 @@ def _find_scope_url(group: Any, scope_key: str) -> str:
     return ""
 
 
+def _start_actor_process(
+    group: Any,
+    actor_id: str,
+    *,
+    command: List[str],
+    env: Dict[str, str],
+    runner: str,
+    runtime: str,
+    by: str,
+) -> Dict[str, Any]:
+    """Start actor PTY/headless session.
+
+    This is the common startup logic used by both actor_add and actor_start.
+
+    Returns:
+        {
+            "success": True/False,
+            "event": {...} or None,  # actor.start event if successful
+            "effective_runner": "pty"/"headless" or None,
+            "error": "..." or None,  # error message if failed
+        }
+    """
+    # Get working directory from scope
+    group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
+    if not group_scope_key:
+        return {"success": False, "error": "no active scope for group"}
+
+    actor = find_actor(group, actor_id)
+    if actor is None:
+        return {"success": False, "error": f"actor not found: {actor_id}"}
+
+    scope_key = str(actor.get("default_scope_key") or group_scope_key).strip()
+    url = _find_scope_url(group, scope_key)
+    if not url:
+        return {"success": False, "error": f"scope not attached: {scope_key}"}
+
+    cwd = Path(url).expanduser().resolve()
+    if not cwd.exists():
+        return {"success": False, "error": f"project root path does not exist: {cwd}"}
+
+    # Validate runtime
+    if runtime not in SUPPORTED_RUNTIMES:
+        return {"success": False, "error": f"unsupported runtime: {runtime}"}
+
+    effective_runner = _effective_runner_kind(runner)
+
+    # Validate custom runtime
+    if runtime == "custom" and effective_runner != "headless" and not command:
+        return {"success": False, "error": "custom runtime requires a command (PTY runner)"}
+
+    # Ensure MCP is installed for the runtime
+    try:
+        _ensure_mcp_installed(runtime, cwd)
+    except Exception as e:
+        return {"success": False, "error": f"failed to install MCP: {e}"}
+
+    # Start the session
+    try:
+        if effective_runner == "headless":
+            # Start headless session (no PTY, MCP-driven)
+            headless_runner.SUPERVISOR.start_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+            )
+            try:
+                _write_headless_state(group.group_id, actor_id)
+            except Exception:
+                pass
+        else:
+            # Start PTY session (interactive terminal)
+            session = pty_runner.SUPERVISOR.start_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                command=list(command or []),
+                env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                max_backlog_bytes=_pty_backlog_bytes(),
+            )
+            try:
+                _write_pty_state(group.group_id, actor_id, pid=session.pid)
+            except Exception:
+                pass
+    except Exception as e:
+        return {"success": False, "error": f"failed to start session: {e}"}
+
+    # Clear preamble state so system prompt will be injected on first message
+    clear_preamble_sent(group, actor_id)
+    # Reset delivery metadata but keep queued messages.
+    THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
+
+    # Mark group as running
+    try:
+        group.doc["running"] = True
+        group.save()
+    except Exception:
+        pass
+
+    # Record actor.start event
+    start_data: Dict[str, Any] = {"actor_id": actor_id, "runner": runner}
+    if effective_runner != runner:
+        start_data["runner_effective"] = effective_runner
+    start_event = append_event(
+        group.ledger_path,
+        kind="actor.start",
+        group_id=group.group_id,
+        scope_key="",
+        by=by,
+        data=start_data,
+    )
+
+    return {
+        "success": True,
+        "event": start_event,
+        "effective_runner": effective_runner,
+        "error": None,
+    }
+
+
 def _normalize_attachments(group: Any, raw: Any) -> list[dict[str, Any]]:
     if raw is None:
         return []
@@ -2350,7 +2470,31 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             pass
         # If foreman changes (e.g., first actor created/recreated), restart automation timers to avoid bursts.
         _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
-        return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
+
+        # Auto-start the actor immediately after adding (add = add + start)
+        # This ensures the PTY/headless session is running and ready to receive messages.
+        start_result = _start_actor_process(
+            group,
+            actor_id,
+            command=command,
+            env=env,
+            runner=runner,
+            runtime=runtime,
+            by=by,
+        )
+
+        result: Dict[str, Any] = {"actor": actor, "event": ev}
+        if start_result["success"]:
+            result["start_event"] = start_result["event"]
+            result["running"] = True
+            if start_result.get("effective_runner") != runner:
+                result["runner_effective"] = start_result.get("effective_runner")
+        else:
+            result["start_error"] = start_result.get("error")
+            result["running"] = False
+        if forced_headless:
+            result["runner_effective"] = "headless"
+        return DaemonResponse(ok=True, result=result), False
 
     if op == "actor_remove":
         group_id = str(args.get("group_id") or "").strip()
@@ -2579,143 +2723,33 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             actor = update_actor(group, actor_id, {"enabled": True})
         except Exception as e:
             return _error("actor_start_failed", str(e)), False
-        
-        # Start the actor process immediately (no group.running check needed)
-        group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
-        if not group_scope_key:
-            return (
-                _error(
-                    "missing_project_root",
-                    "missing project root for group (no active scope)",
-                    details={"hint": "Attach a project root first (e.g. cccc attach <path> --group <id>)"},
-                ),
-                False,
-            )
-        scope_key = str(actor.get("default_scope_key") or group_scope_key).strip()
-        url = _find_scope_url(group, scope_key)
-        if not url:
-            return (
-                _error(
-                    "scope_not_attached",
-                    f"scope not attached: {scope_key}",
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "scope_key": scope_key,
-                        "hint": "Attach this scope to the group (cccc attach <path> --group <id>)",
-                    },
-                ),
-                False,
-            )
-        cwd = Path(url).expanduser().resolve()
-        if not cwd.exists():
-            return (
-                _error(
-                    "invalid_project_root",
-                    "project root path does not exist",
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "scope_key": scope_key,
-                        "path": str(cwd),
-                        "hint": "Re-attach a valid project root (cccc attach <path> --group <id>)",
-                    },
-                ),
-                False,
-            )
+
+        # Get actor configuration
         cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
         env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
         runner_kind = str(actor.get("runner") or "pty").strip()
-        effective_runner = _effective_runner_kind(runner_kind)
-        forced_headless = effective_runner == "headless" and runner_kind != "headless" and not _pty_supported()
-
-        # Ensure MCP is installed for the runtime BEFORE starting the actor
         runtime = str(actor.get("runtime") or "codex").strip()
-        if runtime not in SUPPORTED_RUNTIMES:
-            return (
-                _error(
-                    "unsupported_runtime",
-                    f"unsupported runtime: {runtime}",
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "runtime": runtime,
-                        "supported": list(SUPPORTED_RUNTIMES),
-                        "hint": "Change the actor runtime to a supported one.",
-                    },
-                ),
-                False,
-            )
-        if runtime == "custom" and effective_runner != "headless" and not cmd:
-            return (
-                _error(
-                    "missing_command",
-                    "custom runtime requires a command (PTY runner)",
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "runtime": runtime,
-                        "hint": "Set actor.command (or switch runner to headless).",
-                    },
-                ),
-                False,
-            )
-        _ensure_mcp_installed(runtime, cwd)
+        forced_headless = _effective_runner_kind(runner_kind) == "headless" and runner_kind != "headless" and not _pty_supported()
 
-        if effective_runner == "headless":
-            # Start headless session (no PTY, MCP-driven)
-            headless_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id,
-                actor_id=actor_id,
-                cwd=cwd,
-                env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
-            )
-            try:
-                _write_headless_state(group.group_id, actor_id)
-            except Exception:
-                pass
-        else:
-            # Start PTY session (interactive terminal)
-            session = pty_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id,
-                actor_id=actor_id,
-                cwd=cwd,
-                command=list(cmd or []),
-                env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
-                max_backlog_bytes=_pty_backlog_bytes(),
-            )
-            try:
-                _write_pty_state(group.group_id, actor_id, pid=session.pid)
-            except Exception:
-                pass
-        
-        # Clear preamble state so system prompt will be injected on first message
-        clear_preamble_sent(group, actor_id)
-        # Reset delivery metadata but keep queued messages.
-        THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
+        # Start the actor process using common function
+        start_result = _start_actor_process(
+            group,
+            actor_id,
+            command=list(cmd or []),
+            env=dict(env or {}),
+            runner=runner_kind,
+            runtime=runtime,
+            by=by,
+        )
 
-        try:
-            group.doc["running"] = True
-            group.save()
-        except Exception:
-            pass
+        if not start_result["success"]:
+            return _error("actor_start_failed", start_result.get("error") or "unknown error"), False
 
         _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
 
-        data: Dict[str, Any] = {"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")}
-        if forced_headless:
-            data["runner_effective"] = "headless"
-        ev = append_event(
-            group.ledger_path,
-            kind="actor.start",
-            group_id=group.group_id,
-            scope_key="",
-            by=by,
-            data=data,
-        )
-        result: Dict[str, Any] = {"actor": actor, "event": ev}
-        if forced_headless:
-            result["runner_effective"] = "headless"
+        result: Dict[str, Any] = {"actor": actor, "event": start_result["event"]}
+        if forced_headless or start_result.get("effective_runner") != runner_kind:
+            result["runner_effective"] = start_result.get("effective_runner") or "headless"
         return DaemonResponse(ok=True, result=result), False
 
     if op == "actor_stop":

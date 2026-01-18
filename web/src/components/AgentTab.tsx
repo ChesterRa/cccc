@@ -8,6 +8,7 @@ import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
 import { useObservabilityStore } from "../stores";
+import { withAuthToken } from "../services/api";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -314,7 +315,7 @@ export function AgentTab({
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actor.id)}/term`;
 
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(withAuthToken(wsUrl));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 

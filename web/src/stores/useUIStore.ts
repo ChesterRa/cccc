@@ -15,6 +15,7 @@ interface UIState {
   notice: UINotice | null;
   isTransitioning: boolean;
   sidebarOpen: boolean;
+  sidebarCollapsed: boolean; // Desktop sidebar collapsed state
   showScrollButton: boolean;
   chatUnreadCount: number;
   isSmallScreen: boolean;
@@ -31,6 +32,8 @@ interface UIState {
   dismissNotice: () => void;
   setTransitioning: (v: boolean) => void;
   setSidebarOpen: (v: boolean) => void;
+  setSidebarCollapsed: (v: boolean) => void;
+  toggleSidebarCollapsed: () => void;
   setShowScrollButton: (v: boolean) => void;
   setChatUnreadCount: (v: number) => void;
   incrementChatUnread: () => void;
@@ -41,6 +44,25 @@ interface UIState {
 
 let errorTimeoutId: number | null = null;
 
+// localStorage key for sidebar collapsed state
+const SIDEBAR_COLLAPSED_KEY = "cccc-sidebar-collapsed";
+
+function loadSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveSidebarCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export const useUIStore = create<UIState>((set) => ({
   // Initial state
   activeTab: "chat",
@@ -49,6 +71,7 @@ export const useUIStore = create<UIState>((set) => ({
   notice: null,
   isTransitioning: false,
   sidebarOpen: true,
+  sidebarCollapsed: loadSidebarCollapsed(),
   showScrollButton: false,
   chatUnreadCount: 0,
   isSmallScreen: false,
@@ -82,6 +105,16 @@ export const useUIStore = create<UIState>((set) => ({
 
   setTransitioning: (v) => set({ isTransitioning: v }),
   setSidebarOpen: (v) => set({ sidebarOpen: v }),
+  setSidebarCollapsed: (v) => {
+    saveSidebarCollapsed(v);
+    set({ sidebarCollapsed: v });
+  },
+  toggleSidebarCollapsed: () =>
+    set((state) => {
+      const next = !state.sidebarCollapsed;
+      saveSidebarCollapsed(next);
+      return { sidebarCollapsed: next };
+    }),
   setShowScrollButton: (v) => set({ showScrollButton: v }),
   setChatUnreadCount: (v) => set({ chatUnreadCount: v }),
   incrementChatUnread: () => set((state) => ({ chatUnreadCount: state.chatUnreadCount + 1 })),

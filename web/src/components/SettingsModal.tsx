@@ -80,7 +80,7 @@ function ScopeTooltip({
             ref={refs.setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className={`z-[9999] w-max max-w-[220px] rounded-lg border shadow-xl px-3 py-2 text-[11px] transition-opacity duration-150 ${isPositioned ? "opacity-100" : "opacity-0"
+            className={`z-max w-max max-w-[220px] rounded-lg border shadow-xl px-3 py-2 text-[11px] transition-opacity duration-150 ${isPositioned ? "opacity-100" : "opacity-0"
               } ${isDark ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-gray-200 text-gray-600"
               }`}
           >

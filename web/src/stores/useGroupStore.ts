@@ -14,6 +14,7 @@ import * as api from "../services/api";
 interface GroupState {
   // Data
   groups: GroupMeta[];
+  groupOrder: string[]; // Group IDs in user-defined order
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   events: LedgerEvent[];
@@ -35,6 +36,9 @@ interface GroupState {
 
   // Actions
   setGroups: (groups: GroupMeta[]) => void;
+  setGroupOrder: (order: string[]) => void;
+  reorderGroups: (fromIndex: number, toIndex: number) => void;
+  getOrderedGroups: () => GroupMeta[];
   setSelectedGroupId: (id: string) => void;
   setGroupDoc: (doc: GroupDoc | null) => void;
   setEvents: (events: LedgerEvent[]) => void;
@@ -62,6 +66,43 @@ interface GroupState {
 
 const MAX_UI_EVENTS = 800;
 
+// localStorage key for group order
+const GROUP_ORDER_KEY = "cccc-group-order";
+
+function loadGroupOrder(): string[] {
+  try {
+    const stored = localStorage.getItem(GROUP_ORDER_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return [];
+}
+
+function saveGroupOrder(order: string[]): void {
+  try {
+    localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Merge stored order with current groups: preserve order for existing groups, append new ones at end
+function mergeGroupOrder(storedOrder: string[], groups: GroupMeta[]): string[] {
+  const currentIds = new Set(groups.map((g) => String(g.group_id || "")));
+  // Keep only IDs that still exist in the current group list
+  const validOrder = storedOrder.filter((id) => currentIds.has(id));
+  // Find new groups not in stored order
+  const orderedSet = new Set(validOrder);
+  const newIds = groups
+    .map((g) => String(g.group_id || ""))
+    .filter((id) => id && !orderedSet.has(id));
+  return [...validOrder, ...newIds];
+}
+
 // In-flight guards
 let refreshGroupsInFlight = false;
 let refreshGroupsQueued = false;
@@ -71,6 +112,7 @@ const refreshActorsQueued = new Set<string>();
 export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
   groups: [],
+  groupOrder: loadGroupOrder(),
   selectedGroupId: "",
   groupDoc: null,
   events: [],
@@ -84,7 +126,38 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   isChatWindowLoading: false,
 
   // Sync actions
-  setGroups: (groups) => set({ groups }),
+  setGroups: (groups) => {
+    const storedOrder = get().groupOrder;
+    const mergedOrder = mergeGroupOrder(storedOrder, groups);
+    saveGroupOrder(mergedOrder);
+    set({ groups, groupOrder: mergedOrder });
+  },
+  setGroupOrder: (order) => {
+    saveGroupOrder(order);
+    set({ groupOrder: order });
+  },
+  reorderGroups: (fromIndex, toIndex) => {
+    const order = get().groupOrder.slice();
+    const [moved] = order.splice(fromIndex, 1);
+    order.splice(toIndex, 0, moved);
+    saveGroupOrder(order);
+    set({ groupOrder: order });
+  },
+  getOrderedGroups: () => {
+    const { groups, groupOrder } = get();
+    const groupMap = new Map(groups.map((g) => [String(g.group_id || ""), g]));
+    const ordered: GroupMeta[] = [];
+    for (const id of groupOrder) {
+      const g = groupMap.get(id);
+      if (g) ordered.push(g);
+    }
+    // Include any groups not in order (shouldn't happen normally, but be safe)
+    for (const g of groups) {
+      const id = String(g.group_id || "");
+      if (!groupOrder.includes(id)) ordered.push(g);
+    }
+    return ordered;
+  },
   setSelectedGroupId: (id) => set({ selectedGroupId: id }),
   setGroupDoc: (doc) => set({ groupDoc: doc }),
   setEvents: (events) => set({ events }),
@@ -220,7 +293,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const resp = await api.fetchGroups();
       if (resp.ok) {
         const next = resp.result.groups || [];
-        set({ groups: next });
+        // Use setGroups to ensure groupOrder is updated
+        get().setGroups(next);
 
         const cur = get().selectedGroupId;
         const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);

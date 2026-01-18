@@ -15,6 +15,7 @@ import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
+import { ImageIcon, FileIcon } from "./Icons";
 
 
 function formatEventLine(ev: LedgerEvent): string {
@@ -55,7 +56,7 @@ function ImagePreview({
                 title={`Download ${alt}`}
                 download
             >
-                <span className="opacity-70">🖼️</span>
+                <ImageIcon size={14} className="opacity-70 flex-shrink-0" />
                 <span className="truncate">{alt}</span>
             </a>
         );
@@ -476,7 +477,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                     title={`Download ${label}`}
                                                     download
                                                 >
-                                                    <span className="opacity-70">📎</span>
+                                                    <FileIcon size={14} className="opacity-70 flex-shrink-0" />
                                                     <span className="truncate">{label}</span>
                                                 </a>
                                             );
@@ -626,7 +627,7 @@ export const MessageBubble = memo(function MessageBubble({
                             style={floatingStyles}
                             {...getFloatingProps()}
                             className={classNames(
-                                "z-[200] w-[360px] rounded-xl border shadow-2xl px-3 py-2",
+                                "z-tooltip w-[360px] rounded-xl border shadow-2xl px-3 py-2",
                                 isDark
                                     ? "bg-slate-900/95 border-white/10 text-slate-200"
                                     : "bg-white/95 border-black/10 text-gray-900"

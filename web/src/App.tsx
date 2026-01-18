@@ -43,6 +43,7 @@ export default function App() {
   // Zustand stores
   const {
     groups,
+    groupOrder,
     selectedGroupId,
     groupDoc,
     events,
@@ -60,6 +61,8 @@ export default function App() {
     loadMoreHistory,
     openChatWindow,
     closeChatWindow,
+    reorderGroups,
+    getOrderedGroups,
   } = useGroupStore();
 
   const {
@@ -68,6 +71,7 @@ export default function App() {
     notice,
     isTransitioning,
     sidebarOpen,
+    sidebarCollapsed,
     activeTab,
     showScrollButton,
     chatUnreadCount,
@@ -80,6 +84,7 @@ export default function App() {
     dismissNotice,
     showNotice,
     setSidebarOpen,
+    toggleSidebarCollapsed,
     setActiveTab,
     setShowScrollButton,
     setChatUnreadCount,
@@ -216,6 +221,8 @@ export default function App() {
   // Computed values
   const projectRoot = useMemo(() => getProjectRoot(groupDoc), [groupDoc]);
   const hasForeman = useMemo(() => actors.some((a) => a.role === "foreman"), [actors]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- groups and groupOrder trigger recalculation
+  const orderedGroups = useMemo(() => getOrderedGroups(), [groups, groupOrder]);
   const selectedGroupMeta = useMemo(
     () => groups.find((g) => String(g.group_id || "") === selectedGroupId) || null,
     [groups, selectedGroupId]
@@ -453,7 +460,7 @@ export default function App() {
     let errorCount = 0;
 
     function connectSSE() {
-      es = new EventSource("/api/v1/events/stream");
+      es = new EventSource(api.withAuthToken("/api/v1/events/stream"));
       es.addEventListener("event", (e) => {
         try {
           const ev = JSON.parse((e as MessageEvent).data || "{}");
@@ -880,11 +887,15 @@ export default function App() {
         }}
       />
 
-      <div className="relative h-full grid grid-cols-1 md:grid-cols-[280px_1fr] transition-all duration-300">
+      <div className={`relative h-full grid grid-cols-1 transition-all duration-300 ${
+        sidebarCollapsed ? "md:grid-cols-[60px_1fr]" : "md:grid-cols-[280px_1fr]"
+      }`}>
         <GroupSidebar
-          groups={groups}
+          orderedGroups={orderedGroups}
+          groupOrder={groupOrder}
           selectedGroupId={selectedGroupId}
           isOpen={sidebarOpen}
+          isCollapsed={sidebarCollapsed}
           isDark={isDark}
           onSelectGroup={(gid) => setSelectedGroupId(gid)}
           onCreateGroup={() => {
@@ -892,6 +903,8 @@ export default function App() {
             void fetchDirSuggestions();
           }}
           onClose={() => setSidebarOpen(false)}
+          onToggleCollapse={toggleSidebarCollapsed}
+          onReorder={reorderGroups}
         />
 
         {/* Main content */}

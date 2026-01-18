@@ -10,7 +10,7 @@ export function DropOverlay({ isOpen, isDark, maxFileMb }: DropOverlayProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60]">
+    <div className="fixed inset-0 z-overlay">
       <div className={classNames("absolute inset-0 backdrop-blur-sm", isDark ? "bg-black/60" : "bg-black/40")} aria-hidden="true" />
       <div className="absolute inset-0 flex items-center justify-center p-6">
         <div
