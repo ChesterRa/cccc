@@ -27,6 +27,7 @@ from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...kernel.scope import detect_scope
+from ...kernel.git import git_list_branches, git_root
 from ...kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
     DEFAULT_STANDUP_TEMPLATE,
@@ -83,6 +84,9 @@ class CreateGroupRequest(BaseModel):
 class AttachRequest(BaseModel):
     path: str
     by: str = Field(default="user")
+    create_worktree: bool = Field(default=False)
+    worktree_branch: str = Field(default="")
+    base_branch: str = Field(default="")
 
 
 class SendRequest(BaseModel):
@@ -828,6 +832,50 @@ def create_app() -> FastAPI:
         except Exception as e:
             return {"ok": False, "error": {"code": "resolve_failed", "message": str(e)}}
 
+    @app.get("/api/v1/git/branches")
+    async def git_branches(repo_path: str = "", include_remote: bool = False) -> Dict[str, Any]:
+        """List branches in a git repository with worktree occupation status.
+
+        Returns branches with their status:
+        - name: branch name
+        - is_remote: whether it's a remote tracking branch
+        - in_use: whether it's checked out in a worktree (can't be used for new worktree)
+        - worktree_path: path to the worktree using this branch, or null
+        """
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Git endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "git_branches"},
+                },
+            )
+
+        if not repo_path.strip():
+            return {"ok": False, "error": {"code": "missing_path", "message": "repo_path is required"}}
+
+        p = Path(repo_path).expanduser().resolve()
+        if not p.exists() or not p.is_dir():
+            return {"ok": False, "error": {"code": "invalid_path", "message": f"path does not exist: {repo_path}"}}
+
+        # Find git root
+        root = git_root(p)
+        if root is None:
+            return {"ok": False, "error": {"code": "not_git_repo", "message": f"not a git repository: {repo_path}"}}
+
+        try:
+            branches = await run_in_threadpool(git_list_branches, root, include_remote=include_remote)
+            return {
+                "ok": True,
+                "result": {
+                    "repo_root": str(root),
+                    "branches": branches,
+                },
+            }
+        except Exception as e:
+            return {"ok": False, "error": {"code": "list_failed", "message": str(e)}}
+
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
         async def _fetch() -> Dict[str, Any]:
@@ -1287,7 +1335,16 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/groups/{group_id}/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
-        return await _daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
+        args: Dict[str, Any] = {"path": req.path, "by": req.by, "group_id": group_id}
+        if req.create_worktree:
+            args["create_worktree"] = True
+            if req.base_branch:
+                # Auto-branch mode: create cccc/<group_id> branch based on base_branch
+                args["base_branch"] = req.base_branch
+            else:
+                # Legacy mode: checkout existing branch
+                args["worktree_branch"] = req.worktree_branch
+        return await _daemon({"op": "attach", "args": args})
 
     @app.delete("/api/v1/groups/{group_id}/scopes/{scope_key}")
     async def group_detach_scope(group_id: str, scope_key: str, by: str = "user") -> Dict[str, Any]:

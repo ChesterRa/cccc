@@ -148,10 +148,26 @@ export async function deleteGroup(groupId: string) {
   );
 }
 
-export async function attachScope(groupId: string, path: string) {
+export async function attachScope(
+  groupId: string,
+  path: string,
+  options?: { createWorktree?: boolean; worktreeBranch?: string; baseBranch?: string }
+) {
+  const body: Record<string, unknown> = { path, by: "user" };
+  if (options?.createWorktree) {
+    body.create_worktree = true;
+    if (options.baseBranch) {
+      // Auto-branch mode: system creates cccc/<group_id> branch
+      body.base_branch = options.baseBranch;
+    } else if (options.worktreeBranch) {
+      // Legacy mode: checkout existing branch (only if provided)
+      body.worktree_branch = options.worktreeBranch;
+    }
+    // If neither is provided, let backend handle validation error
+  }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/attach`, {
     method: "POST",
-    body: JSON.stringify({ path, by: "user" }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -537,6 +553,22 @@ export async function fetchDirContents(path: string) {
 export async function resolveScopeRoot(path: string) {
   return apiJson<{ path: string; scope_root: string; scope_key: string; git_remote: string }>(
     `/api/v1/fs/scope_root?path=${encodeURIComponent(path)}`
+  );
+}
+
+// ============ Git ============
+
+export interface BranchInfo {
+  name: string;
+  is_remote: boolean;
+  in_use: boolean;
+  worktree_path: string | null;
+  is_current: boolean;
+}
+
+export async function fetchBranches(repoPath: string, includeRemote: boolean = true) {
+  return apiJson<{ branches: BranchInfo[] }>(
+    `/api/v1/git/branches?repo_path=${encodeURIComponent(repoPath)}&include_remote=${includeRemote}`
   );
 }
 

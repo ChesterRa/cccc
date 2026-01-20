@@ -118,6 +118,10 @@ export function AppModals({
     createGroupPath,
     createGroupName,
     createGroupTemplateFile,
+    createWorktree,
+    baseBranch,
+    branches,
+    loadingBranches,
     dirItems,
     dirSuggestions,
     currentDir,
@@ -126,6 +130,10 @@ export function AppModals({
     setCreateGroupPath,
     setCreateGroupName,
     setCreateGroupTemplateFile,
+    setCreateWorktree,
+    setBaseBranch,
+    setBranches,
+    setLoadingBranches,
     setDirItems,
     setCurrentDir,
     setParentDir,
@@ -180,6 +188,38 @@ export function AppModals({
     }, 250);
     return () => window.clearTimeout(t);
   }, [modals.createGroup, createGroupTemplateFile, createGroupPath]);
+
+  // Fetch branches when worktree option is enabled and path is set
+  useEffect(() => {
+    if (!modals.createGroup || !createWorktree || !createGroupPath.trim()) {
+      setBranches([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void (async () => {
+        setLoadingBranches(true);
+        try {
+          const resp = await api.fetchBranches(createGroupPath);
+          if (resp.ok && resp.result?.branches) {
+            const branchList = resp.result.branches;
+            setBranches(branchList);
+            // Auto-select current branch if available (current branch is valid base even if in_use)
+            const currentBranch = branchList.find(b => b.is_current);
+            if (currentBranch) {
+              setBaseBranch(currentBranch.name);
+            }
+          } else {
+            setBranches([]);
+          }
+        } catch {
+          setBranches([]);
+        } finally {
+          setLoadingBranches(false);
+        }
+      })();
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [modals.createGroup, createWorktree, createGroupPath]);
 
   // Computed
   const selectedGroupRunning = useGroupStore(
@@ -426,7 +466,10 @@ export function AppModals({
           return;
         }
         groupId = resp.result.group_id;
-        const attachResp = await api.attachScope(groupId, path);
+        const attachResp = await api.attachScope(groupId, path, {
+          createWorktree,
+          baseBranch,
+        });
         if (!attachResp.ok) {
           showError(`Created group but failed to attach: ${attachResp.error.message}`);
         }
@@ -719,6 +762,12 @@ export function AppModals({
         templateError={createTemplateError}
         templateBusy={createTemplateBusy}
         onSelectTemplate={handleSelectCreateGroupTemplate}
+        createWorktree={createWorktree}
+        setCreateWorktree={setCreateWorktree}
+        baseBranch={baseBranch}
+        setBaseBranch={setBaseBranch}
+        branches={branches}
+        loadingBranches={loadingBranches}
         onFetchDirContents={handleFetchDirContents}
         onCreateGroup={handleCreateGroup}
         onClose={() => closeModal("createGroup")}

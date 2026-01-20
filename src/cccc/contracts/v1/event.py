@@ -60,6 +60,7 @@ class GroupAttachData(BaseModel):
     url: str
     label: str = ""
     git_remote: str = ""
+    worktree_path: str = ""
 
     model_config = ConfigDict(extra="forbid")
 

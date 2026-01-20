@@ -1,4 +1,5 @@
 import { DirItem, DirSuggestion } from "../../types";
+import { BranchInfo } from "../../services/api";
 import { TemplatePreviewDetails } from "../TemplatePreviewDetails";
 
 export interface CreateGroupModalProps {
@@ -23,6 +24,14 @@ export interface CreateGroupModalProps {
   templateError: string;
   templateBusy: boolean;
   onSelectTemplate: (file: File | null) => void;
+
+  // Worktree options
+  createWorktree: boolean;
+  setCreateWorktree: (v: boolean) => void;
+  baseBranch: string;
+  setBaseBranch: (v: string) => void;
+  branches: BranchInfo[];
+  loadingBranches: boolean;
 
   onFetchDirContents: (path: string) => void;
   onCreateGroup: () => void;
@@ -50,6 +59,12 @@ export function CreateGroupModal({
   templateError,
   templateBusy,
   onSelectTemplate,
+  createWorktree,
+  setCreateWorktree,
+  baseBranch,
+  setBaseBranch,
+  branches,
+  loadingBranches,
   onFetchDirContents,
   onCreateGroup,
   onClose,
@@ -200,6 +215,72 @@ export function CreateGroupModal({
 
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              Git Worktree (optional)
+            </label>
+            <div
+              className={`rounded-xl border px-4 py-3 ${
+                isDark ? "border-slate-600/50 bg-slate-900/50" : "border-gray-200 bg-gray-50"
+              }`}
+            >
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={createWorktree}
+                  onChange={(e) => setCreateWorktree(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className={`text-sm ${isDark ? "text-slate-200" : "text-gray-700"}`}>
+                  Create isolated Git worktree for this group
+                </span>
+              </label>
+              {createWorktree && (
+                <div className="mt-3">
+                  {loadingBranches ? (
+                    <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                      Loading branches...
+                    </div>
+                  ) : branches.length > 0 ? (
+                    <div className="space-y-2">
+                      <label className={`block text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                        Base Branch (new branch will be created from this)
+                      </label>
+                      <select
+                        className={`w-full rounded-lg border px-3 py-2 text-sm min-h-[40px] transition-colors ${
+                          isDark
+                            ? "bg-slate-800/80 border-slate-600/50 text-white focus:border-blue-500"
+                            : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                        }`}
+                        value={baseBranch}
+                        onChange={(e) => setBaseBranch(e.target.value)}
+                      >
+                        <option value="">Select base branch...</option>
+                        {branches.filter(b => !b.in_use || b.is_current).map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}{b.is_current ? " (当前)" : b.is_remote ? " (远程)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {baseBranch && (
+                        <div className={`text-xs ${isDark ? "text-blue-400" : "text-blue-600"}`}>
+                          A new branch will be auto-created based on "{baseBranch}"
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className={`text-sm ${isDark ? "text-amber-400" : "text-amber-600"}`}>
+                      No branches found. Make sure the directory is a Git repository.
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                Creates a separate working directory to avoid conflicts with other groups.
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
               Create Group From Template (optional)
             </label>
             <div
@@ -266,7 +347,8 @@ export function CreateGroupModal({
                 busy === "create" ||
                 templateBusy ||
                 (!!createGroupTemplateFile && !templatePreview) ||
-                (!!createGroupTemplateFile && !!templateError)
+                (!!createGroupTemplateFile && !!templateError) ||
+                (createWorktree && !baseBranch)
               }
             >
               {busy === "create" ? "Creating..." : createGroupTemplateFile ? "Create Group From Template" : "Create Group"}

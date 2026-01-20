@@ -1595,20 +1595,46 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         scope = detect_scope(path)
         reg = load_registry()
         requested_group_id = str(args.get("group_id") or "").strip()
+        create_worktree = bool(args.get("create_worktree", False))
+        worktree_branch = str(args.get("worktree_branch") or "").strip()
+        base_branch = str(args.get("base_branch") or "").strip()
+
         if requested_group_id:
             group = load_group(requested_group_id)
             if group is None:
                 return _error("group_not_found", f"group not found: {requested_group_id}"), False
-            group = attach_scope_to_group(reg, group, scope, set_active=True)
+            try:
+                group = attach_scope_to_group(
+                    reg, group, scope, set_active=True,
+                    create_worktree=create_worktree,
+                    worktree_branch=worktree_branch,
+                    base_branch=base_branch,
+                )
+            except ValueError as e:
+                return _error("worktree_failed", str(e)), False
         else:
             group = ensure_group_for_scope(reg, scope)
+
+        # Get worktree_path from the attached scope
+        worktree_path = ""
+        scopes_list = group.doc.get("scopes", [])
+        for sc in scopes_list:
+            if isinstance(sc, dict) and sc.get("scope_key") == scope.scope_key:
+                worktree_path = str(sc.get("worktree_path") or "")
+                break
+
         append_event(
             group.ledger_path,
             kind="group.attach",
             group_id=group.group_id,
             scope_key=scope.scope_key,
             by=str(args.get("by") or "cli"),
-            data={"url": scope.url, "label": scope.label, "git_remote": scope.git_remote},
+            data={
+                "url": scope.url,
+                "label": scope.label,
+                "git_remote": scope.git_remote,
+                "worktree_path": worktree_path,
+            },
         )
         return (
             DaemonResponse(

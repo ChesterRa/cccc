@@ -14,6 +14,7 @@ class ScopeIdentity:
     scope_key: str
     label: str
     git_remote: str = ""
+    worktree_path: str = ""  # If this scope is a git worktree, path to the worktree
 
 
 def _hash_key(value: str) -> str:
