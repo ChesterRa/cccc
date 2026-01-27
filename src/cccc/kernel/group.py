@@ -12,6 +12,7 @@ import yaml  # type: ignore
 from ..paths import ensure_home
 from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
+from .git import git_branch_exists, git_remote_ref_exists, git_root, git_worktree_add
 from .registry import Registry
 from .scope import ScopeIdentity
 
@@ -103,8 +104,89 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
     return Group(group_id=group_id, path=gp, doc=group_doc)
 
 
-def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, set_active: bool = True) -> Group:
+def attach_scope_to_group(
+    reg: Registry,
+    group: Group,
+    scope: ScopeIdentity,
+    *,
+    set_active: bool = True,
+    create_worktree: bool = False,
+    worktree_branch: str = "",
+    base_branch: str = "",
+) -> Group:
+    """Attach a scope (directory) to a group.
+
+    Args:
+        reg: Registry instance
+        group: Group to attach the scope to
+        scope: ScopeIdentity of the directory
+        set_active: Whether to set this scope as the active scope
+        create_worktree: If True, create a git worktree for this scope
+        worktree_branch: Branch name for the worktree (used if base_branch is not provided)
+        base_branch: Base branch to create a new auto-named branch from (e.g., "main").
+                     If provided, auto-generates branch name as cccc/<group_id>.
+                     Takes precedence over worktree_branch.
+
+    Returns:
+        Updated Group
+    """
     now = utc_now_iso()
+
+    # Handle worktree creation if requested
+    worktree_path = ""
+    actual_scope_url = scope.url
+
+    if create_worktree:
+        source_path = Path(scope.url)
+        repo_root = git_root(source_path)
+        if not repo_root:
+            raise ValueError(f"Not a git repository: {scope.url}")
+
+        if base_branch:
+            # Auto-branch mode: create new branch cccc/<group_id> based on base_branch
+            auto_branch_name = f"cccc/{group.group_id}"
+
+            # Determine start_point based on whether base_branch is already a remote ref
+            if base_branch.startswith("origin/"):
+                # User selected a remote branch directly (e.g., "origin/main")
+                if git_remote_ref_exists(repo_root, base_branch):
+                    start_point = base_branch
+                else:
+                    raise ValueError(f"Remote branch '{base_branch}' not found")
+            else:
+                # User selected a local branch name, prefer origin/<branch> if exists
+                remote_ref = f"origin/{base_branch}"
+                if git_remote_ref_exists(repo_root, remote_ref):
+                    start_point = remote_ref
+                elif git_branch_exists(repo_root, base_branch):
+                    start_point = base_branch
+                else:
+                    raise ValueError(f"Base branch '{base_branch}' not found (checked origin/{base_branch} and local)")
+
+            # Create worktree with auto-generated branch name
+            worktree_dir = repo_root.parent / f"{group.group_id}-{auto_branch_name.replace('/', '-')}"
+            success, msg = git_worktree_add(
+                repo_root, worktree_dir, auto_branch_name, create_branch=True, start_point=start_point
+            )
+            if not success:
+                raise ValueError(f"Failed to create worktree: {msg}")
+
+            worktree_path = str(worktree_dir)
+            actual_scope_url = worktree_path
+        elif worktree_branch:
+            # Legacy mode: use provided branch name
+            # Create worktree in sibling directory: ../group-<branch>
+            worktree_dir = repo_root.parent / f"{group.group_id}-{worktree_branch}"
+            # Check if branch already exists to decide whether to create it
+            branch_exists = git_branch_exists(repo_root, worktree_branch)
+            success, msg = git_worktree_add(repo_root, worktree_dir, worktree_branch, create_branch=not branch_exists)
+            if not success:
+                raise ValueError(f"Failed to create worktree: {msg}")
+
+            worktree_path = str(worktree_dir)
+            actual_scope_url = worktree_path  # Update scope URL to point to worktree
+        else:
+            raise ValueError("Either worktree_branch or base_branch is required when create_worktree=True")
 
     scopes = group.doc.get("scopes")
     if not isinstance(scopes, list):
@@ -121,9 +203,10 @@ def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, 
     scope_entry.update(
         {
             "scope_key": scope.scope_key,
-            "url": scope.url,
+            "url": actual_scope_url,
             "label": scope.label,
             "git_remote": scope.git_remote,
+            "worktree_path": worktree_path,
         }
     )
     if existing is None:
@@ -143,9 +226,10 @@ def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, 
     scope_doc: Dict[str, Any] = {
         "v": 1,
         "scope_key": scope.scope_key,
-        "url": scope.url,
+        "url": actual_scope_url,
         "label": scope.label,
         "git_remote": scope.git_remote,
+        "worktree_path": worktree_path,
         "created_at": created_at,
         "updated_at": now,
     }
