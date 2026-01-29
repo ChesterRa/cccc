@@ -249,10 +249,24 @@ def _actor_role(group: Group, actor_id: str) -> str:
     return get_effective_role(group, actor_id)
 
 
-def is_message_for_actor(group: Group, *, actor_id: str, event: Dict[str, Any]) -> bool:
-    """Return True if the event should be visible/delivered to the given actor."""
+def is_message_for_actor(
+    group: Group,
+    *,
+    actor_id: str,
+    event: Dict[str, Any],
+    role: Optional[str] = None,
+) -> bool:
+    """Return True if the event should be visible/delivered to the given actor.
+
+    Args:
+        group: Working group
+        actor_id: Actor id
+        event: Event dict
+        role: Pre-computed actor role (optimization to avoid repeated lookups).
+              If None, will be computed via get_effective_role().
+    """
     kind = str(event.get("kind") or "")
-    
+
     # system.notify: check target_actor_id
     if kind == "system.notify":
         data = event.get("data")
@@ -263,7 +277,7 @@ def is_message_for_actor(group: Group, *, actor_id: str, event: Dict[str, Any]) 
         if not target:
             return True
         return target == actor_id
-    
+
     # chat.message: check the "to" field
     targets = _message_targets(event)
 
@@ -279,8 +293,9 @@ def is_message_for_actor(group: Group, *, actor_id: str, event: Dict[str, Any]) 
     if actor_id in targets:
         return True
 
-    # Role-based matching
-    role = _actor_role(group, actor_id)
+    # Role-based matching (use pre-computed role if provided)
+    if role is None:
+        role = _actor_role(group, actor_id)
     if role == "peer" and "@peers" in targets:
         return True
     if role == "foreman" and "@foreman" in targets:
@@ -414,6 +429,9 @@ def batch_unread_counts(
     # Initialize counts
     counts: Dict[str, int] = {aid: 0 for aid in actor_ids}
 
+    # Pre-compute actor roles once (optimization: avoids repeated get_effective_role calls)
+    actor_roles: Dict[str, str] = {aid: get_effective_role(group, aid) for aid in actor_ids}
+
     # Single pass through the ledger
     for ev in iter_events(group.ledger_path):
         ev_kind = str(ev.get("kind") or "")
@@ -429,8 +447,8 @@ def batch_unread_counts(
             # Exclude messages sent by the actor itself
             if ev_kind == "chat.message" and ev_by == aid:
                 continue
-            # Check delivery/visibility rules
-            if not is_message_for_actor(group, actor_id=aid, event=ev):
+            # Check delivery/visibility rules (pass pre-computed role)
+            if not is_message_for_actor(group, actor_id=aid, event=ev, role=actor_roles[aid]):
                 continue
             # Check read cursor
             cursor_dt = actor_cursor_dts[aid]

@@ -203,6 +203,9 @@ class ContextStorage:
         self.group = group
         self.context_dir = group.path / "context"
         self.tasks_dir = self.context_dir / "tasks"
+        # Cache for raw data to avoid re-reading files in compute_version()
+        self._context_raw: Optional[Dict[str, Any]] = None
+        self._tasks_raw: Dict[str, Dict[str, Any]] = {}
 
     def _ensure_dirs(self) -> None:
         self.context_dir.mkdir(parents=True, exist_ok=True)
@@ -237,8 +240,13 @@ class ContextStorage:
 
         h = hashlib.sha256()
 
+        # Use cached context data if available, otherwise read from file
         ctx_path = self._context_path()
-        if ctx_path.exists():
+        if self._context_raw is not None:
+            data = self._context_raw
+            payload = json.dumps(_jsonable(data), sort_keys=True).encode()
+            h.update(payload)
+        elif ctx_path.exists():
             try:
                 data = yaml.safe_load(ctx_path.read_text(encoding="utf-8"))
             except Exception:
@@ -246,13 +254,17 @@ class ContextStorage:
             payload = json.dumps(_jsonable(data), sort_keys=True).encode()
             h.update(payload)
 
+        # Use cached task data if available, otherwise read from file
         if self.tasks_dir.exists():
             for task_file in sorted(self.tasks_dir.glob("T*.yaml")):
                 h.update(task_file.name.encode("utf-8"))
-                try:
-                    data = yaml.safe_load(task_file.read_text(encoding="utf-8"))
-                except Exception:
-                    data = None
+                if task_file.name in self._tasks_raw:
+                    data = self._tasks_raw[task_file.name]
+                else:
+                    try:
+                        data = yaml.safe_load(task_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = None
                 payload = json.dumps(_jsonable(data), sort_keys=True).encode()
                 h.update(payload)
 
@@ -282,6 +294,9 @@ class ContextStorage:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
             if data is None:
                 return Context(meta=self._default_meta())
+
+            # Cache raw data for compute_version()
+            self._context_raw = data
 
             vision = data.get("vision")
             sketch = data.get("sketch")
@@ -455,6 +470,9 @@ class ContextStorage:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
             if data is None:
                 return None
+
+            # Cache raw data for compute_version()
+            self._tasks_raw[path.name] = data
 
             steps = []
             for s in data.get("steps", []):

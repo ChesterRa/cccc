@@ -38,6 +38,7 @@ from ..runners import headless as headless_runner
 from ..util.conv import coerce_bool
 from ..util.obslog import setup_root_json_logging
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
+from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
 from .delivery import (
@@ -3857,6 +3858,15 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     p = paths or default_paths()
     p.daemon_dir.mkdir(parents=True, exist_ok=True)
 
+    # Acquire exclusive lock to prevent multiple daemon instances (race condition fix).
+    # The lock is held for the lifetime of the daemon process.
+    lock_path = p.daemon_dir / "ccccd.lock"
+    try:
+        lock_handle = acquire_lockfile(lock_path, blocking=False)
+    except LockUnavailableError:
+        # Another daemon already holds the lock
+        return 0
+
     # Apply global observability settings early (logging + developer mode gating).
     try:
         _apply_observability_settings(p.home, get_observability_settings())
@@ -3865,6 +3875,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     _cleanup_stale_daemon_endpoints(p)
     if _is_daemon_alive(p):
+        release_lockfile(lock_handle)
         return 0
 
     # Cleanup stale IM bridge state from previous runs/crashes.
@@ -4231,6 +4242,13 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             p.pid_path.unlink()
     except Exception:
         pass
+
+    # Release the daemon lock
+    try:
+        release_lockfile(lock_handle)
+    except Exception:
+        pass
+
     return 0
 
 

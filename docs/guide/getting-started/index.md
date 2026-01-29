@@ -41,18 +41,37 @@ Both approaches require:
 
 ## Installation
 
+### Upgrading from older versions
+
+If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
+
+```bash
+# For pipx users
+pipx uninstall cccc-pair
+
+# For pip users
+pip uninstall cccc-pair
+
+# Remove any leftover binaries if needed
+rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
+```
+
+::: warning Version 0.4.x Breaking Changes
+Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
+:::
+
 ### From TestPyPI (recommended for RC)
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc16
+  cccc-pair==0.4.0rc17
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/ChesterRa/cccc
+git clone https://github.com/dweb-channel/cccc
 cd cccc
 pip install -e .
 ```

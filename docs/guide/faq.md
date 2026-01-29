@@ -10,13 +10,30 @@ Frequently asked questions about CCCC.
 # From TestPyPI (RC version)
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc16
+  cccc-pair==0.4.0rc17
 
 # From source
-git clone https://github.com/ChesterRa/cccc
+git clone https://github.com/dweb-channel/cccc
 cd cccc
 pip install -e .
 ```
+
+### How do I upgrade from an older version (0.3.x)?
+
+You must uninstall the old version first:
+
+```bash
+# For pipx users
+pipx uninstall cccc-pair
+
+# For pip users
+pip uninstall cccc-pair
+
+# Remove any leftover binaries
+rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
+```
+
+Then install the new version. Note that 0.4.x has a completely different command structure from 0.3.x.
 
 ### What are the system requirements?
 

@@ -324,10 +324,11 @@ export async function searchChatMessages(
 
 // ============ Actors ============
 
-export async function fetchActors(groupId: string) {
-  return apiJson<{ actors: Actor[] }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`
-  );
+export async function fetchActors(groupId: string, includeUnread = true) {
+  const url = includeUnread
+    ? `/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`
+    : `/api/v1/groups/${encodeURIComponent(groupId)}/actors`;
+  return apiJson<{ actors: Actor[] }>(url);
 }
 
 export async function addActor(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -465,8 +466,25 @@ def _default_entry() -> int:
     )
     server = uvicorn.Server(config)
 
+    # Get LAN IP for display
+    def _get_lan_ip() -> str:
+        try:
+            # Create a socket to an external address to determine the local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.1)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return ""
+
     try:
         print("[cccc] Starting web server...", file=sys.stderr)
+        print(f"[cccc]   Local:   http://{host}:{port}", file=sys.stderr)
+        lan_ip = _get_lan_ip()
+        if lan_ip and lan_ip != host and lan_ip != "127.0.0.1":
+            print(f"[cccc]   Network: http://{lan_ip}:{port}", file=sys.stderr)
         server.run()
     except (SystemExit, KeyboardInterrupt):
         pass

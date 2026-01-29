@@ -519,7 +519,14 @@ class AutomationManager:
             _queue_notify_to_pty(group, actor_id=aid, runner_kind=runner_kind, ev=ev, notify=notify_data)
 
     def _check_actor_idle(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
-        """Check for idle actors and notify foreman."""
+        """Check for idle actors and notify foreman.
+
+        Idle detection uses multiple signals:
+        1. PTY output activity (for pty runners) - most accurate for CLI agents
+        2. Ledger activity (last event by actor) - fallback for headless runners
+
+        An actor is considered idle only if BOTH signals indicate inactivity.
+        """
         if cfg.actor_idle_timeout_seconds <= 0:
             return
 
@@ -552,12 +559,31 @@ class AutomationManager:
                     if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
                         continue
 
-                # Get last activity
+                # Get idle time from PTY (if applicable) - this is the most accurate signal
+                # for CLI-based agents that produce terminal output while working
+                pty_idle_seconds: Optional[float] = None
+                if runner_kind != "headless":
+                    pty_idle_seconds = pty_runner.SUPERVISOR.idle_seconds(
+                        group_id=group.group_id, actor_id=aid
+                    )
+
+                # Get last activity from ledger (fallback)
                 last_activity = _get_last_actor_activity(group, aid)
-                if last_activity is None:
-                    continue  # No activity yet, skip
-                
-                idle_seconds = (now - last_activity).total_seconds()
+                ledger_idle_seconds: Optional[float] = None
+                if last_activity is not None:
+                    ledger_idle_seconds = (now - last_activity).total_seconds()
+
+                # Determine effective idle time:
+                # - For PTY actors: use PTY idle time (more accurate)
+                # - For headless: use ledger idle time
+                # - If PTY shows recent activity, actor is NOT idle even if ledger is old
+                if pty_idle_seconds is not None:
+                    idle_seconds = pty_idle_seconds
+                elif ledger_idle_seconds is not None:
+                    idle_seconds = ledger_idle_seconds
+                else:
+                    continue  # No activity data, skip
+
                 if idle_seconds < float(cfg.actor_idle_timeout_seconds):
                     continue
 
@@ -569,7 +595,7 @@ class AutomationManager:
                         # Don't notify again within the timeout period
                         if (now - last_notify_dt).total_seconds() < float(cfg.actor_idle_timeout_seconds):
                             continue
-                
+
                 st["last_idle_notify_at"] = utc_now_iso()
                 to_notify.append((aid, idle_seconds))
 

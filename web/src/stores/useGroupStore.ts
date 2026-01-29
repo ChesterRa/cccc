@@ -359,10 +359,11 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     const gid = String(groupId || "").trim();
     if (!gid) return;
 
+    // Fast initial load: skip unread counts for snappy group switching
     const [show, tail, a, ctx, settings] = await Promise.all([
       api.fetchGroup(gid),
       api.fetchLedgerTail(gid),
-      api.fetchActors(gid),
+      api.fetchActors(gid, false),
       api.fetchContext(gid),
       api.fetchSettings(gid),
     ]);
@@ -380,6 +381,13 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       groupSettings: settings.ok && settings.result.settings ? settings.result.settings : null,
       hasMoreHistory: tail.ok ? !!tail.result.has_more : true,
     });
+
+    // Deferred: load unread counts in background (doesn't block UI)
+    setTimeout(() => {
+      if (get().selectedGroupId === gid) {
+        get().refreshActors(gid);
+      }
+    }, 300);
   },
 
   loadMoreHistory: async () => {

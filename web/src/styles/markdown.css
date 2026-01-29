@@ -60,6 +60,7 @@
 .markdown-body {
   word-wrap: break-word;
   overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 /* Code Block Wrapper & Header */
@@ -68,6 +69,7 @@
   overflow: hidden;
   border: 1px solid #e1e4e8;
   background-color: #f6f8fa;
+  max-width: 100%;
 }
 
 .dark .code-block-wrapper {
@@ -80,6 +82,7 @@
   border: none !important;
   border-radius: 0 !important;
   background: transparent !important;
+  overflow-x: auto;
 }
 
 .code-block-header {

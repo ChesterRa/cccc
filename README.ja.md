@@ -69,6 +69,23 @@ cccc
 >
 > エラーが発生した場合は、診断と解決を手伝ってください。
 
+### 旧バージョンからのアップグレード
+
+古いバージョンの cccc-pair（例：0.3.x）がインストールされている場合は、先にアンインストールが必要です：
+
+```bash
+# pipx ユーザー
+pipx uninstall cccc-pair
+
+# pip ユーザー
+pip uninstall cccc-pair
+
+# 残留ファイルがある場合は手動で削除
+rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
+```
+
+> **注意**：0.4.x のコマンド構造は 0.3.x と完全に異なります。旧版の `init`、`run`、`bridge` コマンドは `attach`、`daemon`、`mcp` などに置き換えられました。
+
 ### TestPyPI からインストール（推奨）
 
 ```bash

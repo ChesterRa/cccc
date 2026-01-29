@@ -68,6 +68,7 @@ class PtySession:
         self._on_exit = on_exit
         self._started_at = time.monotonic()
         self._first_output_at: Optional[float] = None
+        self._last_output_at: Optional[float] = None
         self._max_backlog_bytes = int(max_backlog_bytes)
         # Allow some slack beyond the initial backlog so clients are not immediately detached if the
         # PTY produces output while we are still draining the attach-time backlog.
@@ -156,6 +157,19 @@ class PtySession:
     def bracketed_paste_changed_at_monotonic(self) -> Optional[float]:
         with self._lock:
             return None if self._bracketed_paste_changed_at is None else float(self._bracketed_paste_changed_at)
+
+    def last_output_at_monotonic(self) -> Optional[float]:
+        """Return monotonic timestamp of last PTY output (or None if no output yet)."""
+        with self._lock:
+            return None if self._last_output_at is None else float(self._last_output_at)
+
+    def idle_seconds(self) -> float:
+        """Return seconds since last PTY output (or since session start if no output)."""
+        now = time.monotonic()
+        with self._lock:
+            if self._last_output_at is not None:
+                return now - self._last_output_at
+            return now - self._started_at
 
     def tail_output(self, *, max_bytes: int = 2_000_000) -> bytes:
         """Return the latest PTY output bytes (bounded).
@@ -294,8 +308,10 @@ class PtySession:
     def _append_backlog(self, chunk: bytes) -> None:
         if not chunk:
             return
+        now = time.monotonic()
         if self._first_output_at is None:
-            self._first_output_at = time.monotonic()
+            self._first_output_at = now
+        self._last_output_at = now
         self._backlog.append(chunk)
         self._backlog_bytes += len(chunk)
         limit = max(0, self._max_backlog_bytes)
@@ -696,6 +712,22 @@ class PtySupervisor:
             return (s.started_at_monotonic(), s.first_output_at_monotonic())
         except Exception:
             return (None, None)
+
+    def idle_seconds(self, *, group_id: str, actor_id: str) -> Optional[float]:
+        """Return seconds since last PTY output for a running actor.
+
+        Returns None if actor is not running.
+        Used by automation to detect truly idle actors vs those actively working.
+        """
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            return None
+        try:
+            return s.idle_seconds()
+        except Exception:
+            return None
 
     def session_key(self, *, group_id: str, actor_id: str) -> Optional[str]:
         """Return a stable key for the current PTY session (changes on restart).

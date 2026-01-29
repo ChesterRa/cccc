@@ -57,6 +57,7 @@ export type LedgerEvent = {
   id?: string;
   ts?: string;
   kind?: string;
+  group_id?: string;
   by?: string;
   data?: LedgerEventData;
   _read_status?: Record<string, boolean>;

@@ -189,6 +189,9 @@ export const MessageBubble = memo(function MessageBubble({
         }))
         .filter((a) => a.path.startsWith("state/blobs/"));
 
+    // Use event's group_id for blob URLs (attachments are stored in the event's original group)
+    const blobGroupId = String(ev.group_id || "").trim() || groupId;
+
     const readStatus = ev._read_status;
     const ackStatus = ev._ack_status;
     const recipients = msgData?.to;
@@ -262,7 +265,7 @@ export const MessageBubble = memo(function MessageBubble({
             {/* Message Content */}
             <div
                 className={classNames(
-                    "flex flex-col w-full sm:w-auto sm:max-w-[75%]",
+                    "flex flex-col w-full sm:w-auto sm:max-w-[75%] min-w-0",
                     isUserMessage ? "items-end" : "items-start"
                 )}
             >
@@ -345,7 +348,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* Bubble */}
                 <div
                     className={classNames(
-                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-none",
+                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-full min-w-0 overflow-hidden",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none"
                             : isDark
@@ -429,11 +432,11 @@ export const MessageBubble = memo(function MessageBubble({
                         content={formatEventLine(ev)}
                         isDark={isDark}
                         invertText={isUserMessage}
-                        className="break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full"
+                        className="break-words [overflow-wrap:anywhere] max-w-full"
                     />
 
                     {/* Attachments */}
-                    {blobAttachments.length > 0 && groupId && (() => {
+                    {blobAttachments.length > 0 && blobGroupId && (() => {
                         const imageAttachments = blobAttachments.filter((a) =>
                             a.mime_type.startsWith("image/")
                         );
@@ -448,7 +451,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         {imageAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
-                                            const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const href = `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
                                             const label = a.title || blobName;
                                             return (
                                                 <ImagePreview
@@ -468,7 +471,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         {fileAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
-                                            const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const href = `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
                                             const label = a.title || blobName || "file";
                                             return (
                                                 <a

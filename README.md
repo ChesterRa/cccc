@@ -69,6 +69,23 @@ Copy this prompt to your AI assistant (Claude, ChatGPT, etc.):
 >
 > If you encounter any errors, please help me diagnose and resolve them.
 
+### Upgrading from older versions
+
+If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
+
+```bash
+# For pipx users
+pipx uninstall cccc-pair
+
+# For pip users
+pip uninstall cccc-pair
+
+# Remove any leftover binaries if needed
+rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
+```
+
+> **Note**: Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
+
 ### From TestPyPI (recommended)
 
 ```bash
