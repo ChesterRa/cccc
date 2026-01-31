@@ -602,7 +602,7 @@ def group_create_from_template(args: Dict[str, Any]) -> DaemonResponse:
             group_id=group.group_id,
             scope_key=scope.scope_key,
             by=by,
-            data={"url": scope.url, "label": scope.label, "git_remote": scope.git_remote},
+            data={"url": scope.url, "label": scope.label, "git_remote": scope.git_remote, "worktree_path": ""},
         )
     except Exception:
         pass
