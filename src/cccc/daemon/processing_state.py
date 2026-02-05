@@ -43,7 +43,7 @@ class ProcessingStateConfig:
     enabled: bool = True
 
     # Timeout configuration
-    processing_timeout_sec: float = 30.0    # Time before considering stale
+    processing_timeout_sec: float = 60.0    # Time before considering stale
     mcp_activity_grace_sec: float = 60.0    # Grace period after any MCP activity
     stale_giveup_sec: float = 300.0         # Give up nudging after this time
 

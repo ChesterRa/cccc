@@ -864,11 +864,12 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             if ok:
                 THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
                 THROTTLE.mark_delivered(gid, aid)
-                # Notify processing state tracker
+                # Notify processing state tracker (only for chat.message, not system.notify)
                 tracker = get_processing_tracker()
                 if tracker and deliverable:
                     last_msg = deliverable[-1]
-                    tracker.on_message_delivered(gid, aid, last_msg.event_id)
+                    if last_msg.kind == "chat.message":
+                        tracker.on_message_delivered(gid, aid, last_msg.event_id)
                 # Auto-mark as read if enabled
                 if _get_auto_mark_on_delivery(group) and deliverable:
                     last_msg = deliverable[-1]
@@ -894,11 +895,12 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if delivered:
             THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
             THROTTLE.mark_delivered(gid, aid)
-            # Notify processing state tracker
+            # Notify processing state tracker (only for chat.message, not system.notify)
             tracker = get_processing_tracker()
             if tracker and deliverable:
                 last_msg = deliverable[-1]
-                tracker.on_message_delivered(gid, aid, last_msg.event_id)
+                if last_msg.kind == "chat.message":
+                    tracker.on_message_delivered(gid, aid, last_msg.event_id)
             # Auto-mark as read if enabled
             if _get_auto_mark_on_delivery(group) and deliverable:
                 last_msg = deliverable[-1]

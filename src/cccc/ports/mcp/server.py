@@ -61,7 +61,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...daemon.server import call_daemon
-from ...daemon.processing_state import get_tracker as get_processing_tracker
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.actors import get_effective_role
 from ...kernel.group import load_group
@@ -1840,26 +1839,41 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     # Track MCP call for processing state (prevents false stale detection)
     # Reply tools (message_send/reply/file_send) are tracked separately after success
+    # NOTE: We must use daemon IPC because MCP server runs in a separate process
+    # and the processing state tracker lives in the daemon process.
     _REPLY_TOOLS = {"cccc_message_send", "cccc_message_reply", "cccc_file_send"}
-    _tracking_gid = ""
-    _tracking_aid = ""
-    _should_track = name not in _REPLY_TOOLS
+    _tracking_gid = _env_str("CCCC_GROUP_ID")
+    _tracking_aid = _env_str("CCCC_ACTOR_ID")
+    _should_track = name not in _REPLY_TOOLS and _tracking_gid and _tracking_aid
 
     if _should_track:
-        tracker = get_processing_tracker()
-        if tracker:
-            _tracking_gid = _env_str("CCCC_GROUP_ID")
-            _tracking_aid = _env_str("CCCC_ACTOR_ID")
-            if _tracking_gid and _tracking_aid:
-                tracker.on_mcp_call_start(_tracking_gid, _tracking_aid, name)
+        try:
+            call_daemon({
+                "op": "processing_mcp_call_start",
+                "args": {
+                    "group_id": _tracking_gid,
+                    "actor_id": _tracking_aid,
+                    "tool_name": name,
+                }
+            })
+        except Exception:
+            pass  # Best effort - don't fail the tool call if tracking fails
 
     try:
         return _handle_tool_call_impl(name, arguments)
     finally:
-        if _should_track and _tracking_gid and _tracking_aid:
-            tracker = get_processing_tracker()
-            if tracker:
-                tracker.on_mcp_call_end(_tracking_gid, _tracking_aid, name)
+        if _should_track:
+            try:
+                call_daemon({
+                    "op": "processing_mcp_call_end",
+                    "args": {
+                        "group_id": _tracking_gid,
+                        "actor_id": _tracking_aid,
+                        "tool_name": name,
+                    }
+                })
+            except Exception:
+                pass  # Best effort
 
 
 def _handle_tool_call_impl(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -1941,9 +1955,15 @@ def _handle_tool_call_impl(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             priority=str(arguments.get("priority") or "normal"),
         )
         # Track MCP reply - actor has responded via MCP, clear processing state
-        tracker = get_processing_tracker()
-        if tracker and gid and aid:
-            tracker.on_mcp_reply(gid, aid)
+        # NOTE: Must use daemon IPC because tracker lives in daemon process
+        if gid and aid:
+            try:
+                call_daemon({
+                    "op": "processing_mcp_reply",
+                    "args": {"group_id": gid, "actor_id": aid}
+                })
+            except Exception:
+                pass  # Best effort
         return result
 
     if name == "cccc_message_reply":
@@ -1960,9 +1980,15 @@ def _handle_tool_call_impl(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             priority=str(arguments.get("priority") or "normal"),
         )
         # Track MCP reply - actor has responded via MCP, clear processing state
-        tracker = get_processing_tracker()
-        if tracker and gid and aid:
-            tracker.on_mcp_reply(gid, aid)
+        # NOTE: Must use daemon IPC because tracker lives in daemon process
+        if gid and aid:
+            try:
+                call_daemon({
+                    "op": "processing_mcp_reply",
+                    "args": {"group_id": gid, "actor_id": aid}
+                })
+            except Exception:
+                pass  # Best effort
         return result
 
     if name == "cccc_file_send":
@@ -1978,9 +2004,15 @@ def _handle_tool_call_impl(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             priority=str(arguments.get("priority") or "normal"),
         )
         # Track MCP reply - actor has responded via MCP, clear processing state
-        tracker = get_processing_tracker()
-        if tracker and gid and aid:
-            tracker.on_mcp_reply(gid, aid)
+        # NOTE: Must use daemon IPC because tracker lives in daemon process
+        if gid and aid:
+            try:
+                call_daemon({
+                    "op": "processing_mcp_reply",
+                    "args": {"group_id": gid, "actor_id": aid}
+                })
+            except Exception:
+                pass  # Best effort
         return result
 
     if name == "cccc_blob_path":

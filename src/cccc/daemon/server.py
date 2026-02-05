@@ -4227,6 +4227,39 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         return handle_headless_ack_message(args), False
 
     # ==========================================================================
+    # Processing State Operations (for MCP server -> daemon communication)
+    # ==========================================================================
+
+    if op == "processing_mcp_call_start":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        tool_name = str(args.get("tool_name") or "").strip()
+        if group_id and actor_id and tool_name:
+            tracker = get_processing_tracker()
+            if tracker:
+                tracker.on_mcp_call_start(group_id, actor_id, tool_name)
+        return {"ok": True}, False
+
+    if op == "processing_mcp_call_end":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        tool_name = str(args.get("tool_name") or "").strip()
+        if group_id and actor_id and tool_name:
+            tracker = get_processing_tracker()
+            if tracker:
+                tracker.on_mcp_call_end(group_id, actor_id, tool_name)
+        return {"ok": True}, False
+
+    if op == "processing_mcp_reply":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        if group_id and actor_id:
+            tracker = get_processing_tracker()
+            if tracker:
+                tracker.on_mcp_reply(group_id, actor_id)
+        return {"ok": True}, False
+
+    # ==========================================================================
     # System Notification Operations
     # ==========================================================================
 
