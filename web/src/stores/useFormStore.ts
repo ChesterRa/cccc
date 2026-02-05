@@ -1,6 +1,7 @@
 // Form state store for modals.
 import { create } from "zustand";
 import type { DirItem, DirSuggestion, SupportedRuntime } from "../types";
+import type { BranchInfo } from "../services/api";
 
 interface FormState {
   // Edit Group
@@ -25,6 +26,10 @@ interface FormState {
   createGroupPath: string;
   createGroupName: string;
   createGroupTemplateFile: File | null;
+  createWorktree: boolean;
+  baseBranch: string;  // Base branch for auto-branch mode (cccc/<group_id>)
+  branches: BranchInfo[];
+  loadingBranches: boolean;
   dirItems: DirItem[];
   dirSuggestions: DirSuggestion[];
   currentDir: string;
@@ -54,6 +59,10 @@ interface FormState {
   setCreateGroupPath: (v: string) => void;
   setCreateGroupName: (v: string) => void;
   setCreateGroupTemplateFile: (f: File | null) => void;
+  setCreateWorktree: (v: boolean) => void;
+  setBaseBranch: (v: string) => void;
+  setBranches: (v: BranchInfo[]) => void;
+  setLoadingBranches: (v: boolean) => void;
   setDirItems: (v: DirItem[]) => void;
   setDirSuggestions: (v: DirSuggestion[]) => void;
   setCurrentDir: (v: string) => void;
@@ -85,6 +94,10 @@ export const useFormStore = create<FormState>((set) => ({
   createGroupPath: "",
   createGroupName: "",
   createGroupTemplateFile: null,
+  createWorktree: false,
+  baseBranch: "",
+  branches: [],
+  loadingBranches: false,
   dirItems: [],
   dirSuggestions: [],
   currentDir: "",
@@ -122,6 +135,10 @@ export const useFormStore = create<FormState>((set) => ({
   setCreateGroupPath: (v) => set({ createGroupPath: v }),
   setCreateGroupName: (v) => set({ createGroupName: v }),
   setCreateGroupTemplateFile: (f) => set({ createGroupTemplateFile: f }),
+  setCreateWorktree: (v) => set({ createWorktree: v }),
+  setBaseBranch: (v) => set({ baseBranch: v }),
+  setBranches: (v) => set({ branches: v }),
+  setLoadingBranches: (v) => set({ loadingBranches: v }),
   setDirItems: (v) => set({ dirItems: v }),
   setDirSuggestions: (v) => set({ dirSuggestions: v }),
   setCurrentDir: (v) => set({ currentDir: v }),
@@ -132,6 +149,10 @@ export const useFormStore = create<FormState>((set) => ({
       createGroupPath: "",
       createGroupName: "",
       createGroupTemplateFile: null,
+      createWorktree: false,
+      baseBranch: "",
+      branches: [],
+      loadingBranches: false,
       dirItems: [],
       showDirBrowser: false,
     }),
