@@ -43,6 +43,12 @@ from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
+from .processing_state import (
+    get_tracker as get_processing_tracker,
+    init_tracker as init_processing_tracker,
+    ProcessingStateConfig,
+    ActorProcessingState,
+)
 from .delivery import (
     inject_system_prompt as deliver_system_prompt,
     get_headless_targets_for_message,
@@ -616,6 +622,85 @@ def _merge_actor_env_with_private(group_id: str, actor_id: str, env: Dict[str, A
 AUTOMATION = AutomationManager()
 
 _AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"}
+
+
+def _on_processing_stale(group_id: str, actor_id: str, state: ActorProcessingState) -> None:
+    """Callback when an actor's processing state becomes stale.
+
+    This is triggered when:
+    1. Actor received a message via PTY
+    2. Actor has terminal output (indicating they're responding)
+    3. Actor hasn't used MCP send/reply tools
+    4. No recent MCP activity (like tool calls)
+
+    This nudges the actor to use MCP tools instead of terminal output.
+    """
+    from ..contracts.v1 import SystemNotifyData
+
+    group = load_group(group_id)
+    if group is None:
+        return
+
+    actor = find_actor(group, actor_id)
+    if not isinstance(actor, dict):
+        return
+
+    runner_kind = str(actor.get("runner") or "pty").strip()
+    if runner_kind != "pty":
+        return
+    if not pty_runner.SUPERVISOR.actor_running(group_id, actor_id):
+        return
+
+    notify_data = SystemNotifyData(
+        kind="nudge",
+        priority="normal",
+        title="Use MCP to respond",
+        message=(
+            "Terminal output detected but no MCP reply sent. "
+            "Your terminal responses are NOT delivered to users.\n\n"
+            "Use MCP to respond, for example:\n"
+            "  cccc_message_send(to=['user'], text='Your response here')\n"
+            "  cccc_message_reply(event_id='...', text='Your reply')"
+        ),
+        target_actor_id=actor_id,
+        requires_ack=False,
+    )
+    ev = append_event(
+        group.ledger_path,
+        kind="system.notify",
+        group_id=group_id,
+        scope_key="",
+        by="system",
+        data=notify_data.model_dump(),
+    )
+    queue_system_notify(
+        group,
+        actor_id=actor_id,
+        event_id=str(ev.get("id") or ""),
+        notify_kind="nudge",
+        title=notify_data.title,
+        message=notify_data.message,
+        ts=str(ev.get("ts") or ""),
+    )
+    flush_pending_messages(group, actor_id=actor_id)
+
+
+# Initialize processing state tracker with stale callback
+PROCESSING_TRACKER = init_processing_tracker(
+    config=ProcessingStateConfig(
+        enabled=True,
+        processing_timeout_sec=30.0,
+        mcp_activity_grace_sec=60.0,
+        stale_giveup_sec=300.0,
+        nudge_enabled=True,
+        nudge_max_count=3,
+        nudge_base_interval_sec=30.0,
+        nudge_interval_multiplier=2.0,
+        check_interval_sec=5.0,
+        require_terminal_activity=False,  # Route B: pure MCP-based detection
+    ),
+    on_stale=_on_processing_stale,
+)
 
 
 def _foreman_id(group: Any) -> str:
@@ -2062,7 +2147,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             "terminal_transcript_notify_tail",
             "terminal_transcript_notify_lines",
         }
-        allowed = messaging_keys | delivery_keys | automation_keys | terminal_transcript_keys
+        processing_keys = {
+            "processing_tracking_enabled",
+            "processing_timeout_sec",
+            "mcp_activity_grace_sec",
+            "processing_nudge_max_count",
+        }
+        allowed = messaging_keys | delivery_keys | automation_keys | terminal_transcript_keys | processing_keys
         
         unknown = set(patch.keys()) - allowed
         if unknown:
@@ -2119,11 +2210,47 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 tt_patch["notify_lines"] = patch.get("terminal_transcript_notify_lines")
             if tt_patch:
                 apply_terminal_transcript_patch(group.doc, tt_patch)
-            
+
+            # Update processing state tracking settings
+            processing_patch = {k: v for k, v in patch.items() if k in processing_keys}
+            if processing_patch:
+                processing = group.doc.get("processing") if isinstance(group.doc.get("processing"), dict) else {}
+                if "processing_tracking_enabled" in processing_patch:
+                    processing["enabled"] = coerce_bool(processing_patch["processing_tracking_enabled"], default=True)
+                if "processing_timeout_sec" in processing_patch:
+                    processing["processing_timeout_sec"] = int(processing_patch["processing_timeout_sec"])
+                if "mcp_activity_grace_sec" in processing_patch:
+                    processing["mcp_activity_grace_sec"] = int(processing_patch["mcp_activity_grace_sec"])
+                if "processing_nudge_max_count" in processing_patch:
+                    processing["nudge_max_count"] = int(processing_patch["processing_nudge_max_count"])
+                group.doc["processing"] = processing
+
             group.save()
+
+            # Update processing tracker config if processing settings changed
+            if processing_patch:
+                tracker = get_processing_tracker()
+                if tracker:
+                    old_config = tracker.config
+                    new_config = ProcessingStateConfig(
+                        enabled=coerce_bool(processing.get("enabled"), default=old_config.enabled),
+                        processing_timeout_sec=float(processing.get("processing_timeout_sec", old_config.processing_timeout_sec)),
+                        mcp_activity_grace_sec=float(processing.get("mcp_activity_grace_sec", old_config.mcp_activity_grace_sec)),
+                        stale_giveup_sec=old_config.stale_giveup_sec,
+                        nudge_enabled=old_config.nudge_enabled,
+                        nudge_max_count=int(processing.get("nudge_max_count", old_config.nudge_max_count)),
+                        nudge_base_interval_sec=old_config.nudge_base_interval_sec,
+                        nudge_interval_multiplier=old_config.nudge_interval_multiplier,
+                        check_interval_sec=old_config.check_interval_sec,
+                        require_terminal_activity=old_config.require_terminal_activity,
+                    )
+                    tracker.update_config(new_config)
+                    logger.info("Updated processing tracker config: enabled=%s, timeout=%s, grace=%s, max_nudge=%s",
+                                new_config.enabled, new_config.processing_timeout_sec,
+                                new_config.mcp_activity_grace_sec, new_config.nudge_max_count)
         except Exception as e:
             return _error("group_settings_update_failed", str(e)), False
-        
+
         # Return combined settings
         combined_settings = {}
         combined_settings["default_send_to"] = get_default_send_to(group.doc)
@@ -2137,7 +2264,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 "terminal_transcript_notify_lines": int(tt["notify_lines"]),
             }
         )
-        
+        # Include processing settings
+        processing = group.doc.get("processing") if isinstance(group.doc.get("processing"), dict) else {}
+        combined_settings.update(
+            {
+                "processing_tracking_enabled": coerce_bool(processing.get("enabled"), default=True),
+                "processing_timeout_sec": int(processing.get("processing_timeout_sec", 30)),
+                "mcp_activity_grace_sec": int(processing.get("mcp_activity_grace_sec", 60)),
+                "processing_nudge_max_count": int(processing.get("nudge_max_count", 3)),
+            }
+        )
+
         ev = append_event(
             group.ledger_path,
             kind="group.settings_update",
@@ -2778,6 +2915,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             _remove_headless_state(group.group_id, actor_id)
             THROTTLE.clear_actor(group.group_id, actor_id)
             _delete_actor_private_env(group.group_id, actor_id)
+            # Clean up processing state tracker
+            tracker = get_processing_tracker()
+            if tracker:
+                tracker.on_actor_removed(group.group_id, actor_id)
         except Exception as e:
             return _error("actor_remove_failed", str(e)), False
         # Update running flag if no enabled actors remain.
@@ -3094,6 +3235,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             clear_preamble_sent(group, actor_id)
             # Reset delivery metadata but keep queued messages.
             THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
+            # Reset processing state tracker
+            tracker = get_processing_tracker()
+            if tracker:
+                tracker.on_actor_restart(group.group_id, actor_id)
         except Exception as e:
             return _error("actor_restart_failed", str(e)), False
         if coerce_bool(group.doc.get("running"), default=False):
@@ -4279,6 +4424,39 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         while not stop_event.is_set():
             try:
                 AUTOMATION.tick(home=p.home)
+            except Exception:
+                pass
+            # Tick processing state tracker (detect stale actors)
+            try:
+                tracker = get_processing_tracker()
+                if tracker:
+                    # Detect terminal activity for all running PTY actors
+                    base = p.home / "groups"
+                    if base.exists():
+                        for gp in base.glob("*/group.yaml"):
+                            gid = gp.parent.name
+                            if not pty_runner.SUPERVISOR.group_running(gid):
+                                continue
+                            try:
+                                group = load_group(gid)
+                                if group is None:
+                                    continue
+                                for actor in list_actors(group):
+                                    if not isinstance(actor, dict):
+                                        continue
+                                    aid = str(actor.get("id") or "").strip()
+                                    if not aid:
+                                        continue
+                                    runner_kind = str(actor.get("runner") or "pty").strip()
+                                    if runner_kind != "pty":
+                                        continue
+                                    if not pty_runner.SUPERVISOR.actor_running(gid, aid):
+                                        continue
+                                    # Route B: terminal activity detection disabled
+                                    # Pure MCP-based detection relies on mcp_activity_grace_sec
+                            except Exception:
+                                pass
+                    tracker.tick()
             except Exception:
                 pass
             # Tick delivery for all groups with running actors (flush pending messages)

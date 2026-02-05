@@ -196,6 +196,13 @@ class GroupSettingsRequest(BaseModel):
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
     terminal_transcript_notify_tail: Optional[bool] = None
     terminal_transcript_notify_lines: Optional[int] = None
+
+    # Processing state tracking
+    processing_tracking_enabled: Optional[bool] = None
+    processing_timeout_sec: Optional[int] = None
+    mcp_activity_grace_sec: Optional[int] = None
+    processing_nudge_max_count: Optional[int] = None
+
     by: str = Field(default="user")
 
 class ObservabilityUpdateRequest(BaseModel):
@@ -1257,6 +1264,7 @@ def create_app() -> FastAPI:
         from ...kernel.messaging import get_default_send_to
 
         tt = get_terminal_transcript_settings(group.doc)
+        processing = group.doc.get("processing") if isinstance(group.doc.get("processing"), dict) else {}
         return {
             "ok": True,
             "result": {
@@ -1275,6 +1283,11 @@ def create_app() -> FastAPI:
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
+                    # Processing state tracking
+                    "processing_tracking_enabled": coerce_bool(processing.get("enabled"), default=True),
+                    "processing_timeout_sec": int(processing.get("processing_timeout_sec", 30)),
+                    "mcp_activity_grace_sec": int(processing.get("mcp_activity_grace_sec", 60)),
+                    "processing_nudge_max_count": int(processing.get("nudge_max_count", 3)),
                 }
             }
         }
@@ -1313,7 +1326,17 @@ def create_app() -> FastAPI:
             patch["terminal_transcript_notify_tail"] = bool(req.terminal_transcript_notify_tail)
         if req.terminal_transcript_notify_lines is not None:
             patch["terminal_transcript_notify_lines"] = max(1, min(80, int(req.terminal_transcript_notify_lines)))
-        
+
+        # Processing state tracking
+        if req.processing_tracking_enabled is not None:
+            patch["processing_tracking_enabled"] = bool(req.processing_tracking_enabled)
+        if req.processing_timeout_sec is not None:
+            patch["processing_timeout_sec"] = max(5, req.processing_timeout_sec)
+        if req.mcp_activity_grace_sec is not None:
+            patch["mcp_activity_grace_sec"] = max(5, req.mcp_activity_grace_sec)
+        if req.processing_nudge_max_count is not None:
+            patch["processing_nudge_max_count"] = max(0, req.processing_nudge_max_count)
+
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}
         

@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...daemon.server import call_daemon
+from ...daemon.processing_state import get_tracker as get_processing_tracker
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.actors import get_effective_role
 from ...kernel.group import load_group
@@ -1837,6 +1838,32 @@ MCP_TOOLS = [
 def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Handle MCP tool call"""
 
+    # Track MCP call for processing state (prevents false stale detection)
+    # Reply tools (message_send/reply/file_send) are tracked separately after success
+    _REPLY_TOOLS = {"cccc_message_send", "cccc_message_reply", "cccc_file_send"}
+    _tracking_gid = ""
+    _tracking_aid = ""
+    _should_track = name not in _REPLY_TOOLS
+
+    if _should_track:
+        tracker = get_processing_tracker()
+        if tracker:
+            _tracking_gid = _env_str("CCCC_GROUP_ID")
+            _tracking_aid = _env_str("CCCC_ACTOR_ID")
+            if _tracking_gid and _tracking_aid:
+                tracker.on_mcp_call_start(_tracking_gid, _tracking_aid, name)
+
+    try:
+        return _handle_tool_call_impl(name, arguments)
+    finally:
+        if _should_track and _tracking_gid and _tracking_aid:
+            tracker = get_processing_tracker()
+            if tracker:
+                tracker.on_mcp_call_end(_tracking_gid, _tracking_aid, name)
+
+
+def _handle_tool_call_impl(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Internal implementation of tool call handling."""
     # cccc.* namespace
     if name == "cccc_help":
         gid = _env_str("CCCC_GROUP_ID")
@@ -1905,7 +1932,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
-        return message_send(
+        result = message_send(
             group_id=gid,
             dst_group_id=arguments.get("dst_group_id"),
             actor_id=aid,
@@ -1913,13 +1940,18 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             to=list(to_raw) if isinstance(to_raw, list) else [],
             priority=str(arguments.get("priority") or "normal"),
         )
+        # Track MCP reply - actor has responded via MCP, clear processing state
+        tracker = get_processing_tracker()
+        if tracker and gid and aid:
+            tracker.on_mcp_reply(gid, aid)
+        return result
 
     if name == "cccc_message_reply":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
         reply_to = str(arguments.get("event_id") or arguments.get("reply_to") or "").strip()
-        return message_reply(
+        result = message_reply(
             group_id=gid,
             actor_id=aid,
             reply_to=reply_to,
@@ -1927,12 +1959,17 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             to=list(to_raw) if isinstance(to_raw, list) else None,
             priority=str(arguments.get("priority") or "normal"),
         )
+        # Track MCP reply - actor has responded via MCP, clear processing state
+        tracker = get_processing_tracker()
+        if tracker and gid and aid:
+            tracker.on_mcp_reply(gid, aid)
+        return result
 
     if name == "cccc_file_send":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
-        return file_send(
+        result = file_send(
             group_id=gid,
             actor_id=aid,
             path=str(arguments.get("path") or ""),
@@ -1940,6 +1977,11 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             to=list(to_raw) if isinstance(to_raw, list) else [],
             priority=str(arguments.get("priority") or "normal"),
         )
+        # Track MCP reply - actor has responded via MCP, clear processing state
+        tracker = get_processing_tracker()
+        if tracker and gid and aid:
+            tracker.on_mcp_reply(gid, aid)
+        return result
 
     if name == "cccc_blob_path":
         gid = _resolve_group_id(arguments)

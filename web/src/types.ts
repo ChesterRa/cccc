@@ -189,6 +189,12 @@ export type GroupSettings = {
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;
   terminal_transcript_notify_lines: number;
+
+  // Processing state tracking
+  processing_tracking_enabled: boolean;
+  processing_timeout_sec: number;
+  mcp_activity_grace_sec: number;
+  processing_nudge_max_count: number;
 };
 
 export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk";

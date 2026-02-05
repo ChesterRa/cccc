@@ -5,6 +5,7 @@ import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
 import {
   TimingTab,
+  ProcessingTab,
   MessagingTab,
   IMBridgeTab,
   TranscriptTab,
@@ -122,6 +123,12 @@ export function SettingsModal({
   // Messaging policy
   const [defaultSendTo, setDefaultSendTo] = useState<"foreman" | "broadcast">("foreman");
 
+  // Processing state tracking
+  const [processingEnabled, setProcessingEnabled] = useState(true);
+  const [processingTimeoutSec, setProcessingTimeoutSec] = useState(30);
+  const [mcpActivityGraceSec, setMcpActivityGraceSec] = useState(60);
+  const [nudgeMaxCount, setNudgeMaxCount] = useState(3);
+
   // Terminal transcript (group-scoped policy)
   const [terminalVisibility, setTerminalVisibility] = useState<"off" | "foreman" | "all">("foreman");
   const [terminalNotifyTail, setTerminalNotifyTail] = useState(false);
@@ -202,6 +209,11 @@ export function SettingsModal({
       setAutoMarkOnDelivery(Boolean(settings.auto_mark_on_delivery));
       setDefaultSendTo(settings.default_send_to || "foreman");
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
+      // Processing state tracking
+      setProcessingEnabled(settings.processing_tracking_enabled ?? true);
+      setProcessingTimeoutSec(settings.processing_timeout_sec ?? 30);
+      setMcpActivityGraceSec(settings.mcp_activity_grace_sec ?? 60);
+      setNudgeMaxCount(settings.processing_nudge_max_count ?? 3);
       setTerminalNotifyTail(Boolean(settings.terminal_transcript_notify_tail));
       setTerminalNotifyLines(Number(settings.terminal_transcript_notify_lines || 20));
     }
@@ -357,6 +369,15 @@ export function SettingsModal({
   const handleSaveMessagingSettings = async () => {
     await onUpdateSettings({
       default_send_to: defaultSendTo,
+    });
+  };
+
+  const handleSaveProcessingSettings = async () => {
+    await onUpdateSettings({
+      processing_tracking_enabled: processingEnabled,
+      processing_timeout_sec: processingTimeoutSec,
+      mcp_activity_grace_sec: mcpActivityGraceSec,
+      processing_nudge_max_count: nudgeMaxCount,
     });
   };
 
@@ -677,6 +698,7 @@ export function SettingsModal({
 
   const groupTabs: { id: GroupTabId; label: string }[] = [
     { id: "timing", label: "Timing" },
+    { id: "processing", label: "Processing" },
     { id: "messaging", label: "Messaging" },
     { id: "im", label: "IM Bridge" },
     { id: "transcript", label: "Transcript" },
@@ -951,6 +973,22 @@ export function SettingsModal({
                   setAutoMarkOnDelivery={setAutoMarkOnDelivery}
                   onSave={handleSaveSettings}
                   onAutoSave={handleAutoSave}
+                />
+              )}
+
+              {activeTab === "processing" && (
+                <ProcessingTab
+                  isDark={isDark}
+                  busy={busy}
+                  processingEnabled={processingEnabled}
+                  setProcessingEnabled={setProcessingEnabled}
+                  processingTimeoutSec={processingTimeoutSec}
+                  setProcessingTimeoutSec={setProcessingTimeoutSec}
+                  mcpActivityGraceSec={mcpActivityGraceSec}
+                  setMcpActivityGraceSec={setMcpActivityGraceSec}
+                  nudgeMaxCount={nudgeMaxCount}
+                  setNudgeMaxCount={setNudgeMaxCount}
+                  onSave={handleSaveProcessingSettings}
                 />
               )}
 

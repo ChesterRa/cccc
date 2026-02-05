@@ -40,6 +40,7 @@ from ..runners import headless as headless_runner
 from ..util.fs import atomic_write_text, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 from ..util.conv import coerce_bool
+from .processing_state import get_tracker as get_processing_tracker
 
 
 # ============================================================================
@@ -863,6 +864,11 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             if ok:
                 THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
                 THROTTLE.mark_delivered(gid, aid)
+                # Notify processing state tracker
+                tracker = get_processing_tracker()
+                if tracker and deliverable:
+                    last_msg = deliverable[-1]
+                    tracker.on_message_delivered(gid, aid, last_msg.event_id)
                 # Auto-mark as read if enabled
                 if _get_auto_mark_on_delivery(group) and deliverable:
                     last_msg = deliverable[-1]
@@ -888,6 +894,11 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if delivered:
             THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
             THROTTLE.mark_delivered(gid, aid)
+            # Notify processing state tracker
+            tracker = get_processing_tracker()
+            if tracker and deliverable:
+                last_msg = deliverable[-1]
+                tracker.on_message_delivered(gid, aid, last_msg.event_id)
             # Auto-mark as read if enabled
             if _get_auto_mark_on_delivery(group) and deliverable:
                 last_msg = deliverable[-1]
@@ -902,7 +913,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         else:
             # Delivery failed: keep everything queued for retry.
             THROTTLE.requeue_front(gid, aid, messages)
-    
+
     return delivered
 
 
