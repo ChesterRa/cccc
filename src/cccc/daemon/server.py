@@ -89,6 +89,8 @@ _PRIVATE_ENV_MAX_VALUE_CHARS = 200_000
 
 _OBS_LOCK = threading.Lock()
 _OBSERVABILITY: Dict[str, Any] = {}
+_AUTO_WAKE_LOCK = threading.Lock()
+_AUTO_WAKE_IN_PROGRESS: set[tuple[str, str]] = set()
 
 
 def _get_observability() -> Dict[str, Any]:
@@ -1580,19 +1582,57 @@ def _start_actor_process(
     }
 
 
-def _auto_wake_recipients(group: Any, to: List[str], by: str) -> List[str]:
+def _registry_group_yaml_path(group_id: str, meta: Dict[str, Any]) -> Path:
+    """Best-effort path resolution for a group's group.yaml from registry metadata."""
+    gid = str(group_id or "").strip()
+    raw_path = str(meta.get("path") or "").strip() if isinstance(meta, dict) else ""
+    if raw_path:
+        return Path(raw_path).expanduser() / "group.yaml"
+    return ensure_home() / "groups" / gid / "group.yaml"
+
+
+def _registry_group_health(group_id: str, meta: Dict[str, Any]) -> tuple[str, Any]:
+    """Classify registry entry health.
+
+    Returns:
+      ("ok", Group) when loadable
+      ("missing", None) when group.yaml is absent
+      ("corrupt", None) when group.yaml exists but cannot be loaded
+    """
+    p = _registry_group_yaml_path(group_id, meta)
+    if not p.exists():
+        return "missing", None
+    g = load_group(group_id)
+    if g is None:
+        return "corrupt", None
+    return "ok", g
+
+
+def _auto_wake_recipients(group: Any, to: list[str], by: str) -> list[str]:
     """Auto-start disabled actors that match the recipient list.
 
     Returns list of actor IDs that were successfully woken up.
     """
-    woken: List[str] = []
+    woken: list[str] = []
     disabled_ids = disabled_recipient_actor_ids(group, to)
     for actor_id in disabled_ids:
+        key = (str(group.group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            continue
+        with _AUTO_WAKE_LOCK:
+            if key in _AUTO_WAKE_IN_PROGRESS:
+                continue
+            _AUTO_WAKE_IN_PROGRESS.add(key)
         actor = find_actor(group, actor_id)
         if actor is None:
+            with _AUTO_WAKE_LOCK:
+                _AUTO_WAKE_IN_PROGRESS.discard(key)
             continue
         try:
-            update_actor(group, actor_id, {"enabled": True})
+            # Re-check enabled flag under lockless snapshot: another request may have
+            # already enabled/restarted this actor.
+            if bool(actor.get("enabled", True)):
+                continue
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
             runner_kind = str(actor.get("runner") or "pty").strip()
@@ -1606,9 +1646,29 @@ def _auto_wake_recipients(group: Any, to: List[str], by: str) -> List[str]:
                 by=by,
             )
             if result["success"]:
-                woken.append(actor_id)
+                # Mark actor enabled only AFTER successful startup.
+                try:
+                    update_actor(group, actor_id, {"enabled": True})
+                    woken.append(actor_id)
+                except Exception as e:
+                    # Avoid a running-but-disabled zombie if persistence fails.
+                    try:
+                        runner_stop_actor(group.group_id, actor_id, runner_kind)
+                    except Exception:
+                        pass
+                    logger.warning("[auto-wake] failed to persist enabled actor=%s group=%s: %s", actor_id, group.group_id, e)
+            else:
+                logger.info(
+                    "[auto-wake] actor start failed actor=%s group=%s err=%s",
+                    actor_id,
+                    group.group_id,
+                    result.get("error"),
+                )
         except Exception:
-            pass
+            logger.exception("[auto-wake] unexpected error actor=%s group=%s", actor_id, group.group_id)
+        finally:
+            with _AUTO_WAKE_LOCK:
+                _AUTO_WAKE_IN_PROGRESS.discard(key)
     return woken
 
 
@@ -2278,7 +2338,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         groups = list(reg.groups.values())
         groups.sort(key=lambda g: (g.get("updated_at") or "", g.get("created_at") or ""), reverse=True)
         out = []
-        orphaned_ids: list[str] = []
+        missing_ids: list[str] = []
+        corrupt_ids: list[str] = []
         for g in groups:
             if not isinstance(g, dict):
                 continue
@@ -2289,25 +2350,73 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             )
             item = dict(g)
             item["running"] = bool(running)
-            # Load full group doc to get state
+            # Load full group doc to get state. Do not mutate registry here.
             if gid:
-                full_group = load_group(gid)
-                if full_group is not None:
+                health, full_group = _registry_group_health(gid, g)
+                item["registry_health"] = health
+                if health == "ok" and full_group is not None:
                     item["state"] = full_group.doc.get("state", "active")
                 else:
-                    # group.yaml missing — registry orphan; skip from listing
-                    orphaned_ids.append(gid)
+                    if health == "missing":
+                        missing_ids.append(gid)
+                    elif health == "corrupt":
+                        corrupt_ids.append(gid)
                     continue
             out.append(item)
-        # Auto-clean orphaned registry entries
-        if orphaned_ids:
-            for oid in orphaned_ids:
-                reg.groups.pop(oid, None)
-                for k, v in list(reg.defaults.items()):
-                    if v == oid:
-                        reg.defaults.pop(k, None)
-            reg.save()
-        return DaemonResponse(ok=True, result={"groups": out}), False
+        return DaemonResponse(
+            ok=True,
+            result={
+                "groups": out,
+                "registry_health": {
+                    "missing_group_ids": missing_ids,
+                    "corrupt_group_ids": corrupt_ids,
+                },
+            },
+        ), False
+
+    if op == "registry_reconcile":
+        remove_missing = coerce_bool(args.get("remove_missing"), default=False)
+        reg = load_registry()
+        entries = list(reg.groups.items())
+        missing_ids: list[str] = []
+        corrupt_ids: list[str] = []
+        for gid, meta in entries:
+            group_id = str(gid or "").strip()
+            if not group_id:
+                continue
+            meta_dict = meta if isinstance(meta, dict) else {}
+            health, _ = _registry_group_health(group_id, meta_dict)
+            if health == "missing":
+                missing_ids.append(group_id)
+            elif health == "corrupt":
+                corrupt_ids.append(group_id)
+
+        removed_group_ids: list[str] = []
+        removed_default_scope_keys: list[str] = []
+        if remove_missing and missing_ids:
+            to_remove = set(missing_ids)
+            for gid in list(to_remove):
+                if reg.groups.pop(gid, None) is not None:
+                    removed_group_ids.append(gid)
+            if removed_group_ids:
+                removed_set = set(removed_group_ids)
+                for sk, gid in list(reg.defaults.items()):
+                    if str(gid or "").strip() in removed_set:
+                        reg.defaults.pop(sk, None)
+                        removed_default_scope_keys.append(str(sk))
+                reg.save()
+
+        return DaemonResponse(
+            ok=True,
+            result={
+                "dry_run": not remove_missing,
+                "scanned_groups": len(entries),
+                "missing_group_ids": sorted(missing_ids),
+                "corrupt_group_ids": sorted(corrupt_ids),
+                "removed_group_ids": sorted(removed_group_ids),
+                "removed_default_scope_keys": sorted(removed_default_scope_keys),
+            },
+        ), False
 
     if op == "group_start":
         # Batch operation: start ALL actors in the group

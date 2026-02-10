@@ -773,6 +773,26 @@ export async function updateObservability(args: {
   });
 }
 
+export interface RegistryReconcileResult {
+  dry_run: boolean;
+  scanned_groups: number;
+  missing_group_ids: string[];
+  corrupt_group_ids: string[];
+  removed_group_ids: string[];
+  removed_default_scope_keys: string[];
+}
+
+export async function previewRegistryReconcile() {
+  return apiJson<RegistryReconcileResult>("/api/v1/registry/reconcile");
+}
+
+export async function executeRegistryReconcile(removeMissing = true) {
+  return apiJson<RegistryReconcileResult>("/api/v1/registry/reconcile", {
+    method: "POST",
+    body: JSON.stringify({ by: "user", remove_missing: !!removeMissing }),
+  });
+}
+
 // ============ Debug ============
 
 export async function fetchDebugSnapshot(groupId: string) {

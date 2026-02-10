@@ -37,6 +37,7 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: GroupSettings | null;
   onUpdateSettings: (settings: Partial<GroupSettings>) => Promise<void>;
+  onRegistryChanged?: () => Promise<void> | void;
   busy: boolean;
   isDark: boolean;
   groupId?: string;
@@ -107,6 +108,7 @@ export function SettingsModal({
   onClose,
   settings,
   onUpdateSettings,
+  onRegistryChanged,
   busy,
   isDark,
   groupId,
@@ -202,6 +204,11 @@ export function SettingsModal({
   const [logErr, setLogErr] = useState("");
   const [logBusy, setLogBusy] = useState(false);
 
+  // Registry maintenance (global)
+  const [registryBusy, setRegistryBusy] = useState(false);
+  const [registryErr, setRegistryErr] = useState("");
+  const [registryResult, setRegistryResult] = useState<api.RegistryReconcileResult | null>(null);
+
   // ============ Effects ============
 
   useEffect(() => {
@@ -248,6 +255,12 @@ export function SettingsModal({
     if (isOpen && groupId) loadDevActors();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
   }, [isOpen, groupId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (scope !== "global" || globalTab !== "developer") return;
+    void loadRegistryPreview();
+  }, [isOpen, scope, globalTab]);
 
   // ============ Data Loading ============
 
@@ -690,6 +703,52 @@ export function SettingsModal({
     }
   };
 
+  const loadRegistryPreview = async () => {
+    setRegistryBusy(true);
+    setRegistryErr("");
+    try {
+      const resp = await api.previewRegistryReconcile();
+      if (resp.ok) {
+        setRegistryResult(resp.result);
+      } else {
+        setRegistryErr(resp.error?.message || "Failed to scan registry");
+      }
+    } catch {
+      setRegistryErr("Failed to scan registry");
+    } finally {
+      setRegistryBusy(false);
+    }
+  };
+
+  const handleReconcileRegistry = async () => {
+    const missingCount = registryResult?.missing_group_ids?.length || 0;
+    if (missingCount <= 0) {
+      await loadRegistryPreview();
+      return;
+    }
+    if (!window.confirm(`Remove ${missingCount} missing group entries from registry?`)) {
+      return;
+    }
+    setRegistryBusy(true);
+    setRegistryErr("");
+    try {
+      const resp = await api.executeRegistryReconcile(true);
+      if (resp.ok) {
+        setRegistryResult(resp.result);
+        if (onRegistryChanged) {
+          await onRegistryChanged();
+        }
+        await loadRegistryPreview();
+      } else {
+        setRegistryErr(resp.error?.message || "Failed to clean registry");
+      }
+    } catch {
+      setRegistryErr("Failed to clean registry");
+    } finally {
+      setRegistryBusy(false);
+    }
+  };
+
   // ============ Render ============
 
   if (!isOpen) return null;
@@ -1109,6 +1168,11 @@ export function SettingsModal({
                   logBusy={logBusy}
                   onLoadLogTail={loadLogTail}
                   onClearLogs={handleClearLogs}
+                  registryBusy={registryBusy}
+                  registryErr={registryErr}
+                  registryResult={registryResult}
+                  onPreviewRegistry={loadRegistryPreview}
+                  onReconcileRegistry={handleReconcileRegistry}
                 />
               )}
             </div>

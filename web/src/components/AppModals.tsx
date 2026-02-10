@@ -746,6 +746,7 @@ export function AppModals({
         onClose={() => closeModal("settings")}
         settings={groupSettings}
         onUpdateSettings={handleUpdateSettings}
+        onRegistryChanged={refreshGroups}
         busy={busy.startsWith("settings")}
         isDark={isDark}
         groupId={selectedGroupId}

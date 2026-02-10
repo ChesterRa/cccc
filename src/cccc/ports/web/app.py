@@ -232,6 +232,11 @@ class ObservabilityUpdateRequest(BaseModel):
     terminal_ui_scrollback_lines: Optional[int] = None
 
 
+class RegistryReconcileRequest(BaseModel):
+    by: str = Field(default="user")
+    remove_missing: bool = False
+
+
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
@@ -663,6 +668,24 @@ def create_app() -> FastAPI:
             pass
 
         return resp
+
+    @app.get("/api/v1/registry/reconcile")
+    async def registry_reconcile_preview() -> Dict[str, Any]:
+        """Preview registry health (missing/corrupt groups) without mutating registry."""
+        return await _daemon({"op": "registry_reconcile", "args": {"remove_missing": False, "by": "user"}})
+
+    @app.post("/api/v1/registry/reconcile")
+    async def registry_reconcile(req: RegistryReconcileRequest) -> Dict[str, Any]:
+        """Explicitly reconcile registry (currently removes only missing entries)."""
+        return await _daemon(
+            {
+                "op": "registry_reconcile",
+                "args": {
+                    "remove_missing": bool(req.remove_missing),
+                    "by": str(req.by or "user"),
+                },
+            }
+        )
 
     # ---------------------------------------------------------------------
     # Terminal transcript endpoints (group-scoped)

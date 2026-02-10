@@ -30,6 +30,19 @@ interface DeveloperTabProps {
   logBusy: boolean;
   onLoadLogTail: () => void;
   onClearLogs: () => void;
+  // Registry maintenance
+  registryBusy: boolean;
+  registryErr: string;
+  registryResult: {
+    dry_run: boolean;
+    scanned_groups: number;
+    missing_group_ids: string[];
+    corrupt_group_ids: string[];
+    removed_group_ids: string[];
+    removed_default_scope_keys: string[];
+  } | null;
+  onPreviewRegistry: () => void;
+  onReconcileRegistry: () => void;
 }
 
 export function DeveloperTab({
@@ -59,7 +72,16 @@ export function DeveloperTab({
   logBusy,
   onLoadLogTail,
   onClearLogs,
+  registryBusy,
+  registryErr,
+  registryResult,
+  onPreviewRegistry,
+  onReconcileRegistry,
 }: DeveloperTabProps) {
+  const missing = Array.isArray(registryResult?.missing_group_ids) ? registryResult!.missing_group_ids : [];
+  const corrupt = Array.isArray(registryResult?.corrupt_group_ids) ? registryResult!.corrupt_group_ids : [];
+  const removed = Array.isArray(registryResult?.removed_group_ids) ? registryResult!.removed_group_ids : [];
+
   return (
     <div className="space-y-4">
       <div>
@@ -166,6 +188,69 @@ export function DeveloperTab({
             {obsBusy ? "Saving..." : "Save Developer Settings"}
           </button>
         </div>
+      </div>
+
+      {/* Registry maintenance */}
+      <div className={cardClass(isDark)}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Registry maintenance</div>
+            <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+              Scan missing/corrupt groups in registry. Cleanup only removes missing entries.
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onPreviewRegistry}
+              disabled={registryBusy}
+              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
+              } disabled:opacity-50`}
+            >
+              {registryBusy ? "Scanning..." : "Scan"}
+            </button>
+            <button
+              onClick={onReconcileRegistry}
+              disabled={registryBusy || missing.length === 0}
+              className={primaryButtonClass(registryBusy || missing.length === 0)}
+            >
+              {registryBusy ? "Cleaning..." : "Clean Missing"}
+            </button>
+          </div>
+        </div>
+
+        {registryErr ? (
+          <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{registryErr}</div>
+        ) : null}
+
+        {registryResult ? (
+          <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+            isDark ? "border-slate-800 bg-slate-900/40 text-slate-300" : "border-gray-200 bg-white text-gray-700"
+          }`}>
+            <div>
+              scanned={registryResult.scanned_groups} · missing={missing.length} · corrupt={corrupt.length}
+              {removed.length > 0 ? ` · removed=${removed.length}` : ""}
+            </div>
+            {missing.length > 0 ? (
+              <div className="mt-2 break-all">
+                <span className={isDark ? "text-amber-300" : "text-amber-700"}>missing:</span>{" "}
+                {missing.join(", ")}
+              </div>
+            ) : null}
+            {corrupt.length > 0 ? (
+              <div className="mt-2 break-all">
+                <span className={isDark ? "text-rose-300" : "text-rose-700"}>corrupt:</span>{" "}
+                {corrupt.join(", ")}
+              </div>
+            ) : null}
+            {removed.length > 0 ? (
+              <div className="mt-2 break-all">
+                <span className={isDark ? "text-emerald-300" : "text-emerald-700"}>removed:</span>{" "}
+                {removed.join(", ")}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {/* Debug Snapshot */}

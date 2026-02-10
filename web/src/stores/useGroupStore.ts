@@ -473,16 +473,20 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     // Guard against out-of-order resolves when the user switches groups quickly.
     if (get().selectedGroupId !== gid) return;
 
-    // If group not found (orphaned registry entry), clear state and bail out
+    // If group truly does not exist, clear state. For transient failures
+    // (network/500), keep current UI state to avoid false "data vanished" flashes.
     if (!show.ok) {
-      set({
-        groupDoc: null,
-        events: [],
-        actors: [],
-        groupContext: null,
-        groupSettings: null,
-        hasMoreHistory: false,
-      });
+      const code = String(show.error?.code || "").trim();
+      if (code === "group_not_found") {
+        set({
+          groupDoc: null,
+          events: [],
+          actors: [],
+          groupContext: null,
+          groupSettings: null,
+          hasMoreHistory: false,
+        });
+      }
       return;
     }
 
