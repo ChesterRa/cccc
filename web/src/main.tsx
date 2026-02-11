@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { AuthGate } from "./components/AuthGate";
 import App from "./App";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
@@ -27,6 +28,8 @@ if ("serviceWorker" in navigator && typeof navigator.serviceWorker.getRegistrati
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <AuthGate>
+      <App />
+    </AuthGate>
   </React.StrictMode>,
 );

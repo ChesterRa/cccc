@@ -20,6 +20,31 @@ import type {
 // Extract and cache token from URL for dev mode (Vite doesn't proxy /ui/ to backend)
 let cachedToken: string | null = null;
 
+// Global callback for 401 unauthorized responses
+let _authRequiredHandler: (() => void) | null = null;
+
+export function onAuthRequired(handler: () => void): void {
+  _authRequiredHandler = handler;
+}
+
+export function setAuthToken(token: string): void {
+  cachedToken = token;
+  try {
+    sessionStorage.setItem("cccc_dev_token", token);
+  } catch {
+    void 0;
+  }
+}
+
+export function clearAuthToken(): void {
+  cachedToken = "";
+  try {
+    sessionStorage.removeItem("cccc_dev_token");
+  } catch {
+    void 0;
+  }
+}
+
 function getAuthToken(): string | null {
   if (cachedToken !== null) return cachedToken || null;
 
@@ -28,17 +53,15 @@ function getAuthToken(): string | null {
   const urlToken = urlParams.get("token");
   if (urlToken) {
     cachedToken = urlToken;
-    // Store in sessionStorage for page refreshes (dev mode only)
     try {
       sessionStorage.setItem("cccc_dev_token", urlToken);
     } catch {
-      // Storage might be unavailable (private mode / disabled cookies).
       void 0;
     }
     return urlToken;
   }
 
-  // Fallback to sessionStorage (for dev mode page refreshes)
+  // Fallback to sessionStorage
   try {
     const stored = sessionStorage.getItem("cccc_dev_token");
     if (stored) {
@@ -46,7 +69,6 @@ function getAuthToken(): string | null {
       return stored;
     }
   } catch {
-    // Storage might be unavailable (private mode / disabled cookies).
     void 0;
   }
 
@@ -105,6 +127,9 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
 
   try {
     const data = JSON.parse(text);
+    if (!data.ok && data.error?.code === "unauthorized") {
+      _authRequiredHandler?.();
+    }
     return data as ApiResponse<T>;
   } catch {
     // JSON parse error
@@ -138,6 +163,9 @@ export async function apiForm<T>(path: string, form: FormData, init?: RequestIni
 
   try {
     const data = JSON.parse(text);
+    if (!data.ok && data.error?.code === "unauthorized") {
+      _authRequiredHandler?.();
+    }
     return data as ApiResponse<T>;
   } catch {
     return makeErrorResponse("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 100)}`);

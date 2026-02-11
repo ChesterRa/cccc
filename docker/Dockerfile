@@ -16,8 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI (curl + bash, npm package deprecated)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Install Claude Code CLI and move to global path
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && cp /root/.local/bin/claude /usr/local/bin/claude
 
 # Install other CLI tools via npm
 RUN npm install -g \
@@ -39,9 +40,19 @@ RUN pip install --no-cache-dir .
 WORKDIR /workspace
 RUN rm -rf /app
 
+# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash cccc \
+    && mkdir -p /data /workspace \
+    && chown -R cccc:cccc /data /workspace
+
+USER cccc
+ENV HOME=/home/cccc
+
+# Pre-configure Claude CLI (skip onboarding prompt)
+RUN echo '{"hasCompletedOnboarding":true}' > /home/cccc/.claude.json
+
 # Configuration
 ENV CCCC_HOME=/data
-ENV PATH="/root/.local/bin:$PATH"
 
 # Daemon IPC - TCP mode for SDK access
 # K8s sidecar: 127.0.0.1 (same Pod shares network namespace)
