@@ -400,7 +400,7 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; event: CCCSEventV1 }
+{ group_id: string; ruleset: { rules: Array<unknown>; snippets: Record<string, string> }; event: CCCSEventV1 }
 ```
 
 #### `group_set_state`
@@ -417,7 +417,7 @@ Result:
 
 #### `group_settings_update`
 
-Update group-scoped timing/delivery/transcript settings.
+Update group-scoped messaging/automation/delivery/transcript settings.
 
 Args:
 ```ts
@@ -425,13 +425,122 @@ Args:
 ```
 
 Patch keys used by CCCC v0.4.x include:
-- Delivery: `min_interval_seconds`
-- Automation: `nudge_after_seconds`, `actor_idle_timeout_seconds`, `keepalive_delay_seconds`, `keepalive_max_per_actor`, `silence_timeout_seconds`, `standup_interval_seconds`, `help_nudge_interval_seconds`, `help_nudge_min_messages`
+- Messaging: `default_send_to`
+- Delivery: `min_interval_seconds`, `auto_mark_on_delivery`
+- Automation: `nudge_after_seconds`, `reply_required_nudge_after_seconds`, `attention_ack_nudge_after_seconds`, `unread_nudge_after_seconds`, `nudge_digest_min_interval_seconds`, `nudge_max_repeats_per_obligation`, `nudge_escalate_after_repeats`, `actor_idle_timeout_seconds`, `keepalive_delay_seconds`, `keepalive_max_per_actor`, `silence_timeout_seconds`, `help_nudge_interval_seconds`, `help_nudge_min_messages`
 - Terminal transcript: `terminal_transcript_visibility`, `terminal_transcript_notify_tail`, `terminal_transcript_notify_lines`
 
 Result:
 ```ts
 { group_id: string; settings: Record<string, unknown>; event: CCCSEventV1 }
+```
+
+#### `group_automation_update`
+
+Replace group automation rules + snippets (scheduled `system.notify`).
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  expected_version?: number
+  ruleset: {
+    rules: Array<{
+      id: string
+      enabled?: boolean
+      scope?: "group" | "personal"
+      owner_actor_id?: string | null
+      to?: string[]
+      trigger?:
+        | { kind: "interval"; every_seconds: number }
+        | { kind: "cron"; cron: string; timezone?: string }
+        | { kind: "at"; at: string } // RFC3339
+      action?: {
+        kind?: "notify"
+        title?: string
+        snippet_ref?: string | null
+        message?: string
+        priority?: "low" | "normal" | "high" | "urgent"
+        requires_ack?: boolean
+      }
+    }>
+    snippets: Record<string, string>
+  }
+}
+```
+
+Result:
+```ts
+{ group_id: string; ruleset: Record<string, unknown>; version: number; event: CCCSEventV1 }
+```
+
+#### `group_automation_state`
+
+Get effective automation state for a caller.
+
+Args:
+```ts
+{ group_id: string; by?: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  ruleset: {
+    rules: Array<Record<string, unknown>>
+    snippets: Record<string, string>
+  }
+  status: Record<string, {
+    last_fired_at?: string
+    last_error_at?: string
+    last_error?: string
+    next_fire_at?: string
+  }>
+  supported_vars: string[] // e.g. interval_minutes, group_title, actor_names, scheduled_at
+  version: number
+  server_now: string
+  config_path: string
+}
+```
+
+Notes:
+- `by` as a peer receives a filtered view: group rules + own personal rules.
+
+#### `group_automation_manage`
+
+Incremental automation management with action list.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  expected_version?: number
+  actions: Array<
+    | { type: "create_rule"; rule: Record<string, unknown> }
+    | { type: "update_rule"; rule: Record<string, unknown> }
+    | { type: "set_rule_enabled"; rule_id: string; enabled: boolean }
+    | { type: "delete_rule"; rule_id: string }
+    | { type: "replace_all_rules"; ruleset: { rules: Array<Record<string, unknown>>; snippets: Record<string, string> } }
+  >
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  ruleset: Record<string, unknown>
+  status: Record<string, Record<string, string>>
+  supported_vars: string[]
+  version: number
+  server_now: string
+  applied_actions: Array<Record<string, unknown>>
+  changed: boolean
+  event?: CCCSEventV1 | null
+}
 ```
 
 #### `group_start`
@@ -948,12 +1057,12 @@ Args:
 
 Result:
 ```ts
-{ scope_root: string; template: Record<string, unknown>; diff: Record<string, unknown> }
+{ template: Record<string, unknown>; diff: Record<string, unknown> }
 ```
 
 #### `group_template_import_replace`
 
-Destructive replace of actors/settings/repo prompts (does not delete ledger history).
+Destructive replace of actors/settings/group prompt overrides (does not delete ledger history).
 
 Args:
 ```ts
@@ -965,7 +1074,7 @@ Rules:
 
 Result:
 ```ts
-{ group_id: string; applied: true; removed: string[]; added: string[]; updated: string[]; settings_patch: Record<string, unknown>; prompt_paths: Record<string, unknown> }
+{ group_id: string; applied: true; removed: string[]; added: string[]; updated: string[]; settings_patch: Record<string, unknown>; prompt_paths: string[] }
 ```
 
 #### `group_create_from_template`

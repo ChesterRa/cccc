@@ -30,22 +30,18 @@ Agents read this via `cccc_project_info` to understand context.
 
 ### Customize the Help Playbook
 
-The help playbook is the collaboration contract that agents follow. You can customize it per-project.
+The help playbook is the collaboration contract that agents follow. You can customize it per-group.
 
 #### File Priority
 
 CCCC loads help content with the following priority:
 
-1. **Repository override**: `CCCC_HELP.md` in your project root (highest priority)
-2. **Built-in default**: `src/cccc/resources/cccc-help.md` (fallback)
+1. **Group override (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` (highest priority)
+2. **Built-in default**: `cccc.resources/cccc-help.md` (fallback)
 
-To customize, create `CCCC_HELP.md` at your project root:
+To customize, edit the group prompt override (recommended: Web UI → Settings → Guidance).
 
-```bash
-# Copy the default as a starting point
-cp $(python -c "import cccc.resources; print(cccc.resources.__path__[0])")/cccc-help.md ./CCCC_HELP.md
-# Edit to your needs
-```
+You can also locate the file path from the Web UI (it shows the exact override path per group).
 
 #### Conditional Content Markers
 
@@ -90,7 +86,7 @@ The help is returned as:
 ```json
 {
   "markdown": "<filtered content based on role/actor>",
-  "source": "CCCC_HELP.md or cccc.resources/cccc-help.md"
+  "source": "CCCC_HOME/.../prompts/CCCC_HELP.md or cccc.resources/cccc-help.md"
 }
 ```
 

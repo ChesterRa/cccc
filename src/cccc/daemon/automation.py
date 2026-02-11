@@ -2,7 +2,8 @@
 
 Automation levels:
 1. Message-level: nudge (unread timeout)
-2. Session-level: actor idle detection, keepalive, group silence detection, standup
+2. Session-level: actor idle detection, keepalive, group silence detection
+3. Rule-level: user-defined automation rules (scheduled system notifications)
 
 All automation respects group state:
 - active: All automation enabled
@@ -12,19 +13,21 @@ All automation respects group state:
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
-from ..contracts.v1 import SystemNotifyData
+from ..contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
 from ..kernel.actors import list_actors, find_foreman
 from ..kernel.group import Group, load_group, get_group_state
 from ..kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
 from ..kernel.ledger import append_event
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
-from ..kernel.prompt_files import DEFAULT_STANDUP_TEMPLATE, STANDUP_FILENAME, read_repo_prompt_file
+from ..kernel.messaging import enabled_recipient_actor_ids
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from .delivery import flush_pending_messages, queue_system_notify
@@ -44,14 +47,12 @@ class AutomationConfig:
     nudge_digest_min_interval_seconds: int   # Min interval between digest nudges per actor
     nudge_max_repeats_per_obligation: int    # Max repeats per obligation item
     nudge_escalate_after_repeats: int        # Escalate to foreman at/after this repeat count
-    auto_mark_on_delivery: bool       # Auto-mark messages as read after PTY delivery
 
     # Level 2: Session-level
     actor_idle_timeout_seconds: int   # Notify foreman if actor idle for this long
     keepalive_delay_seconds: int      # Send keepalive after Next: declaration
     keepalive_max_per_actor: int      # Max consecutive keepalives per actor
     silence_timeout_seconds: int      # Check group if silent for this long
-    standup_interval_seconds: int     # Periodic standup reminder for foreman (0 to disable)
 
     # Level 3: Help refresh nudges (actor-facing)
     help_nudge_interval_seconds: int  # Minimum time between help nudges per actor (0 to disable)
@@ -79,13 +80,11 @@ def _cfg(group: Group) -> AutomationConfig:
         nudge_digest_min_interval_seconds=_int("nudge_digest_min_interval_seconds", 120),
         nudge_max_repeats_per_obligation=_int("nudge_max_repeats_per_obligation", 3),
         nudge_escalate_after_repeats=_int("nudge_escalate_after_repeats", 2),
-        auto_mark_on_delivery=coerce_bool(d.get("auto_mark_on_delivery"), default=False),
         # Level 2
         actor_idle_timeout_seconds=_int("actor_idle_timeout_seconds", 600),
         keepalive_delay_seconds=_int("keepalive_delay_seconds", 120),
         keepalive_max_per_actor=_int("keepalive_max_per_actor", 3),
         silence_timeout_seconds=_int("silence_timeout_seconds", 600),
-        standup_interval_seconds=_int("standup_interval_seconds", 900),  # Default 15 minutes
         # Level 3
         help_nudge_interval_seconds=_int("help_nudge_interval_seconds", 600),
         help_nudge_min_messages=_int("help_nudge_min_messages", 10),
@@ -105,12 +104,16 @@ def _load_state(group: Group) -> Dict[str, Any]:
         v = int(doc.get("v") or 0)
     except Exception:
         v = 0
-    if v < 4:
-        doc["v"] = 4
+    if v < 5:
+        doc["v"] = 5
     actors = doc.get("actors")
     if not isinstance(actors, dict):
         actors = {}
         doc["actors"] = actors
+    rules = doc.get("rules")
+    if not isinstance(rules, dict):
+        rules = {}
+        doc["rules"] = rules
     return doc
 
 
@@ -129,6 +132,288 @@ def _actor_state(doc: Dict[str, Any], actor_id: str) -> Dict[str, Any]:
         st = {}
         actors[actor_id] = st
     return st
+
+
+def _rule_state(doc: Dict[str, Any], rule_id: str) -> Dict[str, Any]:
+    rules = doc.get("rules")
+    if not isinstance(rules, dict):
+        rules = {}
+        doc["rules"] = rules
+    st = rules.get(rule_id)
+    if not isinstance(st, dict):
+        st = {}
+        rules[rule_id] = st
+    return st
+
+
+def _load_ruleset(group: Group) -> AutomationRuleSet:
+    doc = group.doc.get("automation")
+    d = doc if isinstance(doc, dict) else {}
+
+    raw_snippets = d.get("snippets")
+    snippets_in = raw_snippets if isinstance(raw_snippets, dict) else {}
+    snippets: Dict[str, str] = {}
+    for k, v in snippets_in.items():
+        if not isinstance(k, str):
+            continue
+        key = k.strip()
+        if not key:
+            continue
+        if not isinstance(v, str):
+            continue
+        snippets[key] = v
+
+    raw_rules = d.get("rules")
+    rules_in = raw_rules if isinstance(raw_rules, list) else []
+    seen: set[str] = set()
+    rules: List[AutomationRule] = []
+    for rr in rules_in:
+        if not isinstance(rr, dict):
+            continue
+        try:
+            rule = AutomationRule.model_validate(rr)
+        except Exception:
+            continue
+        rid = str(rule.id or "").strip()
+        if not rid or rid in seen:
+            continue
+        seen.add(rid)
+        rules.append(rule)
+
+    return AutomationRuleSet(rules=rules, snippets=snippets)
+
+
+_SNIPPET_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+_AUTOMATION_SUPPORTED_VARS = ["interval_minutes", "group_title", "actor_names", "scheduled_at"]
+
+
+def _render_snippet(text: str, *, context: Dict[str, str]) -> str:
+    def _one(m: re.Match[str]) -> str:
+        key = str(m.group(1) or "").strip()
+        if not key:
+            return ""
+        return str(context.get(key, ""))
+
+    return _SNIPPET_VAR_RE.sub(_one, str(text or ""))
+
+
+def _actor_display_names(group: Group) -> str:
+    names: List[str] = []
+    for a in list_actors(group):
+        if not isinstance(a, dict):
+            continue
+        if not coerce_bool(a.get("enabled"), default=True):
+            continue
+        aid = str(a.get("id") or "").strip()
+        if not aid or aid == "user":
+            continue
+        title = str(a.get("title") or "").strip()
+        names.append(title or aid)
+    return ", ".join(names)
+
+
+@dataclass(frozen=True)
+class _CronSpec:
+    minutes: set[int]
+    hours: set[int]
+    days_of_month: set[int]
+    months: set[int]
+    days_of_week: set[int]
+    dom_any: bool
+    dow_any: bool
+
+
+def automation_supported_vars() -> List[str]:
+    return list(_AUTOMATION_SUPPORTED_VARS)
+
+
+def _iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_int_in_range(raw: str, *, min_v: int, max_v: int, field_name: str) -> int:
+    try:
+        n = int(str(raw).strip())
+    except Exception as e:
+        raise ValueError(f"invalid {field_name} value: {raw}") from e
+    if n < min_v or n > max_v:
+        raise ValueError(f"{field_name} out of range: {n} (expected {min_v}-{max_v})")
+    return n
+
+
+def _parse_cron_field(
+    expr: str,
+    *,
+    min_v: int,
+    max_v: int,
+    field_name: str,
+    allow_7_to_0: bool = False,
+) -> Tuple[set[int], bool]:
+    raw = str(expr or "").strip()
+    if not raw:
+        raise ValueError(f"empty cron field: {field_name}")
+
+    full_any = raw == "*"
+    out: set[int] = set()
+
+    for part in raw.split(","):
+        token = str(part or "").strip()
+        if not token:
+            raise ValueError(f"invalid cron token in {field_name}: {raw}")
+
+        step = 1
+        base = token
+        if "/" in token:
+            base, step_raw = token.split("/", 1)
+            step = _parse_int_in_range(step_raw, min_v=1, max_v=100_000, field_name=f"{field_name}.step")
+            base = str(base or "").strip()
+            if not base:
+                raise ValueError(f"invalid cron step token in {field_name}: {token}")
+
+        if base == "*":
+            start, end = min_v, max_v
+        elif "-" in base:
+            a_raw, b_raw = base.split("-", 1)
+            start = _parse_int_in_range(a_raw, min_v=min_v, max_v=max_v, field_name=field_name)
+            end = _parse_int_in_range(b_raw, min_v=min_v, max_v=max_v, field_name=field_name)
+            if end < start:
+                raise ValueError(f"invalid cron range in {field_name}: {base}")
+        else:
+            n = _parse_int_in_range(base, min_v=min_v, max_v=max_v, field_name=field_name)
+            start, end = n, n
+
+        for n in range(start, end + 1, step):
+            if allow_7_to_0 and n == 7:
+                out.add(0)
+            else:
+                out.add(n)
+
+    if not out:
+        raise ValueError(f"empty cron set in {field_name}")
+    return out, full_any
+
+
+def _compile_cron(expr: str) -> _CronSpec:
+    parts = str(expr or "").strip().split()
+    if len(parts) != 5:
+        raise ValueError("cron must have 5 fields: min hour dom month dow")
+
+    minutes, _ = _parse_cron_field(parts[0], min_v=0, max_v=59, field_name="minute")
+    hours, _ = _parse_cron_field(parts[1], min_v=0, max_v=23, field_name="hour")
+    dom, dom_any = _parse_cron_field(parts[2], min_v=1, max_v=31, field_name="day_of_month")
+    months, _ = _parse_cron_field(parts[3], min_v=1, max_v=12, field_name="month")
+    dow, dow_any = _parse_cron_field(parts[4], min_v=0, max_v=7, field_name="day_of_week", allow_7_to_0=True)
+
+    return _CronSpec(
+        minutes=minutes,
+        hours=hours,
+        days_of_month=dom,
+        months=months,
+        days_of_week=dow,
+        dom_any=dom_any,
+        dow_any=dow_any,
+    )
+
+
+def _cron_matches(spec: _CronSpec, local_dt: datetime) -> bool:
+    if local_dt.minute not in spec.minutes:
+        return False
+    if local_dt.hour not in spec.hours:
+        return False
+    if local_dt.month not in spec.months:
+        return False
+
+    day_of_month_match = local_dt.day in spec.days_of_month
+    day_of_week = (local_dt.weekday() + 1) % 7  # Sunday=0, Monday=1...
+    day_of_week_match = day_of_week in spec.days_of_week
+
+    if spec.dom_any and spec.dow_any:
+        return True
+    if spec.dom_any:
+        return day_of_week_match
+    if spec.dow_any:
+        return day_of_month_match
+    return day_of_month_match or day_of_week_match
+
+
+def _cron_next_fire_utc(*, cron_expr: str, tz_name: str, now_utc: datetime) -> Optional[datetime]:
+    spec = _compile_cron(cron_expr)
+    tz = ZoneInfo(str(tz_name or "UTC"))
+    now_local = now_utc.astimezone(tz)
+    cursor = now_local.replace(second=0, microsecond=0)
+    if now_local > cursor:
+        cursor = cursor + timedelta(minutes=1)
+
+    for _ in range(366 * 24 * 60):
+        if _cron_matches(spec, cursor):
+            return cursor.astimezone(timezone.utc)
+        cursor = cursor + timedelta(minutes=1)
+    return None
+
+
+def _rule_next_fire_at(rule: AutomationRule, rule_state: Dict[str, Any], *, now_utc: datetime) -> Optional[datetime]:
+    if not bool(rule.enabled):
+        return None
+    trigger = rule.trigger
+
+    if trigger.kind == "interval":
+        every_seconds = int(trigger.every_seconds or 0)
+        if every_seconds <= 0:
+            return None
+        last_dt = parse_utc_iso(str(rule_state.get("last_fired_at") or ""))
+        if last_dt is None:
+            return now_utc + timedelta(seconds=every_seconds)
+        return last_dt + timedelta(seconds=every_seconds)
+
+    if trigger.kind == "cron":
+        try:
+            return _cron_next_fire_utc(cron_expr=str(trigger.cron or ""), tz_name=str(trigger.timezone or "UTC"), now_utc=now_utc)
+        except Exception:
+            return None
+
+    if trigger.kind == "at":
+        if coerce_bool(rule_state.get("at_fired"), default=False):
+            return None
+        at_dt = parse_utc_iso(str(trigger.at or ""))
+        if at_dt is None:
+            return None
+        return at_dt
+
+    return None
+
+
+def build_automation_status(group: Group, *, now: Optional[datetime] = None) -> Dict[str, Dict[str, Any]]:
+    now_utc = now.astimezone(timezone.utc) if isinstance(now, datetime) else datetime.now(timezone.utc)
+    ruleset = _load_ruleset(group)
+    state = _load_state(group)
+    rules_state = state.get("rules") if isinstance(state.get("rules"), dict) else {}
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for rule in ruleset.rules:
+        rid = str(rule.id or "").strip()
+        if not rid:
+            continue
+        st = rules_state.get(rid) if isinstance(rules_state, dict) else None
+        st_dict = st if isinstance(st, dict) else {}
+        next_fire = _rule_next_fire_at(rule, st_dict, now_utc=now_utc)
+        completed = False
+        completed_at = ""
+        try:
+            if str(getattr(rule.trigger, "kind", "") or "").strip() == "at" and coerce_bool(st_dict.get("at_fired"), default=False):
+                completed = True
+                completed_at = str(st_dict.get("last_fired_at") or "")
+        except Exception:
+            completed = False
+            completed_at = ""
+        out[rid] = {
+            "last_fired_at": str(st_dict.get("last_fired_at") or ""),
+            "last_error_at": str(st_dict.get("last_error_at") or ""),
+            "last_error": str(st_dict.get("last_error") or ""),
+            "next_fire_at": _iso_utc(next_fire) if next_fire is not None else "",
+            "completed": bool(completed),
+            "completed_at": str(completed_at or ""),
+        }
+    return out
 
 
 def _get_last_group_activity(group: Group) -> Optional[datetime]:
@@ -325,11 +610,20 @@ class AutomationManager:
             state = _load_state(group)
             state["resume_at"] = now
             state["last_silence_notify_at"] = now
-            state["last_standup_at"] = now
             try:
                 state["help_ledger_pos"] = int(group.ledger_path.stat().st_size)
             except Exception:
                 pass
+            # Reset user-defined automation rule timers to avoid "catch up" bursts.
+            ruleset = _load_ruleset(group)
+            for rule in ruleset.rules:
+                rid = str(rule.id or "").strip()
+                if not rid:
+                    continue
+                st_rule = _rule_state(state, rid)
+                st_rule["last_fired_at"] = now
+                st_rule["last_error_at"] = ""
+                st_rule["last_error"] = ""
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -397,10 +691,12 @@ class AutomationManager:
         self._check_actor_idle(group, cfg, now)
         self._check_keepalive(group, cfg, now)
         self._check_silence(group, cfg, now)
-        self._check_standup(group, cfg, now)
 
         # Level 3: Actor-facing help nudges
         self._check_help_nudge(group, cfg, now)
+
+        # Level 4: User-defined automation rules
+        self._check_rules(group, now)
 
     def _check_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check pending obligations/unread and send one digest nudge per actor."""
@@ -896,76 +1192,412 @@ class AutomationManager:
         foreman_runner_kind = str(foreman.get("runner") or "pty").strip()
         _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=foreman_runner_kind, ev=ev, notify=notify_data)
 
-    def _check_standup(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
-        """Check if it's time for a periodic standup meeting.
-        
-        Standup is a team review mechanism where foreman gathers peers to:
-        1. Update progress in context
-        2. Reflect on approach - is it correct? any blind spots?
-        3. Share ideas and concerns
-        4. Collectively decide on adjustments
-        """
-        if cfg.standup_interval_seconds <= 0:
-            return
-        
-        # Find foreman - standup is only sent to foreman
-        foreman = find_foreman(group)
-        if foreman is None:
-            return
-        foreman_id = str(foreman.get("id") or "").strip()
-        if not foreman_id:
-            return
-        
-        # Check if foreman is running
-        runner_kind = str(foreman.get("runner") or "pty").strip()
-        if runner_kind == "headless":
-            if not headless_runner.SUPERVISOR.actor_running(group.group_id, foreman_id):
-                return
-        else:
-            if not pty_runner.SUPERVISOR.actor_running(group.group_id, foreman_id):
-                return
+    def _daemon_automation_call(self, *, op: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+        """Invoke daemon ops from automation thread without duplicating server logic."""
+        try:
+            from ..contracts.v1 import DaemonRequest
+            from .server import handle_request
 
+            req = DaemonRequest(op=op, args=args)
+            resp, _ = handle_request(req)
+        except Exception as e:
+            return False, str(e)
+        if bool(resp.ok):
+            return True, ""
+        err = resp.error
+        msg = str(getattr(err, "message", "") or f"{op} failed")
+        return False, msg
+
+    def _resolve_actor_control_targets(self, group: Group, targets: List[str]) -> List[str]:
+        actors = list_actors(group)
+        actor_ids: List[str] = []
+        for actor in actors:
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if aid and aid != "user":
+                actor_ids.append(aid)
+        if not actor_ids:
+            return []
+
+        foreman = find_foreman(group)
+        foreman_id = str(foreman.get("id") or "").strip() if isinstance(foreman, dict) else ""
+        peers = [aid for aid in actor_ids if aid and aid != foreman_id]
+
+        selected: set[str] = set()
+        for token in targets:
+            t = str(token or "").strip()
+            if not t:
+                continue
+            if t == "@all":
+                selected.update(actor_ids)
+            elif t == "@foreman":
+                if foreman_id:
+                    selected.add(foreman_id)
+            elif t == "@peers":
+                selected.update(peers)
+            elif t in actor_ids:
+                selected.add(t)
+
+        if not selected:
+            return []
+        return [aid for aid in actor_ids if aid in selected]
+
+    def _execute_group_state_action(self, group: Group, *, target_state: str) -> Tuple[bool, str]:
+        state = str(target_state or "").strip().lower()
+        if state not in ("active", "idle", "paused", "stopped"):
+            return False, f"unsupported group state: {target_state}"
+
+        if state == "stopped":
+            return self._daemon_automation_call(
+                op="group_stop",
+                args={"group_id": group.group_id, "by": "user"},
+            )
+
+        group_now = load_group(group.group_id)
+        running = bool(group_now.doc.get("running")) if group_now is not None else False
+        if state == "active" and not running:
+            ok, err = self._daemon_automation_call(
+                op="group_start",
+                args={"group_id": group.group_id, "by": "user"},
+            )
+            if not ok:
+                return False, err
+        return self._daemon_automation_call(
+            op="group_set_state",
+            args={"group_id": group.group_id, "state": state, "by": "user"},
+        )
+
+    def _execute_actor_control_action(
+        self,
+        group: Group,
+        *,
+        operation: str,
+        targets: List[str],
+    ) -> Tuple[bool, str]:
+        op = str(operation or "").strip().lower()
+        op_map = {
+            "start": "actor_start",
+            "stop": "actor_stop",
+            "restart": "actor_restart",
+        }
+        daemon_op = op_map.get(op)
+        if not daemon_op:
+            return False, f"unsupported actor operation: {operation}"
+
+        actor_ids = self._resolve_actor_control_targets(group, targets)
+        if not actor_ids:
+            return False, "no actor targets resolved"
+
+        success_count = 0
+        errors: List[str] = []
+        for aid in actor_ids:
+            ok, err = self._daemon_automation_call(
+                op=daemon_op,
+                args={"group_id": group.group_id, "actor_id": aid, "by": "user"},
+            )
+            if ok:
+                success_count += 1
+                continue
+            if err:
+                errors.append(f"{aid}: {err}")
+
+        if success_count > 0:
+            return True, ""
+        if errors:
+            return False, " ; ".join(errors[:3])
+        return False, "no actor operations applied"
+
+    def _check_rules(self, group: Group, now: datetime) -> None:
+        """Run user-defined automation rules (scheduled system notifications)."""
+        ruleset = _load_ruleset(group)
+        if not ruleset.rules:
+            return
+
+        # Snapshot roster once.
+        roster: Dict[str, Dict[str, Any]] = {}
+        for a in list_actors(group):
+            if not isinstance(a, dict):
+                continue
+            aid = str(a.get("id") or "").strip()
+            if not aid:
+                continue
+            roster[aid] = a
+
+        group_title = str(group.doc.get("title") or "").strip()
+        actor_names = _actor_display_names(group)
+        now_iso = _iso_utc(now)
+
+        due: List[Dict[str, Any]] = []
         with self._lock:
             state = _load_state(group)
-            last_standup = state.get("last_standup_at")
-            
-            if last_standup:
-                last_standup_dt = parse_utc_iso(str(last_standup))
-                if last_standup_dt is not None:
-                    elapsed = (now - last_standup_dt).total_seconds()
-                    if elapsed < float(cfg.standup_interval_seconds):
+            dirty = False
+
+            for rule in ruleset.rules:
+                rid = str(rule.id or "").strip()
+                if not rid or not bool(rule.enabled):
+                    continue
+
+                st = _rule_state(state, rid)
+                trigger_kind = rule.trigger.kind
+                scheduled_at = ""
+                slot_key = ""
+                interval_seconds = 0
+
+                def _record_error(message: str) -> None:
+                    nonlocal dirty
+                    msg = str(message or "").strip()[:500]
+                    if not msg:
                         return
-            
-            state["last_standup_at"] = utc_now_iso()
-            _save_state(group, state)
+                    if str(st.get("last_error") or "") == msg:
+                        return
+                    st["last_error_at"] = now_iso
+                    st["last_error"] = msg
+                    dirty = True
 
-        # Calculate minutes since last standup for the message
-        interval_minutes = cfg.standup_interval_seconds // 60
+                if trigger_kind == "interval":
+                    interval_seconds = int(getattr(rule.trigger, "every_seconds", 0) or 0)
+                    if interval_seconds <= 0:
+                        continue
+                    last_dt = parse_utc_iso(str(st.get("last_fired_at") or ""))
+                    if last_dt is None:
+                        # New interval rule: start counting from now (no immediate fire).
+                        st["last_fired_at"] = now_iso
+                        dirty = True
+                        continue
+                    elapsed = (now - last_dt).total_seconds()
+                    if elapsed < float(interval_seconds):
+                        continue
+                    scheduled_at = _iso_utc(last_dt + timedelta(seconds=interval_seconds))
 
-        pf = read_repo_prompt_file(group, STANDUP_FILENAME)
-        template = str(pf.content or "").strip() if pf.found else ""
-        if not template:
-            template = str(DEFAULT_STANDUP_TEMPLATE or "")
+                elif trigger_kind == "cron":
+                    cron_expr = str(getattr(rule.trigger, "cron", "") or "").strip()
+                    tz_name = str(getattr(rule.trigger, "timezone", "UTC") or "UTC").strip() or "UTC"
+                    try:
+                        cron_spec = _compile_cron(cron_expr)
+                        tz = ZoneInfo(tz_name)
+                    except Exception as e:
+                        _record_error(f"invalid cron trigger: {e}")
+                        continue
 
-        standup_message = template.replace("{{interval_minutes}}", str(interval_minutes)).strip()
+                    local_now = now.astimezone(tz)
+                    slot_local = local_now.replace(second=0, microsecond=0)
+                    if not _cron_matches(cron_spec, slot_local):
+                        continue
+                    slot_utc = slot_local.astimezone(timezone.utc)
+                    slot_key = f"cron:{_iso_utc(slot_utc)}"
+                    if str(st.get("last_slot_key") or "") == slot_key:
+                        continue
+                    # Mark slot before delivery to avoid per-second re-evaluation in the same minute.
+                    st["last_slot_key"] = slot_key
+                    dirty = True
+                    scheduled_at = _iso_utc(slot_utc)
 
-        notify_data = SystemNotifyData(
-            kind="standup",
-            priority="normal",
-            title="Stand-up Meeting",
-            message=standup_message,
-            target_actor_id=foreman_id,
-            requires_ack=False,
-        )
-        ev = append_event(
-            group.ledger_path,
-            kind="system.notify",
-            group_id=group.group_id,
-            scope_key="",
-            by="system",
-            data=notify_data.model_dump(),
-        )
-        _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=runner_kind, ev=ev, notify=notify_data)
+                elif trigger_kind == "at":
+                    at_dt = parse_utc_iso(str(getattr(rule.trigger, "at", "") or ""))
+                    if at_dt is None:
+                        _record_error("invalid at trigger: expected RFC3339 timestamp")
+                        continue
+                    if coerce_bool(st.get("at_fired"), default=False):
+                        continue
+                    if now < at_dt:
+                        continue
+                    slot_key = f"at:{_iso_utc(at_dt)}"
+                    scheduled_at = _iso_utc(at_dt)
+                else:
+                    continue
+
+                action_kind = str(getattr(rule.action, "kind", "notify") or "notify").strip()
+                if action_kind in ("group_state", "actor_control") and trigger_kind != "at":
+                    _record_error(f"invalid schedule: action.kind={action_kind} only supports one-time schedules")
+                    continue
+                if action_kind == "notify":
+                    snippet_ref = str(getattr(rule.action, "snippet_ref", "") or "").strip()
+                    template = str(ruleset.snippets.get(snippet_ref, "") or "") if snippet_ref else ""
+                    if not template:
+                        template = str(getattr(rule.action, "message", "") or "")
+                    template = str(template or "").strip()
+                    if not template:
+                        continue
+
+                    ctx: Dict[str, str] = {
+                        "interval_minutes": str(max(1, interval_seconds // 60)) if interval_seconds >= 60 else "0",
+                        "group_title": group_title,
+                        "actor_names": actor_names,
+                        "scheduled_at": scheduled_at,
+                    }
+                    rendered = _render_snippet(template, context=ctx).strip()
+                    if not rendered:
+                        continue
+
+                    to = [str(x).strip() for x in (rule.to or []) if isinstance(x, str) and str(x).strip()]
+                    recipient_ids = enabled_recipient_actor_ids(group, to)
+                    if not recipient_ids:
+                        continue
+
+                    due.append(
+                        {
+                            "rule_id": rid,
+                            "rule": rule,
+                            "trigger_kind": trigger_kind,
+                            "slot_key": slot_key,
+                            "rendered": rendered,
+                            "recipient_ids": recipient_ids,
+                        }
+                    )
+                    continue
+
+                if action_kind in ("group_state", "actor_control"):
+                    due.append(
+                        {
+                            "rule_id": rid,
+                            "rule": rule,
+                            "trigger_kind": trigger_kind,
+                            "slot_key": slot_key,
+                        }
+                    )
+                    continue
+
+                _record_error(f"unsupported action kind: {action_kind}")
+
+            if dirty:
+                _save_state(group, state)
+
+        if not due:
+            return
+
+        results: Dict[str, Tuple[bool, str, str, str]] = {}  # rule_id -> (sent_any, last_error, trigger_kind, slot_key)
+        for item in due:
+            rid = str(item.get("rule_id") or "").strip()
+            rule = item.get("rule")
+            if not rid or not isinstance(rule, AutomationRule):
+                continue
+            trigger_kind = str(item.get("trigger_kind") or "")
+            slot_key = str(item.get("slot_key") or "")
+            sent_any = False
+            last_error = ""
+            action_kind = str(getattr(rule.action, "kind", "notify") or "notify").strip()
+            if action_kind == "notify":
+                recipient_ids = item.get("recipient_ids") if isinstance(item.get("recipient_ids"), list) else []
+                rendered = str(item.get("rendered") or "")
+                for aid in recipient_ids:
+                    actor = roster.get(str(aid))
+                    if not isinstance(actor, dict):
+                        continue
+                    runner_kind = str(actor.get("runner") or "pty").strip()
+                    try:
+                        running = (
+                            headless_runner.SUPERVISOR.actor_running(group.group_id, str(aid))
+                            if runner_kind == "headless"
+                            else pty_runner.SUPERVISOR.actor_running(group.group_id, str(aid))
+                        )
+                    except Exception:
+                        running = False
+                    if not running:
+                        continue
+
+                    title = str(getattr(rule.action, "title", "") or "").strip() or "Reminder"
+                    notify_data = SystemNotifyData(
+                        kind="automation",
+                        priority=rule.action.priority,
+                        title=title,
+                        message=rendered,
+                        target_actor_id=str(aid),
+                        context={"rule_id": rid},
+                        requires_ack=bool(getattr(rule.action, "requires_ack", False)),
+                    )
+                    try:
+                        ev = append_event(
+                            group.ledger_path,
+                            kind="system.notify",
+                            group_id=group.group_id,
+                            scope_key="",
+                            by="system",
+                            data=notify_data.model_dump(),
+                        )
+                        _queue_notify_to_pty(group, actor_id=str(aid), runner_kind=runner_kind, ev=ev, notify=notify_data)
+                        sent_any = True
+                    except Exception as e:
+                        last_error = str(e)
+            elif action_kind == "group_state":
+                state_target = str(getattr(rule.action, "state", "") or "").strip()
+                sent_any, last_error = self._execute_group_state_action(group, target_state=state_target)
+            elif action_kind == "actor_control":
+                operation = str(getattr(rule.action, "operation", "") or "").strip()
+                raw_targets = getattr(rule.action, "targets", [])
+                targets = [str(x).strip() for x in (raw_targets or []) if isinstance(x, str) and str(x).strip()]
+                sent_any, last_error = self._execute_actor_control_action(
+                    group,
+                    operation=operation,
+                    targets=targets,
+                )
+            else:
+                last_error = f"unsupported action kind: {action_kind}"
+
+            results[rid] = (sent_any, last_error[:500] if last_error else "", trigger_kind, slot_key)
+
+        # Persist rule fire/error state.
+        with self._lock:
+            state = _load_state(group)
+            dirty = False
+            for rid, (sent_any, last_error, trigger_kind, slot_key) in results.items():
+                st = _rule_state(state, rid)
+                if sent_any:
+                    st["last_fired_at"] = now_iso
+                    st["last_error_at"] = ""
+                    st["last_error"] = ""
+                    if trigger_kind == "at":
+                        st["at_fired"] = True
+                        st["last_slot_key"] = slot_key
+                    elif trigger_kind == "cron" and slot_key:
+                        st["last_slot_key"] = slot_key
+                    dirty = True
+                elif last_error:
+                    st["last_error_at"] = now_iso
+                    st["last_error"] = last_error
+                    dirty = True
+            if dirty:
+                _save_state(group, state)
+
+        # For one-time rules, a successful execution should invalidate the rule itself
+        # (persisted in group.yaml), not only runtime state. This prevents re-sending
+        # after blueprint export/import where state files are not carried over.
+        one_time_completed = [
+            rid
+            for rid, (sent_any, _last_error, trigger_kind, _slot_key) in results.items()
+            if sent_any and trigger_kind == "at"
+        ]
+        if one_time_completed:
+            disable_errors: Dict[str, str] = {}
+            for rid in one_time_completed:
+                ok, err = self._daemon_automation_call(
+                    op="group_automation_manage",
+                    args={
+                        "group_id": group.group_id,
+                        "by": "user",
+                        "actions": [
+                            {
+                                "type": "set_rule_enabled",
+                                "rule_id": rid,
+                                "enabled": False,
+                            }
+                        ],
+                    },
+                )
+                if not ok:
+                    disable_errors[rid] = str(err or "failed to disable one-time rule")[:500]
+
+            if disable_errors:
+                with self._lock:
+                    state = _load_state(group)
+                    dirty = False
+                    for rid, err in disable_errors.items():
+                        st = _rule_state(state, rid)
+                        st["last_error_at"] = now_iso
+                        st["last_error"] = f"auto-disable failed: {err}"[:500]
+                        dirty = True
+                    if dirty:
+                        _save_state(group, state)
 
     def _check_help_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Remind running actors to refresh the help playbook via cccc_help.

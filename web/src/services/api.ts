@@ -7,6 +7,8 @@ import type {
   RuntimeInfo,
   GroupContext,
   GroupSettings,
+  GroupAutomation,
+  AutomationRuleSet,
   Task,
   DirItem,
   DirSuggestion,
@@ -268,7 +270,7 @@ export async function previewGroupTemplate(groupId: string, file: File) {
   const form = new FormData();
   form.append("by", "user");
   form.append("file", file);
-  return apiForm<{ template: unknown; diff: unknown; scope_root: string }>(
+  return apiForm<{ template: unknown; diff: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/template/preview_upload`,
     form
   );
@@ -511,6 +513,32 @@ export async function updateSettings(groupId: string, settings: Partial<GroupSet
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`, {
     method: "PUT",
     body: JSON.stringify({ ...settings, by: "user" }),
+  });
+}
+
+export async function fetchAutomation(groupId: string) {
+  return apiJson<GroupAutomation>(`/api/v1/groups/${encodeURIComponent(groupId)}/automation`);
+}
+
+export async function updateAutomation(groupId: string, ruleset: AutomationRuleSet, expectedVersion?: number) {
+  const body: Record<string, unknown> = { rules: ruleset.rules, snippets: ruleset.snippets, by: "user" };
+  if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
+    body.expected_version = Math.trunc(expectedVersion);
+  }
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/automation`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function resetAutomationBaseline(groupId: string, expectedVersion?: number) {
+  const body: Record<string, unknown> = { by: "user" };
+  if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
+    body.expected_version = Math.trunc(expectedVersion);
+  }
+  return apiJson<GroupAutomation>(`/api/v1/groups/${encodeURIComponent(groupId)}/automation/reset_baseline`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 

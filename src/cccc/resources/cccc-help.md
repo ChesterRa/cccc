@@ -126,3 +126,24 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
 - Inbox: `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_inbox_mark_all_read`
 - Session: `cccc_bootstrap`
 - Group: `cccc_group_info`, `cccc_actor_list`, `cccc_group_set_state`
+
+### Automation tools (when needed)
+
+- Read current automation: `cccc_automation_state`
+- Manage automation reminders: `cccc_automation_manage`
+  - Simple ops: `op=create|update|enable|disable|delete|replace_all` (recommended).
+  - Naming note: API field names keep protocol terms (`rule`, `rule_id`, `ruleset`), but conceptually these are reminders.
+  - For `op=create|update`, prefer canonical fields in `rule`: `id`, `trigger`, `action`.
+  - Compatibility shortcuts are accepted: `name -> id`, `actions[0] -> action`, `trigger.every_minutes -> trigger.every_seconds`.
+  - Action/schedule constraint:
+    - `action.kind="notify"` supports interval / recurring / one-time.
+    - `action.kind="group_state"` and `action.kind="actor_control"` support one-time only (`trigger.kind="at"`).
+  - One-time shortcut: for `trigger.kind="at"`, you can pass:
+    - `trigger.at` (absolute ISO time), or
+    - `trigger.after_minutes`, `trigger.after_seconds`, or `trigger.after` (example: `"30m"`).
+  - The MCP server normalizes relative one-time values into absolute UTC `trigger.at`.
+  - MCP actor writes are **notify-only**.
+  - Foreman: can manage all notify reminders (including `replace_all_rules`).
+  - Peer: only own personal notify reminders (must target self).
+  - Operational automation actions (`group_state`, `actor_control`) are configured in Web/Admin.
+- Use automation for recurring, objective reminders (timing/checkpoint/safety), not for chat spam.

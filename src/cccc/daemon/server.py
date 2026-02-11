@@ -12,16 +12,25 @@ import time
 import signal
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger("cccc.daemon.server")
 
 from .. import __version__
-from ..contracts.v1 import ChatMessageData, DaemonError, DaemonRequest, DaemonResponse
+from ..contracts.v1 import AutomationRule, AutomationRuleSet, ChatMessageData, DaemonError, DaemonRequest, DaemonResponse
 from ..kernel.active import load_active, set_active_group_id
 from ..kernel.group import ensure_group_for_scope, load_group
-from ..kernel.group import attach_scope_to_group, create_group, delete_group, detach_scope_from_group, set_active_scope, update_group
+from ..kernel.group import (
+    attach_scope_to_group,
+    create_group,
+    default_automation_ruleset_doc,
+    delete_group,
+    detach_scope_from_group,
+    set_active_scope,
+    update_group,
+)
 from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
@@ -42,7 +51,7 @@ from ..util.obslog import setup_root_json_logging
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
-from .automation import AutomationManager
+from .automation import AutomationManager, _load_ruleset as load_automation_ruleset, build_automation_status, automation_supported_vars
 from .delivery import (
     inject_system_prompt as deliver_system_prompt,
     get_headless_targets_for_message,
@@ -617,7 +626,7 @@ def _merge_actor_env_with_private(group_id: str, actor_id: str, env: Dict[str, A
 
 AUTOMATION = AutomationManager()
 
-_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"}
+_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"}
 
 
 def _foreman_id(group: Any) -> str:
@@ -654,6 +663,426 @@ def _maybe_reset_automation_on_foreman_change(group: Any, *, before_foreman_id: 
     if str(before_foreman_id or "") == str(after or ""):
         return
     _reset_automation_timers_if_active(group)
+
+
+def _ensure_automation_doc(group: Any) -> Dict[str, Any]:
+    raw_automation = group.doc.get("automation")
+    seed = default_automation_ruleset_doc()
+    if not isinstance(raw_automation, dict):
+        automation = seed
+    else:
+        automation = dict(raw_automation)
+        has_rules = isinstance(automation.get("rules"), list)
+        has_snippets = isinstance(automation.get("snippets"), dict)
+        if not has_rules and not has_snippets:
+            automation["rules"] = seed.get("rules", [])
+            automation["snippets"] = seed.get("snippets", {})
+        else:
+            if not has_rules:
+                automation["rules"] = []
+            if not has_snippets:
+                automation["snippets"] = {}
+    try:
+        version = int(automation.get("version") or 0)
+    except Exception:
+        version = 0
+    if version <= 0:
+        version = 1
+    automation["version"] = version
+    if group.doc.get("automation") != automation:
+        group.doc["automation"] = automation
+        group.save()
+    else:
+        group.doc["automation"] = automation
+    return automation
+
+
+def _automation_version(group: Any) -> int:
+    automation = _ensure_automation_doc(group)
+    try:
+        version = int(automation.get("version") or 0)
+    except Exception:
+        version = 0
+    return max(1, version)
+
+
+def _set_automation_ruleset(group: Any, *, ruleset: AutomationRuleSet) -> int:
+    previous_ruleset = load_automation_ruleset(group)
+    automation = _ensure_automation_doc(group)
+    automation["rules"] = [r.model_dump(exclude_none=True) for r in (ruleset.rules or [])]
+    automation["snippets"] = dict(ruleset.snippets or {})
+    try:
+        old_version = int(automation.get("version") or 0)
+    except Exception:
+        old_version = 0
+    automation["version"] = max(1, old_version) + 1
+    group.doc["automation"] = automation
+    group.save()
+    _reconcile_automation_state_after_ruleset_change(group, previous=previous_ruleset, current=ruleset)
+    return int(automation["version"])
+
+
+def _validate_automation_rule_action_trigger(rule: AutomationRule) -> None:
+    rid = str(rule.id or "").strip() or "<unknown>"
+    trigger_kind = str(getattr(rule.trigger, "kind", "") or "").strip()
+    action_kind = str(getattr(rule.action, "kind", "notify") or "notify").strip()
+    if action_kind in {"group_state", "actor_control"} and trigger_kind != "at":
+        raise ValueError(f'rule "{rid}": action.kind={action_kind} only supports trigger.kind=at')
+
+
+def _reconcile_automation_state_after_ruleset_change(
+    group: Any,
+    *,
+    previous: AutomationRuleSet,
+    current: AutomationRuleSet,
+) -> None:
+    state_path = group.path / "state" / "automation.json"
+    raw = read_json(state_path)
+    state = raw if isinstance(raw, dict) else {}
+    rules_state = state.get("rules") if isinstance(state.get("rules"), dict) else {}
+    if not isinstance(rules_state, dict):
+        rules_state = {}
+    changed = False
+
+    prev_by_id: Dict[str, AutomationRule] = {}
+    for rule in previous.rules:
+        rid = str(rule.id or "").strip()
+        if rid:
+            prev_by_id[rid] = rule
+
+    next_by_id: Dict[str, AutomationRule] = {}
+    for rule in current.rules:
+        rid = str(rule.id or "").strip()
+        if rid:
+            next_by_id[rid] = rule
+
+    next_ids = set(next_by_id.keys())
+    stale_ids = [rid for rid in list(rules_state.keys()) if rid not in next_ids]
+    for rid in stale_ids:
+        rules_state.pop(rid, None)
+        changed = True
+
+    for rid, next_rule in next_by_id.items():
+        entry = rules_state.get(rid)
+        if not isinstance(entry, dict):
+            continue
+        trigger_kind = str(getattr(next_rule.trigger, "kind", "") or "").strip()
+        if trigger_kind != "at":
+            if entry.pop("at_fired", None) is not None:
+                changed = True
+            slot_key = str(entry.get("last_slot_key") or "")
+            if slot_key.startswith("at:"):
+                entry.pop("last_slot_key", None)
+                changed = True
+            continue
+
+        prev_rule = prev_by_id.get(rid)
+        prev_at = ""
+        if prev_rule is not None and str(getattr(prev_rule.trigger, "kind", "") or "").strip() == "at":
+            prev_at = str(getattr(prev_rule.trigger, "at", "") or "").strip()
+        next_at = str(getattr(next_rule.trigger, "at", "") or "").strip()
+        if prev_at and next_at and prev_at == next_at:
+            continue
+
+        if entry.pop("at_fired", None) is not None:
+            changed = True
+        slot_key = str(entry.get("last_slot_key") or "")
+        if slot_key.startswith("at:"):
+            entry.pop("last_slot_key", None)
+            changed = True
+
+    if not changed:
+        return
+
+    state["rules"] = rules_state
+    state["updated_at"] = utc_now_iso()
+    atomic_write_json(state_path, state)
+
+
+def _normalize_automation_positive_int(raw: Any, *, field_name: str) -> int:
+    try:
+        value = int(raw)
+    except Exception as e:
+        raise ValueError(f"{field_name} must be a positive integer") from e
+    if value <= 0:
+        raise ValueError(f"{field_name} must be >= 1")
+    return value
+
+
+def _parse_automation_duration_seconds(raw: Any) -> int:
+    text = str(raw or "").strip().lower()
+    if not text:
+        raise ValueError("trigger.after cannot be empty")
+    m = re.fullmatch(r"(\d+)\s*([smhd]?)", text)
+    if m is None:
+        raise ValueError("trigger.after must be like 30m / 2h / 45s / 1d")
+    amount = _normalize_automation_positive_int(m.group(1), field_name="trigger.after")
+    unit = m.group(2) or "m"
+    mult = 60
+    if unit == "s":
+        mult = 1
+    elif unit == "m":
+        mult = 60
+    elif unit == "h":
+        mult = 3600
+    elif unit == "d":
+        mult = 86400
+    return amount * mult
+
+
+def _normalize_automation_rule_id(raw: Any) -> str:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"[^a-z0-9_-]+", "_", text).strip("_")
+    text = re.sub(r"_+", "_", text)
+    if not text:
+        text = f"rule_{int(time.time())}"
+    return text[:64]
+
+
+def _normalize_legacy_automation_action_doc(raw_action: Dict[str, Any]) -> Dict[str, Any]:
+    action = dict(raw_action)
+    kind = str(action.get("kind") or action.get("type") or "").strip().lower()
+    if not kind:
+        kind = "notify"
+
+    if kind in {"notify", "send_message", "message", "send"}:
+        title = str(action.get("title") or action.get("subject") or "").strip()
+        message = str(
+            action.get("message")
+            or action.get("text")
+            or action.get("content")
+            or action.get("body")
+            or ""
+        ).strip()
+        out: Dict[str, Any] = {"kind": "notify"}
+        if title:
+            out["title"] = title
+        if message:
+            out["message"] = message
+        return out
+
+    if kind in {"group_state", "set_group_state"}:
+        state = str(action.get("state") or action.get("value") or "paused").strip().lower()
+        return {"kind": "group_state", "state": state}
+
+    if kind in {"actor_control", "runtime_control"}:
+        operation = str(action.get("operation") or action.get("op") or "restart").strip().lower()
+        targets_raw = action.get("targets")
+        if isinstance(targets_raw, list):
+            targets = [str(x).strip() for x in targets_raw if str(x).strip()]
+        else:
+            targets = ["@all"]
+        return {"kind": "actor_control", "operation": operation, "targets": targets or ["@all"]}
+
+    return action
+
+
+def _normalize_legacy_automation_trigger_doc(raw_trigger: Dict[str, Any]) -> Dict[str, Any]:
+    trigger = dict(raw_trigger)
+    kind = str(trigger.get("kind") or "").strip().lower()
+    if not kind:
+        if trigger.get("cron") is not None:
+            kind = "cron"
+        elif trigger.get("at") is not None or trigger.get("after_minutes") is not None or trigger.get("after_seconds") is not None:
+            kind = "at"
+        elif trigger.get("every_minutes") is not None or trigger.get("interval_minutes") is not None:
+            kind = "interval"
+    if kind == "interval":
+        if trigger.get("every_seconds") is None:
+            minutes_raw = trigger.get("every_minutes", trigger.get("interval_minutes"))
+            if minutes_raw is not None:
+                minutes = _normalize_automation_positive_int(minutes_raw, field_name="trigger.every_minutes")
+                trigger["every_seconds"] = minutes * 60
+        trigger["kind"] = "interval"
+        trigger.pop("every_minutes", None)
+        trigger.pop("interval_minutes", None)
+        return trigger
+    if kind == "cron":
+        trigger["kind"] = "cron"
+        return trigger
+    if kind == "at":
+        trigger["kind"] = "at"
+        return trigger
+    return trigger
+
+
+def _normalize_legacy_automation_rule_doc(raw_rule: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(raw_rule)
+
+    if not str(out.get("id") or "").strip():
+        alias_id = out.get("name") or out.get("rule_id")
+        normalized_id = _normalize_automation_rule_id(alias_id)
+        if normalized_id:
+            out["id"] = normalized_id
+    out.pop("name", None)
+
+    if not isinstance(out.get("action"), dict):
+        actions_raw = out.get("actions")
+        if isinstance(actions_raw, list) and actions_raw:
+            first_action = actions_raw[0]
+            if isinstance(first_action, dict):
+                out["action"] = _normalize_legacy_automation_action_doc(first_action)
+    out.pop("actions", None)
+    if isinstance(out.get("action"), dict):
+        out["action"] = _normalize_legacy_automation_action_doc(out["action"])
+
+    if not isinstance(out.get("trigger"), dict):
+        schedule = out.get("schedule")
+        if isinstance(schedule, dict):
+            out["trigger"] = dict(schedule)
+    out.pop("schedule", None)
+
+    trigger_raw = out.get("trigger")
+    if not isinstance(trigger_raw, dict):
+        return out
+    trigger = _normalize_legacy_automation_trigger_doc(trigger_raw)
+    kind = str(trigger.get("kind") or "").strip().lower()
+    if kind != "at":
+        out["trigger"] = trigger
+        return out
+
+    at_raw = str(trigger.get("at") or "").strip()
+    if at_raw:
+        out["trigger"] = trigger
+        return out
+
+    seconds: Optional[int] = None
+    if trigger.get("after_seconds") is not None:
+        seconds = _normalize_automation_positive_int(trigger.get("after_seconds"), field_name="trigger.after_seconds")
+    elif trigger.get("after_minutes") is not None:
+        minutes = _normalize_automation_positive_int(trigger.get("after_minutes"), field_name="trigger.after_minutes")
+        seconds = minutes * 60
+    elif trigger.get("after") is not None:
+        seconds = _parse_automation_duration_seconds(trigger.get("after"))
+    elif out.get("after_seconds") is not None:
+        seconds = _normalize_automation_positive_int(out.get("after_seconds"), field_name="after_seconds")
+    elif out.get("after_minutes") is not None:
+        minutes = _normalize_automation_positive_int(out.get("after_minutes"), field_name="after_minutes")
+        seconds = minutes * 60
+    elif out.get("after") is not None:
+        seconds = _parse_automation_duration_seconds(out.get("after"))
+
+    if seconds is None:
+        raise ValueError("One-time trigger requires trigger.at or trigger.after_minutes / trigger.after_seconds / trigger.after")
+
+    fire_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+    trigger.pop("after_seconds", None)
+    trigger.pop("after_minutes", None)
+    trigger.pop("after", None)
+    trigger["at"] = fire_at
+    out["trigger"] = trigger
+    out.pop("after_seconds", None)
+    out.pop("after_minutes", None)
+    out.pop("after", None)
+    return out
+
+
+def _normalize_legacy_automation_manage_action(raw_action: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(raw_action)
+    action_type = str(out.get("type") or out.get("op") or "").strip().lower()
+    if not action_type:
+        return out
+
+    if action_type in {"create", "create_rule"}:
+        rule = out.get("rule")
+        if not isinstance(rule, dict):
+            raise ValueError("create_rule requires rule")
+        return {"type": "create_rule", "rule": _normalize_legacy_automation_rule_doc(rule)}
+
+    if action_type in {"update", "update_rule"}:
+        rule = out.get("rule")
+        if not isinstance(rule, dict):
+            raise ValueError("update_rule requires rule")
+        return {"type": "update_rule", "rule": _normalize_legacy_automation_rule_doc(rule)}
+
+    if action_type in {"enable", "disable"}:
+        rule_id = str(out.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError(f"{action_type} requires rule_id")
+        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": action_type == "enable"}
+
+    if action_type == "set_rule_enabled":
+        rule_id = str(out.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError("set_rule_enabled requires rule_id")
+        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": bool(coerce_bool(out.get("enabled"), default=False))}
+
+    if action_type in {"delete", "delete_rule"}:
+        rule_id = str(out.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError("delete_rule requires rule_id")
+        return {"type": "delete_rule", "rule_id": rule_id}
+
+    if action_type in {"replace_all", "replace_all_rules"}:
+        ruleset = out.get("ruleset")
+        if not isinstance(ruleset, dict):
+            raise ValueError("replace_all_rules requires ruleset")
+        next_ruleset = dict(ruleset)
+        rules_raw = ruleset.get("rules")
+        if isinstance(rules_raw, list):
+            next_rules: list[Any] = []
+            for rule in rules_raw:
+                if isinstance(rule, dict):
+                    next_rules.append(_normalize_legacy_automation_rule_doc(rule))
+                else:
+                    next_rules.append(rule)
+            next_ruleset["rules"] = next_rules
+        return {"type": "replace_all_rules", "ruleset": next_ruleset}
+
+    out["type"] = action_type
+    return out
+
+
+def _map_simple_automation_manage_op(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    op = str(args.get("op") or "").strip().lower()
+    if not op:
+        return None
+    if op == "create":
+        rule = args.get("rule")
+        if not isinstance(rule, dict):
+            raise ValueError("op=create requires reminder object (rule)")
+        return {"type": "create_rule", "rule": rule}
+    if op == "update":
+        rule = args.get("rule")
+        if not isinstance(rule, dict):
+            raise ValueError("op=update requires reminder object (rule)")
+        return {"type": "update_rule", "rule": rule}
+    if op == "enable":
+        rule_id = str(args.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError("op=enable requires rule_id")
+        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": True}
+    if op == "disable":
+        rule_id = str(args.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError("op=disable requires rule_id")
+        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": False}
+    if op == "delete":
+        rule_id = str(args.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError("op=delete requires rule_id")
+        return {"type": "delete_rule", "rule_id": rule_id}
+    if op == "replace_all":
+        ruleset = args.get("ruleset")
+        if not isinstance(ruleset, dict):
+            raise ValueError("op=replace_all requires reminderset object (ruleset)")
+        return {"type": "replace_all_rules", "ruleset": ruleset}
+    raise ValueError("op must be one of: create, update, enable, disable, delete, replace_all")
+
+
+def _actor_role_or_none(group: Any, actor_id: str) -> str:
+    aid = str(actor_id or "").strip()
+    if not aid:
+        return ""
+    if find_actor(group, aid) is None:
+        return ""
+    try:
+        return str(get_effective_role(group, aid) or "").strip()
+    except Exception:
+        return ""
 
 
 @dataclass
@@ -2137,7 +2566,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         
         # Define allowed keys and their target sections
         messaging_keys = {"default_send_to"}
-        delivery_keys = {"min_interval_seconds"}
+        delivery_keys = {"min_interval_seconds", "auto_mark_on_delivery"}
         automation_keys = {
             "nudge_after_seconds",
             "reply_required_nudge_after_seconds",
@@ -2150,10 +2579,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             "keepalive_delay_seconds",
             "keepalive_max_per_actor",
             "silence_timeout_seconds",
-            "standup_interval_seconds",
             "help_nudge_interval_seconds",
             "help_nudge_min_messages",
-            "auto_mark_on_delivery",
         }
         terminal_transcript_keys = {
             "terminal_transcript_visibility",
@@ -2193,7 +2620,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if delivery_patch:
                 delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
                 for k, v in delivery_patch.items():
-                    delivery[k] = int(v)
+                    if k == "auto_mark_on_delivery":
+                        delivery[k] = coerce_bool(v, default=False)
+                    else:
+                        delivery[k] = int(v)
                 group.doc["delivery"] = delivery
             
             # Update automation settings
@@ -2201,10 +2631,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if automation_patch:
                 automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
                 for k, v in automation_patch.items():
-                    if k == "auto_mark_on_delivery":
-                        automation[k] = coerce_bool(v, default=False)
-                    else:
-                        automation[k] = int(v)
+                    automation[k] = int(v)
                 group.doc["automation"] = automation
 
             # Update terminal transcript settings
@@ -2222,19 +2649,31 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception as e:
             return _error("group_settings_update_failed", str(e)), False
         
-        # Return combined settings
-        combined_settings = {}
-        combined_settings["default_send_to"] = get_default_send_to(group.doc)
-        combined_settings.update(group.doc.get("delivery") or {})
-        combined_settings.update(group.doc.get("automation") or {})
+        # Return combined settings (stable API shape; exclude automation rules/snippets).
+        automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
+        delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
         tt = get_terminal_transcript_settings(group.doc)
-        combined_settings.update(
-            {
-                "terminal_transcript_visibility": tt["visibility"],
-                "terminal_transcript_notify_tail": bool(tt["notify_tail"]),
-                "terminal_transcript_notify_lines": int(tt["notify_lines"]),
-            }
-        )
+        combined_settings = {
+            "default_send_to": get_default_send_to(group.doc),
+            "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
+            "reply_required_nudge_after_seconds": int(automation.get("reply_required_nudge_after_seconds", 300)),
+            "attention_ack_nudge_after_seconds": int(automation.get("attention_ack_nudge_after_seconds", 600)),
+            "unread_nudge_after_seconds": int(automation.get("unread_nudge_after_seconds", 900)),
+            "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
+            "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
+            "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
+            "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
+            "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
+            "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
+            "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
+            "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
+            "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
+            "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
+            "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
+            "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
+            "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
+            "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
+        }
         
         ev = append_event(
             group.ledger_path,
@@ -2245,6 +2684,447 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             data={"patch": dict(patch)},
         )
         return DaemonResponse(ok=True, result={"group_id": group.group_id, "settings": combined_settings, "event": ev}), False
+
+    if op == "group_automation_update":
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        raw = args.get("ruleset") if isinstance(args.get("ruleset"), dict) else {}
+        expected_version_raw = args.get("expected_version")
+        expected_version: Optional[int] = None
+        if expected_version_raw is not None:
+            try:
+                expected_version = int(expected_version_raw)
+            except Exception:
+                return _error("invalid_request", "expected_version must be an integer"), False
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        try:
+            require_group_permission(group, by=by, action="group.settings_update")
+            ruleset = AutomationRuleSet.model_validate(raw)
+            for rule in ruleset.rules:
+                _validate_automation_rule_action_trigger(rule)
+            if by and by != "user":
+                for rule in ruleset.rules:
+                    action = getattr(rule, "action", None)
+                    kind = str(getattr(action, "kind", "notify") or "notify").strip()
+                    if kind != "notify":
+                        raise ValueError("agents can only manage notify automation rules")
+            current_version = _automation_version(group)
+            if expected_version is not None and expected_version != current_version:
+                return (
+                    _error(
+                        "version_conflict",
+                        "automation version mismatch",
+                        details={"expected_version": expected_version, "current_version": current_version},
+                    ),
+                    False,
+                )
+            next_version = _set_automation_ruleset(group, ruleset=ruleset)
+        except Exception as e:
+            return _error("group_automation_update_failed", str(e)), False
+
+        # Keep the ledger small: do not store full snippet bodies.
+        ev = append_event(
+            group.ledger_path,
+            kind="group.automation_update",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "rules": [str(r.id) for r in (ruleset.rules or [])],
+                "snippets": sorted([str(k) for k in (ruleset.snippets or {}).keys()]),
+                "version": int(next_version),
+            },
+        )
+        return DaemonResponse(
+            ok=True,
+            result={"group_id": group.group_id, "ruleset": ruleset.model_dump(), "version": int(next_version), "event": ev},
+        ), False
+
+    if op == "group_automation_state":
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        role = ""
+        if by and by != "user":
+            role = _actor_role_or_none(group, by)
+            if not role:
+                return _error("permission_denied", f"unknown actor: {by}"), False
+
+        ruleset = load_automation_ruleset(group)
+        status = build_automation_status(group)
+        version = _automation_version(group)
+
+        if role == "peer":
+            visible_rules: list[Any] = []
+            visible_ids: set[str] = set()
+            for rule in ruleset.rules:
+                rid = str(rule.id or "").strip()
+                if not rid:
+                    continue
+                scope = str(rule.scope or "group")
+                owner = str(rule.owner_actor_id or "").strip()
+                if scope == "group" or owner == by:
+                    visible_rules.append(rule)
+                    visible_ids.add(rid)
+            snippet_refs: set[str] = set()
+            for r in visible_rules:
+                action = getattr(r, "action", None)
+                if str(getattr(action, "kind", "notify") or "notify").strip() != "notify":
+                    continue
+                ref = str(getattr(action, "snippet_ref", "") or "").strip()
+                if ref:
+                    snippet_refs.add(ref)
+            snippets = {k: v for k, v in (ruleset.snippets or {}).items() if k in snippet_refs}
+            status = {rid: st for rid, st in status.items() if rid in visible_ids}
+            ruleset_out = AutomationRuleSet(rules=visible_rules, snippets=snippets)
+        else:
+            ruleset_out = ruleset
+
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "ruleset": ruleset_out.model_dump(),
+                "status": status,
+                "supported_vars": automation_supported_vars(),
+                "version": int(version),
+                "server_now": utc_now_iso(),
+                "config_path": str(group.path / "group.yaml"),
+            },
+        ), False
+
+    if op == "group_automation_manage":
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        actions: list[Any] = []
+        try:
+            mapped = _map_simple_automation_manage_op(args)
+        except Exception as e:
+            return _error("invalid_request", str(e)), False
+        if isinstance(mapped, dict):
+            actions.append(mapped)
+        actions_raw = args.get("actions")
+        if isinstance(actions_raw, list):
+            actions.extend(actions_raw)
+        expected_version_raw = args.get("expected_version")
+        expected_version: Optional[int] = None
+        if expected_version_raw is not None:
+            try:
+                expected_version = int(expected_version_raw)
+            except Exception:
+                return _error("invalid_request", "expected_version must be an integer"), False
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actions:
+            return _error("invalid_request", "actions must be a non-empty array"), False
+        normalized_actions: list[Dict[str, Any]] = []
+        try:
+            for idx, action in enumerate(actions):
+                if not isinstance(action, dict):
+                    raise ValueError(f"action[{idx}] must be an object")
+                normalized_actions.append(_normalize_legacy_automation_manage_action(action))
+        except Exception as e:
+            return _error("invalid_request", str(e)), False
+        actions = normalized_actions
+
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        caller_role = "user"
+        caller_id = by
+        if by and by != "user":
+            role = _actor_role_or_none(group, by)
+            if role not in ("foreman", "peer"):
+                return _error("permission_denied", f"unknown actor: {by}"), False
+            caller_role = role
+
+        current_ruleset = load_automation_ruleset(group)
+        current_version = _automation_version(group)
+        if expected_version is not None and expected_version != current_version:
+            return (
+                _error(
+                    "version_conflict",
+                    "automation version mismatch",
+                    details={"expected_version": expected_version, "current_version": current_version},
+                ),
+                False,
+            )
+
+        rules_order: list[str] = []
+        rules_by_id: Dict[str, Any] = {}
+        for rule in current_ruleset.rules:
+            rid = str(rule.id or "").strip()
+            if not rid or rid in rules_by_id:
+                continue
+            rules_order.append(rid)
+            rules_by_id[rid] = rule
+        snippets: Dict[str, str] = dict(current_ruleset.snippets or {})
+
+        def _enforce_peer_rule(rule: Any, *, existing: Optional[Any] = None) -> Any:
+            if caller_role != "peer":
+                return rule
+            if existing is not None:
+                existing_scope = str(existing.scope or "group")
+                existing_owner = str(existing.owner_actor_id or "").strip()
+                if existing_scope != "personal" or existing_owner != caller_id:
+                    raise ValueError("peer can only manage own personal rules")
+            scope = str(rule.scope or "group")
+            owner = str(rule.owner_actor_id or "").strip()
+            if scope != "personal":
+                raise ValueError("peer rules must use scope=personal")
+            if owner != caller_id:
+                raise ValueError("peer rules must set owner_actor_id to self")
+            to = [str(x).strip() for x in (rule.to or []) if isinstance(x, str) and str(x).strip()]
+            if len(to) != 1 or to[0] != caller_id:
+                raise ValueError("peer rules must target only self actor_id")
+            return rule
+
+        def _enforce_actor_action_kind(rule: Any) -> Any:
+            if caller_role == "user":
+                return rule
+            action = getattr(rule, "action", None)
+            kind = str(getattr(action, "kind", "notify") or "notify").strip()
+            if kind != "notify":
+                raise ValueError("agents can only manage notify automation rules")
+            return rule
+
+        def _normalize_rule(rule: Any) -> Any:
+            scope = str(rule.scope or "group")
+            owner = str(rule.owner_actor_id or "").strip()
+            if scope == "group":
+                if owner:
+                    rule = rule.model_copy(update={"owner_actor_id": None})
+            elif scope == "personal":
+                if not owner:
+                    raise ValueError("personal rule requires owner_actor_id")
+            else:
+                raise ValueError(f"invalid scope: {scope}")
+            return rule
+
+        applied_actions: List[Dict[str, Any]] = []
+
+        try:
+            for idx, raw_action in enumerate(actions):
+                if not isinstance(raw_action, dict):
+                    raise ValueError(f"action[{idx}] must be an object")
+                action_type = str(raw_action.get("type") or "").strip()
+                if not action_type:
+                    raise ValueError(f"action[{idx}].type is required")
+
+                if action_type == "create_rule":
+                    rule_raw = raw_action.get("rule")
+                    if not isinstance(rule_raw, dict):
+                        raise ValueError("create_rule requires rule")
+                    rule = AutomationRule.model_validate(rule_raw)
+                    rid = str(rule.id or "").strip()
+                    if not rid:
+                        raise ValueError("rule.id is required")
+                    if rid in rules_by_id:
+                        raise ValueError(f"rule already exists: {rid}")
+                    rule = _normalize_rule(rule)
+                    rule = _enforce_peer_rule(rule)
+                    rule = _enforce_actor_action_kind(rule)
+                    _validate_automation_rule_action_trigger(rule)
+                    rules_by_id[rid] = rule
+                    rules_order.append(rid)
+                    applied_actions.append({"type": action_type, "rule_id": rid})
+                    continue
+
+                if action_type == "update_rule":
+                    rule_raw = raw_action.get("rule")
+                    if not isinstance(rule_raw, dict):
+                        raise ValueError("update_rule requires rule")
+                    rule = AutomationRule.model_validate(rule_raw)
+                    rid = str(rule.id or "").strip()
+                    if not rid:
+                        raise ValueError("rule.id is required")
+                    existing = rules_by_id.get(rid)
+                    if existing is None:
+                        raise ValueError(f"rule not found: {rid}")
+                    _enforce_peer_rule(existing)
+                    _enforce_actor_action_kind(existing)
+                    rule = _normalize_rule(rule)
+                    rule = _enforce_peer_rule(rule, existing=existing)
+                    rule = _enforce_actor_action_kind(rule)
+                    _validate_automation_rule_action_trigger(rule)
+                    rules_by_id[rid] = rule
+                    applied_actions.append({"type": action_type, "rule_id": rid})
+                    continue
+
+                if action_type == "set_rule_enabled":
+                    rid = str(raw_action.get("rule_id") or "").strip()
+                    if not rid:
+                        raise ValueError("set_rule_enabled requires rule_id")
+                    existing = rules_by_id.get(rid)
+                    if existing is None:
+                        raise ValueError(f"rule not found: {rid}")
+                    _enforce_peer_rule(existing)
+                    _enforce_actor_action_kind(existing)
+                    enabled = coerce_bool(raw_action.get("enabled"), default=False)
+                    rules_by_id[rid] = existing.model_copy(update={"enabled": bool(enabled)})
+                    applied_actions.append({"type": action_type, "rule_id": rid, "enabled": bool(enabled)})
+                    continue
+
+                if action_type == "delete_rule":
+                    rid = str(raw_action.get("rule_id") or "").strip()
+                    if not rid:
+                        raise ValueError("delete_rule requires rule_id")
+                    existing = rules_by_id.get(rid)
+                    if existing is None:
+                        raise ValueError(f"rule not found: {rid}")
+                    _enforce_peer_rule(existing)
+                    _enforce_actor_action_kind(existing)
+                    rules_by_id.pop(rid, None)
+                    rules_order = [x for x in rules_order if x != rid]
+                    applied_actions.append({"type": action_type, "rule_id": rid})
+                    continue
+
+                if action_type == "replace_all_rules":
+                    if caller_role not in ("user", "foreman"):
+                        raise ValueError("replace_all_rules is foreman-only")
+                    ruleset_raw = raw_action.get("ruleset")
+                    if not isinstance(ruleset_raw, dict):
+                        raise ValueError("replace_all_rules requires ruleset")
+                    replacement = AutomationRuleSet.model_validate(ruleset_raw)
+                    seen: set[str] = set()
+                    new_order: list[str] = []
+                    new_map: Dict[str, Any] = {}
+                    for rule in replacement.rules:
+                        rid = str(rule.id or "").strip()
+                        if not rid:
+                            raise ValueError("rule.id is required")
+                        if rid in seen:
+                            raise ValueError(f"duplicate rule id: {rid}")
+                        seen.add(rid)
+                        normalized = _normalize_rule(rule)
+                        normalized = _enforce_actor_action_kind(normalized)
+                        _validate_automation_rule_action_trigger(normalized)
+                        new_order.append(rid)
+                        new_map[rid] = normalized
+                    rules_order = new_order
+                    rules_by_id = new_map
+                    snippets = dict(replacement.snippets or {})
+                    applied_actions.append({"type": action_type, "rules": len(rules_order), "snippets": len(snippets)})
+                    continue
+
+                raise ValueError(f"unsupported action type: {action_type}")
+        except Exception as e:
+            return _error("group_automation_manage_failed", str(e)), False
+
+        next_rules = [rules_by_id[rid] for rid in rules_order if rid in rules_by_id]
+        next_ruleset = AutomationRuleSet(rules=next_rules, snippets=snippets)
+
+        changed = next_ruleset.model_dump() != current_ruleset.model_dump()
+        if changed:
+            next_version = _set_automation_ruleset(group, ruleset=next_ruleset)
+            ev = append_event(
+                group.ledger_path,
+                kind="group.automation_update",
+                group_id=group.group_id,
+                scope_key="",
+                by=by,
+                data={
+                    "rules": [str(r.id) for r in next_rules],
+                    "snippets": sorted([str(k) for k in snippets.keys()]),
+                    "version": int(next_version),
+                    "actions": applied_actions,
+                },
+            )
+        else:
+            next_version = current_version
+            ev = None
+
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "ruleset": next_ruleset.model_dump(),
+                "status": build_automation_status(group),
+                "supported_vars": automation_supported_vars(),
+                "version": int(next_version),
+                "server_now": utc_now_iso(),
+                "applied_actions": applied_actions,
+                "changed": bool(changed),
+                "event": ev,
+            },
+        ), False
+
+    if op == "group_automation_reset_baseline":
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        expected_version_raw = args.get("expected_version")
+        expected_version: Optional[int] = None
+        if expected_version_raw is not None:
+            try:
+                expected_version = int(expected_version_raw)
+            except Exception:
+                return _error("invalid_request", "expected_version must be an integer"), False
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        try:
+            require_group_permission(group, by=by, action="group.settings_update")
+            current_version = _automation_version(group)
+            if expected_version is not None and expected_version != current_version:
+                return (
+                    _error(
+                        "version_conflict",
+                        "automation version mismatch",
+                        details={"expected_version": expected_version, "current_version": current_version},
+                    ),
+                    False,
+                )
+            seed = default_automation_ruleset_doc()
+            baseline = AutomationRuleSet.model_validate(
+                {
+                    "rules": list(seed.get("rules", [])),
+                    "snippets": dict(seed.get("snippets", {})),
+                }
+            )
+            next_version = _set_automation_ruleset(group, ruleset=baseline)
+        except Exception as e:
+            return _error("group_automation_reset_baseline_failed", str(e)), False
+
+        ev = append_event(
+            group.ledger_path,
+            kind="group.automation_update",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "rules": [str(r.id) for r in baseline.rules],
+                "snippets": sorted([str(k) for k in baseline.snippets.keys()]),
+                "version": int(next_version),
+                "source": "baseline_reset",
+            },
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "ruleset": baseline.model_dump(),
+                "status": build_automation_status(group),
+                "supported_vars": automation_supported_vars(),
+                "version": int(next_version),
+                "server_now": utc_now_iso(),
+                "config_path": str(group.path / "group.yaml"),
+                "event": ev,
+            },
+        ), False
 
     if op == "group_detach_scope":
         group_id = str(args.get("group_id") or "").strip()
@@ -2672,7 +3552,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 try:
                     THROTTLE.clear_pending_system_notifies(
                         group.group_id,
-                        notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"},
+                        notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"},
                     )
                 except Exception:
                     pass
@@ -3815,7 +4695,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     try:
                         THROTTLE.clear_pending_system_notifies(
                             group.group_id,
-                            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"},
+                            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"},
                         )
                     except Exception:
                         pass
@@ -4068,7 +4948,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     try:
                         THROTTLE.clear_pending_system_notifies(
                             group.group_id,
-                            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"},
+                            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"},
                         )
                     except Exception:
                         pass
@@ -4310,7 +5190,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
 
         # Validate kind and priority.
-        valid_kinds = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup", "status_change", "error", "info"}
+        valid_kinds = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation", "status_change", "error", "info"}
         valid_priorities = {"low", "normal", "high", "urgent"}
         if kind not in valid_kinds:
             kind = "info"

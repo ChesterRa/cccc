@@ -4,7 +4,7 @@ import { cardClass, labelClass, primaryButtonClass } from "./types";
 import { TemplatePreviewDetails } from "../../TemplatePreviewDetails";
 import type { TemplatePreviewDetailsProps } from "../../TemplatePreviewDetails";
 
-interface TemplateTabProps {
+interface BlueprintTabProps {
   isDark: boolean;
   groupId?: string;
   groupTitle?: string;
@@ -13,7 +13,6 @@ interface TemplateTabProps {
 type TemplatePreviewResult = {
   template?: TemplatePreviewDetailsProps["template"];
   diff?: NonNullable<TemplatePreviewDetailsProps["diff"]>;
-  scope_root?: string;
 };
 
 function downloadTextFile(filename: string, text: string) {
@@ -28,7 +27,7 @@ function downloadTextFile(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
+export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<TemplatePreviewResult | null>(null);
   const [err, setErr] = useState("");
@@ -81,7 +80,7 @@ export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
   const handleImportReplace = async () => {
     if (!groupId || !file) return;
     const ok = window.confirm(
-      `Replace this group’s actors, settings, and prompts using "${file.name}"?\n\nThis will stop running agents and then apply repo prompt files (create/overwrite/delete):\n- CCCC_PREAMBLE.md\n- CCCC_HELP.md\n- CCCC_STANDUP.md`
+      `Replace this group’s actors, settings, automation rules, and guidance using "${file.name}"?\n\nThis will stop running agents and then apply group guidance overrides under CCCC_HOME:\n- CCCC_PREAMBLE.md\n- CCCC_HELP.md`
     );
     if (!ok) return;
 
@@ -114,7 +113,6 @@ export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
 
   const diff = preview?.diff;
   const tpl = preview?.template;
-  const scopeRoot = String(preview?.scope_root || "").trim();
 
   return (
     <div className="space-y-4">
@@ -123,11 +121,11 @@ export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
       <div className={cardClass(isDark)}>
         <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Export</div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-          Save this group’s actors, settings, and prompts as a single portable file.
+          Save this group’s actors, settings, automation rules, and guidance as a single portable file.
         </div>
         <div className="mt-3 flex items-center gap-2">
           <button className={primaryButtonClass(busy)} onClick={handleExport} disabled={busy}>
-            Export Template
+            Export Blueprint
           </button>
           {exportInfo && <div className={`text-xs ${isDark ? "text-emerald-300" : "text-emerald-700"}`}>{exportInfo}</div>}
         </div>
@@ -136,11 +134,11 @@ export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
       <div className={cardClass(isDark)}>
         <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Import (Replace)</div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-          Applies a template by replacing actors, timing settings, and repo prompt files. Ledger history is never modified.
+          Applies a blueprint by replacing actors, settings, automation rules/snippets, and group guidance overrides (CCCC_HOME). Ledger history is never modified.
         </div>
 
         <div className="mt-3">
-          <label className={labelClass(isDark)}>Template file</label>
+          <label className={labelClass(isDark)}>Blueprint file</label>
           <input
             key={file ? file.name : "none"}
             type="file"
@@ -161,7 +159,7 @@ export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
 
         {tpl && diff && (
           <div className="mt-3">
-            <TemplatePreviewDetails isDark={isDark} template={tpl} diff={diff} scopeRoot={scopeRoot} wrap={false} />
+            <TemplatePreviewDetails isDark={isDark} template={tpl} diff={diff} wrap={false} />
           </div>
         )}
 

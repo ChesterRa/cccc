@@ -20,8 +20,6 @@ export interface CreateGroupModalProps {
   setCreateGroupName: (name: string) => void;
   createGroupTemplateFile: File | null;
   templatePreview: TemplatePreviewDetailsProps["template"] | null;
-  scopeRoot: string;
-  promptOverwriteFiles: string[];
   templateError: string;
   templateBusy: boolean;
   onSelectTemplate: (file: File | null) => void;
@@ -47,8 +45,6 @@ export function CreateGroupModal({
   setCreateGroupName,
   createGroupTemplateFile,
   templatePreview,
-  scopeRoot,
-  promptOverwriteFiles,
   templateError,
   templateBusy,
   onSelectTemplate,
@@ -203,9 +199,9 @@ export function CreateGroupModal({
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              Create Group From Template (optional)
-            </label>
+              <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                Create Group From Blueprint (optional)
+              </label>
             <div
               className={`rounded-xl border px-4 py-3 ${
                 isDark ? "border-slate-600/50 bg-slate-900/50" : "border-gray-200 bg-gray-50"
@@ -237,7 +233,7 @@ export function CreateGroupModal({
                 )}
               </div>
               {templateBusy && (
-                <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>Loading template…</div>
+                <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>Loading blueprint…</div>
               )}
               {!templateBusy && templateError && (
                 <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-red-600"}`}>{templateError}</div>
@@ -247,15 +243,13 @@ export function CreateGroupModal({
                   <TemplatePreviewDetails
                     isDark={isDark}
                     template={templatePreview}
-                    scopeRoot={scopeRoot}
-                    promptOverwriteFiles={promptOverwriteFiles}
                     detailsOpenByDefault={true}
                     wrap={false}
                   />
                 </div>
               )}
               <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Applies actors, settings, and prompt files (CCCC_PREAMBLE.md / CCCC_HELP.md / CCCC_STANDUP.md).
+                Applies actors, settings, automation rules/snippets, and group guidance overrides under CCCC_HOME (CCCC_PREAMBLE.md / CCCC_HELP.md).
               </div>
             </div>
           </div>
@@ -273,7 +267,7 @@ export function CreateGroupModal({
                 (!!createGroupTemplateFile && !!templateError)
               }
             >
-              {busy === "create" ? "Creating..." : createGroupTemplateFile ? "Create Group From Template" : "Create Group"}
+              {busy === "create" ? "Creating..." : createGroupTemplateFile ? "Create Group From Blueprint" : "Create Group"}
             </button>
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${

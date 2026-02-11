@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import shutil
 import uuid
@@ -14,6 +15,48 @@ from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
 from .registry import Registry
 from .scope import ScopeIdentity
+
+_DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passed. Stand-up reminder (foreman only).
+
+Alignment checkpoint:
+- Direction: Re-check goals/constraints/DoD (PROJECT.md if present; otherwise user + Context). Are we drifting?
+- Rigor: Which key points are evidence vs hypotheses? What needs investigation/verification next?
+- Coordination: Ask @peers for risks/alternatives/objections. Synthesize and update Context. If a major decision is unclear, ask the user.
+
+Use your own words. Avoid rigid templates; keep it human and direct.
+"""
+
+def _default_automation_ruleset() -> Dict[str, Any]:
+    # Stored in group.yaml; must not share mutable objects across groups.
+    return {
+        "version": 1,
+        "rules": [
+            {
+                "id": "standup",
+                "enabled": True,
+                "scope": "group",
+                "owner_actor_id": None,
+                "to": ["@foreman"],
+                "trigger": {"kind": "interval", "every_seconds": 900},
+                "action": {
+                    "kind": "notify",
+                    "priority": "normal",
+                    "requires_ack": False,
+                    "title": "Stand-up",
+                    "snippet_ref": "standup",
+                    "message": "",
+                },
+            }
+        ],
+        "snippets": {
+            "standup": _DEFAULT_AUTOMATION_STANDUP_SNIPPET,
+        },
+    }
+
+
+def default_automation_ruleset_doc() -> Dict[str, Any]:
+    """Return a fresh default automation ruleset document."""
+    return copy.deepcopy(_default_automation_ruleset())
 
 
 def _new_group_id(seed: str) -> str:
@@ -82,6 +125,8 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
         "active_scope_key": "",
         "scopes": [],
         "actors": [],
+        # Single-layer storage: automation rules/snippets live in group.yaml under CCCC_HOME.
+        "automation": default_automation_ruleset_doc(),
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 
@@ -227,6 +272,8 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
         "active_scope_key": "",
         "scopes": [],
         "actors": [],
+        # Keep deterministic defaults consistent with create_group().
+        "automation": default_automation_ruleset_doc(),
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 

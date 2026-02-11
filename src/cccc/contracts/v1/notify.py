@@ -8,7 +8,7 @@ Kinds:
 - help_nudge: remind an actor to refresh the collaboration playbook (cccc_help)
 - actor_idle: actor idle alert (to foreman)
 - silence_check: group silence alert (to foreman)
-- standup: periodic stand-up reminder (to foreman)
+- automation: user-defined automation rule notification
 - status_change: actor/group status change
 - error: system error
 """
@@ -25,7 +25,7 @@ NotifyKind = Literal[
     "help_nudge",      # Ask actor to refresh cccc_help
     "actor_idle",      # Actor idle alert (to foreman)
     "silence_check",   # Group silence alert (to foreman)
-    "standup",         # Periodic stand-up reminder (to foreman)
+    "automation",      # User-defined automation rule notification
     "status_change",   # Status change notification
     "error",           # Error notification
     "info",            # Informational notification

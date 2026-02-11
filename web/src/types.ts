@@ -198,12 +198,81 @@ export type GroupSettings = {
   help_nudge_interval_seconds: number;
   help_nudge_min_messages: number;
   min_interval_seconds: number;
-  standup_interval_seconds: number;
   auto_mark_on_delivery: boolean;
 
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;
   terminal_transcript_notify_lines: number;
+};
+
+export type AutomationRuleTriggerInterval = {
+  kind: "interval";
+  every_seconds: number;
+};
+
+export type AutomationRuleTriggerCron = {
+  kind: "cron";
+  cron: string;
+  timezone?: string;
+};
+
+export type AutomationRuleTriggerAt = {
+  kind: "at";
+  at: string;
+};
+
+export type AutomationRuleTrigger =
+  | AutomationRuleTriggerInterval
+  | AutomationRuleTriggerCron
+  | AutomationRuleTriggerAt;
+
+export type AutomationRuleAction = {
+  kind: "notify";
+  title?: string;
+  snippet_ref?: string | null;
+  message?: string;
+  priority?: "low" | "normal" | "high" | "urgent";
+  requires_ack?: boolean;
+} | {
+  kind: "group_state";
+  state: "active" | "idle" | "paused" | "stopped";
+} | {
+  kind: "actor_control";
+  operation: "start" | "stop" | "restart";
+  targets?: string[];
+};
+
+export type AutomationRule = {
+  id: string;
+  enabled?: boolean;
+  scope?: "group" | "personal";
+  owner_actor_id?: string | null;
+  to?: string[];
+  trigger?: AutomationRuleTrigger;
+  action?: AutomationRuleAction;
+};
+
+export type AutomationRuleSet = {
+  rules: AutomationRule[];
+  snippets: Record<string, string>;
+};
+
+export type AutomationRuleStatus = {
+  last_fired_at?: string;
+  last_error_at?: string;
+  last_error?: string;
+  next_fire_at?: string;
+  completed?: boolean;
+  completed_at?: string;
+};
+
+export type GroupAutomation = {
+  ruleset: AutomationRuleSet;
+  status: Record<string, AutomationRuleStatus>;
+  config_path: string;
+  supported_vars: string[];
+  version?: number;
+  server_now?: string;
 };
 
 export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk";

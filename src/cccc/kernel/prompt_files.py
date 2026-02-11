@@ -11,9 +11,9 @@ from ..util.fs import atomic_write_text
 
 PREAMBLE_FILENAME = "CCCC_PREAMBLE.md"
 HELP_FILENAME = "CCCC_HELP.md"
-STANDUP_FILENAME = "CCCC_STANDUP.md"
+PROMPTS_DIRNAME = "prompts"
 
-_MAX_FILE_BYTES = 512 * 1024  # Safety limit for repo-managed markdown files.
+_MAX_FILE_BYTES = 512 * 1024  # Safety limit for prompt markdown files.
 
 DEFAULT_PREAMBLE_BODY = """Quick start (recommended):
 - Call `cccc_bootstrap` to load PROJECT.md (if present) + Context + inbox + the CCCC help playbook.
@@ -23,16 +23,6 @@ DEFAULT_PREAMBLE_BODY = """Quick start (recommended):
 Intent: collaborate rigorously (if peers exist) and keep pushing the task forward with evidence-based steps.
 Mechanics: use MCP for visible chat; keep commitments/decisions/progress in Context; keep the inbox clean.
 Message modes: choose intentionally (normal / attention / task[reply_required]); avoid both overuse and underuse.
-"""
-
-DEFAULT_STANDUP_TEMPLATE = """{{interval_minutes}} minutes have passed. Stand-up reminder (foreman only).
-
-Alignment checkpoint:
-- Direction: Re-check goals/constraints/DoD (PROJECT.md if present; otherwise user + Context). Are we drifting?
-- Rigor: Which key points are evidence vs hypotheses? What needs investigation/verification next (including web search if allowed)?
-- Coordination: Ask @peers for risks/alternatives/objections. Synthesize and update Context. If a major decision is unclear, ask the user.
-
-Use your own words. Avoid rigid templates; keep it human and direct.
 """
 
 def load_builtin_help_markdown() -> str:
@@ -95,19 +85,20 @@ def _read_text_file(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def read_repo_prompt_file(group: Group, filename: str) -> PromptFile:
-    """Read a prompt override file from the group's active scope root.
+def _group_prompts_root(group: Group) -> Path:
+    return group.path / PROMPTS_DIRNAME
 
-    The file is optional. When missing, found=False and content=None.
+
+def read_group_prompt_file(group: Group, filename: str) -> PromptFile:
+    """Read a group prompt override from CCCC_HOME.
+
+    Overrides live under:
+      CCCC_HOME/groups/<group_id>/prompts/<filename>
     """
-    root = resolve_active_scope_root(group)
-    if root is None:
-        return PromptFile(filename=filename, path=None, found=False, content=None)
-
+    root = _group_prompts_root(group)
     path = (root / filename).expanduser()
     if not path.exists() or not path.is_file():
         return PromptFile(filename=filename, path=str(path), found=False, content=None)
-
     try:
         content = _read_text_file(path)
     except Exception:
@@ -115,27 +106,21 @@ def read_repo_prompt_file(group: Group, filename: str) -> PromptFile:
     return PromptFile(filename=filename, path=str(path), found=True, content=content)
 
 
-def delete_repo_prompt_file(group: Group, filename: str) -> PromptFile:
-    """Delete a repo prompt file if present (reset to built-in defaults)."""
-    root = resolve_active_scope_root(group)
-    if root is None:
-        return PromptFile(filename=filename, path=None, found=False, content=None)
-
+def delete_group_prompt_file(group: Group, filename: str) -> PromptFile:
+    """Delete a group prompt override file if present (reset to built-in defaults)."""
+    root = _group_prompts_root(group)
     path = (root / filename).expanduser()
     if not path.exists():
         return PromptFile(filename=filename, path=str(path), found=False, content=None)
-
     if path.is_file():
         os.unlink(path)
     return PromptFile(filename=filename, path=str(path), found=False, content=None)
 
 
-def write_repo_prompt_file(group: Group, filename: str, content: str) -> PromptFile:
-    """Create or update a repo prompt file under the group's active scope root."""
-    root = resolve_active_scope_root(group)
-    if root is None:
-        raise ValueError("group has no scope attached")
-
+def write_group_prompt_file(group: Group, filename: str, content: str) -> PromptFile:
+    """Create or update a group prompt override file under CCCC_HOME."""
+    root = _group_prompts_root(group)
+    root.mkdir(parents=True, exist_ok=True)
     path = (root / filename).expanduser()
     atomic_write_text(path, str(content or ""), encoding="utf-8")
     return PromptFile(filename=filename, path=str(path), found=True, content=_read_text_file(path))

@@ -70,8 +70,9 @@ prompts: {{}}
 
                 group = load_group(group_id)
                 self.assertIsNotNone(group)
+                delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
                 automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
-                self.assertTrue(bool(automation.get("auto_mark_on_delivery")))
+                self.assertTrue(bool(delivery.get("auto_mark_on_delivery")))
                 self.assertEqual(int(automation.get("reply_required_nudge_after_seconds", -1)), 111)
                 self.assertEqual(int(automation.get("attention_ack_nudge_after_seconds", -1)), 222)
                 self.assertEqual(int(automation.get("unread_nudge_after_seconds", -1)), 333)
@@ -87,4 +88,3 @@ prompts: {{}}
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -245,7 +245,7 @@ System notifications are separated from chat to avoid polluting conversations.
 
 ```ts
 data: {
-  kind: "nudge" | "keepalive" | "help_nudge" | "actor_idle" | "silence_check" | "standup" | "status_change" | "error" | "info" | string
+  kind: "nudge" | "keepalive" | "help_nudge" | "actor_idle" | "silence_check" | "automation" | "status_change" | "error" | "info" | string
   priority?: "low" | "normal" | "high" | "urgent"   // default "normal"
   title?: string
   message?: string

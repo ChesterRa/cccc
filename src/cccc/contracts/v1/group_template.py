@@ -5,6 +5,7 @@ from typing import List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from .actor import ActorSubmit, AgentRuntime, RunnerKind
+from .automation import AutomationRuleSet
 
 
 TerminalTranscriptVisibility = Literal["off", "foreman", "all"]
@@ -49,7 +50,6 @@ class GroupTemplateSettings(BaseModel):
     help_nudge_interval_seconds: int = 600
     help_nudge_min_messages: int = 10
     min_interval_seconds: int = 0
-    standup_interval_seconds: int = 900
 
     terminal_transcript_visibility: TerminalTranscriptVisibility = "foreman"
     terminal_transcript_notify_tail: bool = True
@@ -62,13 +62,12 @@ class GroupTemplatePrompts(BaseModel):
     """Optional prompt bodies embedded directly in the template file.
 
     When a prompt field is omitted / null, the template uses the built-in
-    default and import-replace will reset (delete) the corresponding repo
-    prompt file.
+    default and import-replace will reset (delete) the corresponding group
+    prompt override file under CCCC_HOME.
     """
 
     preamble: Optional[str] = None
     help: Optional[str] = None
-    standup: Optional[str] = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -88,5 +87,6 @@ class GroupTemplate(BaseModel):
     actors: List[GroupTemplateActor] = Field(default_factory=list)
     settings: GroupTemplateSettings = Field(default_factory=GroupTemplateSettings)
     prompts: GroupTemplatePrompts = Field(default_factory=GroupTemplatePrompts)
+    automation: AutomationRuleSet = Field(default_factory=AutomationRuleSet)
 
     model_config = ConfigDict(extra="ignore")

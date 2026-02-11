@@ -64,15 +64,16 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
         delivery = {}
     return {
         "min_interval_seconds": int(delivery.get("min_interval_seconds", DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS)),
+        "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
     }
 
 
 def _get_auto_mark_on_delivery(group: Group) -> bool:
-    """Get auto_mark_on_delivery setting from group.yaml automation config."""
-    automation = group.doc.get("automation")
-    if not isinstance(automation, dict):
+    """Get auto_mark_on_delivery setting from group.yaml delivery config."""
+    delivery = group.doc.get("delivery")
+    if not isinstance(delivery, dict):
         return False
-    return coerce_bool(automation.get("auto_mark_on_delivery"), default=False)
+    return coerce_bool(delivery.get("auto_mark_on_delivery"), default=False)
 
 
 # ============================================================================

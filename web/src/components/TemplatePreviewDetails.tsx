@@ -2,10 +2,10 @@ import { useState } from "react";
 
 import { cardClass } from "./modals/settings/types";
 
-type TemplatePromptKind = "preamble" | "help" | "standup";
+type TemplatePromptKind = "preamble" | "help";
 
 type TemplatePromptPreview = {
-  source?: "builtin" | "repo";
+  source?: "builtin" | "home";
   chars?: number;
   preview?: string;
 };
@@ -30,6 +30,9 @@ type TemplatePayload = {
   exported_at?: string;
   actors?: TemplateActor[];
   settings?: TemplateSettings;
+  automation?: { rules?: number; snippets?: number };
+  guidance?: Record<string, TemplatePromptPreview>;
+  // Legacy: older servers returned this as "prompts".
   prompts?: Record<string, TemplatePromptPreview>;
 };
 
@@ -38,14 +41,25 @@ type TemplateDiff = {
   actors_update?: string[];
   actors_remove?: string[];
   settings_changed?: Record<string, { from: unknown; to: unknown }>;
+  guidance_changed?: Record<
+    string,
+    {
+      changed: boolean;
+      current_chars?: number;
+      new_chars?: number;
+      current_source?: "builtin" | "home";
+      new_source?: "builtin" | "home";
+    }
+  >;
+  // Legacy: older servers returned this as "prompts_changed".
   prompts_changed?: Record<
     string,
     {
       changed: boolean;
       current_chars?: number;
       new_chars?: number;
-      current_source?: "builtin" | "repo";
-      new_source?: "builtin" | "repo";
+      current_source?: "builtin" | "home";
+      new_source?: "builtin" | "home";
     }
   >;
 };
@@ -54,8 +68,6 @@ export interface TemplatePreviewDetailsProps {
   isDark: boolean;
   template: TemplatePayload;
   diff?: TemplateDiff | null;
-  scopeRoot?: string;
-  promptOverwriteFiles?: string[];
   wrap?: boolean;
   detailsOpenByDefault?: boolean;
 }
@@ -76,8 +88,6 @@ export function TemplatePreviewDetails({
   isDark,
   template,
   diff,
-  scopeRoot,
-  promptOverwriteFiles,
   wrap = true,
   detailsOpenByDefault = false,
 }: TemplatePreviewDetailsProps) {
@@ -85,20 +95,24 @@ export function TemplatePreviewDetails({
 
   const actors = Array.isArray(template.actors) ? template.actors : [];
   const settings = (template.settings && typeof template.settings === "object" ? template.settings : {}) as TemplateSettings;
-  const prompts = (template.prompts && typeof template.prompts === "object" ? template.prompts : {}) as Record<
+  const guidance = (template.guidance && typeof template.guidance === "object" ? template.guidance : {}) as Record<
     string,
     TemplatePromptPreview
   >;
+  const promptsLegacy = (template.prompts && typeof template.prompts === "object" ? template.prompts : {}) as Record<
+    string,
+    TemplatePromptPreview
+  >;
+  const guidancePrompts = Object.keys(guidance).length > 0 ? guidance : promptsLegacy;
 
   const addIds = asStringArray(diff?.actors_add);
   const updateIds = asStringArray(diff?.actors_update);
   const removeIds = asStringArray(diff?.actors_remove);
 
-  const overwrite = Array.isArray(promptOverwriteFiles) ? promptOverwriteFiles : [];
-
   const promptMeta = (kind: TemplatePromptKind) => {
-    const p = prompts[kind] || {};
-    const ch = diff?.prompts_changed?.[kind];
+    const p = guidancePrompts[kind] || {};
+    const changedMap = diff?.guidance_changed || diff?.prompts_changed;
+    const ch = changedMap?.[kind];
     const changed = typeof ch?.changed === "boolean" ? ch.changed : undefined;
     const currentChars = ch?.current_chars;
     const newChars = ch?.new_chars;
@@ -109,18 +123,20 @@ export function TemplatePreviewDetails({
 
   const formatPromptLabel = (kind: TemplatePromptKind) => {
     if (kind === "help") return "CCCC_HELP.md";
-    if (kind === "standup") return "CCCC_STANDUP.md";
     return "CCCC_PREAMBLE.md";
   };
 
   const formatSource = (s: unknown): string => {
-    if (s === "repo") return "repo";
+    if (s === "home") return "override";
     if (s === "builtin") return "builtin";
     return "";
   };
 
   const settingsChangedKeys = diff?.settings_changed ? Object.keys(diff.settings_changed) : [];
-  const promptRepoCount = (["preamble", "help", "standup"] as const).filter((k) => prompts[k]?.source === "repo").length;
+  const promptOverrideCount = (["preamble", "help"] as const).filter((k) => guidancePrompts[k]?.source === "home").length;
+  const automationRules = Number(template.automation?.rules || 0);
+  const automationSnippets = Number(template.automation?.snippets || 0);
+  const hasAutomation = automationRules > 0 || automationSnippets > 0;
 
   const formatSettingLine = (key: string) => {
     if (diff?.settings_changed && diff.settings_changed[key]) {
@@ -140,7 +156,14 @@ export function TemplatePreviewDetails({
   };
 
   const stableSettingsKeys: string[] = [
+    "default_send_to",
     "nudge_after_seconds",
+    "reply_required_nudge_after_seconds",
+    "attention_ack_nudge_after_seconds",
+    "unread_nudge_after_seconds",
+    "nudge_digest_min_interval_seconds",
+    "nudge_max_repeats_per_obligation",
+    "nudge_escalate_after_repeats",
     "actor_idle_timeout_seconds",
     "keepalive_delay_seconds",
     "keepalive_max_per_actor",
@@ -148,7 +171,7 @@ export function TemplatePreviewDetails({
     "help_nudge_interval_seconds",
     "help_nudge_min_messages",
     "min_interval_seconds",
-    "standup_interval_seconds",
+    "auto_mark_on_delivery",
     "terminal_transcript_visibility",
     "terminal_transcript_notify_tail",
     "terminal_transcript_notify_lines",
@@ -156,52 +179,45 @@ export function TemplatePreviewDetails({
 
   const body = (
     <>
-      <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Template preview</div>
+      <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Blueprint preview</div>
       <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-        Template title/topic are informational only (not applied automatically).
+        Blueprint title/topic are informational only (not applied automatically).
       </div>
 
       <div className="mt-3 space-y-1">
         <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-          Template:{" "}
+          Blueprint:{" "}
           <span className="font-mono">
             v{String(template.v || "")} {String(template.cccc_version || "")}
           </span>
-          {template.title ? (
-            <span className="ml-2">
-              • <span className="font-mono">{String(template.title)}</span>
-            </span>
-          ) : null}
-        </div>
-        {scopeRoot ? (
-          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-            Repo scope root: <span className="font-mono">{scopeRoot}</span>
-          </div>
+        {template.title ? (
+          <span className="ml-2">
+            • <span className="font-mono">{String(template.title)}</span>
+          </span>
         ) : null}
-        {overwrite.length > 0 ? (
-          <div
-            className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
-              isDark
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                : "border-amber-200 bg-amber-50 text-amber-800"
-            }`}
-          >
-            Will modify existing repo prompt files: <span className="font-mono">{overwrite.join(", ")}</span>
-          </div>
-        ) : null}
+      </div>
 
         {diff ? (
           <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
             Actors: +{addIds.length} / ~{updateIds.length} / -{removeIds.length} • Settings changes:{" "}
-            {settingsChangedKeys.length} • Prompts changes:{" "}
-            {diff.prompts_changed
-              ? Object.keys(diff.prompts_changed).filter((k) => diff.prompts_changed?.[k]?.changed).length
+            {settingsChangedKeys.length} • Guidance changes:{" "}
+            {diff.guidance_changed || diff.prompts_changed
+              ? Object.keys(diff.guidance_changed || diff.prompts_changed || {}).filter(
+                  (k) => (diff.guidance_changed || diff.prompts_changed || {})[k]?.changed
+                ).length
               : 0}
+            {hasAutomation ? (
+              <>
+                {" "}
+                • Automation: {automationRules} rule(s) / {automationSnippets} snippet(s)
+              </>
+            ) : null}
           </div>
         ) : (
           <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-            Actors: {actors.length} • Settings: {stableSettingsKeys.length} keys • Prompts:{" "}
-            {promptRepoCount > 0 ? `${promptRepoCount} file(s)` : "builtin"}
+            Actors: {actors.length} • Settings: {stableSettingsKeys.length} keys • Guidance:{" "}
+            {promptOverrideCount > 0 ? `${promptOverrideCount} override(s)` : "builtin"}
+            {hasAutomation ? ` • Automation: ${automationRules} rule(s) / ${automationSnippets} snippet(s)` : ""}
           </div>
         )}
       </div>
@@ -288,8 +304,8 @@ export function TemplatePreviewDetails({
           ) : null}
 
           <div>
-            <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Prompts</div>
-            {(["preamble", "help", "standup"] as const).map((kind) => {
+            <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Guidance</div>
+            {(["preamble", "help"] as const).map((kind) => {
               const meta = promptMeta(kind);
               const label = formatPromptLabel(kind);
               const changed =
@@ -301,7 +317,7 @@ export function TemplatePreviewDetails({
                 const nxt = formatSource(meta.newSource);
                 if (cur && nxt) return `${cur} → ${nxt}`;
                 if (meta.p.source === "builtin") return "builtin";
-                if (meta.p.source === "repo") return "repo";
+                if (meta.p.source === "home") return "override";
                 return "";
               })();
               const charLabel = (() => {
@@ -330,7 +346,7 @@ export function TemplatePreviewDetails({
                     </pre>
                   ) : meta.p.source === "builtin" ? (
                     <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                      Uses built-in defaults (no repo file).
+                      Uses built-in defaults (no override file).
                     </div>
                   ) : null}
                 </details>

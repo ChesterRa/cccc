@@ -1,5 +1,5 @@
 // AppModals renders all modal components in one place.
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
 import { SearchModal } from "./SearchModal";
@@ -141,59 +141,8 @@ export function AppModals({
   } = useFormStore();
 
   const [createTemplatePreview, setCreateTemplatePreview] = useState<TemplatePreviewDetailsProps["template"] | null>(null);
-  const [createTemplateScopeRoot, setCreateTemplateScopeRoot] = useState("");
-  const [createTemplatePromptOverwriteFiles, setCreateTemplatePromptOverwriteFiles] = useState<string[]>([]);
   const [createTemplateError, setCreateTemplateError] = useState("");
   const [createTemplateBusy, setCreateTemplateBusy] = useState(false);
-
-  const detectPromptOverwriteFiles = async (path: string): Promise<{ scopeRoot: string; files: string[] }> => {
-    const p = String(path || "").trim();
-    if (!p) return { scopeRoot: "", files: [] };
-    try {
-      let root = p;
-      try {
-        const rootResp = await api.resolveScopeRoot(p);
-        if (rootResp.ok && rootResp.result?.scope_root) {
-          root = String(rootResp.result.scope_root || "").trim() || p;
-        }
-      } catch {
-        // ignore
-      }
-
-      const resp = await api.fetchDirContents(root);
-      if (!resp.ok) return { scopeRoot: root, files: [] };
-      const items = Array.isArray(resp.result?.items) ? resp.result.items : [];
-      const names = new Set(
-        items
-          .map((it: unknown) => {
-            if (!it || typeof it !== "object") return "";
-            return String((it as { name?: unknown }).name || "").trim();
-          })
-          .filter((s) => s)
-      );
-      const wanted = ["CCCC_PREAMBLE.md", "CCCC_HELP.md", "CCCC_STANDUP.md"];
-      return { scopeRoot: root, files: wanted.filter((n) => names.has(n)) };
-    } catch {
-      return { scopeRoot: "", files: [] };
-    }
-  };
-
-  useEffect(() => {
-    if (!modals.createGroup) return;
-    if (!createGroupTemplateFile || !createGroupPath.trim()) {
-      setCreateTemplateScopeRoot("");
-      setCreateTemplatePromptOverwriteFiles([]);
-      return;
-    }
-    const t = window.setTimeout(() => {
-      void (async () => {
-        const res = await detectPromptOverwriteFiles(createGroupPath);
-        setCreateTemplateScopeRoot(res.scopeRoot);
-        setCreateTemplatePromptOverwriteFiles(res.files);
-      })();
-    }, 250);
-    return () => window.clearTimeout(t);
-  }, [modals.createGroup, createGroupTemplateFile, createGroupPath]);
 
   // Computed
   const selectedGroupRunning = useGroupStore(
@@ -443,8 +392,6 @@ export function AppModals({
     setCreateGroupTemplateFile(file);
     setCreateTemplatePreview(null);
     setCreateTemplateError("");
-    setCreateTemplateScopeRoot("");
-    setCreateTemplatePromptOverwriteFiles([]);
     if (!file) return;
 
     setCreateTemplateBusy(true);
@@ -455,11 +402,6 @@ export function AppModals({
         return;
       }
       setCreateTemplatePreview(resp.result?.template || null);
-      if (createGroupPath.trim()) {
-        const res = await detectPromptOverwriteFiles(createGroupPath);
-        setCreateTemplateScopeRoot(res.scopeRoot);
-        setCreateTemplatePromptOverwriteFiles(res.files);
-      }
     } catch {
       setCreateTemplateError("Failed to load template");
     } finally {
@@ -477,15 +419,6 @@ export function AppModals({
       let groupId = "";
 
       if (createGroupTemplateFile) {
-        const overwrite = await detectPromptOverwriteFiles(path);
-        if (overwrite.files.length > 0) {
-          const ok = window.confirm(
-            `This will modify repo prompt files (create/overwrite/delete):\n\n- ${overwrite.files.join("\n- ")}${
-              overwrite.scopeRoot ? `\n\nProject root:\n- ${overwrite.scopeRoot}` : ""
-            }\n\nContinue?`
-          );
-          if (!ok) return;
-        }
         const resp = await api.createGroupFromTemplate(path, title, "", createGroupTemplateFile);
         if (!resp.ok) {
           if (resp.error?.code === "scope_already_attached") {
@@ -497,7 +430,6 @@ export function AppModals({
               setCreateTemplatePreview(null);
               setCreateTemplateError("");
               setCreateTemplateBusy(false);
-              setCreateTemplatePromptOverwriteFiles([]);
               setSelectedGroupId(existing);
               return;
             }
@@ -523,7 +455,6 @@ export function AppModals({
       setCreateTemplatePreview(null);
       setCreateTemplateError("");
       setCreateTemplateBusy(false);
-      setCreateTemplatePromptOverwriteFiles([]);
       closeModal("createGroup");
       await refreshGroups();
       setSelectedGroupId(groupId);
@@ -831,8 +762,6 @@ export function AppModals({
         setCreateGroupName={setCreateGroupName}
         createGroupTemplateFile={createGroupTemplateFile}
         templatePreview={createTemplatePreview}
-        scopeRoot={createTemplateScopeRoot}
-        promptOverwriteFiles={createTemplatePromptOverwriteFiles}
         templateError={createTemplateError}
         templateBusy={createTemplateBusy}
         onSelectTemplate={handleSelectCreateGroupTemplate}
@@ -845,7 +774,6 @@ export function AppModals({
           setCreateTemplatePreview(null);
           setCreateTemplateError("");
           setCreateTemplateBusy(false);
-          setCreateTemplatePromptOverwriteFiles([]);
         }}
       />
 

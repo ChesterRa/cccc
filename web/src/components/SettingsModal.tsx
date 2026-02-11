@@ -4,12 +4,13 @@ import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
 import {
-  TimingTab,
+  AutomationTab,
+  DeliveryTab,
   MessagingTab,
   IMBridgeTab,
   TranscriptTab,
-  PromptsTab,
-  TemplateTab,
+  GuidanceTab,
+  BlueprintTab,
   RemoteAccessTab,
   DeveloperTab,
   SettingsScope,
@@ -116,10 +117,10 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
-  const [groupTab, setGroupTab] = useState<GroupTabId>("timing");
+  const [groupTab, setGroupTab] = useState<GroupTabId>("automation");
   const [globalTab, setGlobalTab] = useState<GlobalTabId>("remote");
 
-  // Timing settings state
+  // Automation + delivery settings state
   const [nudgeSeconds, setNudgeSeconds] = useState(300);
   const [replyRequiredNudgeSeconds, setReplyRequiredNudgeSeconds] = useState(300);
   const [attentionAckNudgeSeconds, setAttentionAckNudgeSeconds] = useState(600);
@@ -134,7 +135,6 @@ export function SettingsModal({
   const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
   const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
   const [deliveryInterval, setDeliveryInterval] = useState(0);
-  const [standupInterval, setStandupInterval] = useState(900);
   const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(false);
 
   // Messaging policy
@@ -227,7 +227,6 @@ export function SettingsModal({
       setHelpNudgeIntervalSeconds(settings.help_nudge_interval_seconds ?? 600);
       setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
       setDeliveryInterval(settings.min_interval_seconds);
-      setStandupInterval(settings.standup_interval_seconds ?? 900);
       setAutoMarkOnDelivery(Boolean(settings.auto_mark_on_delivery));
       setDefaultSendTo(settings.default_send_to || "foreman");
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
@@ -362,7 +361,14 @@ export function SettingsModal({
 
   // ============ Handlers ============
 
-  const handleSaveSettings = async () => {
+  const handleSaveDeliverySettings = async () => {
+    await onUpdateSettings({
+      min_interval_seconds: deliveryInterval,
+      auto_mark_on_delivery: autoMarkOnDelivery,
+    });
+  };
+
+  const handleSaveAutomationSettings = async () => {
     await onUpdateSettings({
       nudge_after_seconds: nudgeSeconds,
       reply_required_nudge_after_seconds: replyRequiredNudgeSeconds,
@@ -377,9 +383,6 @@ export function SettingsModal({
       silence_timeout_seconds: silenceSeconds,
       help_nudge_interval_seconds: helpNudgeIntervalSeconds,
       help_nudge_min_messages: helpNudgeMinMessages,
-      min_interval_seconds: deliveryInterval,
-      standup_interval_seconds: standupInterval,
-      auto_mark_on_delivery: autoMarkOnDelivery,
     });
   };
 
@@ -763,12 +766,13 @@ export function SettingsModal({
   })();
 
   const groupTabs: { id: GroupTabId; label: string }[] = [
-    { id: "timing", label: "Timing" },
+    { id: "guidance", label: "Guidance" },
+    { id: "automation", label: "Automation" },
+    { id: "delivery", label: "Delivery" },
     { id: "messaging", label: "Messaging" },
     { id: "im", label: "IM Bridge" },
     { id: "transcript", label: "Transcript" },
-    { id: "prompts", label: "Prompts" },
-    { id: "template", label: "Template" },
+    { id: "blueprint", label: "Blueprint" },
   ];
   const globalTabs: { id: GlobalTabId; label: string }[] = [
     { id: "remote", label: "Remote Access" },
@@ -827,7 +831,7 @@ export function SettingsModal({
                   type="button"
                   onClick={() => setScope("group")}
                   disabled={!groupId}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left font-medium transition-colors ${scope === "group"
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${scope === "group"
                     ? isDark
                       ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
                       : "bg-emerald-50 text-emerald-700 border border-emerald-200"
@@ -859,7 +863,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={() => setScope("global")}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left font-medium transition-colors ${scope === "global"
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${scope === "global"
                     ? isDark
                       ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
                       : "bg-emerald-50 text-emerald-700 border border-emerald-200"
@@ -898,7 +902,7 @@ export function SettingsModal({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === tab.id
+                  className={`w-full flex items-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${activeTab === tab.id
                     ? isDark
                       ? "bg-slate-800 text-emerald-400"
                       : "bg-white shadow-sm border border-gray-200 text-emerald-600"
@@ -999,7 +1003,7 @@ export function SettingsModal({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex-shrink-0 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === tab.id
+                  className={`flex-shrink-0 px-4 py-2.5 text-xs font-medium transition-colors whitespace-nowrap ${activeTab === tab.id
                     ? isDark
                       ? "text-emerald-400 border-b-2 border-emerald-400"
                       : "text-emerald-600 border-b-2 border-emerald-600"
@@ -1017,9 +1021,11 @@ export function SettingsModal({
           {/* Main Content Area */}
           <div className="flex-1 overflow-y-auto flex flex-col">
             <div className="p-5 sm:p-8 space-y-6">
-              {activeTab === "timing" && (
-                <TimingTab
+              {activeTab === "automation" && (
+                <AutomationTab
                   isDark={isDark}
+                  groupId={groupId}
+                  devActors={devActors}
                   busy={busy}
                   nudgeSeconds={nudgeSeconds}
                   setNudgeSeconds={setNudgeSeconds}
@@ -1047,13 +1053,19 @@ export function SettingsModal({
                   setHelpNudgeIntervalSeconds={setHelpNudgeIntervalSeconds}
                   helpNudgeMinMessages={helpNudgeMinMessages}
                   setHelpNudgeMinMessages={setHelpNudgeMinMessages}
+                  onSavePolicies={handleSaveAutomationSettings}
+                />
+              )}
+
+              {activeTab === "delivery" && (
+                <DeliveryTab
+                  isDark={isDark}
+                  busy={busy}
                   deliveryInterval={deliveryInterval}
                   setDeliveryInterval={setDeliveryInterval}
-                  standupInterval={standupInterval}
-                  setStandupInterval={setStandupInterval}
                   autoMarkOnDelivery={autoMarkOnDelivery}
                   setAutoMarkOnDelivery={setAutoMarkOnDelivery}
-                  onSave={handleSaveSettings}
+                  onSave={handleSaveDeliverySettings}
                   onAutoSave={handleAutoSave}
                 />
               )}
@@ -1131,9 +1143,9 @@ export function SettingsModal({
                 />
               )}
 
-              {activeTab === "prompts" && <PromptsTab isDark={isDark} groupId={groupId} />}
+              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
 
-              {activeTab === "template" && <TemplateTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
+              {activeTab === "blueprint" && <BlueprintTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
 
               {activeTab === "remote" && <RemoteAccessTab isDark={isDark} />}
 

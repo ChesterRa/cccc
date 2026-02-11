@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 from .actors import get_effective_role, list_actors
 from .group import Group
-from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_repo_prompt_file
+from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 
 
 def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
@@ -128,8 +128,8 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
     ]
 
-    # Group override: CCCC_PREAMBLE.md in repo root (active scope).
-    pf = read_repo_prompt_file(group, PREAMBLE_FILENAME)
+    # Group override: CCCC_PREAMBLE.md under CCCC_HOME.
+    pf = read_group_prompt_file(group, PREAMBLE_FILENAME)
     custom_body = str(pf.content or "").strip() if pf.found else ""
 
     body = custom_body if custom_body else str(DEFAULT_PREAMBLE_BODY or "").strip()

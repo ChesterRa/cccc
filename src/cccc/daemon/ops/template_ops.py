@@ -15,10 +15,9 @@ from ...kernel.permissions import require_group_permission
 from ...kernel.prompt_files import (
     HELP_FILENAME,
     PREAMBLE_FILENAME,
-    STANDUP_FILENAME,
-    delete_repo_prompt_file,
-    resolve_active_scope_root,
-    write_repo_prompt_file,
+    delete_group_prompt_file,
+    read_group_prompt_file,
+    write_group_prompt_file,
 )
 from ...kernel.runtime import get_runtime_command_with_flags
 from ...kernel.scope import detect_scope
@@ -43,15 +42,6 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
 def _slug_filename(value: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "").strip()).strip("-").lower()
     return s or "group"
-
-def _require_scope_root_exists(group: Group) -> Path:
-    root = resolve_active_scope_root(group)
-    if root is None:
-        raise ValueError("group has no scope attached")
-    if not root.exists() or not root.is_dir():
-        raise ValueError(f"scope root does not exist: {root}")
-    return root
-
 
 def _remove_runner_state_files(group_id: str, actor_id: str) -> None:
     home = ensure_home()
@@ -111,17 +101,18 @@ def group_template_preview(args: Dict[str, Any]) -> DaemonResponse:
         return _error("invalid_template", str(e))
 
     diff = preview_group_template_replace(group, tpl)
-    scope_root = resolve_active_scope_root(group)
-
     def _prompt_preview(kind: str, limit: int = 2000) -> Dict[str, Any]:
         raw = getattr(tpl.prompts, kind, None)
         if raw is None:
             return {"source": "builtin"}
         txt = str(raw)
+        if not txt.strip():
+            return {"source": "builtin"}
         out = txt.strip()
         if len(out) > limit:
             out = out[:limit] + "\n…"
-        return {"source": "repo", "chars": len(txt), "preview": out}
+        # Prompts embedded in the template become group overrides under CCCC_HOME.
+        return {"source": "home", "chars": len(txt), "preview": out}
 
     settings = tpl.settings.model_dump()
     actors = [
@@ -152,7 +143,6 @@ def group_template_preview(args: Dict[str, Any]) -> DaemonResponse:
     return DaemonResponse(
         ok=True,
         result={
-            "scope_root": str(scope_root) if scope_root is not None else "",
             "template": {
                 "kind": tpl.kind,
                 "v": tpl.v,
@@ -162,12 +152,15 @@ def group_template_preview(args: Dict[str, Any]) -> DaemonResponse:
                 "cccc_version": tpl.cccc_version,
                 "actors": actors,
                 "settings": settings,
+                "automation": {
+                    "rules": len(tpl.automation.rules),
+                    "snippets": len(tpl.automation.snippets),
+                },
                 "prompts": {
                     "preamble": _prompt_preview("preamble"),
                     "help": _prompt_preview("help"),
-                    "standup": _prompt_preview("standup"),
                 },
-            },
+                },
             "diff": {
                 "actors_add": diff.actors_add,
                 "actors_update": diff.actors_update,
@@ -228,9 +221,8 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     _int("help_nudge_interval_seconds", min_v=0)
     _int("help_nudge_min_messages", min_v=0)
     _int("min_interval_seconds", min_v=0)
-    _int("standup_interval_seconds", min_v=0)
 
-    # Automation toggles
+    # Delivery toggles
     if "auto_mark_on_delivery" in settings:
         patch["auto_mark_on_delivery"] = bool(settings.get("auto_mark_on_delivery"))
 
@@ -246,7 +238,7 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
             n = 20
         patch["terminal_transcript_notify_lines"] = max(1, min(80, n))
 
-    delivery_keys = {"min_interval_seconds"}
+    delivery_keys = {"min_interval_seconds", "auto_mark_on_delivery"}
     automation_keys = {
         "nudge_after_seconds",
         "reply_required_nudge_after_seconds",
@@ -255,14 +247,12 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
         "nudge_digest_min_interval_seconds",
         "nudge_max_repeats_per_obligation",
         "nudge_escalate_after_repeats",
-        "auto_mark_on_delivery",
         "actor_idle_timeout_seconds",
         "keepalive_delay_seconds",
         "keepalive_max_per_actor",
         "silence_timeout_seconds",
         "help_nudge_interval_seconds",
         "help_nudge_min_messages",
-        "standup_interval_seconds",
     }
     messaging_keys = {"default_send_to"}
 
@@ -272,12 +262,12 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
 
     for k, v in patch.items():
         if k in delivery_keys:
-            delivery[k] = int(v)
-        if k in automation_keys:
             if k == "auto_mark_on_delivery":
-                automation[k] = bool(v)
+                delivery[k] = bool(v)
             else:
-                automation[k] = int(v)
+                delivery[k] = int(v)
+        if k in automation_keys:
+            automation[k] = int(v)
         if k in messaging_keys:
             messaging["default_send_to"] = str(v)
 
@@ -300,25 +290,20 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
 
 
 def _apply_prompts_replace(group: Group, prompts: Any) -> List[str]:
-    root = resolve_active_scope_root(group)
-    if root is None:
-        raise ValueError("group has no scope attached")
-
     modified: list[str] = []
     for kind, filename in (
         ("preamble", PREAMBLE_FILENAME),
         ("help", HELP_FILENAME),
-        ("standup", STANDUP_FILENAME),
     ):
         body = getattr(prompts, kind, None)
-        path = Path(root) / filename
-        if body is None:
-            if path.exists():
-                delete_repo_prompt_file(group, filename)
-                modified.append(str(path))
+        if body is None or not str(body).strip():
+            pf = read_group_prompt_file(group, filename)
+            if pf.found:
+                pf2 = delete_group_prompt_file(group, filename)
+                modified.append(str(pf2.path or pf.path or filename))
             continue
-        write_repo_prompt_file(group, filename, str(body))
-        modified.append(str(path))
+        pf2 = write_group_prompt_file(group, filename, str(body))
+        modified.append(str(pf2.path or filename))
     return modified
 
 
@@ -341,11 +326,6 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
         require_group_permission(group, by=by, action="group.update")
     except Exception as e:
         return _error("permission_denied", str(e))
-
-    try:
-        _ = _require_scope_root_exists(group)
-    except Exception as e:
-        return _error("invalid_scope", str(e))
 
     try:
         tpl = parse_group_template(template_text)
@@ -535,11 +515,46 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
         except Exception:
             pass
 
-    # Apply repo prompt overrides (write custom; delete when built-in).
+    # Apply group prompt overrides under CCCC_HOME (write custom; delete when built-in).
     try:
         prompt_paths = _apply_prompts_replace(group, tpl.prompts)
     except Exception as e:
         return _error("template_apply_failed", str(e))
+
+    # Apply automation rules/snippets from template (replace semantics, including empty).
+    automation_result: Dict[str, Any] = {}
+    try:
+        ruleset = tpl.automation
+        automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
+        template_rules = [r.model_dump(exclude_none=True) for r in (ruleset.rules or [])]
+        template_snippets = dict(ruleset.snippets or {})
+        automation["rules"] = template_rules
+        automation["snippets"] = template_snippets
+        try:
+            old_version = int(automation.get("version") or 0)
+        except Exception:
+            old_version = 0
+        automation["version"] = max(1, old_version) + 1
+        group.doc["automation"] = automation
+        group.save()
+
+        automation_result = {
+            "rule_ids": [str(r.id) for r in (ruleset.rules or []) if str(r.id or "").strip()],
+            "snippet_ids": sorted([str(k) for k in (ruleset.snippets or {}).keys() if str(k or "").strip()]),
+        }
+        append_event(
+            group.ledger_path,
+            kind="group.automation_update",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "rules": list(automation_result["rule_ids"]),
+                "snippets": list(automation_result["snippet_ids"]),
+            },
+        )
+    except Exception as e:
+        return _error("template_apply_failed", f"failed to apply automation rules: {e}")
 
     # If we stopped a running actor, clear its status to avoid stale presence.
     try:
@@ -563,6 +578,7 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
             "updated": updated,
             "settings_patch": settings_patch,
             "prompt_paths": prompt_paths,
+            "automation": automation_result,
         },
     )
 

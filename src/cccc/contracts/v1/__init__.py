@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, HeadlessState, RunnerKind
+from .automation import AutomationAction, AutomationRule, AutomationRuleSet, AutomationTrigger
 from .event import Event
 from .group_template import GroupTemplate, GroupTemplateActor, GroupTemplatePrompts, GroupTemplateSettings
 from .ipc import DaemonError, DaemonRequest, DaemonResponse
@@ -12,6 +13,10 @@ __all__ = [
     "ActorRole",
     "ActorSubmit",
     "AgentRuntime",
+    "AutomationAction",
+    "AutomationRule",
+    "AutomationRuleSet",
+    "AutomationTrigger",
     "Attachment",
     "ChatMessageData",
     "ChatReactionData",

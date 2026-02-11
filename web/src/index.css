@@ -455,10 +455,18 @@ select {
   button,
   [role="button"],
   a,
-  input[type="checkbox"],
-  input[type="radio"] {
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"] {
     min-height: 44px;
     min-width: 44px;
+  }
+
+  /* Keep native checkbox/radio visual size; expand tap area via wrapping label/container. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 0;
+    min-width: 0;
   }
 
   /* Allow smaller buttons with explicit class */

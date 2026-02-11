@@ -6,16 +6,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml  # type: ignore
 
+from ..contracts.v1.automation import AutomationRuleSet
 from ..contracts.v1.group_template import GroupTemplate, GroupTemplateActor
 from .group import Group
 from .prompt_files import (
     DEFAULT_PREAMBLE_BODY,
-    DEFAULT_STANDUP_TEMPLATE,
     HELP_FILENAME,
     PREAMBLE_FILENAME,
-    STANDUP_FILENAME,
     load_builtin_help_markdown,
-    read_repo_prompt_file,
+    read_group_prompt_file,
 )
 from .terminal_transcript import get_terminal_transcript_settings
 from .messaging import get_default_send_to
@@ -91,7 +90,7 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
         "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
         "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
         "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
-        "auto_mark_on_delivery": bool(automation.get("auto_mark_on_delivery", False)),
+        "auto_mark_on_delivery": bool(delivery.get("auto_mark_on_delivery", False)),
         "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
         "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
         "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
@@ -99,25 +98,33 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
         "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
         "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
         "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
-        "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
         "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
         "terminal_transcript_notify_tail": bool(tt.get("notify_tail", True)),
         "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
     }
 
     def _prompt_value(filename: str) -> Optional[str]:
-        pf = read_repo_prompt_file(group, filename)
+        pf = read_group_prompt_file(group, filename)
         if not pf.found:
             return None
         if pf.content is None:
-            raise ValueError(f"failed to read repo prompt file: {filename}")
+            raise ValueError(f"failed to read group prompt file: {filename}")
+        if not isinstance(pf.content, str) or not pf.content.strip():
+            return None
         return str(pf.content)
 
     prompts = {
         "preamble": _prompt_value(PREAMBLE_FILENAME),
         "help": _prompt_value(HELP_FILENAME),
-        "standup": _prompt_value(STANDUP_FILENAME),
     }
+
+    ruleset: AutomationRuleSet
+    raw_rules = automation.get("rules") if isinstance(automation.get("rules"), list) else []
+    raw_snippets = automation.get("snippets") if isinstance(automation.get("snippets"), dict) else {}
+    try:
+        ruleset = AutomationRuleSet.model_validate({"rules": raw_rules, "snippets": raw_snippets})
+    except Exception:
+        ruleset = AutomationRuleSet()
 
     return GroupTemplate(
         kind="cccc.group_template",
@@ -129,6 +136,7 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
         actors=[GroupTemplateActor.model_validate(a) for a in actors],
         settings=settings,  # type: ignore[arg-type]
         prompts=prompts,  # type: ignore[arg-type]
+        automation=ruleset,
     )
 
 
@@ -196,7 +204,7 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
         "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
         "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
         "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
-        "auto_mark_on_delivery": bool(automation.get("auto_mark_on_delivery", False)),
+        "auto_mark_on_delivery": bool(delivery.get("auto_mark_on_delivery", False)),
         "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
         "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
         "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
@@ -204,7 +212,6 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
         "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
         "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
         "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
-        "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
         "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
         "terminal_transcript_notify_tail": bool(tt.get("notify_tail", True)),
         "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
@@ -217,23 +224,24 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
             settings_changed[k] = (cur, nxt)
 
     # Prompts diff summary (changed, current_len, new_len, current_source, new_source).
-    # Source is "repo" (CCCC_*.md exists) or "builtin" (no repo file).
+    # Source is "home" (group override exists under CCCC_HOME) or "builtin" (no override file).
     prompts_changed: Dict[str, Tuple[bool, int, int, str, str]] = {}
     for kind, filename, builtin in (
         ("preamble", PREAMBLE_FILENAME, DEFAULT_PREAMBLE_BODY),
         ("help", HELP_FILENAME, load_builtin_help_markdown()),
-        ("standup", STANDUP_FILENAME, DEFAULT_STANDUP_TEMPLATE),
     ):
-        pf = read_repo_prompt_file(group, filename)
-        cur_source = "repo" if pf.found else "builtin"
-        cur_body = str(pf.content or "") if pf.found and isinstance(pf.content, str) else str(builtin or "")
+        pf = read_group_prompt_file(group, filename)
+        cur_has_override = bool(pf.found and isinstance(pf.content, str) and pf.content.strip())
+        cur_source = "home" if cur_has_override else "builtin"
+        cur_body = str(pf.content or "") if cur_has_override else str(builtin or "")
 
         new_raw = getattr(template.prompts, kind, None)
-        new_source = "repo" if new_raw is not None else "builtin"
-        new_body = str(new_raw) if new_raw is not None else str(builtin or "")
+        new_has_override = bool(new_raw is not None and str(new_raw).strip())
+        new_source = "home" if new_has_override else "builtin"
+        new_body = str(new_raw) if new_has_override else str(builtin or "")
 
         changed = cur_source != new_source
-        if not changed and cur_source == "repo" and new_source == "repo":
+        if not changed and cur_source == "home" and new_source == "home":
             changed = cur_body != new_body
 
         prompts_changed[kind] = (changed, len(cur_body), len(new_body), cur_source, new_source)

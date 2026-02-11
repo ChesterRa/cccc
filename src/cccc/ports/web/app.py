@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import __version__
 from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
+from ...contracts.v1.automation import AutomationRule, AutomationRuleSet
 from ...daemon.server import call_daemon, get_daemon_endpoint
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
@@ -29,21 +30,19 @@ from ...kernel.ledger import read_last_lines
 from ...kernel.scope import detect_scope
 from ...kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
-    DEFAULT_STANDUP_TEMPLATE,
     HELP_FILENAME,
     PREAMBLE_FILENAME,
-    STANDUP_FILENAME,
-    delete_repo_prompt_file,
+    delete_group_prompt_file,
     load_builtin_help_markdown,
-    read_repo_prompt_file,
+    read_group_prompt_file,
     resolve_active_scope_root,
-    write_repo_prompt_file,
+    write_group_prompt_file,
 )
 from ...kernel.group_template import parse_group_template
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
 from ...util.conv import coerce_bool
-from ...util.fs import atomic_write_text
+from ...util.fs import atomic_write_text, read_json
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
@@ -198,13 +197,30 @@ class GroupSettingsRequest(BaseModel):
     help_nudge_interval_seconds: Optional[int] = None
     help_nudge_min_messages: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
-    standup_interval_seconds: Optional[int] = None  # periodic review interval
     auto_mark_on_delivery: Optional[bool] = None  # auto-mark messages as read after delivery
 
     # Terminal transcript (group-scoped policy)
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
     terminal_transcript_notify_tail: Optional[bool] = None
     terminal_transcript_notify_lines: Optional[int] = None
+    by: str = Field(default="user")
+
+
+class GroupAutomationRequest(BaseModel):
+    rules: list[AutomationRule] = Field(default_factory=list)
+    snippets: Dict[str, str] = Field(default_factory=dict)
+    expected_version: Optional[int] = None
+    by: str = Field(default="user")
+
+
+class GroupAutomationManageRequest(BaseModel):
+    actions: list[Dict[str, Any]] = Field(default_factory=list)
+    expected_version: Optional[int] = None
+    by: str = Field(default="user")
+
+
+class GroupAutomationResetBaselineRequest(BaseModel):
+    expected_version: Optional[int] = None
     by: str = Field(default="user")
 
 
@@ -957,10 +973,13 @@ def create_app() -> FastAPI:
             if value is None:
                 return {"source": "builtin"}
             raw_text = str(value)
+            if not raw_text.strip():
+                return {"source": "builtin"}
             out = raw_text.strip()
             if len(out) > limit:
                 out = out[:limit] + "\n…"
-            return {"source": "repo", "chars": len(raw_text), "preview": out}
+            # Templates now map prompt overrides to CCCC_HOME/group prompts.
+            return {"source": "home", "chars": len(raw_text), "preview": out}
 
         return {
             "ok": True,
@@ -985,10 +1004,13 @@ def create_app() -> FastAPI:
                         for a in tpl.actors
                     ],
                     "settings": tpl.settings.model_dump(),
+                    "automation": {
+                        "rules": len(tpl.automation.rules),
+                        "snippets": len(tpl.automation.snippets),
+                    },
                     "prompts": {
                         "preamble": _prompt_preview(tpl.prompts.preamble),
                         "help": _prompt_preview(tpl.prompts.help),
-                        "standup": _prompt_preview(tpl.prompts.standup),
                     },
                 }
             },
@@ -1173,8 +1195,6 @@ def create_app() -> FastAPI:
             return PREAMBLE_FILENAME
         if k == "help":
             return HELP_FILENAME
-        if k == "standup":
-            return STANDUP_FILENAME
         raise HTTPException(status_code=400, detail={"code": "invalid_kind", "message": f"unknown prompt kind: {kind}"})
 
     def _builtin_prompt_markdown(kind: str) -> str:
@@ -1183,32 +1203,20 @@ def create_app() -> FastAPI:
             return str(DEFAULT_PREAMBLE_BODY or "").strip()
         if k == "help":
             return str(load_builtin_help_markdown() or "").strip()
-        if k == "standup":
-            return str(DEFAULT_STANDUP_TEMPLATE or "").strip()
         return ""
 
     @app.get("/api/v1/groups/{group_id}/prompts")
     async def prompts_get(group_id: str) -> Dict[str, Any]:
-        """Get effective group prompt markdown (preamble/help/standup) and repo override status."""
+        """Get effective group guidance markdown (preamble/help) and override status."""
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-        root = resolve_active_scope_root(group)
-        scope_root = str(root) if root is not None else None
-
         def _one(kind: str) -> Dict[str, Any]:
             filename = _prompt_kind_to_filename(kind)
-            pf = read_repo_prompt_file(group, filename)
-            repo_content = str(pf.content or "").strip() if pf.found else ""
-            if repo_content:
-                return {
-                    "kind": kind,
-                    "source": "repo",
-                    "filename": filename,
-                    "path": pf.path,
-                    "content": repo_content,
-                }
+            pf = read_group_prompt_file(group, filename)
+            if pf.found and isinstance(pf.content, str) and pf.content.strip():
+                return {"kind": kind, "source": "home", "filename": filename, "path": pf.path, "content": str(pf.content)}
             return {
                 "kind": kind,
                 "source": "builtin",
@@ -1220,33 +1228,32 @@ def create_app() -> FastAPI:
         return {
             "ok": True,
             "result": {
-                "scope_root": scope_root,
                 "preamble": _one("preamble"),
                 "help": _one("help"),
-                "standup": _one("standup"),
             },
         }
 
     @app.put("/api/v1/groups/{group_id}/prompts/{kind}")
     async def prompts_put(group_id: str, kind: str, req: RepoPromptUpdateRequest) -> Dict[str, Any]:
-        """Create or update a group prompt override file in the repo root (active scope)."""
+        """Create or update a group prompt override file under CCCC_HOME."""
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
         filename = _prompt_kind_to_filename(kind)
-        if resolve_active_scope_root(group) is None:
-            return {"ok": False, "error": {"code": "NO_SCOPE", "message": "No scope attached to group. Use 'cccc attach <path>' first."}}
-
         try:
-            pf = write_repo_prompt_file(group, filename, str(req.content or ""))
-            return {"ok": True, "result": {"kind": kind, "source": "repo", "filename": filename, "path": pf.path, "content": pf.content or ""}}
+            raw = str(req.content or "")
+            if not raw.strip():
+                pf = delete_group_prompt_file(group, filename)
+                return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind)}}
+            pf = write_group_prompt_file(group, filename, raw)
+            return {"ok": True, "result": {"kind": kind, "source": "home", "filename": filename, "path": pf.path, "content": pf.content or ""}}
         except Exception as e:
             return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write {filename}: {e}"}}
 
     @app.delete("/api/v1/groups/{group_id}/prompts/{kind}")
     async def prompts_delete(group_id: str, kind: str, confirm: str = "") -> Dict[str, Any]:
-        """Reset a group prompt override by deleting the repo file (requires confirm=kind)."""
+        """Reset a group prompt override by deleting the CCCC_HOME file (requires confirm=kind)."""
         if str(confirm or "").strip().lower() != str(kind or "").strip().lower():
             raise HTTPException(status_code=400, detail={"code": "confirmation_required", "message": f"confirm must equal kind: {kind}"})
 
@@ -1255,11 +1262,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
         filename = _prompt_kind_to_filename(kind)
-        if resolve_active_scope_root(group) is None:
-            return {"ok": False, "error": {"code": "NO_SCOPE", "message": "No scope attached to group. Use 'cccc attach <path>' first."}}
-
         try:
-            pf = delete_repo_prompt_file(group, filename)
+            pf = delete_group_prompt_file(group, filename)
             return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind)}}
         except Exception as e:
             return {"ok": False, "error": {"code": "DELETE_FAILED", "message": f"Failed to delete {filename}: {e}"}}
@@ -1295,7 +1299,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/settings")
     async def group_settings_get(group_id: str) -> Dict[str, Any]:
-        """Get group automation settings."""
+        """Get group-scoped automation + delivery settings."""
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -1325,8 +1329,7 @@ def create_app() -> FastAPI:
                     "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
                     "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
                     "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
-                    "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
-                    "auto_mark_on_delivery": coerce_bool(automation.get("auto_mark_on_delivery"), default=False),
+                    "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
@@ -1336,7 +1339,7 @@ def create_app() -> FastAPI:
 
     @app.put("/api/v1/groups/{group_id}/settings")
     async def group_settings_update(group_id: str, req: GroupSettingsRequest) -> Dict[str, Any]:
-        """Update group automation settings."""
+        """Update group-scoped automation + delivery settings."""
         patch: Dict[str, Any] = {}
         if req.default_send_to is not None:
             patch["default_send_to"] = str(req.default_send_to)
@@ -1368,8 +1371,6 @@ def create_app() -> FastAPI:
             patch["help_nudge_min_messages"] = max(0, req.help_nudge_min_messages)
         if req.min_interval_seconds is not None:
             patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
-        if req.standup_interval_seconds is not None:
-            patch["standup_interval_seconds"] = max(0, req.standup_interval_seconds)
         if req.auto_mark_on_delivery is not None:
             patch["auto_mark_on_delivery"] = bool(req.auto_mark_on_delivery)
 
@@ -1388,6 +1389,51 @@ def create_app() -> FastAPI:
             "op": "group_settings_update",
             "args": {"group_id": group_id, "patch": patch, "by": req.by}
         })
+
+    @app.get("/api/v1/groups/{group_id}/automation")
+    async def group_automation_get(group_id: str) -> Dict[str, Any]:
+        """Get group automation rules + snippets + runtime status."""
+        return await _daemon({"op": "group_automation_state", "args": {"group_id": group_id, "by": "user"}})
+
+    @app.put("/api/v1/groups/{group_id}/automation")
+    async def group_automation_update(group_id: str, req: GroupAutomationRequest) -> Dict[str, Any]:
+        """Update group automation rules + snippets."""
+        ruleset = AutomationRuleSet(rules=req.rules, snippets=req.snippets).model_dump()
+        return await _daemon(
+            {
+                "op": "group_automation_update",
+                "args": {"group_id": group_id, "ruleset": ruleset, "expected_version": req.expected_version, "by": req.by},
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/automation/manage")
+    async def group_automation_manage(group_id: str, req: GroupAutomationManageRequest) -> Dict[str, Any]:
+        """Manage group automation incrementally via actions."""
+        return await _daemon(
+            {
+                "op": "group_automation_manage",
+                "args": {
+                    "group_id": group_id,
+                    "actions": [a for a in req.actions if isinstance(a, dict)],
+                    "expected_version": req.expected_version,
+                    "by": req.by,
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/automation/reset_baseline")
+    async def group_automation_reset_baseline(group_id: str, req: GroupAutomationResetBaselineRequest) -> Dict[str, Any]:
+        """Reset group automation rules/snippets to baseline defaults."""
+        return await _daemon(
+            {
+                "op": "group_automation_reset_baseline",
+                "args": {
+                    "group_id": group_id,
+                    "expected_version": req.expected_version,
+                    "by": req.by,
+                },
+            }
+        )
 
     @app.post("/api/v1/groups/{group_id}/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
