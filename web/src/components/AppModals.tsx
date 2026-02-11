@@ -26,6 +26,7 @@ import { RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData } from "../ty
 
 interface AppModalsProps {
   isDark: boolean;
+  ccccHome: string;
   composerRef: React.RefObject<HTMLTextAreaElement>;
   onStartReply: (ev: LedgerEvent) => void;
   onThemeToggle: () => void;
@@ -44,6 +45,7 @@ function getErrorDetailGroupId(err: unknown): string {
 
 export function AppModals({
   isDark,
+  ccccHome,
   composerRef,
   onStartReply,
   onThemeToggle,
@@ -710,7 +712,7 @@ export function AppModals({
         isDark={isDark}
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
-        activeScopeKey={groupDoc?.active_scope_key || ""}
+        ccccHome={ccccHome}
         projectRoot={
           (() => {
             const key = String(groupDoc?.active_scope_key || "").trim();

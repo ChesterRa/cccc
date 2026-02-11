@@ -553,7 +553,7 @@ select {
 }
 
 .safe-area-inset-top {
-  padding-top: env(safe-area-inset-top, 0);
+  padding-top: max(1rem, env(safe-area-inset-top, 0));
 }
 
 /* ============================================

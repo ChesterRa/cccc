@@ -5,7 +5,7 @@ export interface GroupEditModalProps {
   isDark: boolean;
   busy: string;
   groupId: string;
-  activeScopeKey: string;
+  ccccHome: string;
   projectRoot: string;
   title: string;
   topic: string;
@@ -21,7 +21,7 @@ export function GroupEditModal({
   isDark,
   busy,
   groupId,
-  activeScopeKey,
+  ccccHome,
   projectRoot,
   title,
   topic,
@@ -33,6 +33,12 @@ export function GroupEditModal({
 }: GroupEditModalProps) {
   const { modalRef } = useModalA11y(isOpen, onCancel);
   if (!isOpen) return null;
+
+  const homeRoot = String(ccccHome || "").trim();
+  const gid = String(groupId || "").trim();
+  const groupDataDir = homeRoot && gid ? `${homeRoot}/groups/${gid}` : "";
+  const groupConfigFile = groupDataDir ? `${groupDataDir}/group.yaml` : "";
+  const groupLedgerFile = groupDataDir ? `${groupDataDir}/ledger.jsonl` : "";
 
   async function copyToClipboard(text: string): Promise<boolean> {
     const t = String(text || "").trim();
@@ -118,7 +124,7 @@ export function GroupEditModal({
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Root folder</div>
+                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Project Root</div>
                 <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
                   {projectRoot || "— (no scope attached)"}
                 </div>
@@ -129,17 +135,66 @@ export function GroupEditModal({
                     if (!ok) return;
                   }}
                   disabled={!projectRoot}
-                  title="Copy root folder path"
+                  title="Copy project root path"
                   type="button"
                 >
                   Copy
                 </button>
               </div>
-              {activeScopeKey ? (
-                <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                  Active scope: <span className="font-mono">{activeScopeKey}</span>
+              <div className="flex items-center gap-2">
+                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Group Data Directory</div>
+                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                  {groupDataDir || "—"}
                 </div>
-              ) : null}
+                <button
+                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(groupDataDir);
+                    if (!ok) return;
+                  }}
+                  disabled={!groupDataDir}
+                  title="Copy group data directory"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Group Config File</div>
+                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                  {groupConfigFile || "—"}
+                </div>
+                <button
+                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(groupConfigFile);
+                    if (!ok) return;
+                  }}
+                  disabled={!groupConfigFile}
+                  title="Copy group config file path"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Group Ledger File</div>
+                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                  {groupLedgerFile || "—"}
+                </div>
+                <button
+                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(groupLedgerFile);
+                    if (!ok) return;
+                  }}
+                  disabled={!groupLedgerFile}
+                  title="Copy group ledger file path"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
             </div>
           </div>
           <div className="flex gap-3 pt-3 flex-wrap">

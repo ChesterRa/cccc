@@ -316,11 +316,6 @@ export function ChatComposer({
     : messageMode === "attention"
       ? "Important: recipients are expected to acknowledge this message."
       : "";
-  const sendButtonLabel = messageMode === "task"
-    ? "Need Reply"
-    : messageMode === "attention"
-      ? "Important"
-      : "Send";
 
   const fileDisabledReason = (() => {
     if (!selectedGroupId) return "Select a group first.";
@@ -631,8 +626,8 @@ export function ChatComposer({
                         ? "bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
                         : "bg-amber-100 text-amber-700 hover:bg-amber-200"
                       : isDark
-                        ? "text-slate-300 hover:bg-white/10"
-                        : "text-gray-500 hover:bg-gray-100"
+                        ? "bg-slate-800/70 text-slate-100 ring-1 ring-white/15 hover:bg-slate-700/70"
+                        : "bg-white text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50"
               )}
               disabled={busy === "send" || !selectedGroupId}
               onClick={() => setShowModeMenu((v) => !v)}
@@ -646,7 +641,7 @@ export function ChatComposer({
               ) : messageMode === "attention" ? (
                 <AlertIcon size={12} className="opacity-95" />
               ) : (
-                <span className={classNames("w-2 h-2 rounded-full", isDark ? "bg-slate-300" : "bg-gray-500")} />
+                <span className="text-[11px] sm:text-xs font-black italic leading-none">N</span>
               )}
             </button>
 
@@ -703,7 +698,7 @@ export function ChatComposer({
                         ) : opt.key === "attention" ? (
                           <AlertIcon size={13} />
                         ) : (
-                          <span className={classNames("w-1.5 h-1.5 rounded-full", isDark ? "bg-slate-200" : "bg-gray-500")} />
+                          <span className="text-[11px] font-black italic leading-none">N</span>
                         )}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -765,15 +760,15 @@ export function ChatComposer({
           )}
           onClick={onSendMessage}
           disabled={busy === "send" || !canSend}
-          aria-label={`Send message (${activeMode.label})`}
-          title={`Send message (${activeMode.label})`}
+          aria-label="Send message"
+          title="Send message"
         >
           {busy === "send" ? (
             <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
             <>
               <SendIcon size={18} className="sm:hidden" />
-              <span className="hidden sm:inline font-bold">{sendButtonLabel}</span>
+              <span className="hidden sm:inline font-bold">Send</span>
             </>
           )}
         </button>

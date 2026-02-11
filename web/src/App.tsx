@@ -117,6 +117,7 @@ export default function App() {
   const [_mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const [mountedActorIds, setMountedActorIds] = React.useState<string[]>([]);
+  const [ccccHome, setCcccHome] = React.useState("");
 
   // Custom hooks
   const { connectStream, fetchContext, scheduleActorWarmupRefresh, cleanup: cleanupSSE } = useSSE({
@@ -323,6 +324,7 @@ export default function App() {
     void api.fetchPing().then((resp) => {
       if (resp.ok) {
         setWebReadOnly(Boolean(resp.result?.web?.read_only));
+        setCcccHome(String(resp.result?.home || "").trim());
       }
     }).catch(() => {
       /* ignore */
@@ -571,6 +573,7 @@ export default function App() {
       {/* Modals */}
       <AppModals
         isDark={isDark}
+        ccccHome={ccccHome}
         composerRef={composerRef}
         onStartReply={startReply}
         onThemeToggle={() => setTheme(isDark ? "light" : "dark")}
