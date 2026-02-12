@@ -3,6 +3,8 @@
 > CCCC = Collaborative Code Coordination Center
 >
 > 全局唯一的 AI Agent 协作中枢：单一 daemon 管理多个工作组，Web/CLI/IM 作为入口。
+>
+> 说明：本页属于 vNext 历史设计快照，可能滞后于当前实现。当前行为以 `docs/reference/*` 与 `docs/standards/*` 为准。
 
 ## 1. 核心概念
 
@@ -40,7 +42,7 @@
     ├── ledger.jsonl             # 事实流（append-only）
     ├── context/                 # 上下文（vision/sketch/tasks）
     └── state/                   # 运行时状态
-        └── ledger/blobs/        # 大文本/附件等二进制（以引用方式进入 ledger）
+        └── blobs/               # 大文本/附件等二进制（以引用方式进入 ledger）
 ```
 
 ## 3. 架构分层
@@ -177,7 +179,7 @@ class ChatMessageData:
 
 ## 7. MCP Server
 
-38 个工具，4 个命名空间：
+MCP 工具按能力命名空间组织（工具数量会随版本迭代）：
 
 ### 7.1 cccc.* (协作控制面)
 

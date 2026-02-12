@@ -40,7 +40,7 @@ Default: `CCCC_HOME=~/.cccc`
     ├── ledger.jsonl             # Event stream (append-only)
     ├── context/                 # Context (vision/sketch/tasks)
     └── state/                   # Runtime state
-        └── ledger/blobs/        # Large text/attachments (referenced in ledger)
+        └── blobs/               # Large text/attachments (referenced in ledger)
 ```
 
 ## Architecture Layers
@@ -104,11 +104,11 @@ Default: `CCCC_HOME=~/.cccc`
 
 | Kind | Description |
 |------|-------------|
-| `group.create/update/attach/start/stop` | Working group lifecycle |
+| `group.create/update/attach/start/stop/set_state/settings_update/automation_update` | Working group lifecycle and configuration |
 | `actor.add/update/start/stop/restart/remove` | Actor lifecycle |
 | `chat.message` | Chat message |
-| `chat.read` | Read receipt |
-| `system.notify` | System notification |
+| `chat.read` / `chat.ack` | Read and acknowledgement events |
+| `system.notify` / `system.notify_ack` | System notifications and acknowledgement |
 
 ### chat.message Data
 
@@ -137,7 +137,7 @@ class ChatMessageData:
 
 ### Design Principles
 
-- **Ledger stores only references, not large binaries**: Large text/attachments go to `CCCC_HOME` blobs (e.g., `groups/<group_id>/state/ledger/blobs/`).
+- **Ledger stores only references, not large binaries**: Large text/attachments go to `CCCC_HOME` blobs (e.g., `groups/<group_id>/state/blobs/`).
 - **No automatic writes to repo by default**: Attachments belong to the runtime domain (`CCCC_HOME`); if needed in scope/repo, user/agent explicitly copies/exports.
 - **Content is portable**: Attachments use `sha256` as stable identity, allowing future cross-group/repo copy and reference rewriting.
 
@@ -167,31 +167,32 @@ class ChatMessageData:
 
 ## MCP Server
 
-38+ tools across 4 namespaces:
+MCP is exposed as capability groups (tool count is intentionally not hardcoded):
 
-### cccc.* (Collaboration Control Plane)
+### Collaboration Control (`cccc_*`)
 
-- `cccc_inbox_list` / `cccc_inbox_mark_read`
-- `cccc_message_send` / `cccc_message_reply`
-- `cccc_group_info` / `cccc_actor_list`
-- `cccc_actor_add/remove/start/stop/restart`
-- `cccc_runtime_list` / `cccc_project_info`
+- Inbox and bootstrap: `cccc_inbox_*`, `cccc_bootstrap`
+- Messaging and files: `cccc_message_*`, `cccc_file_send`, `cccc_blob_path`
+- Group/actor operations: `cccc_group_*`, `cccc_actor_*`, `cccc_runtime_list`
+- Automation: `cccc_automation_state`, `cccc_automation_manage`
+- Project/help info: `cccc_project_info`, `cccc_help`
 
-### context.* (State Sync)
+### Context Sync (`cccc_context_*` and related)
 
-- `cccc_context_get` / `cccc_context_sync`
-- `cccc_vision_update` / `cccc_sketch_update`
-- `cccc_milestone_*` / `cccc_task_*`
-- `cccc_note_*` / `cccc_reference_*`
+- Context batch operations: `cccc_context_get`, `cccc_context_sync`
+- Vision/sketch: `cccc_vision_update`, `cccc_sketch_update`
+- Milestones/tasks: `cccc_milestone_*`, `cccc_task_*`
+- Notes/references/presence: `cccc_note_*`, `cccc_reference_*`, `cccc_presence_*`
 
-### headless.* (Headless Runner)
+### Headless and Notifications
 
-- `cccc_headless_status` / `cccc_headless_set_status`
-- `cccc_headless_ack_message`
+- Headless runner: `cccc_headless_*`
+- System notifications: `cccc_notify_*`
 
-### notify.* (System Notifications)
+### Diagnostics and Transcript
 
-- `cccc_notify_send` / `cccc_notify_ack`
+- Terminal transcript: `cccc_terminal_tail`
+- Developer diagnostics: `cccc_debug_*`
 
 ## Tech Stack
 

@@ -1,245 +1,150 @@
-# CCCC — Multi-Agent Collaboration Kernel
+# CCCC — Local-First Multi-Agent Collaboration Kernel
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
-
-> **Status**: 0.4.0rc18 (Release Candidate)
 
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
-CCCC is a **local-first multi-agent collaboration kernel** that coordinates AI agents like a modern IM.
+CCCC helps you run real multi-agent collaboration as a durable system, not a collection of fragile terminal sessions.
 
-**Key features**:
-- 🤖 **Multi-runtime support** — Claude Code, Codex CLI, Droid, OpenCode, Copilot, and more
-- 📝 **Append-only ledger** — Durable history as single source of truth
-- 🌐 **Web-first console** — Mobile-friendly control plane
-- 💬 **IM-grade messaging** — @mentions, reply/quote, read receipts
-- 🔧 **MCP tool surface** — 38+ tools for reliable agent operations
-- 🔌 **IM Bridge** — Telegram, Slack, Discord, Feishu, DingTalk
+You get:
+- A single source of truth (`ledger.jsonl`) for all collaboration events
+- One control plane across Web UI, CLI, MCP, and IM bridges
+- Reliable message delivery semantics (read/ack/reply-required)
+- Multi-runtime orchestration (Claude, Codex, Gemini, Copilot, and others)
 
 ![CCCC Chat UI](screenshots/chat.png)
 
----
+## Why CCCC
 
-## Quick Start
+Most teams hit the same bottlenecks when using multiple coding agents:
+- Coordination is ad-hoc and disappears in terminal scrollback
+- Message delivery is ambiguous across tools and sessions
+- Operational control (start/stop/recover/escalate) is fragmented
+- Remote operation from mobile or IM channels is brittle
+
+CCCC addresses these with a daemon-centered architecture:
+- **Append-only ledger** as the collaboration record
+- **Explicit recipient routing** and obligation signals
+- **Unified operations surface** via Web/CLI/MCP/IM
+- **Local-first runtime home** (`CCCC_HOME`, default `~/.cccc`)
+
+## 10-Minute Quick Start
+
+### 1) Install
 
 ```bash
-# Install
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+python -m pip install -U cccc-pair
+```
 
-# Start
+For explicit RC verification:
+
+```bash
+python -m pip install --index-url https://pypi.org/simple \
+  --extra-index-url https://test.pypi.org/simple \
+  cccc-pair==0.4.0rc19
+```
+
+### 2) Start CCCC
+
+```bash
 cccc
 ```
 
-Open `http://127.0.0.1:8848/` to access the Web UI.
+Open `http://127.0.0.1:8848/`.
 
----
-
-## Documentation
-
-📚 **[Read the Docs](https://dweb-channel.github.io/cccc/)** — Full guides, reference, and API documentation.
-
----
-
-## Installation
-
-### Install with AI Assistant
-
-Copy this prompt to your AI assistant (Claude, ChatGPT, etc.):
-
-> Please help me install and start CCCC (Claude Code Collaboration Context) multi-agent collaboration system.
->
-> Steps:
->
-> 1. Install cccc-pair:
->    ```
->    pip install --index-url https://pypi.org/simple \
->      --extra-index-url https://test.pypi.org/simple \
->      cccc-pair==0.4.0rc18
->    ```
->
-> 2. After installation, start CCCC:
->    ```
->    cccc
->    ```
->
-> 3. Tell me the access URL (usually http://localhost:8848/ui/)
->
-> If you encounter any errors, please help me diagnose and resolve them.
-
-### Upgrading from older versions
-
-If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
+### 3) Create your first multi-agent group
 
 ```bash
-# For pipx users
-pipx uninstall cccc-pair
+cd /path/to/repo
+cccc attach .
+cccc setup --runtime claude
+cccc actor add foreman --runtime claude
+cccc actor add reviewer --runtime codex
+cccc group start
+cccc send "Please split the current task and start implementation." --to @all
+```
 
-# For pip users
-pip uninstall cccc-pair
+## Product Capabilities
 
-# Remove any leftover binaries if needed
+- **Multi-Agent Runtime Orchestration**
+  - Add/start/stop/restart actors per group
+  - Foreman + peers role model with permission boundaries
+- **Durable Collaboration Ledger**
+  - Every message/event is append-only
+  - Replayable history for debugging and operations
+- **IM-Grade Messaging Semantics**
+  - `@all` / `@peers` / `@foreman` / actor-level routing
+  - Structured reply, read cursors, attention/ack, reply-required obligations
+- **Automation and System Policies**
+  - Interval, recurring schedule, one-time triggers
+  - Reminder actions plus controlled operational actions
+- **Multi-Channel Operations**
+  - Web UI control plane
+  - CLI for scripted workflows
+  - MCP for agent-side control
+  - IM bridges (Telegram/Slack/Discord/Feishu/DingTalk)
+
+## Where CCCC Fits
+
+| If you need... | CCCC fit |
+|---|---|
+| A persistent collaboration substrate for multiple coding agents | Excellent fit |
+| Human + agent coordination with durable audit history | Excellent fit |
+| Mobile/IM-assisted operations for long-running groups | Strong fit |
+| Deterministic workflow DAG orchestration with rich task scheduling UI | Use CCCC + external orchestrator |
+
+CCCC is intentionally a **collaboration kernel**, not an all-in-one workflow studio.
+
+## Architecture at a Glance
+
+- **Core unit**: Working Group
+- **Source of truth**: append-only group ledger
+- **Single writer**: daemon
+- **Ports are thin**: Web/CLI/MCP/IM call daemon IPC
+- **Runtime home**: `CCCC_HOME` (default `~/.cccc`)
+
+See:
+- `docs/reference/architecture.md`
+- `docs/standards/CCCS_V1.md`
+- `docs/standards/CCCC_DAEMON_IPC_V1.md`
+
+## Documentation Map
+
+- Start here: `docs/guide/getting-started/index.md`
+- Practical scenarios: `docs/guide/use-cases.md`
+- Operations runbook: `docs/guide/operations.md`
+- Product positioning: `docs/reference/positioning.md`
+- CLI reference: `docs/reference/cli.md`
+- Features deep dive: `docs/reference/features.md`
+
+Online docs: https://dweb-channel.github.io/cccc/
+
+## Security and Operations Notes
+
+- Web UI is high privilege; set `CCCC_WEB_TOKEN` for any remote access.
+- Prefer Cloudflare Access or Tailscale over direct public exposure.
+- Keep runtime state in `CCCC_HOME`, not inside repo working trees.
+- For recovery workflows and runbook commands, see `docs/guide/operations.md`.
+
+## Upgrading from 0.3.x
+
+`0.4.x` is a new architecture line. Legacy commands and behavior changed.
+
+Before upgrading:
+
+```bash
+pipx uninstall cccc-pair || true
+pip uninstall cccc-pair || true
 rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 ```
 
-> **Note**: Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
+Then install fresh and run `cccc doctor`.
 
-### From TestPyPI (recommended)
+## Legacy Line
 
-```bash
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
-```
-
-### From source
-
-```bash
-git clone https://github.com/dweb-channel/cccc
-cd cccc
-pip install -e .
-```
-
-### Using uv (recommended for Windows)
-
-```bash
-uv venv -p 3.11 .venv
-uv pip install -e .
-uv run cccc --help
-```
-
-**Requirements**: Python 3.9+, macOS / Linux / Windows
-
----
-
-## Core Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **Working Group** | Collaboration unit with durable history (like a group chat) |
-| **Actor** | An agent session (PTY or headless) |
-| **Scope** | A directory attached to a group |
-| **Ledger** | Append-only event stream |
-| **CCCC_HOME** | Runtime home, default `~/.cccc/` |
-
----
-
-## Runtimes & MCP
-
-CCCC supports multiple agent runtimes:
-
-```bash
-cccc runtime list --all    # List available runtimes
-cccc setup --runtime <name> # Configure MCP
-```
-
-**Auto MCP setup**: `claude`, `codex`, `droid`, `amp`, `auggie`, `neovate`, `gemini`
-**Manual setup**: `cursor`, `kilocode`, `opencode`, `copilot`, `custom`
-
----
-
-## Multi-Agent Setup
-
-To set up multi-agent collaboration on a project:
-
-```bash
-# Attach to your project directory
-cd /path/to/repo
-cccc attach .
-
-# Setup MCP for your runtime
-cccc setup --runtime claude
-
-# Add actors (first enabled actor becomes foreman)
-cccc actor add foreman --runtime claude
-cccc actor add peer-1  --runtime codex
-
-# Start the group
-cccc group start
-```
-
----
-
-## Web UI
-
-The bundled Web UI provides:
-
-- Multi-group navigation
-- Actor management (add/start/stop/restart)
-- Chat with @mentions and reply
-- Embedded terminal per actor
-- Context & automation settings
-- IM Bridge configuration
-
----
-
-## IM Bridge
-
-Bridge your working group to IM platforms:
-
-```bash
-cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
-cccc im start
-```
-
-Supported: **Telegram** | **Slack** | **Discord** | **Feishu/Lark** | **DingTalk**
-
----
-
-## CLI Cheat Sheet
-
-```bash
-cccc doctor              # Check environment
-cccc groups              # List groups
-cccc use <group_id>      # Switch group
-cccc send "msg" --to @all
-cccc inbox --mark-read
-cccc tail -n 50 -f
-cccc daemon status|start|stop
-```
-
----
-
-## PROJECT.md
-
-Place `PROJECT.md` at your repo root as the project constitution. Agents read it via `cccc_project_info` MCP tool.
-
----
-
-## Security Notes
-
-The Web UI has high privilege. For remote access:
-- Set `CCCC_WEB_TOKEN` environment variable
-- Use an access gateway (Cloudflare Access, Tailscale, WireGuard)
-
----
-
-## Why a Rewrite?
-
-<details>
-<summary>History: v0.3.x → v0.4.x</summary>
-
-v0.3.x (tmux-first) proved the concept but hit limits:
-
-1. **No unified ledger** — Messages in multiple files caused latency
-2. **Actor count limit** — tmux layout limited to 1–2 actors
-3. **Weak agent control surface** — Limited autonomy
-4. **No first-class remote access** — Web control plane needed
-
-v0.4.x introduces:
-- Unified append-only ledger
-- N-actor model
-- MCP control plane with 38+ tools
-- Web-first console
-- IM-grade messaging
-
-Legacy version: [cccc-tmux](https://github.com/ChesterRa/cccc-tmux)
-
-</details>
-
----
+The old tmux-first implementation remains at:
+- https://github.com/ChesterRa/cccc-tmux
 
 ## License
 

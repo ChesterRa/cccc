@@ -38,7 +38,9 @@ Click on a group in the sidebar to switch.
 1. Click the **Settings** icon in the header
 2. Configure:
    - Group title
-   - Automation rules
+   - Guidance (preamble/help/standup, etc.)
+   - Automation rules and engine policies
+   - Delivery and messaging defaults
    - IM Bridge settings
 
 ## Managing Agents
@@ -114,9 +116,13 @@ Access via the gear icon:
 
 ### Automation
 
-- **Nudge timeout**: Remind when messages go unread
-- **Actor idle timeout**: Notify foreman when agent is idle
-- **Silence timeout**: Notify when group goes quiet
+- **Rules**: Create reminders with interval / recurring schedule / one-time schedule.
+- **Actions**:
+  - `Send Reminder` (normal reminder delivery)
+  - `Set Group Status` (operational, one-time only)
+  - `Control Actor Runtimes` (operational, one-time only)
+- **One-time behavior**: One-time rules auto-complete after firing, then can be cleaned up from completed list.
+- **Engine Policies**: Configure built-in nudges (reply-required, attention ACK, unread), actor idle, keepalive, silence, and help nudges.
 
 ### IM Bridge
 

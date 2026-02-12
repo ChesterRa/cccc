@@ -66,7 +66,7 @@ class CCCCClient:
         """Get group info"""
 
     def group_set_state(self, group_id: str, state: str, by: str) -> Dict[str, Any]:
-        """Set group state: active|idle|paused"""
+        """Set group state: active|idle|paused|stopped"""
 
     # ---- actor ----
     def actor_list(self, group_id: str) -> Dict[str, Any]:
@@ -155,4 +155,3 @@ Week 2
 - context API
 - demo 脚本
 - 集成测试
-

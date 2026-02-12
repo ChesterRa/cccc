@@ -62,7 +62,7 @@ The daemon writes a JSON object with the following fields:
   "host": "",
   "port": 0,
   "pid": 12345,
-  "version": "0.4.0rc14",
+  "version": "0.4.x",
   "ts": "2026-01-13T12:34:56Z"
 }
 ```
@@ -302,6 +302,31 @@ Result:
 { observability: Record<string, unknown> }
 ```
 
+#### `debug_snapshot`
+
+Developer-mode diagnostic snapshot (global + optional group context).
+
+Args:
+```ts
+{ group_id?: string; by?: string }
+```
+
+Result:
+```ts
+{
+  developer_mode: true
+  observability: Record<string, unknown>
+  daemon: { pid: number; version: string; ts: string }
+  group?: { group_id: string; state: string; active_scope_key: string; title: string }
+  actors?: Array<{ id: string; role: string; runtime: string; runner: string; runner_effective: string; enabled: boolean; running: boolean; unread_count: number }>
+  delivery?: Record<string, unknown>
+}
+```
+
+Notes:
+- Requires developer mode.
+- Permission is `user`, or `foreman` when `group_id` is provided.
+
 ### 8.3 Groups and Scopes
 
 #### `attach`
@@ -327,6 +352,27 @@ Args: none
 Result:
 ```ts
 { groups: Array<Record<string, unknown>> } // includes at least group_id/title/created_at/updated_at + running/state
+```
+
+#### `registry_reconcile`
+
+Scan registry entries for missing/corrupt groups, and optionally remove missing entries.
+
+Args:
+```ts
+{ remove_missing?: boolean }
+```
+
+Result:
+```ts
+{
+  dry_run: boolean
+  scanned_groups: number
+  missing_group_ids: string[]
+  corrupt_group_ids: string[]
+  removed_group_ids: string[]
+  removed_default_scope_keys: string[]
+}
 ```
 
 #### `group_show`
@@ -409,6 +455,10 @@ Args:
 ```ts
 { group_id: string; state: "active" | "idle" | "paused"; by?: string }
 ```
+
+Notes:
+- `stopped` is not a valid `group_set_state` value in daemon IPC v1.
+- Higher-level surfaces (CLI/MCP) MAY expose `stopped` as a convenience alias that maps to `group_stop`.
 
 Result:
 ```ts
@@ -540,6 +590,29 @@ Result:
   applied_actions: Array<Record<string, unknown>>
   changed: boolean
   event?: CCCSEventV1 | null
+}
+```
+
+#### `group_automation_reset_baseline`
+
+Reset automation ruleset to built-in baseline defaults.
+
+Args:
+```ts
+{ group_id: string; by?: string; expected_version?: number }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  ruleset: { rules: Array<Record<string, unknown>>; snippets: Record<string, string> }
+  status: Record<string, Record<string, unknown>>
+  supported_vars: string[]
+  version: number
+  server_now: string
+  config_path: string
+  event: CCCSEventV1
 }
 ```
 
@@ -980,6 +1053,34 @@ Result:
 { group_id: string; actor_id: string; cleared: true }
 ```
 
+#### `debug_tail_logs`
+
+Tail daemon/web/im-bridge log files (developer mode).
+
+Args:
+```ts
+{ component: "daemon" | "ccccd" | "web" | "im" | "im_bridge"; group_id?: string; by?: string; lines?: number }
+```
+
+Result:
+```ts
+{ component: string; group_id: string; path: string; lines: string[] }
+```
+
+#### `debug_clear_logs`
+
+Truncate daemon/web/im-bridge log files (developer mode).
+
+Args:
+```ts
+{ component: "daemon" | "ccccd" | "web" | "im" | "im_bridge"; group_id?: string; by?: string }
+```
+
+Result:
+```ts
+{ component: string; group_id: string; path: string; cleared: true }
+```
+
 #### `term_resize`
 
 Args:
@@ -1134,7 +1235,7 @@ Request line:
 
 Response line:
 ```json
-{"v":1,"ok":true,"result":{"version":"0.4.0rc14","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true}},"error":null}
+{"v":1,"ok":true,"result":{"version":"0.4.x","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true}},"error":null}
 ```
 
 ### 9.2 Error

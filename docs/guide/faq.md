@@ -7,13 +7,16 @@ Frequently asked questions about CCCC.
 ### How do I install CCCC?
 
 ```bash
-# From TestPyPI (RC version)
+# From PyPI
+python -m pip install -U cccc-pair
+
+# From TestPyPI (explicit RC testing)
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+  cccc-pair==<rc-version>
 
 # From source
-git clone https://github.com/dweb-channel/cccc
+git clone https://github.com/ChesterRa/cccc
 cd cccc
 pip install -e .
 ```
@@ -198,7 +201,7 @@ The ledger is an append-only event stream that stores all messages, state change
 
 ### What is MCP?
 
-MCP (Model Context Protocol) is how agents interact with CCCC. It provides 38+ tools for messaging, context management, and system control.
+MCP (Model Context Protocol) is how agents interact with CCCC. It exposes a rich tool surface for messaging, context management, automation, and system control.
 
 ### What is a Scope?
 

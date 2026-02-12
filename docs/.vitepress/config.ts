@@ -9,7 +9,8 @@ export default defineConfig({
 
   // Ignore dead links in legacy vnext docs
   ignoreDeadLinks: [
-    /archive/
+    /archive/,
+    /localhost:8848\/ui\/index/
   ],
 
   head: [
@@ -21,7 +22,8 @@ export default defineConfig({
 
     nav: [
       { text: 'Guide', link: '/guide/' },
-      { text: 'Reference', link: '/reference/architecture' }
+      { text: 'Reference', link: '/reference/architecture' },
+      { text: 'Release', link: '/release/' }
     ],
 
     sidebar: {
@@ -44,7 +46,9 @@ export default defineConfig({
         {
           text: 'Core Guides',
           items: [
+            { text: 'Use Cases', link: '/guide/use-cases' },
             { text: 'Workflows', link: '/guide/workflows' },
+            { text: 'Operations Runbook', link: '/guide/operations' },
             { text: 'Web UI', link: '/guide/web-ui' },
             { text: 'Best Practices', link: '/guide/best-practices' },
             { text: 'FAQ', link: '/guide/faq' }
@@ -67,9 +71,29 @@ export default defineConfig({
         {
           text: 'Reference',
           items: [
+            { text: 'Positioning', link: '/reference/positioning' },
             { text: 'Architecture', link: '/reference/architecture' },
             { text: 'Features', link: '/reference/features' },
             { text: 'CLI', link: '/reference/cli' }
+          ]
+        }
+      ],
+      '/release/': [
+        {
+          text: 'Release Program',
+          items: [
+            { text: 'Overview', link: '/release/' },
+            { text: 'RC19 Release Board', link: '/release/RC19_RELEASE_BOARD' },
+            { text: 'Audit Method', link: '/release/RC19_AUDIT_METHOD' },
+            { text: 'Owner Map', link: '/release/RC19_OWNER_MAP' },
+            { text: 'Findings Register', link: '/release/RC19_FINDINGS_REGISTER' },
+            { text: 'Quality Gates', link: '/release/RC19_GATES' },
+            { text: 'Execution Checklist', link: '/release/RC19_EXECUTION_CHECKLIST' },
+            { text: 'Contract Gap Baseline', link: '/release/rc19_contract_gap' },
+            { text: 'Core Findings (R3)', link: '/release/rc19_core_findings' },
+            { text: 'Port Parity Findings (R4)', link: '/release/rc19_port_parity' },
+            { text: 'Rehearsal Report (R8)', link: '/release/rc19_rehearsal_report' },
+            { text: 'File Matrix', link: '/release/rc19_file_matrix' }
           ]
         }
       ]

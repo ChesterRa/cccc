@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md) | **日本語**
 
-> **ステータス**: 0.4.0rc18 (Release Candidate)
+> **ステータス**: 0.4.x Release Candidate ライン
 
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
@@ -14,7 +14,7 @@ CCCC は **local-first なマルチエージェント協調カーネル**です�
 - 📝 **追記型 ledger** — 永続的な履歴、唯一の事実源
 - 🌐 **Web ファーストコンソール** — モバイルフレンドリー
 - 💬 **IM グレードのメッセージング** — @mentions、reply/quote、既読確認
-- 🔧 **MCP ツール面** — 38+ ツールで信頼性の高いエージェント操作
+- 🔧 **MCP ツール面** — 豊富なコントロールプレーンツールで信頼性の高いエージェント操作
 - 🔌 **IM ブリッジ** — Telegram、Slack、Discord、Feishu、DingTalk
 
 ![CCCC Chat UI](screenshots/chat.png)
@@ -25,9 +25,7 @@ CCCC は **local-first なマルチエージェント協調カーネル**です�
 
 ```bash
 # インストール
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+python -m pip install -U cccc-pair
 
 # 起動
 cccc
@@ -55,9 +53,7 @@ cccc
 >
 > 1. cccc-pair をインストール：
 >    ```
->    pip install --index-url https://pypi.org/simple \
->      --extra-index-url https://test.pypi.org/simple \
->      cccc-pair==0.4.0rc18
+>    python -m pip install -U cccc-pair
 >    ```
 >
 > 2. インストール後、CCCC を起動：
@@ -86,18 +82,18 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 
 > **注意**：0.4.x のコマンド構造は 0.3.x と完全に異なります。旧版の `init`、`run`、`bridge` コマンドは `attach`、`daemon`、`mcp` などに置き換えられました。
 
-### TestPyPI からインストール（推奨）
+### TestPyPI からインストール（RC 検証時）
 
 ```bash
-pip install --index-url https://pypi.org/simple \
+python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+  cccc-pair==0.4.0rc19
 ```
 
 ### ソースからインストール
 
 ```bash
-git clone https://github.com/dweb-channel/cccc
+git clone https://github.com/ChesterRa/cccc
 cd cccc
 pip install -e .
 ```
@@ -231,7 +227,7 @@ v0.3.x（tmux-first）は概念を証明しましたが、限界に直面：
 v0.4.x の導入：
 - 統一された追記型 ledger
 - N-actor モデル
-- 38+ MCP ツールのコントロールプレーン
+- 豊富な MCP ツール面のコントロールプレーン
 - Web ファーストコンソール
 - IM グレードのメッセージング
 

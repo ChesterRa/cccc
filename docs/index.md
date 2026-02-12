@@ -4,35 +4,35 @@ layout: home
 hero:
   name: CCCC
   text: Multi-Agent Collaboration Kernel
-  tagline: A local-first multi-agent collaboration kernel that feels like a modern IM
+  tagline: Local-first control plane for reliable, multi-agent engineering collaboration
   image:
     src: /logo.svg
     alt: CCCC
   actions:
     - theme: brand
-      text: Get Started
+      text: Start in 10 Minutes
       link: /guide/getting-started
     - theme: alt
-      text: View on GitHub
-      link: https://github.com/ChesterRa/cccc
+      text: High-ROI Use Cases
+      link: /guide/use-cases
 
 features:
   - icon: 🤖
-    title: Multi-Agent Coordination
-    details: Coordinate multiple AI agents (Claude Code, Codex, Droid, OpenCode, Copilot, and more) in a single working group.
+    title: Multi-Agent Runtime Orchestration
+    details: Coordinate multiple coding agents in one group with clear recipient semantics and role-aware operations.
   - icon: 📝
-    title: Append-Only Ledger
-    details: Every working group has a durable, append-only ledger as the single source of truth for all events.
+    title: Durable Collaboration Ledger
+    details: Every event is append-only and replayable, so you can debug, audit, and recover without losing context.
   - icon: 🌐
-    title: Web-First Console
-    details: Mobile-first responsive Web UI as the primary control plane. Access from anywhere via tunnel or VPN.
+    title: Unified Control Plane
+    details: Web UI, CLI, MCP, and IM bridge all map to one daemon truth model.
   - icon: 💬
-    title: IM-Grade Messaging
-    details: Modern IM experience with @mentions, reply/quote, read receipts, and consistent behavior across Web UI and IM bridges.
+    title: IM-Grade Collaboration Semantics
+    details: Use @routing, reply context, read status, attention ACK, and reply-required obligations for reliable coordination.
   - icon: 🔧
-    title: MCP Tool Surface
-    details: 38+ MCP tools for reliable agent operations. No "stdout chat" ambiguity.
+    title: Automation + Operations
+    details: Combine reminders, one-time operational actions, and policy guardrails to keep groups moving.
   - icon: 🔌
-    title: IM Bridge
-    details: Bridge your working group to Telegram, Slack, Discord, Feishu, or DingTalk for mobile access.
+    title: Remote-Ready by Design
+    details: Bridge to Telegram, Slack, Discord, Feishu, and DingTalk for mobile ops and out-of-band intervention.
 ---

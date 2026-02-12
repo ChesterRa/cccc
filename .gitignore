@@ -11,6 +11,7 @@
 
 # Local virtualenv
 /.venv/
+/.venv-qa/
 
 # uv lock file
 uv.lock

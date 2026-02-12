@@ -159,8 +159,9 @@ In direct messages with the bot, you can use `/send` directly:
 ```
 
 ::: warning Important
-- In channels, you must @mention the bot before using commands
-- Plain messages without the `/send` command are ignored
+- In channels, you must @mention the bot before the message is routed
+- After mentioning the bot, plain text is treated as implicit send to foreman
+- Use `/send` when you need explicit recipients like `@all` or `@peers`
 :::
 
 ### Targeting Specific Agents

@@ -1,0 +1,286 @@
+path,tier,domain,review_mode,status,owner,notes
+.dockerignore,B,misc,standard-file,reviewed,ops,build context exclusions aligned with release intent
+.github/workflows/ci.yml,A,ci-release,deep-file+function,fixed,releng,pytest + web lint + web typecheck gates added
+.github/workflows/docs.yml,A,ci-release,deep-file+function,reviewed,releng,pages deploy pipeline validated for docs-only trigger and least-privilege permissions
+.github/workflows/release.yml,A,ci-release,deep-file+function,fixed,releng,pytest + web lint + web typecheck gates added
+.gitignore,B,misc,standard-file,reviewed,ops,ignore rules align with local-runtime and release artifact expectations
+CHANGELOG.md,B,misc,standard-file,fixed,ops,governance asset added
+LICENSE,B,misc,standard-file,reviewed,ops,Apache-2.0 license text present and intact
+MANIFEST.in,B,misc,standard-file,reviewed,ops,sdist inclusion list matches runtime resources and web dist packaging
+README.ja.md,A,misc,deep-file+function,fixed,ops,status/install/source-url wording refreshed for release-line consistency
+README.md,A,misc,deep-file+function,fixed,ops,restructured to product-level positioning + value + adoption narrative
+README.zh-CN.md,A,misc,deep-file+function,fixed,ops,restructured to product-level positioning + value + adoption narrative (zh-CN)
+SECURITY.md,B,misc,standard-file,fixed,ops,governance asset added
+SUPPORT.md,B,misc,standard-file,fixed,ops,governance asset added
+docker/Dockerfile,B,docker,standard-file,reviewed,ops,multi-stage build and runtime toolchain validated; no release blocker found
+docs/.vitepress/config.ts,B,docs-other,standard-file,reviewed,docs,sidebar/nav/release-doc wiring reviewed; no parity blocker
+docs/assets/screenshots/chat-placeholder.svg,B,docs-other,standard-file,reviewed,docs,static placeholder asset reviewed (non-runtime)
+docs/assets/screenshots/terminal-placeholder.svg,B,docs-other,standard-file,reviewed,docs,static placeholder asset reviewed (non-runtime)
+docs/guide/best-practices.md,B,docs-guide,standard-file,reviewed,docs,guidance customization and help-consumption flow reviewed
+docs/guide/faq.md,B,docs-guide,standard-file,fixed,docs,install/source links and MCP wording updated to remove stale rc/tool-count drift
+docs/guide/getting-started/cli.md,B,docs-guide,standard-file,reviewed,docs,quick-start command flow reviewed
+docs/guide/getting-started/index.md,B,docs-guide,standard-file,fixed,docs,install instructions updated to non-stale PyPI/TestPyPI and source URL
+docs/guide/getting-started/web.md,B,docs-guide,standard-file,reviewed,docs,web quick-start flow reviewed
+docs/guide/im-bridge/dingtalk.md,B,docs-guide,standard-file,reviewed,docs,dingtalk setup/permissions/commands reviewed
+docs/guide/im-bridge/discord.md,B,docs-guide,standard-file,fixed,docs,rc19-im-parity-pass
+docs/guide/im-bridge/feishu.md,B,docs-guide,standard-file,reviewed,docs,feishu setup/permissions/commands reviewed
+docs/guide/im-bridge/index.md,B,docs-guide,standard-file,fixed,docs,rc19-im-parity-pass
+docs/guide/im-bridge/slack.md,B,docs-guide,standard-file,fixed,docs,rc19-im-parity-pass
+docs/guide/im-bridge/telegram.md,B,docs-guide,standard-file,reviewed,docs,telegram setup/commands/security guidance reviewed
+docs/guide/index.md,B,docs-guide,standard-file,reviewed,docs,introductory guide positioning reviewed
+docs/guide/operations.md,B,docs-guide,standard-file,fixed,docs,new operations runbook for triage/recovery/upgrade/backup flows
+docs/guide/use-cases.md,B,docs-guide,standard-file,fixed,docs,new scenario-driven guide for high-ROI collaboration patterns
+docs/guide/web-ui.md,B,docs-guide,standard-file,fixed,docs,settings/automation guide updated to current rule+policy model
+docs/guide/workflows.md,B,docs-guide,standard-file,reviewed,docs,workflow examples reviewed for current command surface
+docs/index.md,B,docs-other,standard-file,reviewed,docs,home page positioning reviewed; no critical drift
+docs/package-lock.json,B,docs-other,standard-file,reviewed,docs,docs lockfile reviewed against successful docs build
+docs/package.json,B,docs-other,standard-file,reviewed,docs,docs package scripts/deps reviewed
+docs/public/images/cccc-im-bridge-feishu.png,B,docs-other,standard-file,reviewed,docs,static doc image asset reviewed
+docs/public/images/cccc-im-bridge-telegram.png,B,docs-other,standard-file,reviewed,docs,static doc image asset reviewed
+docs/public/images/feishu-bot-setting.png,B,docs-other,standard-file,reviewed,docs,static doc image asset reviewed
+docs/public/images/feishu-event-config.png,B,docs-other,standard-file,reviewed,docs,static doc image asset reviewed
+docs/public/images/feishu-permissions.png,B,docs-other,standard-file,reviewed,docs,static doc image asset reviewed
+docs/public/images/image.png,B,docs-other,standard-file,reviewed,docs,static doc image asset reviewed
+docs/public/logo.svg,B,docs-other,standard-file,reviewed,docs,docs logo asset reviewed
+docs/reference/architecture.md,B,docs-reference,standard-file,fixed,docs,blob path + MCP capability-group narrative synchronized
+docs/reference/cli.md,B,docs-reference,standard-file,fixed,docs,cli reference parity to parser
+docs/reference/features.md,B,docs-reference,standard-file,fixed,docs,automation section synchronized to current rule engine (triggers/actions/one-time semantics/MCP surface)
+docs/reference/positioning.md,B,docs-reference,standard-file,fixed,docs,new product positioning page clarifying fit/non-fit and integration boundaries
+docs/release/RC19_AUDIT_METHOD.md,B,docs-other,standard-file,reviewed,docs,audit rubric and tier policy reviewed
+docs/release/RC19_EXECUTION_CHECKLIST.md,B,docs-other,standard-file,reviewed,docs,checklist synchronized
+docs/release/RC19_FINDINGS_REGISTER.md,B,docs-other,standard-file,reviewed,docs,register synchronized
+docs/release/RC19_GATES.md,B,docs-other,standard-file,reviewed,docs,gate definitions reviewed against current CI/release checks
+docs/release/RC19_OWNER_MAP.md,B,docs-other,standard-file,reviewed,docs,domain-owner mapping reviewed; no unowned Tier-A rows
+docs/release/RC19_RELEASE_BOARD.md,B,docs-other,standard-file,reviewed,docs,phase sequence and exit criteria rechecked for rc19
+docs/release/index.md,B,docs-other,standard-file,reviewed,docs,release doc index links reviewed
+docs/release/rc19_contract_gap.md,B,docs-other,standard-file,reviewed,docs,baseline gap log preserved as historical R2 snapshot
+docs/release/rc19_core_findings.md,B,docs-other,standard-file,reviewed,docs,core snapshot synchronized
+docs/release/rc19_file_matrix.csv,B,docs-other,standard-file,reviewed,docs,matrix status/owner/notes synchronization reviewed
+docs/release/rc19_file_matrix.md,B,docs-other,standard-file,reviewed,docs,matrix regeneration semantics reviewed
+docs/release/rc19_port_parity.md,B,docs-other,standard-file,reviewed,docs,parity snapshot synchronized
+docs/release/rc19_rehearsal_report.md,B,docs-other,standard-file,reviewed,docs,rehearsal snapshot synchronized
+docs/release/rc19_strategic_review.md,B,docs-other,standard-file,fixed,docs,first-principles strategic review for RC19 convergence
+docs/sdk/CLIENT_SDK.md,B,docs-other,standard-file,fixed,docs,sdk draft state-set example aligned to include stopped state
+docs/standards/CCCC_CONTEXT_OPS_V1.md,B,docs-standards,standard-file,reviewed,docs,context-ops contract text reviewed for current op surface
+docs/standards/CCCC_DAEMON_IPC_V1.md,B,docs-standards,standard-file,fixed,docs,version examples de-pinned
+docs/standards/CCCS_V1.md,B,docs-standards,standard-file,reviewed,docs,cccs v1 baseline reviewed for envelope/routing/ack semantics
+docs/vnext/ARCHITECTURE.md,B,docs-other,standard-file,fixed,docs,added historical-snapshot warning and corrected obvious stale blob/tool-count wording
+docs/vnext/FEATURES.md,B,docs-other,standard-file,fixed,docs,added historical-snapshot warning for stale-risk control
+docs/vnext/README.md,B,docs-other,standard-file,fixed,docs,added historical-snapshot warning and pointer to authoritative docs
+docs/vnext/RELEASE.md,B,docs-other,standard-file,fixed,docs,release examples de-pinned
+docs/vnext/STATUS.md,B,docs-other,standard-file,fixed,docs,status board refreshed
+pyproject.toml,A,misc,deep-file+function,reviewed,ops,metadata/version pins and package-data wiring reviewed for rc19 baseline
+screenshots/chat.png,B,misc,standard-file,reviewed,ops,static screenshot asset reviewed (non-runtime)
+screenshots/terminal.png,B,misc,standard-file,reviewed,ops,static screenshot asset reviewed (non-runtime)
+scripts/build_package.sh,B,ops-scripts,standard-file,reviewed,ops,package build flow reviewed (web build + compileall + build + twine check)
+scripts/build_web.sh,B,ops-scripts,standard-file,reviewed,ops,web build script reviewed and output assertion validated
+scripts/release/assign_rc19_matrix_owners.sh,B,ops-scripts,standard-file,reviewed,ops,owner assignment checked
+scripts/release/gen_rc19_file_matrix.sh,B,ops-scripts,standard-file,fixed,ops,preserve progress + venv exclusion
+src/cccc/__init__.py,A,core-other,deep-file+function,reviewed,core-platform,version detection fallback logic reviewed; dist-name fallback remains intentional
+src/cccc/cli.py,A,core-other,deep-file+function,fixed,core-platform,set-state parity + env bool coercion for CCCC_WEB_RELOAD
+src/cccc/contracts/__init__.py,A,contracts,deep-file+function,reviewed,core-platform,package surface is intentionally minimal
+src/cccc/contracts/v1/__init__.py,A,contracts,deep-file+function,reviewed,core-platform,contract export set reviewed for parity with active models
+src/cccc/contracts/v1/actor.py,A,contracts,deep-file+function,fixed,core-platform,GroupState contract now includes stopped for runtime/state parity
+src/cccc/contracts/v1/automation.py,A,contracts,deep-file+function,reviewed,core-platform,trigger/action discriminator surface reviewed with one-time operational constraints
+src/cccc/contracts/v1/event.py,A,contracts,deep-file+function,fixed,core-platform,modeled missing group.* emitted event kinds
+src/cccc/contracts/v1/group_template.py,A,contracts,deep-file+function,reviewed,core-platform,template contract fields/defaults reviewed against import-replace path
+src/cccc/contracts/v1/ipc.py,A,contracts,deep-file+function,reviewed,core-platform,request/response envelope contract remains coherent
+src/cccc/contracts/v1/message.py,A,contracts,deep-file+function,reviewed,core-platform,message contract fields reviewed for obligation semantics and cross-group metadata
+src/cccc/contracts/v1/notify.py,A,contracts,deep-file+function,reviewed,core-platform,system-notify contract surface reviewed for automation/delivery parity
+src/cccc/daemon/__init__.py,A,daemon,deep-file+function,reviewed,core-platform,module marker reviewed; no behavioral surface
+src/cccc/daemon/automation.py,A,daemon,deep-file+function,fixed,core-platform,running-state coercion hardened for group_state actions; terminal-tail settings parsing clamped/coerced
+src/cccc/daemon/delivery.py,A,daemon,deep-file+function,fixed,core-platform,delivery min_interval parsing hardened against invalid/negative config values
+src/cccc/daemon/ops/__init__.py,A,daemon,deep-file+function,reviewed,core-platform,module docs/import boundary reviewed
+src/cccc/daemon/ops/context_ops.py,A,daemon,deep-file+function,fixed,core-platform,context_sync now stages presence updates and commits atomically
+src/cccc/daemon/ops/runner_ops.py,A,daemon,deep-file+function,reviewed,core-platform,deep pass complete; headless/pty operation split and error boundaries are coherent
+src/cccc/daemon/ops/template_ops.py,A,daemon,deep-file+function,fixed,core-platform,template settings replace now coerces bool toggles canonically to avoid string-false drift
+src/cccc/daemon/server.py,A,daemon,deep-file+function,fixed,core-platform,automation manage legacy-shape rejection + enabled-flag coercion + safe settings response coercion
+src/cccc/daemon/streaming.py,A,daemon,deep-file+function,fixed,core-platform,resume now falls back to since_ts when since_event_id is missing
+src/cccc/daemon_main.py,A,core-other,deep-file+function,fixed,core-platform,start path now blocks duplicate spawn when pid is alive but IPC is down
+src/cccc/kernel/__init__.py,A,kernel,deep-file+function,reviewed,core-platform,module marker reviewed; no behavioral surface
+src/cccc/kernel/active.py,A,kernel,deep-file+function,fixed,core-platform,load_active now normalizes/self-heals dirty non-dict payloads
+src/cccc/kernel/actors.py,A,kernel,deep-file+function,fixed,core-platform,actor id leading underscore now rejected to match documented naming contract
+src/cccc/kernel/blobs.py,A,kernel,deep-file+function,fixed,core-platform,blob attachment path containment check now uses platform-safe Path.relative_to
+src/cccc/kernel/context.py,A,kernel,deep-file+function,fixed,core-platform,loaders now tolerate malformed entries and invalid status values
+src/cccc/kernel/events.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; global event append path remains best-effort and side-effect isolated
+src/cccc/kernel/git.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; git root/origin detection and normalization behavior is coherent
+src/cccc/kernel/group.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; lifecycle/state transitions and default automation seed remain coherent
+src/cccc/kernel/group_template.py,A,kernel,deep-file+function,fixed,core-platform,template export/preview now tolerate dirty numeric/bool settings with stable defaults
+src/cccc/kernel/inbox.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; obligation/read/ack derivation logic remains internally consistent
+src/cccc/kernel/ledger.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; append/follow semantics and spill policy align with contract expectations
+src/cccc/kernel/ledger_retention.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; compaction guards and locking strategy are operationally consistent
+src/cccc/kernel/messaging.py,A,kernel,deep-file+function,fixed,core-platform,recipient routing now coerces enabled flag canonically to avoid string-false drift
+src/cccc/kernel/permissions.py,A,kernel,deep-file+function,fixed,core-platform,GroupAction includes group.settings_update
+src/cccc/kernel/prompt_files.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; CCCC_HOME prompt override flow and builtin fallback semantics validated
+src/cccc/kernel/registry.py,A,kernel,deep-file+function,fixed,core-platform,load path now normalizes malformed registry doc and preserves writable groups/defaults maps
+src/cccc/kernel/runtime.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; runtime catalog/detection paths and command defaults validated
+src/cccc/kernel/scope.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; scope identity hashing and git-remote normalization are coherent
+src/cccc/kernel/settings.py,A,kernel,deep-file+function,fixed,core-platform,get_runtime_pool now returns copy of defaults to avoid shared mutable state pollution
+src/cccc/kernel/system_prompt.py,A,kernel,deep-file+function,fixed,core-platform,team roster summary now coerces enabled flag canonically
+src/cccc/kernel/terminal_transcript.py,A,kernel,deep-file+function,reviewed,core-platform,deep pass complete; settings coercion and patch merge bounds validated
+src/cccc/paths.py,A,core-other,deep-file+function,reviewed,core-platform,deep pass complete; CCCC_HOME resolution and ensure-home semantics are coherent
+src/cccc/ports/__init__.py,A,core-other,deep-file+function,reviewed,core-platform,module marker reviewed
+src/cccc/ports/im/__init__.py,A,port-im,deep-file+function,reviewed,im-bridge,module marker reviewed
+src/cccc/ports/im/__main__.py,A,port-im,deep-file+function,reviewed,im-bridge,module entrypoint argument flow reviewed
+src/cccc/ports/im/adapters/__init__.py,A,port-im,deep-file+function,reviewed,im-bridge,module marker reviewed
+src/cccc/ports/im/adapters/base.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/adapters/dingtalk.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/adapters/discord.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/adapters/feishu.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/adapters/slack.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/adapters/telegram.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/bridge.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/commands.py,A,port-im,deep-file+function,fixed,im-bridge,rc19-im-parity-pass
+src/cccc/ports/im/subscribers.py,A,port-im,deep-file+function,fixed,im-bridge,subscriber loader now coerces bool/int fields safely per entry
+src/cccc/ports/mcp/__init__.py,A,port-mcp,deep-file+function,reviewed,mcp-surface,module marker reviewed
+src/cccc/ports/mcp/main.py,A,port-mcp,deep-file+function,reviewed,mcp-surface,JSON-RPC loop and optional MCP surfaces reviewed
+src/cccc/ports/mcp/server.py,A,port-mcp,deep-file+function,fixed,mcp-surface,group_set_state schema parity + workflow bool coercion + group/actor bool sanitization + file_send path containment hardening
+src/cccc/ports/web/__init__.py,A,port-web,deep-file+function,reviewed,web-ux,module marker reviewed
+src/cccc/ports/web/app.py,A,port-web,deep-file+function,fixed,web-ux,group settings endpoint now tolerates dirty numeric config values
+src/cccc/ports/web/main.py,A,port-web,deep-file+function,reviewed,web-ux,deep pass complete; daemon-availability gate and mode/reload startup wiring are coherent
+src/cccc/ports/web/streams.py,A,port-web,deep-file+function,fixed,web-ux,shared tailers now deregister on idle exit to avoid stale registry growth
+src/cccc/resources/__init__.py,A,core-other,deep-file+function,reviewed,core-platform,resources package marker reviewed
+src/cccc/resources/cccc-help.md,A,core-other,deep-file+function,fixed,core-platform,state table aligned with stopped
+src/cccc/runners/__init__.py,A,runners,deep-file+function,reviewed,core-platform,platform dispatch (pty vs pty_stub) reviewed for fallback safety
+src/cccc/runners/headless.py,A,runners,deep-file+function,reviewed,core-platform,supervisor/session lifecycle and state persistence semantics reviewed
+src/cccc/runners/pty.py,A,runners,deep-file+function,fixed,core-platform,attach path now always registers READ interest to avoid non-writer zero-event selector registration failures
+src/cccc/runners/pty_stub.py,A,runners,deep-file+function,reviewed,core-platform,non-pty platform stub behavior reviewed
+src/cccc/util/__init__.py,A,core-other,deep-file+function,reviewed,core-platform,module marker reviewed
+src/cccc/util/conv.py,A,core-other,deep-file+function,reviewed,core-platform,canonical bool coercion semantics reviewed
+src/cccc/util/file_lock.py,A,core-other,deep-file+function,reviewed,core-platform,cross-platform lock/unlock semantics reviewed
+src/cccc/util/fs.py,A,core-other,deep-file+function,reviewed,core-platform,atomic write/read helpers reviewed for crash-safe behavior
+src/cccc/util/obslog.py,A,core-other,deep-file+function,reviewed,core-platform,JSONL formatter/setup idempotence and failure handling reviewed
+src/cccc/util/terminal_render.py,A,core-other,deep-file+function,reviewed,core-platform,terminal transcript rendering/compaction semantics reviewed
+src/cccc/util/time.py,A,core-other,deep-file+function,reviewed,core-platform,time parsing/normalization reviewed
+start.ps1,B,misc,standard-file,reviewed,ops,windows bootstrap flow reviewed (venv/install/port preflight/start)
+tests/test_actor_private_env.py,B,tests,standard-file,reviewed,qa,private env roundtrip/merge/permissions coverage reviewed
+tests/test_cccs_core_profile_events.py,B,tests,standard-file,fixed,qa,validates CCCS core profile event-kind coverage
+tests/test_cli_env_bool_parsing.py,B,tests,standard-file,fixed,qa,guards CLI env flag parsing for falsey string values
+tests/test_automation_manage_legacy_shape.py,B,tests,standard-file,fixed,qa,covers friendly rejection of legacy automation payload shape
+tests/test_automation_nudge_digest.py,B,tests,standard-file,reviewed,qa,nudge digest min-interval regression coverage reviewed
+tests/test_automation_rules_constraints.py,B,tests,standard-file,fixed,qa,covers one-time constraints plus running-string coercion in group_state action path
+tests/test_delivery_throttle.py,B,tests,standard-file,fixed,qa,covers reset/clear behavior and resilient min_interval parsing
+tests/test_events_stream_resume_filtering.py,B,tests,standard-file,fixed,qa,covers actor-view filtering and resume fallback when since_event_id missing
+tests/test_event_kind_model_parity.py,B,tests,standard-file,fixed,qa,guards append_event standard-kind coverage in contracts event model
+tests/test_event_contract_internal_parity.py,B,tests,standard-file,fixed,qa,guards EventKind literal <-> model map internal parity
+tests/test_global_events.py,B,tests,standard-file,reviewed,qa,global event append jsonl coverage reviewed
+tests/test_group_template_auto_mark_on_delivery.py,B,tests,standard-file,fixed,qa,validated template settings import for delivery/automation fields
+tests/test_group_template_automation_replace.py,B,tests,standard-file,fixed,qa,validated template replace flow and automation replacement behavior
+tests/test_group_template_dirty_settings_tolerance.py,B,tests,standard-file,fixed,qa,guards template export/preview tolerance for dirty numeric/bool settings
+tests/test_im_subscribers_tolerance.py,B,tests,standard-file,fixed,qa,guards IM subscriber loader tolerance for dirty bool/int fields
+tests/test_group_lifecycle_invariants.py,B,tests,standard-file,fixed,qa,guards group start/stop running+enabled invariants
+tests/test_group_automation_baseline.py,B,tests,standard-file,fixed,qa,guards default standup baseline seeding and intentional clear semantics
+tests/test_mcp_bootstrap_ledger_tail.py,B,tests,standard-file,reviewed,qa,mcp bootstrap ledger-tail visibility rules reviewed
+tests/test_daemon_ipc_docs_parity.py,B,tests,standard-file,fixed,qa,guards daemon IPC op coverage in standards doc
+tests/test_docs_blob_path_consistency.py,B,tests,standard-file,fixed,qa,guards architecture blob-path terminology consistency
+tests/test_docs_mcp_architecture_surface.py,B,tests,standard-file,fixed,qa,guards architecture MCP surface narrative against legacy drift
+tests/test_mcp_group_set_state_stopped.py,B,tests,standard-file,fixed,qa,regression test for mcp stopped mapping
+tests/test_mcp_message_send_reply_required.py,B,tests,standard-file,reviewed,qa,mcp reply_required string-coercion coverage reviewed
+tests/test_message_obligation.py,B,tests,standard-file,reviewed,qa,obligation lifecycle and auto-ack-on-reply coverage reviewed
+tests/test_permissions_action_parity.py,B,tests,standard-file,fixed,qa,guards daemon permission action parity (group/actor)
+tests/test_permissions_group_settings_update.py,B,tests,standard-file,fixed,qa,permission boundary regression for group.settings_update
+tests/test_registry_reconcile_and_autowake.py,B,tests,standard-file,reviewed,qa,explicit reconcile + autowake failure invariants reviewed
+tests/test_runtime_pool_defaults_immutable.py,B,tests,standard-file,fixed,qa,guards default runtime pool immutability across callers
+tests/test_registry_doc_normalization.py,B,tests,standard-file,fixed,qa,guards registry normalization for malformed root/groups/defaults
+tests/test_actor_id_validation.py,B,tests,standard-file,fixed,qa,guards leading underscore rejection and CJK acceptance for actor ids
+tests/test_actor_group_state_contract.py,B,tests,standard-file,fixed,qa,guards GroupState contract includes stopped for runtime/state parity
+tests/test_active_doc_normalization.py,B,tests,standard-file,fixed,qa,guards active.json normalization when dirty non-dict payloads are present
+tests/test_blob_path_resolution.py,B,tests,standard-file,fixed,qa,guards blob attachment path containment and traversal rejection
+tests/test_pty_attach_selector_events.py,B,tests,standard-file,fixed,qa,guards pty non-writer attach selector registration includes READ event
+tests/test_context_sync_atomicity.py,B,tests,standard-file,fixed,qa,guards context_sync dry_run coercion and no partial presence writes on batch failure
+tests/test_daemon_group_settings_dirty_tolerance.py,B,tests,standard-file,fixed,qa,guards daemon group_settings_update response against dirty numeric config values
+tests/test_mcp_tool_bool_coercion.py,B,tests,standard-file,fixed,qa,guards MCP bool coercion for dispatcher + direct send/reply helpers + group/actor sanitization + file_send path guard
+tests/test_daemon_main_start_safety.py,B,tests,standard-file,fixed,qa,guards against duplicate daemon spawn on stale/half-broken pid state
+tests/test_enabled_flag_coercion.py,B,tests,standard-file,fixed,qa,guards actor enabled string-false coercion across routing/system-prompt/auto-wake flows
+tests/test_context_storage_dirty_tolerance.py,B,tests,standard-file,fixed,qa,guards context/task/presence loading against malformed YAML entries
+tests/test_web_group_settings_dirty_tolerance.py,B,tests,standard-file,fixed,qa,guards web group settings API against dirty numeric config values
+tests/test_web_streams_tailer_cleanup.py,B,tests,standard-file,fixed,qa,guards shared web SSE tailer registry cleanup after idle exit
+web/.gitignore,B,misc,standard-file,reviewed,ops,web local artifact ignores reviewed
+web/eslint.config.js,B,misc,standard-file,reviewed,ops,eslint profile reviewed against current ts/react stack
+web/index.html,B,misc,standard-file,reviewed,ops,html shell/meta/icon wiring reviewed
+web/package-lock.json,B,misc,standard-file,reviewed,ops,lockfile present and consistent with successful web build
+web/package.json,B,misc,standard-file,fixed,ops,typecheck script added for CI/release gates
+web/postcss.config.cjs,B,misc,standard-file,reviewed,ops,postcss plugin chain reviewed
+web/public/favicon.ico,B,misc,standard-file,reviewed,ops,web static asset reviewed
+web/public/favicon.png,B,misc,standard-file,reviewed,ops,web static asset reviewed
+web/public/logo.png,B,misc,standard-file,reviewed,ops,web static asset reviewed
+web/public/logo.svg,B,misc,standard-file,reviewed,ops,web static asset reviewed
+web/src/App.tsx,A,web-ui,deep-file+function,reviewed,web-ux,deep pass complete; group switch draft-restore and chat/actor mount choreography revalidated
+web/src/components/AgentTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,terminal attach/reconnect/paste handling path reviewed; no release blocker found
+web/src/components/AppModals.tsx,A,web-ui,deep-file+function,fixed,web-ux,template create conflict path now refreshes group list before selecting existing group
+web/src/components/AuthGate.tsx,A,web-ui,deep-file+function,reviewed,web-ux,auth probe/login gate flow reviewed; no release blocker found
+web/src/components/ContextModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown for both main and nested notify modals to prevent drag-select accidental dismiss
+web/src/components/DropOverlay.tsx,A,web-ui,deep-file+function,reviewed,web-ux,overlay semantics and drop hint presentation reviewed; no blocker found
+web/src/components/ErrorBoundary.tsx,A,web-ui,deep-file+function,reviewed,web-ux,error fallback/reset flow reviewed; no regression blocker found
+web/src/components/Icons.tsx,A,web-ui,deep-file+function,reviewed,web-ux,icon primitives reviewed for consistency and accessibility surface; no blocker found
+web/src/components/MarkdownRenderer.tsx,A,web-ui,deep-file+function,reviewed,web-ux,markdown sanitization and delegated copy behavior reviewed; no release blocker found
+web/src/components/MessageBubble.tsx,A,web-ui,deep-file+function,reviewed,web-ux,message rendering path reviewed (obligation badges, attachment handling, recipient labels); no blocker found
+web/src/components/ScrollFade.tsx,A,web-ui,deep-file+function,reviewed,web-ux,overflow affordance/mask behavior reviewed; no blocker found
+web/src/components/SearchModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown to avoid accidental close during text selection
+web/src/components/SettingsModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown to prevent drag-selection accidental close across mouse/touch
+web/src/components/TabBar.tsx,A,web-ui,deep-file+function,reviewed,web-ux,overflow/add-agent tab strip logic reviewed; no blocker found
+web/src/components/TemplatePreviewDetails.tsx,A,web-ui,deep-file+function,reviewed,web-ux,blueprint preview/diff rendering reviewed; no blocker found
+web/src/components/ThemeToggle.tsx,A,web-ui,deep-file+function,reviewed,web-ux,theme cycling/labels reviewed across compact and full variants; no blocker found
+web/src/components/VirtualMessageList.tsx,A,web-ui,deep-file+function,reviewed,web-ux,virtualized scrolling/restore path reviewed; no release blocker found in current pass
+web/src/components/layout/AppHeader.tsx,A,web-ui,deep-file+function,reviewed,web-ux,header control surface/status toasts/actions reviewed; no blocker found
+web/src/components/layout/GroupSidebar.tsx,A,web-ui,deep-file+function,fixed,web-ux,mobile sidebar backdrop close moved to pointerdown target-check semantics
+web/src/components/layout/MobileMenuSheet.tsx,A,web-ui,deep-file+function,fixed,web-ux,mobile menu backdrop close moved to pointerdown target-check semantics
+web/src/components/layout/SortableGroupItem.tsx,A,web-ui,deep-file+function,reviewed,web-ux,sortable group item drag/select/status rendering reviewed; no blocker found
+web/src/components/modals/AddActorModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown target-check semantics
+web/src/components/modals/CreateGroupModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown target-check semantics
+web/src/components/modals/EditActorModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown target-check semantics
+web/src/components/modals/GroupEditModal.tsx,A,web-ui,deep-file+function,reviewed,web-ux,group metadata/path disclosure panel and destructive action flow revalidated
+web/src/components/modals/InboxModal.tsx,A,web-ui,deep-file+function,reviewed,web-ux,inbox rendering and mark-all-read interaction pass complete; no new blocker
+web/src/components/modals/RecipientsModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown to prevent accidental close during text selection
+web/src/components/modals/RelayMessageModal.tsx,A,web-ui,deep-file+function,fixed,web-ux,backdrop close moved to pointerdown target-check semantics
+web/src/components/modals/settings/AutomationTab.tsx,A,web-ui,deep-file+function,fixed,web-ux,notify-action type narrowing fixed and persisted-action normalization made type-safe
+web/src/components/modals/settings/BlueprintTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,export/import-replace flow reviewed; automation + guidance coverage remains coherent
+web/src/components/modals/settings/DeliveryTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,delivery pacing and auto-mark policy controls reviewed; no blocker found
+web/src/components/modals/settings/DeveloperTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,developer/registry maintenance controls reviewed; no blocker found
+web/src/components/modals/settings/GuidanceTab.tsx,A,web-ui,deep-file+function,fixed,web-ux,expanded editor backdrop close moved to pointerdown to prevent drag-select accidental dismiss
+web/src/components/modals/settings/IMBridgeTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,platform-specific credential fields and action gating reviewed; no blocker found
+web/src/components/modals/settings/MessagingTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,default recipient routing configuration reviewed; no blocker found
+web/src/components/modals/settings/RemoteAccessTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,remote-access setup guidance reviewed for operator clarity; no blocker found
+web/src/components/modals/settings/TranscriptTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,transcript policy/tail viewer controls reviewed; no blocker found
+web/src/components/modals/settings/index.ts,A,web-ui,deep-file+function,reviewed,web-ux,settings-tab export surface reviewed; no blocker found
+web/src/components/modals/settings/types.ts,A,web-ui,deep-file+function,reviewed,web-ux,settings shared types/style helpers reviewed; no blocker found
+web/src/hooks/useActorActions.ts,A,web-ui,deep-file+function,reviewed,web-ux,actor lifecycle actions and inbox-open flow revalidated; no new blocker
+web/src/hooks/useActorDisplayName.ts,A,web-ui,deep-file+function,reviewed,web-ux,actor display-name mapping and token rendering helpers reviewed; no blocker found
+web/src/hooks/useChatTab.ts,A,web-ui,deep-file+function,fixed,web-ux,removed @all important/reply modal confirm and kept deterministic send-path dependency set
+web/src/hooks/useCrossGroupRecipients.ts,A,web-ui,deep-file+function,reviewed,web-ux,cross-group recipient cache/fetch lifecycle reviewed; no blocker found
+web/src/hooks/useDeepLink.ts,A,web-ui,deep-file+function,reviewed,web-ux,deep-link queue/apply behavior reviewed; no new P0/P1 issue
+web/src/hooks/useDragDrop.ts,A,web-ui,deep-file+function,reviewed,web-ux,global drag/drop capture and size guard reviewed; no blocker found
+web/src/hooks/useGlobalEvents.ts,A,web-ui,deep-file+function,fixed,web-ux,fallback polling now periodically retries SSE to restore realtime stream
+web/src/hooks/useGroupActions.ts,A,web-ui,deep-file+function,reviewed,web-ux,group start/stop/state action flow reviewed; no new blocker
+web/src/hooks/useModalA11y.ts,A,web-ui,deep-file+function,reviewed,web-ux,stacked-modal escape/focus/scroll-lock flow rechecked; no new P0/P1 defect found
+web/src/hooks/useSSE.ts,A,web-ui,deep-file+function,reviewed,web-ux,deep pass complete; no new P0/P1 blocker in reconnect/event handling path
+web/src/hooks/useSwipeNavigation.ts,A,web-ui,deep-file+function,reviewed,web-ux,swipe threshold and tab bounds logic reviewed; no blocker found
+web/src/hooks/useTheme.ts,A,web-ui,deep-file+function,reviewed,web-ux,theme resolution/system subscription flow reviewed; no blocker found
+web/src/hooks/useViewportHeight.ts,A,web-ui,deep-file+function,reviewed,web-ux,visualViewport keyboard offset handling reviewed; no blocker found
+web/src/index.css,A,web-ui,deep-file+function,reviewed,web-ux,theme tokens and base layout invariants reviewed; no new P0/P1 blocker
+web/src/main.tsx,A,web-ui,deep-file+function,reviewed,web-ux,boot path and service-worker cleanup strategy reviewed; no blocker found
+web/src/pages/ActorTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,lazy actor-tab mount/keying behavior reviewed; no blocker found
+web/src/pages/chat/ChatComposer.tsx,A,web-ui,deep-file+function,reviewed,web-ux,deep pass complete; no new P0/P1 blocker in composer interaction flow
+web/src/pages/chat/ChatTab.tsx,A,web-ui,deep-file+function,reviewed,web-ux,chat layout and setup/checklist split reviewed; no blocker found
+web/src/pages/chat/SetupChecklist.tsx,A,web-ui,deep-file+function,reviewed,web-ux,setup checklist state/action gating reviewed; no blocker found
+web/src/pages/chat/index.ts,A,web-ui,deep-file+function,reviewed,web-ux,chat module export surface reviewed; no blocker found
+web/src/services/api.ts,A,web-ui,deep-file+function,fixed,web-ux,apiJson/apiForm now trigger auth-required callback on HTTP 401 even with non-JSON responses
+web/src/stores/index.ts,A,web-ui,deep-file+function,reviewed,web-ux,store export surface reviewed; no blocker found
+web/src/stores/useComposerStore.ts,A,web-ui,deep-file+function,reviewed,web-ux,draft persistence and per-group restore semantics reviewed; no new P0/P1 issue
+web/src/stores/useFormStore.ts,A,web-ui,deep-file+function,reviewed,web-ux,modal form state/reset paths reviewed; no blocker found
+web/src/stores/useGroupStore.ts,A,web-ui,deep-file+function,fixed,web-ux,refreshGroups now clears stale selected-group caches when selection disappears or group list becomes empty
+web/src/stores/useInboxStore.ts,A,web-ui,deep-file+function,reviewed,web-ux,inbox modal state transitions reviewed; no blocker found
+web/src/stores/useModalStore.ts,A,web-ui,deep-file+function,reviewed,web-ux,modal visibility/source state model reviewed; no blocker found
+web/src/stores/useObservabilityStore.ts,A,web-ui,deep-file+function,reviewed,web-ux,observability defaults and load coercion reviewed; no blocker found
+web/src/stores/useUIStore.ts,A,web-ui,deep-file+function,reviewed,web-ux,ui state/error/notice lifecycle reviewed; no blocker found
+web/src/styles/markdown.css,A,web-ui,deep-file+function,reviewed,web-ux,markdown/codeblock readability and wrapping rules reviewed; no new blocker
+web/src/types.ts,A,web-ui,deep-file+function,reviewed,web-ux,shared type surface (automation/runtime/ui) reviewed; no blocker found
+web/src/utils/classNames.ts,A,web-ui,deep-file+function,reviewed,web-ux,utility behavior reviewed; no blocker found
+web/src/utils/groupStatus.ts,A,web-ui,deep-file+function,fixed,web-ux,status resolution now prioritizes running=false as STOP to avoid stale paused-only presentation
+web/src/utils/ledgerEventHandlers.ts,A,web-ui,deep-file+function,reviewed,web-ux,read/ack/obligation derivation reviewed; no blocker found
+web/src/utils/mcpConfigSnippets.ts,A,web-ui,deep-file+function,reviewed,web-ux,mcp config snippet presets reviewed; no blocker found
+web/src/utils/privateEnvInput.ts,A,web-ui,deep-file+function,reviewed,web-ux,shell-style export/unset parsing reviewed for secret editor workflow; no blocker found
+web/src/utils/time.ts,A,web-ui,deep-file+function,reviewed,web-ux,time formatting utility reviewed; no blocker found
+web/tailwind.config.ts,B,misc,standard-file,reviewed,ops,tailwind semantic tokens/z-index scale reviewed
+web/tsconfig.json,B,misc,standard-file,reviewed,ops,strict tsconfig profile reviewed
+web/vite.config.ts,B,misc,standard-file,reviewed,ops,vite chunking/proxy/build output settings reviewed

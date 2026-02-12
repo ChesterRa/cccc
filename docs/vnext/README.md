@@ -3,6 +3,8 @@
 > CCCC = Collaborative Code Coordination Center
 > 
 > 一个全局的 AI Agent 协作中枢：单一 daemon 管理多个工作组，Web/CLI/IM 作为入口。
+>
+> 说明：`vnext/` 目录是历史设计与迭代记录，内容可能滞后。当前实现请优先参考 `docs/reference/*` 与 `docs/standards/*`。
 
 ## 快速开始
 
@@ -70,7 +72,7 @@ cccc send "Hello" --to @all      # 发送消息
 - **Kernel/Daemon**: Python + Pydantic
 - **Web Port**: FastAPI + Uvicorn
 - **Web UI**: React + TypeScript + Vite + Tailwind + xterm.js
-- **MCP**: stdio mode, JSON-RPC (41 tools)
+- **MCP**: stdio mode, JSON-RPC tool surface
 
 ## 相关链接
 

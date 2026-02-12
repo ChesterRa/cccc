@@ -40,10 +40,11 @@ Manage the CCCC daemon.
 cccc daemon status      # Check daemon status
 cccc daemon start       # Start daemon
 cccc daemon stop        # Stop daemon
-cccc daemon restart     # Restart daemon
-cccc daemon logs        # View daemon logs
-cccc daemon logs -f     # Follow daemon logs
 ```
+
+Notes:
+- `cccc daemon start` refuses to spawn a duplicate daemon if the pid-file process is still alive but IPC is not responding.
+- In that case, run `cccc daemon stop` (or clean stale runtime state) before retrying start.
 
 ## Group Commands
 
@@ -62,7 +63,6 @@ List all working groups.
 
 ```bash
 cccc groups             # List groups
-cccc groups --json      # JSON output
 ```
 
 ### `cccc use`
@@ -78,10 +78,15 @@ cccc use <group_id>     # Switch to group
 Manage the current working group.
 
 ```bash
-cccc group start        # Start all enabled actors
-cccc group stop         # Stop all actors
-cccc group info         # Show group info
-cccc group edit         # Edit group settings
+cccc group create --title "my-group"         # Create group
+cccc group show <group_id>                   # Show group metadata
+cccc group update --group <id> --title "..." # Update title/topic
+cccc group use <group_id> .                  # Set active scope
+cccc group start --group <id>                # Start group actors
+cccc group stop --group <id>                 # Stop group actors
+cccc group set-state idle --group <id>       # Set state: active/idle/paused/stopped
+cccc group detach-scope <scope_key> --group <id>
+cccc group delete --group <id> --confirm <id>
 ```
 
 ## Actor Commands
@@ -112,7 +117,8 @@ cccc actor start <actor_id>        # Start actor
 cccc actor stop <actor_id>         # Stop actor
 cccc actor restart <actor_id>      # Restart actor
 cccc actor remove <actor_id>       # Remove actor
-cccc actor edit <actor_id>         # Edit actor settings
+cccc actor update <actor_id> ...   # Update actor settings
+cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 ```
 
 ## Message Commands
@@ -141,9 +147,8 @@ cccc reply <event_id> "Reply text"
 View inbox.
 
 ```bash
-cccc inbox                         # View unread messages
-cccc inbox --actor-id <id>         # View actor's inbox
-cccc inbox --mark-read             # Mark all as read
+cccc inbox --actor-id <id>         # View actor unread messages
+cccc inbox --actor-id <id> --mark-read
 ```
 
 ### `cccc tail`

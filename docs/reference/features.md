@@ -152,20 +152,64 @@ Ledger (complete memory)
 
 ## Automation
 
-### Retained Mechanisms
+Automation is now a rule engine (for reminders + operational actions), not only built-in nudges.
 
-| Mechanism | Config | Default | Description |
-|-----------|--------|---------|-------------|
+### Rule Triggers
+
+| Trigger type | Web label | Protocol | Typical use |
+|--------------|-----------|----------|-------------|
+| Interval | Every N minutes | `every_seconds` | Standup/checkpoint reminders |
+| Recurring schedule | Daily / Weekly / Monthly | `cron` | Fixed-time recurring reminders |
+| One-time schedule | Countdown / Exact time | `at` | One-off reminders and operations |
+
+Notes:
+- Web UI intentionally hides raw cron expression editing by default.
+- Operational actions are intentionally constrained to one-time trigger.
+
+### Rule Actions
+
+| Action | Who configures | Trigger support | Description |
+|--------|----------------|-----------------|-------------|
+| `notify` | Web + MCP | interval / recurring / one-time | Send system notification to selected recipients |
+| `group_state` | Web (foreman/admin) | one-time only | Set group state (`active` / `idle` / `paused` / `stopped`) |
+| `actor_control` | Web (foreman/admin) | one-time only | Start/stop/restart selected actor runtimes |
+
+### One-Time Completion Semantics
+
+- One-time rules auto-mark as completed after firing.
+- Completed one-time rules are disabled (no repeated fire).
+- UI supports clearing completed items for cleanup.
+
+### Built-in Policies (separate from custom rules)
+
+| Policy | Config | Default | Description |
+|--------|--------|---------|-------------|
 | Nudge | `nudge_after_seconds` | 300s | Unread message timeout reminder |
+| Reply-required nudge | `reply_required_nudge_after_seconds` | 300s | Follow-up for required-reply obligations |
+| Attention-ack nudge | `attention_ack_nudge_after_seconds` | 600s | Follow-up for attention messages lacking ACK |
+| Unread nudge | `unread_nudge_after_seconds` | 900s | Inbox still-unread reminder |
 | Actor idle | `actor_idle_timeout_seconds` | 600s | Actor idle notification to foreman |
-| Keepalive | `keepalive_delay_seconds` | 120s | Next: reminder after declaration |
+| Keepalive | `keepalive_delay_seconds` | 120s | Foreman keepalive reminder |
 | Silence | `silence_timeout_seconds` | 600s | Group silence notification to foreman |
+| Help nudge | `help_nudge_interval_seconds` / `help_nudge_min_messages` | 600s / 10 | Prompt actor to revisit `cccc_help` |
 
 ### Delivery Throttling
 
 | Config | Default | Description |
 |--------|---------|-------------|
 | `min_interval_seconds` | 60s | Minimum interval between consecutive deliveries |
+
+### MCP Management Surface
+
+```text
+cccc_automation_state
+cccc_automation_manage(op=create|update|enable|disable|delete|replace_all, ...)
+```
+
+`cccc_automation_manage` is optimized for reminder management by agents:
+- Foreman can manage all notify reminders and full replace.
+- Peer can manage only own-personal or shared notify reminders.
+- Operational actions (`group_state`, `actor_control`) stay Web/Admin-facing.
 
 ## Web UI
 

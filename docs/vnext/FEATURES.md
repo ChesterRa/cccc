@@ -1,5 +1,7 @@
 # CCCC vNext — Features
 
+> 说明：本页属于 vNext 历史设计快照，可能滞后于当前实现。当前行为以 `docs/reference/*` 与 `docs/standards/*` 为准。
+
 ## 1. IM 风格消息机制
 
 ### 1.1 核心契约

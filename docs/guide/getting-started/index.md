@@ -60,18 +60,24 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
 :::
 
-### From TestPyPI (recommended for RC)
+### From PyPI
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+### From TestPyPI (for explicit RC testing)
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+  cccc-pair==<rc-version>
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/dweb-channel/cccc
+git clone https://github.com/ChesterRa/cccc
 cd cccc
 pip install -e .
 ```
@@ -88,3 +94,6 @@ This checks Python version, available runtimes, and system configuration.
 
 - [Web UI Quick Start](./web) - Get started with the visual interface
 - [CLI Quick Start](./cli) - Get started with the command line
+- [Use Cases](/guide/use-cases) - Learn high-ROI real-world patterns
+- [Operations Runbook](/guide/operations) - Run CCCC with operator-grade reliability
+- [Positioning](/reference/positioning) - Decide where CCCC should sit in your stack

@@ -2,6 +2,14 @@
 
 This repo publishes the Python package **`cccc-pair`** (CLI command: **`cccc`**).
 
+## RC19 Program
+
+For `v0.4.0rc19`, release execution is governed by:
+
+- `docs/release/RC19_RELEASE_BOARD.md`
+- `docs/release/RC19_AUDIT_METHOD.md`
+- `docs/release/rc19_file_matrix.csv` (generated)
+
 ## What the release pipeline produces
 
 The GitHub Actions workflow builds and uploads:
@@ -17,7 +25,7 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
 | Git tag | Upload target | Expected `pyproject.toml` version |
 |--------|----------------|-----------------------------------|
 | `v0.4.0` | PyPI | `0.4.0` |
-| `v0.4.0-rc16` | TestPyPI | `0.4.0rc16` |
+| `v0.4.0-rcN` | TestPyPI | `0.4.0rcN` |
 | `v0.4.0-alpha1` | TestPyPI | `0.4.0a1` |
 | `v0.4.0-beta1` | TestPyPI | `0.4.0b1` |
 
@@ -32,7 +40,7 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
    - `python -m pip install --force-reinstall dist/*.whl`
    - `cccc version`
 4. Tag and push:
-   - `git tag -a v0.4.0-rc16 -m "v0.4.0-rc16"`
+   - `git tag -a v0.4.0-rcN -m "v0.4.0-rcN"`
    - `git push --tags`
 
 ## Installing an RC from TestPyPI
@@ -40,5 +48,5 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+  cccc-pair==0.4.0rcN
 ```
