@@ -601,3 +601,15 @@ def handle_presence_get(args: Dict[str, Any]) -> DaemonResponse:
         ],
         "heartbeat_timeout_seconds": presence.heartbeat_timeout_seconds,
     })
+
+
+def try_handle_context_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
+    if op == "context_get":
+        return handle_context_get(args)
+    if op == "context_sync":
+        return handle_context_sync(args)
+    if op == "task_list":
+        return handle_task_list(args)
+    if op == "presence_get":
+        return handle_presence_get(args)
+    return None

@@ -142,3 +142,13 @@ def stop_all() -> None:
     """Stop all actors (both PTY and headless)."""
     pty_runner.SUPERVISOR.stop_all()
     headless_runner.SUPERVISOR.stop_all()
+
+
+def try_handle_headless_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
+    if op == "headless_status":
+        return handle_headless_status(args)
+    if op == "headless_set_status":
+        return handle_headless_set_status(args)
+    if op == "headless_ack_message":
+        return handle_headless_ack_message(args)
+    return None

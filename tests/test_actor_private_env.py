@@ -5,6 +5,70 @@ from pathlib import Path
 
 
 class TestActorPrivateEnv(unittest.TestCase):
+    def test_private_env_user_only_permissions(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import load_group
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+
+                create, _ = handle_request(
+                    DaemonRequest.model_validate({"op": "group_create", "args": {"title": "t", "topic": "", "by": "user"}})
+                )
+                self.assertTrue(create.ok, getattr(create, "error", None))
+                group_id = str((create.result or {}).get("group_id") or "").strip()
+                self.assertTrue(group_id)
+
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                add_actor(
+                    group,
+                    actor_id="peer1",
+                    title="peer1",
+                    command=[],
+                    env={},
+                    enabled=False,
+                    runner="headless",
+                    runtime="codex",
+                )
+
+                denied_update, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {
+                            "op": "actor_env_private_update",
+                            "args": {
+                                "group_id": group_id,
+                                "actor_id": "peer1",
+                                "by": "peer1",
+                                "set": {"OPENAI_API_KEY": "secret"},
+                            },
+                        }
+                    )
+                )
+                self.assertFalse(denied_update.ok)
+                self.assertEqual(getattr(denied_update.error, "code", ""), "permission_denied")
+
+                denied_keys, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {
+                            "op": "actor_env_private_keys",
+                            "args": {"group_id": group_id, "actor_id": "peer1", "by": "peer1"},
+                        }
+                    )
+                )
+                self.assertFalse(denied_keys.ok)
+                self.assertEqual(getattr(denied_keys.error, "code", ""), "permission_denied")
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_private_env_roundtrip_and_merge(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.server import handle_request, _merge_actor_env_with_private
@@ -148,6 +212,45 @@ class TestActorPrivateEnv(unittest.TestCase):
                 )
                 self.assertTrue(listed.ok, getattr(listed, "error", None))
                 self.assertEqual(set(listed.result.get("keys") or []), {"OPENAI_API_KEY"})
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_actor_add_rejects_env_private_for_non_user(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+
+                create, _ = handle_request(
+                    DaemonRequest.model_validate({"op": "group_create", "args": {"title": "t", "topic": "", "by": "user"}})
+                )
+                self.assertTrue(create.ok, getattr(create, "error", None))
+                group_id = str((create.result or {}).get("group_id") or "").strip()
+                self.assertTrue(group_id)
+
+                denied, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {
+                            "op": "actor_add",
+                            "args": {
+                                "group_id": group_id,
+                                "actor_id": "peer1",
+                                "runtime": "codex",
+                                "runner": "headless",
+                                "env_private": {"OPENAI_API_KEY": "secret"},
+                                "by": "peer1",
+                            },
+                        }
+                    )
+                )
+                self.assertFalse(denied.ok)
+                self.assertEqual(getattr(denied.error, "code", ""), "actor_add_failed")
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

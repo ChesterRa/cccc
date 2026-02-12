@@ -58,7 +58,51 @@ These files are large and should stay under active watch during GA hardening:
 ## Current Progress
 
 - `D1` started: group lifecycle invariant test and several non-runtime-behavior tests now use `runner=headless`.
+  - Added lifecycle-runner guardrail test (`tests/test_lifecycle_tests_headless_runner.py`) to prevent reintroducing PTY/binary dependency in lifecycle invariants.
 - `D2` completed: MCP tool dispatcher is split by namespace and tool schema moved out of `mcp/server.py` to `mcp/toolspecs.py`.
-- `D3` in progress: `group_automation_*` operation family extracted from `daemon/server.py` into `daemon/ops/automation_ops.py` (behavior-preserving slice).
+- `D3` completed:
+  - `group_automation_*` operation family extracted from `daemon/server.py` into `daemon/ops/automation_ops.py`.
+  - `group_settings_update` extracted into `daemon/ops/group_settings_ops.py`.
+  - `attach / group_create / group_template_*` bootstrap flow extracted into `daemon/ops/group_bootstrap_ops.py`.
+  - `group_show / group_update / group_detach_scope / group_use / group_delete` extracted into `daemon/ops/group_ops.py`.
+  - `group_start / group_stop` extracted into `daemon/ops/group_lifecycle_ops.py`.
+  - `groups / registry_reconcile` extracted into `daemon/ops/registry_ops.py`.
+  - `ping / shutdown / observability_*` extracted into `daemon/ops/daemon_core_ops.py`.
+  - `group_set_state` extracted into `daemon/ops/group_state_ops.py`.
+  - `actor_add` extracted into `daemon/ops/actor_add_ops.py`.
+  - `actor_list / actor_env_private_keys / actor_env_private_update` extracted into `daemon/ops/actor_ops.py`.
+  - `actor_remove` extracted into `daemon/ops/actor_membership_ops.py`.
+  - `actor_update` extracted into `daemon/ops/actor_update_ops.py`.
+  - `actor_start / actor_stop / actor_restart` extracted into `daemon/ops/actor_lifecycle_ops.py`.
+  - Internal actor startup routine extracted into `daemon/ops/actor_runtime_ops.py` (server keeps thin wrapper).
+  - `inbox_list / inbox_mark_read` extracted into `daemon/ops/inbox_read_ops.py`.
+  - `chat_ack / inbox_mark_all_read` extracted into `daemon/ops/inbox_ack_ops.py`.
+  - `send / reply` extracted into `daemon/ops/chat_ops.py`.
+  - `term_resize / ledger_snapshot / ledger_compact / send_cross_group` extracted into `daemon/ops/maintenance_ops.py`.
+  - Socket-loop special ops `term_attach / events_stream` extracted into `daemon/ops/socket_special_ops.py`.
+  - Socket accept-loop request handling extracted into `daemon/ops/socket_accept_ops.py`.
+  - Context/headless inline dispatch converted to `try_handle_context_op` and `try_handle_headless_op`.
+  - IM bridge stop/cleanup process logic extracted into `daemon/im_bridge_ops.py`.
+  - IM bridge bootstrap helper extracted into `daemon/bootstrap_im_ops.py`.
+  - Actor autostart bootstrap helper extracted into `daemon/bootstrap_actor_ops.py`.
+  - Runtime MCP install/check logic extracted into `daemon/mcp_install.py`.
+  - Daemon client transport helper extracted into `daemon/client_ops.py`.
+  - Actor private env storage/validation/merge logic extracted into `daemon/private_env_ops.py`.
+  - Runner state file read/write/cleanup logic extracted into `daemon/runner_state_ops.py`.
+  - Chat flow helper logic (`auto-wake` + attachment normalization) extracted into `daemon/ops/chat_support_ops.py`.
+  - Socket protocol helper logic (`recv/send json`, response dump, stream bootstrap, error factory) extracted into `daemon/socket_protocol_ops.py`.
+  - Request dispatch chain extracted into `daemon/request_dispatch_ops.py`; `server.handle_request` is now a thin delegator.
+  - Daemon run-loop orchestration (automation thread, bind/write endpoint, bootstrap thread, shutdown cleanup) extracted into `daemon/serve_ops.py`.
+  - `system_notify / notify_ack` extracted into `daemon/ops/system_notify_ops.py`.
+  - `debug_snapshot / terminal_tail / terminal_clear / debug_tail_logs / debug_clear_logs` extracted into `daemon/ops/diagnostics_ops.py`.
+  - `daemon/server.py` reduced to <1000 LOC while preserving request-dispatch behavior.
+  - Request-dispatch dependency wiring moved from string-key dict access to typed `RequestDispatchDeps` field access, removing key-name drift risk at compile/review time.
+  - Extracted slices are behavior-preserving and validated by full regression/build checks.
+- `D5` completed:
+  - IPC docs parity test now scans both `daemon/server.py` and `daemon/ops/*.py` for `op` handlers, preventing modularization-era doc drift.
+  - Added MCP toolspec/dispatch parity test (`tests/test_mcp_toolspec_dispatch_parity.py`) to block MCP tool-name drift between `ports/mcp/toolspecs.py` and `ports/mcp/server.py`.
+  - Added MCP toolspec schema guard (`tests/test_mcp_toolspec_schema_guard.py`) to enforce stable tool schema shape and naming conventions.
+  - Added CLI reference parity guard (`tests/test_cli_reference_parity.py`) to prevent reintroducing removed command/docs drift.
+  - Added Web automation docs parity guard (`tests/test_web_automation_docs_parity.py`) to ensure guide/reference coverage stays aligned with current editor trigger/action surface.
 - `D4` completed: `AutomationTab` extracted shared utilities and dedicated subcomponents (`AutomationRuleList`, `AutomationRuleEditorModal`, `AutomationSnippetModal`, `AutomationPoliciesSection`) while preserving behavior.
-- Remaining items are tracked here and should be landed in small, reviewable PRs.
+- Must-fix debt items (`D1`~`D5`) are now closed for `0.4.0` pre-GA baseline.
