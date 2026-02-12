@@ -131,26 +131,20 @@ def _resolve_self_actor_id(arguments: Dict[str, Any]) -> str:
 def _resolve_by_actor_id(arguments: Dict[str, Any]) -> str:
     """Resolve the caller 'by' actor id from env or tool arguments (env wins).
 
-    Accepts both `by` and `actor_id` from tool arguments for compatibility.
+    Only reads the ``by`` argument -- NOT ``actor_id``, which in many tools
+    (actor_add, actor_start, actor_stop, actor_restart) refers to the
+    *target* actor, not the caller.
     """
     env_aid = _env_str("CCCC_ACTOR_ID")
     arg_by = str(arguments.get("by") or "").strip()
-    arg_actor_id = str(arguments.get("actor_id") or "").strip()
-    if arg_by and arg_actor_id and arg_by != arg_actor_id:
-        raise MCPError(
-            code="actor_id_mismatch",
-            message="by/actor_id mismatch (tool args must use one consistent actor id)",
-            details={"by": arg_by, "actor_id": arg_actor_id},
-        )
-    arg_aid = arg_by or arg_actor_id
-    aid = env_aid or arg_aid
+    aid = env_aid or arg_by
     if not aid:
-        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by/actor_id)")
-    if env_aid and arg_aid and arg_aid != env_aid:
+        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by)")
+    if env_aid and arg_by and arg_by != env_aid:
         raise MCPError(
             code="actor_id_mismatch",
-            message="actor id mismatch (tool args must match CCCC_ACTOR_ID)",
-            details={"env": env_aid, "arg": arg_aid},
+            message="by mismatch (tool args must match CCCC_ACTOR_ID)",
+            details={"env": env_aid, "arg": arg_by},
         )
     return _validate_self_actor_id(aid)
 
