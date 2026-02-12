@@ -4,6 +4,7 @@ This section tracks the `v0.4.0rc19` release program from full-system audit to p
 
 ## Documents
 
+- [Technical Debt Board (`0.4.0`)](./DEBT_BOARD_0_4_0)
 - [RC19 Release Board](./RC19_RELEASE_BOARD)
 - [Audit Method](./RC19_AUDIT_METHOD)
 - [Owner Map](./RC19_OWNER_MAP)

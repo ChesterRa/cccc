@@ -84,6 +84,7 @@ export default defineConfig({
           text: 'Release Program',
           items: [
             { text: 'Overview', link: '/release/' },
+            { text: 'Technical Debt Board (0.4.0)', link: '/release/DEBT_BOARD_0_4_0' },
             { text: 'RC19 Release Board', link: '/release/RC19_RELEASE_BOARD' },
             { text: 'Audit Method', link: '/release/RC19_AUDIT_METHOD' },
             { text: 'Owner Map', link: '/release/RC19_OWNER_MAP' },
