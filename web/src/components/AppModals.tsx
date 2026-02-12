@@ -432,6 +432,7 @@ export function AppModals({
               setCreateTemplatePreview(null);
               setCreateTemplateError("");
               setCreateTemplateBusy(false);
+              await refreshGroups();
               setSelectedGroupId(existing);
               return;
             }

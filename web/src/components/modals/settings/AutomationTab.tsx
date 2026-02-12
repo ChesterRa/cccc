@@ -216,15 +216,15 @@ function nowId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}`;
 }
 
-function defaultNotifyAction(): AutomationRuleAction {
+function defaultNotifyAction(): Extract<AutomationRuleAction, { kind: "notify" }> {
   return { kind: "notify", priority: "high", requires_ack: false, snippet_ref: null, message: "" };
 }
 
-function defaultGroupStateAction(): AutomationRuleAction {
+function defaultGroupStateAction(): Extract<AutomationRuleAction, { kind: "group_state" }> {
   return { kind: "group_state", state: "paused" };
 }
 
-function defaultActorControlAction(): AutomationRuleAction {
+function defaultActorControlAction(): Extract<AutomationRuleAction, { kind: "actor_control" }> {
   return { kind: "actor_control", operation: "restart", targets: ["@all"] };
 }
 
@@ -460,7 +460,7 @@ export function AutomationTab(props: AutomationTabProps) {
     const normalizedRules = source.rules.map((rule) => {
       if (!rule.action || rule.action.kind !== "notify") return rule;
       const notifyAction = rule.action as Extract<AutomationRuleAction, { kind: "notify" }>;
-      const { title: _unusedTitle, ...rest } = notifyAction;
+      const { kind: _kind, title: _unusedTitle, ...rest } = notifyAction;
       return { ...rule, action: { kind: "notify", ...rest } as AutomationRuleAction };
     });
     return { ...source, rules: normalizedRules };

@@ -264,7 +264,9 @@ export function GroupSidebar({
       {isOpen && (
         <div
           className="fixed inset-0 z-30 md:hidden glass-overlay animate-fade-in"
-          onClick={onClose}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) onClose();
+          }}
           aria-hidden="true"
         />
       )}

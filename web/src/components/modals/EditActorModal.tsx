@@ -131,7 +131,7 @@ export function EditActorModal({
   return (
     <div
       className={`fixed inset-0 flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/60" : "bg-black/40"}`}
-      onMouseDown={(e) => {
+      onPointerDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
       role="dialog"

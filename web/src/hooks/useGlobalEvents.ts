@@ -39,6 +39,11 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
         fallbackTimer = null;
         if (!document.hidden) {
           refreshGroupsRef.current();
+          // While in polling fallback, periodically attempt to restore SSE.
+          // If reconnect succeeds, onopen() clears fallback polling.
+          if (!es) {
+            connectSSE();
+          }
         }
         fallbackDelayMs = Math.min(fallbackDelayMs * 2, 60000);
         scheduleFallbackPoll();
@@ -46,6 +51,7 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
     }
 
     function connectSSE() {
+      if (es) return;
       es = new EventSource(api.withAuthToken("/api/v1/events/stream"));
       es.addEventListener("event", (e) => {
         try {

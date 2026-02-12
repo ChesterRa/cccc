@@ -117,6 +117,9 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     // Network error
     return makeErrorResponse("NETWORK_ERROR", e instanceof Error ? e.message : "Network request failed");
   }
+  if (resp.status === 401) {
+    _authRequiredHandler?.();
+  }
 
   const text = await resp.text();
   if (!text) {
@@ -153,6 +156,9 @@ export async function apiForm<T>(path: string, form: FormData, init?: RequestIni
     });
   } catch (e) {
     return makeErrorResponse("NETWORK_ERROR", e instanceof Error ? e.message : "Network request failed");
+  }
+  if (resp.status === 401) {
+    _authRequiredHandler?.();
   }
 
   const text = await resp.text();

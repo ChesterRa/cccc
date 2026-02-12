@@ -280,12 +280,6 @@ export function useChatTab({
     const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
 
     const prio = replyRequired ? "attention" : (priority || "normal");
-    const isExplicitAll = toTokens.includes("@all");
-    if (isExplicitAll && (replyRequired || prio === "attention")) {
-      const modeLabel = replyRequired ? "NEED REPLY" : "IMPORTANT";
-      const ok = window.confirm(`Send ${modeLabel} to @all?`);
-      if (!ok) return;
-    }
 
     setBusy("send");
     try {
@@ -355,7 +349,6 @@ export function useChatTab({
     inChatWindow,
     setBusy,
     showError,
-    showNotice,
     setDestGroupId,
     clearComposer,
     clearDraft,

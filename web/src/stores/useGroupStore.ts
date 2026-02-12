@@ -406,8 +406,34 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
         const cur = get().selectedGroupId;
         const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);
-        if (!curExists && next.length > 0) {
-          set({ selectedGroupId: String(next[0].group_id || "") });
+        if (!curExists) {
+          if (next.length > 0) {
+            // Selected group disappeared (or none selected): switch to first group
+            // and clear stale per-group caches so UI does not render old data while switching.
+            set({
+              selectedGroupId: String(next[0].group_id || ""),
+              groupDoc: null,
+              events: [],
+              actors: [],
+              groupContext: null,
+              groupSettings: null,
+              chatWindow: null,
+              hasMoreHistory: true,
+            });
+          } else {
+            // No groups remain: clear selection + per-group caches.
+            set({
+              selectedGroupId: "",
+              groupDoc: null,
+              events: [],
+              actors: [],
+              groupContext: null,
+              groupSettings: null,
+              chatWindow: null,
+              hasMoreHistory: false,
+            });
+          }
+          return;
         }
 
         // Keep groupDoc's basic fields in sync with the group list. This matters when

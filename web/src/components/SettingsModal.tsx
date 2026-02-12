@@ -790,7 +790,7 @@ export function SettingsModal({
       {/* Backdrop */}
       <div
         className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
-        onClick={onClose}
+        onPointerDown={onClose}
         aria-hidden="true"
       />
 

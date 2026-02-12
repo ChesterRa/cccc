@@ -382,7 +382,9 @@ export function ContextModal({
       {/* Backdrop */}
       <div
         className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
-        onClick={onClose}
+        onPointerDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
         aria-hidden="true"
       />
 
@@ -1660,7 +1662,10 @@ export function ContextModal({
         <div className="fixed inset-0 z-overlay flex items-center justify-center p-4 animate-fade-in">
           <div
             className={isDark ? "absolute inset-0 bg-black/70" : "absolute inset-0 bg-black/50"}
-            onClick={() => { if (!notifyBusy) setShowNotifyModal(false); }}
+            onPointerDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              if (!notifyBusy) setShowNotifyModal(false);
+            }}
             aria-hidden="true"
           />
           <div

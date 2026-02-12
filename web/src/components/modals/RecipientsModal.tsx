@@ -28,7 +28,7 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
       aria-modal="true"
       aria-label="Recipient status"
     >
-      <div className={classNames("absolute inset-0", isDark ? "bg-black/60" : "bg-black/40")} onClick={onClose} aria-hidden="true" />
+      <div className={classNames("absolute inset-0", isDark ? "bg-black/60" : "bg-black/40")} onPointerDown={onClose} aria-hidden="true" />
       <div
         ref={modalRef}
         className={classNames(

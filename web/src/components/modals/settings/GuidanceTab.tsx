@@ -212,7 +212,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
           className="fixed inset-0 z-[1000]"
           role="dialog"
           aria-modal="true"
-          onMouseDown={(e) => {
+          onPointerDown={(e) => {
             if (e.target === e.currentTarget) setExpandedKind(null);
           }}
         >

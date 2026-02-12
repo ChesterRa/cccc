@@ -59,7 +59,9 @@ export function MobileMenuSheet({
     <div className="fixed inset-0 z-50 md:hidden animate-fade-in">
       <div
         className="absolute inset-0 glass-overlay"
-        onClick={onClose}
+        onPointerDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
         aria-hidden="true"
       />
 
