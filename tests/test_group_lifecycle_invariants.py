@@ -51,7 +51,7 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
                     "actor_id": "a1",
                     "title": "A1",
                     "runtime": "codex",
-                    "runner": "pty",
+                    "runner": "headless",
                 },
             )
             self.assertTrue(add_1_resp.ok, getattr(add_1_resp, "error", None))
@@ -64,7 +64,7 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
                     "actor_id": "a2",
                     "title": "A2",
                     "runtime": "codex",
-                    "runner": "pty",
+                    "runner": "headless",
                 },
             )
             self.assertTrue(add_2_resp.ok, getattr(add_2_resp, "error", None))
