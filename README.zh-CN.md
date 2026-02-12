@@ -42,7 +42,7 @@ python -m pip install -U cccc-pair
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc19
+  cccc-pair==0.4.0rc20
 ```
 
 ### 2) 启动

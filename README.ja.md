@@ -87,7 +87,7 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc19
+  cccc-pair==0.4.0rc20
 ```
 
 ### ソースからインストール

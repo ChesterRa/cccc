@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.4.0rc19"
+version = "0.4.0rc20"
 description = "Global multi-agent delivery kernel with working groups, scopes, and an append-only collaboration ledger"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
