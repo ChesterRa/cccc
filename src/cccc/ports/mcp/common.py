@@ -9,7 +9,9 @@ from ...daemon.server import call_daemon
 class MCPError(Exception):
     """MCP tool call error"""
 
-    def __init__(self, code: str, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, code: str, message: str, details: Optional[Dict[str, Any]] = None
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
@@ -26,7 +28,10 @@ def _validate_self_actor_id(actor_id: str) -> str:
     if not aid:
         raise MCPError(code="missing_actor_id", message="missing actor_id")
     if aid == "user":
-        raise MCPError(code="invalid_actor_id", message="actor_id 'user' is reserved; agents must not act as user")
+        raise MCPError(
+            code="invalid_actor_id",
+            message="actor_id 'user' is reserved; agents must not act as user",
+        )
     return aid
 
 
@@ -36,7 +41,10 @@ def _resolve_group_id(arguments: Dict[str, Any]) -> str:
     arg_gid = str(arguments.get("group_id") or "").strip()
     gid = env_gid or arg_gid
     if not gid:
-        raise MCPError(code="missing_group_id", message="missing group_id (set CCCC_GROUP_ID env or pass group_id)")
+        raise MCPError(
+            code="missing_group_id",
+            message="missing group_id (set CCCC_GROUP_ID env or pass group_id)",
+        )
     if env_gid and arg_gid and arg_gid != env_gid:
         raise MCPError(
             code="group_id_mismatch",
@@ -52,7 +60,10 @@ def _resolve_self_actor_id(arguments: Dict[str, Any]) -> str:
     arg_aid = str(arguments.get("actor_id") or "").strip()
     aid = env_aid or arg_aid
     if not aid:
-        raise MCPError(code="missing_actor_id", message="missing actor_id (set CCCC_ACTOR_ID env or pass actor_id)")
+        raise MCPError(
+            code="missing_actor_id",
+            message="missing actor_id (set CCCC_ACTOR_ID env or pass actor_id)",
+        )
     if env_aid and arg_aid and arg_aid != env_aid:
         raise MCPError(
             code="actor_id_mismatch",
@@ -71,7 +82,10 @@ def _resolve_caller_from_by(arguments: Dict[str, Any]) -> str:
     arg_by = str(arguments.get("by") or "").strip()
     aid = env_aid or arg_by
     if not aid:
-        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by)")
+        raise MCPError(
+            code="missing_actor_id",
+            message="missing actor id (set CCCC_ACTOR_ID env or pass by)",
+        )
     if env_aid and arg_by and arg_by != env_aid:
         raise MCPError(
             code="actor_id_mismatch",
@@ -95,7 +109,10 @@ def _resolve_caller_actor_id(arguments: Dict[str, Any]) -> str:
     arg_aid = arg_by or arg_actor_id
     aid = env_aid or arg_aid
     if not aid:
-        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by/actor_id)")
+        raise MCPError(
+            code="missing_actor_id",
+            message="missing actor id (set CCCC_ACTOR_ID env or pass by/actor_id)",
+        )
     if env_aid and arg_aid and arg_aid != env_aid:
         raise MCPError(
             code="actor_id_mismatch",
@@ -103,11 +120,6 @@ def _resolve_caller_actor_id(arguments: Dict[str, Any]) -> str:
             details={"env": env_aid, "arg": arg_aid},
         )
     return _validate_self_actor_id(aid)
-
-
-def _resolve_by_actor_id(arguments: Dict[str, Any]) -> str:
-    """Backward-compatible alias of ``_resolve_caller_actor_id``."""
-    return _resolve_caller_actor_id(arguments)
 
 
 def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -119,7 +131,9 @@ def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
             raise MCPError(
                 code=str(err.get("code") or "daemon_error"),
                 message=str(err.get("message") or "daemon error"),
-                details=err.get("details") if isinstance(err.get("details"), dict) else {},
+                details=(
+                    err.get("details") if isinstance(err.get("details"), dict) else {}
+                ),
             )
         raise MCPError(code="daemon_error", message=str(err))
     return resp.get("result") if isinstance(resp.get("result"), dict) else {}
