@@ -6,7 +6,7 @@
 
 Run multiple coding agents as a **durable, coordinated system** — not a pile of disconnected terminal sessions.
 
-`pip install cccc-pair && cccc` — zero infrastructure, production-grade power.
+Three commands to go. Zero infrastructure, production-grade power.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
@@ -50,9 +50,14 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 ### Install
 
 ```bash
-pip install -U cccc-pair
+pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  cccc-pair
 ```
 
+> **Note**: CCCC `0.4.0` is in release-candidate stage. The package is currently published to [TestPyPI](https://test.pypi.org/project/cccc-pair/). Once the stable release lands on PyPI, a simple `pip install cccc-pair` will suffice.
+>
 > **Requirements**: Python 3.9+, macOS / Linux / Windows
 
 ### Launch
@@ -323,7 +328,10 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 ### pip (recommended)
 
 ```bash
-pip install -U cccc-pair
+pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  cccc-pair
 ```
 
 ### From source

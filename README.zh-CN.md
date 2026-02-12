@@ -6,7 +6,7 @@
 
 让多个 coding agent 作为一套**持久化、可协调的系统**运行 — 而不是一堆各自为政的终端窗口。
 
-`pip install cccc-pair && cccc` — 零基础设施，生产级能力。
+三条命令即可开始。零基础设施，生产级能力。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
@@ -50,10 +50,15 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 ### 安装
 
 ```bash
-pip install -U cccc-pair
+pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  cccc-pair
 ```
 
-> **环境要求**：Python 3.9+，macOS / Linux / Windows
+> **注意**: CCCC `0.4.0` 处于发布候选阶段，当前发布在 [TestPyPI](https://test.pypi.org/project/cccc-pair/) 上。正式版发布后只需 `pip install cccc-pair` 即可。
+>
+> **环境要求**: Python 3.9+，macOS / Linux / Windows
 
 ### 启动
 
@@ -323,7 +328,10 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 ### pip（推荐）
 
 ```bash
-pip install -U cccc-pair
+pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  cccc-pair
 ```
 
 ### 从源码安装
