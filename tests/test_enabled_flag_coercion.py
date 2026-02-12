@@ -31,7 +31,7 @@ class TestEnabledFlagCoercion(unittest.TestCase):
                         "group_id": group_id,
                         "actor_id": actor_id,
                         "runtime": "codex",
-                        "runner": "pty",
+                        "runner": "headless",
                         "by": "user",
                     },
                 }
@@ -118,7 +118,7 @@ class TestEnabledFlagCoercion(unittest.TestCase):
                 with patch.object(
                     daemon_server,
                     "_start_actor_process",
-                    return_value={"success": True, "event": None, "effective_runner": "pty", "error": None},
+                    return_value={"success": True, "event": None, "effective_runner": "headless", "error": None},
                 ) as start_mock:
                     send_resp, _ = handle_request(
                         DaemonRequest.model_validate(

@@ -46,7 +46,7 @@ class TestRegistryReconcileAndAutoWake(unittest.TestCase):
                                 "group_id": gid,
                                 "actor_id": "peer1",
                                 "runtime": "codex",
-                                "runner": "pty",
+                                "runner": "headless",
                                 "by": "user",
                             },
                         }

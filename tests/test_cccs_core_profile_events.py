@@ -45,7 +45,7 @@ class TestCCCSCoreProfileEvents(unittest.TestCase):
                     "actor_id": "peer1",
                     "title": "Peer 1",
                     "runtime": "codex",
-                    "runner": "pty",
+                    "runner": "headless",
                 },
             )
             self.assertTrue(add_actor_resp.ok, getattr(add_actor_resp, "error", None))

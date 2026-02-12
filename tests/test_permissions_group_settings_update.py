@@ -46,7 +46,7 @@ class TestGroupSettingsUpdatePermission(unittest.TestCase):
                             "actor_id": "foreman_1",
                             "title": "Foreman",
                             "runtime": "codex",
-                            "runner": "pty",
+                            "runner": "headless",
                         },
                     }
                 )
@@ -63,7 +63,7 @@ class TestGroupSettingsUpdatePermission(unittest.TestCase):
                             "actor_id": "peer_1",
                             "title": "Peer",
                             "runtime": "codex",
-                            "runner": "pty",
+                            "runner": "headless",
                         },
                     }
                 )
