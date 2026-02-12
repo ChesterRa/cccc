@@ -5,6 +5,9 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { ModalFrame } from "./modals/ModalFrame";
+import { ContextSectionJumpBar } from "./modals/context/ContextSectionJumpBar";
+import { ProjectSavedNotifyModal } from "./modals/context/ProjectSavedNotifyModal";
 
 interface ContextModalProps {
   isOpen: boolean;
@@ -378,107 +381,19 @@ export function ContextModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
-      {/* Backdrop */}
-      <div
-        className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
-        onPointerDown={(e) => {
-          if (e.target === e.currentTarget) onClose();
-        }}
-        aria-hidden="true"
-      />
-
-      {/* Modal */}
-      <div
-        className={`relative w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-2xl flex flex-col border shadow-2xl animate-scale-in rounded-none sm:rounded-xl ${isDark
-          ? "bg-slate-900 border-slate-700"
-          : "bg-white border-gray-200"
-          }`}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="context-modal-title"
+    <>
+      <ModalFrame
+        isDark={isDark}
+        onClose={onClose}
+        titleId="context-modal-title"
+        title="📋 Project Context"
+        closeAriaLabel="Close context modal"
+        panelClassName="w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-2xl"
+        modalRef={modalRef}
       >
-        {/* Header */}
-        <div className={`flex items-center justify-between px-5 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-800" : "border-gray-200"
-          }`}>
-          <h2 id="context-modal-title" className={`text-lg font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
-            📋 Project Context
-          </h2>
-          <button
-            onClick={onClose}
-            className={`text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors ${isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-              }`}
-            aria-label="Close context modal"
-          >
-            ×
-          </button>
-        </div>
-
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={classNames(
-                "px-2.5 py-1.5 rounded-xl text-xs transition-all glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
-              )}
-              onClick={() => scrollToSection("context-project")}
-            >
-              PROJECT
-            </button>
-            <button
-              type="button"
-              className={classNames(
-                "px-2.5 py-1.5 rounded-xl text-xs transition-all glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
-              )}
-              onClick={() => scrollToSection("context-vision")}
-            >
-              Vision
-            </button>
-            <button
-              type="button"
-              className={classNames(
-                "px-2.5 py-1.5 rounded-xl text-xs transition-all glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
-              )}
-              onClick={() => scrollToSection("context-sketch")}
-            >
-              Sketch
-            </button>
-            <button
-              type="button"
-              className={classNames(
-                "px-2.5 py-1.5 rounded-xl text-xs transition-all glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
-              )}
-              onClick={() => scrollToSection("context-tasks")}
-            >
-              Tasks
-            </button>
-            <button
-              type="button"
-              className={classNames(
-                "px-2.5 py-1.5 rounded-xl text-xs transition-all glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
-              )}
-              onClick={() => scrollToSection("context-notes")}
-            >
-              Notes
-            </button>
-            <button
-              type="button"
-              className={classNames(
-                "px-2.5 py-1.5 rounded-xl text-xs transition-all glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
-              )}
-              onClick={() => scrollToSection("context-references")}
-            >
-              References
-            </button>
-          </div>
+          <ContextSectionJumpBar isDark={isDark} onScrollToSection={scrollToSection} />
 
           <details id="context-presence" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
@@ -1656,71 +1571,20 @@ export function ContextModal({
             </div>
           )}
         </div>
-      </div>
+      </ModalFrame>
 
-      {showNotifyModal && (
-        <div className="fixed inset-0 z-overlay flex items-center justify-center p-4 animate-fade-in">
-          <div
-            className={isDark ? "absolute inset-0 bg-black/70" : "absolute inset-0 bg-black/50"}
-            onPointerDown={(e) => {
-              if (e.target !== e.currentTarget) return;
-              if (!notifyBusy) setShowNotifyModal(false);
-            }}
-            aria-hidden="true"
-          />
-          <div
-            className={`relative w-full max-w-md rounded-xl border shadow-2xl p-4 ${isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
-              }`}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Project updated"
-          >
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>PROJECT.md saved</div>
-            <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{projectPathLabel}</div>
-
-            {notifyError && (
-              <div className={`mt-3 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
-                }`}>
-                {notifyError}
-              </div>
-            )}
-
-            <label className={`mt-3 flex items-center gap-2 text-sm ${isDark ? "text-slate-200" : "text-gray-800"}`}>
-              <input
-                type="checkbox"
-                checked={notifyAgents}
-                onChange={(e) => setNotifyAgents(e.target.checked)}
-                disabled={notifyBusy}
-              />
-              Notify agents in chat (@all)
-            </label>
-
-            <MarkdownRenderer
-              content={notifyMessage}
-              isDark={isDark}
-              className={classNames("mt-2 text-[11px] rounded-lg px-3 py-2", isDark ? "bg-slate-800/60 text-slate-300" : "bg-gray-50 text-gray-700")}
-            />
-
-            <div className="mt-3 flex gap-2">
-              <button
-                onClick={handleNotifyDone}
-                disabled={notifyBusy}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
-              >
-                {notifyBusy ? "Working..." : "Done"}
-              </button>
-              <button
-                onClick={() => setShowNotifyModal(false)}
-                disabled={notifyBusy}
-                className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                  }`}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      <ProjectSavedNotifyModal
+        isOpen={showNotifyModal}
+        isDark={isDark}
+        projectPathLabel={projectPathLabel}
+        notifyMessage={notifyMessage}
+        notifyAgents={notifyAgents}
+        notifyBusy={notifyBusy}
+        notifyError={notifyError}
+        onChangeNotifyAgents={setNotifyAgents}
+        onDone={handleNotifyDone}
+        onClose={() => setShowNotifyModal(false)}
+      />
+    </>
   );
 }

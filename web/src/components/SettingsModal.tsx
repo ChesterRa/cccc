@@ -1,5 +1,5 @@
 // SettingsModal renders the settings modal.
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
@@ -17,21 +17,9 @@ import {
   GroupTabId,
   GlobalTabId,
 } from "./modals/settings";
-import { InfoIcon } from "./Icons";
-import { ScrollFade } from "./ScrollFade";
+import { ModalFrame } from "./modals/ModalFrame";
+import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
 import { useModalA11y } from "../hooks/useModalA11y";
-import {
-  useFloating,
-  useHover,
-  useDismiss,
-  useRole,
-  useInteractions,
-  FloatingPortal,
-  offset,
-  flip,
-  shift,
-  autoUpdate,
-} from "@floating-ui/react";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -43,65 +31,6 @@ interface SettingsModalProps {
   isDark: boolean;
   groupId?: string;
   groupDoc?: GroupDoc | null;
-}
-
-function ScopeTooltip({
-  isDark,
-  title,
-  content,
-  children,
-}: {
-  isDark: boolean;
-  title: string;
-  content: React.ReactNode;
-  children: (getReferenceProps: (userProps?: React.ButtonHTMLAttributes<HTMLButtonElement>) => Record<string, unknown>, setReference: (node: HTMLElement | null) => void) => React.ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const { refs, floatingStyles, context } = useFloating({
-    open: isOpen,
-    onOpenChange: setIsOpen,
-    placement: "top",
-    middleware: [offset(8), flip(), shift({ padding: 8 })],
-    whileElementsMounted: autoUpdate,
-    strategy: "fixed",
-  });
-
-  const isPositioned = context.isPositioned;
-
-  const hover = useHover(context, { delay: 150, restMs: 100 });
-  const dismiss = useDismiss(context);
-  const role = useRole(context, { role: "tooltip" });
-
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss, role]);
-
-  const setReference = useCallback((node: HTMLElement | null) => {
-    refs.setReference(node);
-  }, [refs]);
-
-  const setFloating = useCallback((node: HTMLElement | null) => {
-    refs.setFloating(node);
-  }, [refs]);
-
-  return (
-    <>
-      {children(getReferenceProps, setReference)}
-      <FloatingPortal>
-        {isOpen && (
-          <div
-            ref={setFloating}
-            style={floatingStyles}
-            {...getFloatingProps()}
-            className={`z-max w-max max-w-[220px] rounded-lg border shadow-xl px-3 py-2 text-[11px] transition-opacity duration-150 ${isPositioned ? "opacity-100" : "opacity-0"
-              } ${isDark ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-gray-200 text-gray-600"
-              }`}
-          >
-            <div className="font-semibold mb-1 text-emerald-500">{title}</div>
-            {content}
-          </div>
-        )}
-      </FloatingPortal>
-    </>
-  );
 }
 
 export function SettingsModal({
@@ -786,241 +715,30 @@ export function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
-      {/* Backdrop */}
-      <div
-        className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
-        onPointerDown={onClose}
-        aria-hidden="true"
-      />
+    <ModalFrame
+      isDark={isDark}
+      onClose={onClose}
+      titleId="settings-modal-title"
+      title="⚙️ Settings"
+      closeAriaLabel="Close settings"
+      panelClassName="w-full h-full sm:h-[640px] sm:max-w-4xl sm:max-h-[85vh]"
+      modalRef={modalRef}
+    >
+      <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
+        <SettingsNavigation
+          isDark={isDark}
+          groupId={groupId}
+          scope={scope}
+          scopeRootUrl={scopeRootUrl}
+          tabs={tabs}
+          activeTab={activeTab}
+          onScopeChange={setScope}
+          onTabChange={(tab) => setActiveTab(tab as GroupTabId | GlobalTabId)}
+        />
 
-      {/* Modal */}
-      <div
-        className={`relative w-full h-full sm:h-[640px] sm:max-w-4xl sm:max-h-[85vh] flex flex-col border shadow-2xl animate-scale-in rounded-none sm:rounded-xl ${isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
-          }`}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-modal-title"
-      >
-        {/* Header */}
-        <div className={`flex flex-shrink-0 items-center justify-between px-5 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-800" : "border-gray-200"}`}>
-          <h2 id="settings-modal-title" className={`text-lg font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
-            ⚙️ Settings
-          </h2>
-          <button
-            onClick={onClose}
-            className={`text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors ${isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-              }`}
-            aria-label="Close settings"
-          >
-            ×
-          </button>
-        </div>
-
-        <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
-          {/* Desktop Sidebar Navigation */}
-          <aside className={`hidden sm:flex sm:flex-col w-48 border-r flex-shrink-0 ${isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-50/50 border-gray-100"}`}>
-            {/* Desktop Scope Toggle */}
-            <div className="p-3 space-y-3">
-              <div className={`px-3 text-[10px] font-bold uppercase tracking-wider opacity-30 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                Target Scope
-              </div>
-              <div className="flex flex-col gap-1">
-                <button
-                  type="button"
-                  onClick={() => setScope("group")}
-                  disabled={!groupId}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${scope === "group"
-                    ? isDark
-                      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                    : isDark
-                      ? "hover:bg-slate-800 text-slate-400"
-                      : "hover:bg-gray-100 text-gray-600"
-                    } disabled:opacity-40`}
-                >
-                  <span>This group</span>
-                  <ScopeTooltip
-                    isDark={isDark}
-                    title="Group Scope"
-                    content={<>Applies to <span className="font-mono text-emerald-500">{scopeRootUrl || groupId}</span> only. Useful for group-specific timeouts and integrations.</>}
-                  >
-                    {(getReferenceProps, setReference) => (
-                      <div
-                        ref={setReference}
-                        {...getReferenceProps({
-                          onClick: (e) => e.stopPropagation()
-                        })}
-                        className="p-1 -mr-1 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
-                      >
-                        <InfoIcon size={12} />
-                      </div>
-                    )}
-                  </ScopeTooltip>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setScope("global")}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${scope === "global"
-                    ? isDark
-                      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                    : isDark
-                      ? "hover:bg-slate-800 text-slate-400"
-                      : "hover:bg-gray-100 text-gray-600"
-                    }`}
-                >
-                  <span>Global</span>
-                  <ScopeTooltip
-                    isDark={isDark}
-                    title="Global Scope"
-                    content={<>Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.</>}
-                  >
-                    {(getReferenceProps, setReference) => (
-                      <div
-                        ref={setReference}
-                        {...getReferenceProps({
-                          onClick: (e) => e.stopPropagation()
-                        })}
-                        className="p-1 -mr-1 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
-                      >
-                        <InfoIcon size={12} />
-                      </div>
-                    )}
-                  </ScopeTooltip>
-                </button>
-              </div>
-            </div>
-
-            <div className={`mx-3 border-b ${isDark ? "border-slate-800" : "border-gray-100"}`} />
-
-            {/* Desktop Vertical Tabs */}
-            <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`w-full flex items-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${activeTab === tab.id
-                    ? isDark
-                      ? "bg-slate-800 text-emerald-400"
-                      : "bg-white shadow-sm border border-gray-200 text-emerald-600"
-                    : isDark
-                      ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                    }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-          </aside>
-
-          {/* Mobile Navigation (Header-style) */}
-          <div className="sm:hidden flex flex-col flex-shrink-0">
-            {/* Mobile Scope Toggle */}
-            <div className={`px-5 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"}`}>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setScope("group")}
-                  disabled={!groupId}
-                  className={`flex-1 relative flex items-center justify-center px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${scope === "group"
-                    ? isDark
-                      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                    : isDark
-                      ? "bg-slate-900 text-slate-300 border border-slate-800 hover:bg-slate-800"
-                      : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
-                    } disabled:opacity-40`}
-                >
-                  <span>This group</span>
-                  <div className="absolute right-1 top-1/2 -translate-y-1/2">
-                    <ScopeTooltip
-                      isDark={isDark}
-                      title="Group Scope"
-                      content={<>Applies to <span className="font-mono text-emerald-500">{scopeRootUrl || groupId}</span> only. Useful for group-specific timeouts and integrations.</>}
-                    >
-                      {(getReferenceProps, setReference) => (
-                        <div
-                          ref={setReference}
-                          {...getReferenceProps({
-                            onClick: (e) => e.stopPropagation()
-                          })}
-                          className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
-                        >
-                          <InfoIcon size={14} />
-                        </div>
-                      )}
-                    </ScopeTooltip>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setScope("global")}
-                  className={`flex-1 relative flex items-center justify-center px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${scope === "global"
-                    ? isDark
-                      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                    : isDark
-                      ? "bg-slate-900 text-slate-300 border border-slate-800 hover:bg-slate-800"
-                      : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
-                    }`}
-                >
-                  <span>Global</span>
-                  <div className="absolute right-1 top-1/2 -translate-y-1/2">
-                    <ScopeTooltip
-                      isDark={isDark}
-                      title="Global Scope"
-                      content={<>Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.</>}
-                    >
-                      {(getReferenceProps, setReference) => (
-                        <div
-                          ref={setReference}
-                          {...getReferenceProps({
-                            onClick: (e) => e.stopPropagation()
-                          })}
-                          className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
-                        >
-                          <InfoIcon size={14} />
-                        </div>
-                      )}
-                    </ScopeTooltip>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            {/* Mobile Tabs - Horizontally scrollable with fade edges */}
-            <ScrollFade
-              className={`flex-shrink-0 w-full border-b ${isDark ? "border-slate-800" : "border-gray-200"}`}
-              innerClassName="flex min-h-[48px]"
-              fadeWidth={20}
-            >
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex-shrink-0 px-4 py-2.5 text-xs font-medium transition-colors whitespace-nowrap ${activeTab === tab.id
-                    ? isDark
-                      ? "text-emerald-400 border-b-2 border-emerald-400"
-                      : "text-emerald-600 border-b-2 border-emerald-600"
-                    : isDark
-                      ? "text-slate-400 hover:text-slate-200"
-                      : "text-gray-500 hover:text-gray-700"
-                    }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </ScrollFade>
-          </div>
-
-          {/* Main Content Area */}
-          <div className="flex-1 overflow-y-auto flex flex-col">
-            <div className="p-5 sm:p-8 space-y-6">
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          <div className="p-5 sm:p-8 space-y-6">
               {activeTab === "automation" && (
                 <AutomationTab
                   isDark={isDark}
@@ -1187,10 +905,9 @@ export function SettingsModal({
                   onReconcileRegistry={handleReconcileRegistry}
                 />
               )}
-            </div>
           </div>
         </div>
       </div>
-    </div>
+    </ModalFrame>
   );
 }
