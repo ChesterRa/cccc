@@ -5,6 +5,7 @@ from unittest.mock import patch
 class TestMcpGroupSetStateStopped(unittest.TestCase):
     def test_group_set_state_stopped_maps_to_group_stop(self) -> None:
         from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
 
         captured = {}
 
@@ -12,7 +13,7 @@ class TestMcpGroupSetStateStopped(unittest.TestCase):
             captured["req"] = req
             return {"ok": True, "result": {"group_id": "g_test"}}
 
-        with patch.object(mcp_server, "call_daemon", side_effect=_fake_call_daemon):
+        with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_group_set_state",
                 {
