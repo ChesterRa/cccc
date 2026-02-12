@@ -96,6 +96,7 @@ CCCC is a collaboration hub, not an orchestration engine:
 | `active` | normal work | enabled | chat + notifications |
 | `idle` | done/waiting | disabled | chat only; notifications suppressed |
 | `paused` | user paused | disabled | nothing (inbox only) |
+| `stopped` | stop runtimes | n/a | all actor runtimes are stopped |
 
 ### Permissions (quick)
 
@@ -133,15 +134,11 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
 - Manage automation reminders: `cccc_automation_manage`
   - Simple ops: `op=create|update|enable|disable|delete|replace_all` (recommended).
   - Naming note: API field names keep protocol terms (`rule`, `rule_id`, `ruleset`), but conceptually these are reminders.
-  - For `op=create|update`, prefer canonical fields in `rule`: `id`, `trigger`, `action`.
-  - Compatibility shortcuts are accepted: `name -> id`, `actions[0] -> action`, `trigger.every_minutes -> trigger.every_seconds`.
+  - For `op=create|update`, `rule` must use canonical contract fields: `id`, `enabled`, `scope`, `owner_actor_id`, `to`, `trigger`, `action`.
   - Action/schedule constraint:
     - `action.kind="notify"` supports interval / recurring / one-time.
     - `action.kind="group_state"` and `action.kind="actor_control"` support one-time only (`trigger.kind="at"`).
-  - One-time shortcut: for `trigger.kind="at"`, you can pass:
-    - `trigger.at` (absolute ISO time), or
-    - `trigger.after_minutes`, `trigger.after_seconds`, or `trigger.after` (example: `"30m"`).
-  - The MCP server normalizes relative one-time values into absolute UTC `trigger.at`.
+  - For one-time reminders, set `trigger.kind="at"` with absolute `trigger.at` (RFC3339 UTC).
   - MCP actor writes are **notify-only**.
   - Foreman: can manage all notify reminders (including `replace_all_rules`).
   - Peer: only own personal notify reminders (must target self).

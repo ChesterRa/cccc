@@ -261,7 +261,10 @@ def _resume_candidates(
         for i, ev in enumerate(filtered):
             if str(ev.get("id") or "").strip() == since_event_id:
                 return filtered[i + 1 :]
-        return []
+        # If the event id is no longer in tail history, fall back to timestamp-based
+        # best-effort resume when available.
+        if not since_ts:
+            return []
 
     if since_ts:
         cutoff = parse_utc_iso(since_ts)

@@ -238,6 +238,16 @@ class _SharedJSONLTailer:
         self._f = None
         self._task = None
 
+        # Remove stale tailer entry from the global registry so long-running web
+        # processes do not accumulate dead per-path tailers.
+        try:
+            key = (str(self._event_name), str(self._path))
+            async with _TAILERS_LOCK:
+                if _TAILERS.get(key) is self:
+                    _TAILERS.pop(key, None)
+        except Exception:
+            pass
+
     def ensure_started(self) -> None:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())

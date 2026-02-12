@@ -191,7 +191,9 @@ def format_help(platform: str = "telegram") -> str:
             + """
 
 Telegram notes:
-  - Use /send for messaging in all chats (including DM). Plain chat is ignored."""
+  - In groups, @mention the bot to route your message.
+  - In direct chat, plain text is sent to foreman by default.
+  - Use /send when you need explicit recipients (e.g. @all, @peers)."""
         )
 
     if platform in ("slack", "discord"):
@@ -200,8 +202,9 @@ Telegram notes:
             + f"""
 
 {platform.title()} notes:
-  - In channels, mention the bot and use /send, e.g. @bot /send hello
-  - Commands must come after the mention (so they don't trigger platform slash-commands)."""
+  - In channels, @mention the bot to route your message.
+  - After mention, plain text is sent to foreman by default.
+  - Use /send for explicit recipients (e.g. @all, @peers)."""
         )
 
     return base

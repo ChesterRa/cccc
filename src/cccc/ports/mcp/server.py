@@ -59,7 +59,6 @@ import mimetypes
 import os
 import json
 import re
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -130,17 +129,28 @@ def _resolve_self_actor_id(arguments: Dict[str, Any]) -> str:
 
 
 def _resolve_by_actor_id(arguments: Dict[str, Any]) -> str:
-    """Resolve the caller 'by' actor id from env or tool arguments (env wins)."""
+    """Resolve the caller 'by' actor id from env or tool arguments (env wins).
+
+    Accepts both `by` and `actor_id` from tool arguments for compatibility.
+    """
     env_aid = _env_str("CCCC_ACTOR_ID")
     arg_by = str(arguments.get("by") or "").strip()
-    aid = env_aid or arg_by
-    if not aid:
-        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by)")
-    if env_aid and arg_by and arg_by != env_aid:
+    arg_actor_id = str(arguments.get("actor_id") or "").strip()
+    if arg_by and arg_actor_id and arg_by != arg_actor_id:
         raise MCPError(
             code="actor_id_mismatch",
-            message="by mismatch (tool args must match CCCC_ACTOR_ID)",
-            details={"env": env_aid, "arg": arg_by},
+            message="by/actor_id mismatch (tool args must use one consistent actor id)",
+            details={"by": arg_by, "actor_id": arg_actor_id},
+        )
+    arg_aid = arg_by or arg_actor_id
+    aid = env_aid or arg_aid
+    if not aid:
+        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by/actor_id)")
+    if env_aid and arg_aid and arg_aid != env_aid:
+        raise MCPError(
+            code="actor_id_mismatch",
+            message="actor id mismatch (tool args must match CCCC_ACTOR_ID)",
+            details={"env": env_aid, "arg": arg_aid},
         )
     return _validate_self_actor_id(aid)
 
@@ -448,6 +458,7 @@ def message_send(
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    reply_required_flag = coerce_bool(reply_required, default=False)
     dst = str(dst_group_id or "").strip()
     if dst and dst != str(group_id or "").strip():
         if reply_to:
@@ -461,7 +472,7 @@ def message_send(
                 "by": actor_id,
                 "to": to or [],
                 "priority": prio,
-                "reply_required": bool(reply_required),
+                "reply_required": reply_required_flag,
             },
         })
     if reply_to:
@@ -474,7 +485,7 @@ def message_send(
                 "reply_to": reply_to,
                 "to": to or [],
                 "priority": prio,
-                "reply_required": bool(reply_required),
+                "reply_required": reply_required_flag,
             },
         })
     return _call_daemon_or_raise({
@@ -486,7 +497,7 @@ def message_send(
             "to": to or [],
             "path": "",
             "priority": prio,
-            "reply_required": bool(reply_required),
+            "reply_required": reply_required_flag,
         },
     })
 
@@ -505,6 +516,7 @@ def message_reply(
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    reply_required_flag = coerce_bool(reply_required, default=False)
     return _call_daemon_or_raise({
         "op": "reply",
         "args": {
@@ -514,7 +526,7 @@ def message_reply(
             "reply_to": reply_to,
             "to": to or [],
             "priority": prio,
-            "reply_required": bool(reply_required),
+            "reply_required": reply_required_flag,
         },
     })
 
@@ -567,8 +579,9 @@ def file_send(
     else:
         src = src.expanduser().resolve()
 
-    root_str = str(root)
-    if str(src) != root_str and not str(src).startswith(root_str + "/"):
+    try:
+        src.relative_to(root)
+    except ValueError:
         raise MCPError(code="invalid_path", message="path must be under the group's active scope root")
     if not src.exists() or not src.is_file():
         raise MCPError(code="not_found", message=f"file not found: {src}")
@@ -584,6 +597,7 @@ def file_send(
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    reply_required_flag = coerce_bool(reply_required, default=False)
     return _call_daemon_or_raise({
         "op": "send",
         "args": {
@@ -594,7 +608,7 @@ def file_send(
             "path": "",
             "attachments": [att],
             "priority": prio,
-            "reply_required": bool(reply_required),
+            "reply_required": reply_required_flag,
         },
     })
 
@@ -611,9 +625,10 @@ def _sanitize_group_doc_for_agent(doc: Any) -> Dict[str, Any]:
     if not isinstance(doc, dict):
         return {}
     out: Dict[str, Any] = {}
-    for k in ("group_id", "title", "topic", "created_at", "updated_at", "running", "state", "active_scope_key"):
+    for k in ("group_id", "title", "topic", "created_at", "updated_at", "state", "active_scope_key"):
         if k in doc:
             out[k] = doc.get(k)
+    out["running"] = coerce_bool(doc.get("running"), default=False)
     scopes = doc.get("scopes")
     if isinstance(scopes, list):
         safe_scopes: list[dict[str, Any]] = []
@@ -642,8 +657,8 @@ def _sanitize_actors_for_agent(raw: Any) -> List[Dict[str, Any]]:
             "id": a.get("id"),
             "role": a.get("role"),
             "title": a.get("title"),
-            "enabled": a.get("enabled"),
-            "running": a.get("running"),
+            "enabled": coerce_bool(a.get("enabled"), default=True),
+            "running": coerce_bool(a.get("running"), default=False),
             "runner": a.get("runner"),
             "runtime": a.get("runtime"),
             "submit": a.get("submit"),
@@ -679,7 +694,7 @@ def group_list() -> Dict[str, Any]:
                 "group_id": gid,
                 "title": g.get("title") or "",
                 "topic": g.get("topic") or "",
-                "running": bool(g.get("running", False)),
+                "running": coerce_bool(g.get("running"), default=False),
                 "state": g.get("state") or "",
                 "updated_at": g.get("updated_at") or "",
                 "created_at": g.get("created_at") or "",
@@ -782,10 +797,16 @@ def runtime_list() -> Dict[str, Any]:
 
 
 def group_set_state(*, group_id: str, by: str, state: str) -> Dict[str, Any]:
-    """Set group state (active/idle/paused)"""
+    """Set group state (active/idle/paused/stopped)."""
+    s = str(state or "").strip().lower()
+    if s == "stopped":
+        return _call_daemon_or_raise({
+            "op": "group_stop",
+            "args": {"group_id": group_id, "by": by},
+        })
     return _call_daemon_or_raise({
         "op": "group_set_state",
-        "args": {"group_id": group_id, "state": state, "by": by},
+        "args": {"group_id": group_id, "state": s, "by": by},
     })
 
 
@@ -813,223 +834,6 @@ def automation_manage(
     if expected_version is not None:
         req_args["expected_version"] = int(expected_version)
     return _call_daemon_or_raise({"op": "group_automation_manage", "args": req_args})
-
-
-def _normalize_positive_int(raw: Any, *, field_name: str) -> int:
-    try:
-        value = int(raw)
-    except Exception as e:
-        raise MCPError(code="invalid_request", message=f"{field_name} must be a positive integer") from e
-    if value <= 0:
-        raise MCPError(code="invalid_request", message=f"{field_name} must be >= 1")
-    return value
-
-
-def _parse_duration_to_seconds(raw: Any) -> int:
-    text = str(raw or "").strip().lower()
-    if not text:
-        raise MCPError(code="invalid_request", message="trigger.after cannot be empty")
-    m = re.fullmatch(r"(\d+)\s*([smhd]?)", text)
-    if m is None:
-        raise MCPError(
-            code="invalid_request",
-            message="trigger.after must be like 30m / 2h / 45s / 1d",
-        )
-    amount = _normalize_positive_int(m.group(1), field_name="trigger.after")
-    unit = m.group(2) or "m"
-    mult = 60
-    if unit == "s":
-        mult = 1
-    elif unit == "m":
-        mult = 60
-    elif unit == "h":
-        mult = 3600
-    elif unit == "d":
-        mult = 86400
-    return amount * mult
-
-
-def _normalize_rule_id(raw: Any) -> str:
-    text = str(raw or "").strip().lower()
-    if not text:
-        return ""
-    text = re.sub(r"\s+", "_", text)
-    text = re.sub(r"[^a-z0-9_-]+", "_", text).strip("_")
-    text = re.sub(r"_+", "_", text)
-    if not text:
-        text = f"rule_{int(datetime.now(timezone.utc).timestamp())}"
-    return text[:64]
-
-
-def _normalize_legacy_action_doc(raw_action: Dict[str, Any]) -> Dict[str, Any]:
-    action = dict(raw_action)
-    kind = str(action.get("kind") or action.get("type") or "").strip().lower()
-    if not kind:
-        kind = "notify"
-
-    if kind in {"notify", "send_message", "message", "send"}:
-        title = str(action.get("title") or action.get("subject") or "").strip()
-        message = str(
-            action.get("message")
-            or action.get("text")
-            or action.get("content")
-            or action.get("body")
-            or ""
-        ).strip()
-        out: Dict[str, Any] = {"kind": "notify"}
-        if title:
-            out["title"] = title
-        if message:
-            out["message"] = message
-        return out
-
-    if kind in {"group_state", "set_group_state"}:
-        state = str(action.get("state") or action.get("value") or "paused").strip().lower()
-        return {"kind": "group_state", "state": state}
-
-    if kind in {"actor_control", "runtime_control"}:
-        operation = str(action.get("operation") or action.get("op") or "restart").strip().lower()
-        targets_raw = action.get("targets")
-        if isinstance(targets_raw, list):
-            targets = [str(x).strip() for x in targets_raw if str(x).strip()]
-        else:
-            targets = ["@all"]
-        return {"kind": "actor_control", "operation": operation, "targets": targets or ["@all"]}
-
-    return action
-
-
-def _normalize_legacy_trigger_doc(raw_trigger: Dict[str, Any]) -> Dict[str, Any]:
-    trigger = dict(raw_trigger)
-    kind = str(trigger.get("kind") or "").strip().lower()
-    if not kind:
-        # Compat aliases often send schedule style docs without explicit kind.
-        if trigger.get("cron") is not None:
-            kind = "cron"
-        elif trigger.get("at") is not None or trigger.get("after_minutes") is not None or trigger.get("after_seconds") is not None:
-            kind = "at"
-        elif trigger.get("every_minutes") is not None or trigger.get("interval_minutes") is not None:
-            kind = "interval"
-    if kind == "interval":
-        if trigger.get("every_seconds") is None:
-            minutes_raw = trigger.get("every_minutes", trigger.get("interval_minutes"))
-            if minutes_raw is not None:
-                minutes = _normalize_positive_int(minutes_raw, field_name="trigger.every_minutes")
-                trigger["every_seconds"] = minutes * 60
-        trigger["kind"] = "interval"
-        trigger.pop("every_minutes", None)
-        trigger.pop("interval_minutes", None)
-        return trigger
-    if kind == "cron":
-        trigger["kind"] = "cron"
-        return trigger
-    if kind == "at":
-        trigger["kind"] = "at"
-        return trigger
-    return trigger
-
-
-def _normalize_automation_rule_shortcuts(rule: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(rule)
-    # Compat aliases: name -> id
-    if not str(out.get("id") or "").strip():
-        alias_id = out.get("name") or out.get("rule_id")
-        normalized_id = _normalize_rule_id(alias_id)
-        if normalized_id:
-            out["id"] = normalized_id
-    out.pop("name", None)
-
-    # Compat aliases: actions[] -> action (first action)
-    if not isinstance(out.get("action"), dict):
-        actions_raw = out.get("actions")
-        if isinstance(actions_raw, list) and actions_raw:
-            first_action = actions_raw[0]
-            if isinstance(first_action, dict):
-                out["action"] = _normalize_legacy_action_doc(first_action)
-    out.pop("actions", None)
-    if isinstance(out.get("action"), dict):
-        out["action"] = _normalize_legacy_action_doc(out["action"])
-
-    # Compat aliases: schedule -> trigger
-    if not isinstance(out.get("trigger"), dict):
-        schedule = out.get("schedule")
-        if isinstance(schedule, dict):
-            out["trigger"] = dict(schedule)
-    out.pop("schedule", None)
-
-    trigger_raw = out.get("trigger")
-    if not isinstance(trigger_raw, dict):
-        return out
-    trigger = _normalize_legacy_trigger_doc(trigger_raw)
-    kind = str(trigger.get("kind") or "").strip().lower()
-    if kind != "at":
-        out["trigger"] = trigger
-        return out
-
-    at_raw = str(trigger.get("at") or "").strip()
-    if at_raw:
-        out["trigger"] = trigger
-        return out
-
-    seconds: Optional[int] = None
-    if trigger.get("after_seconds") is not None:
-        seconds = _normalize_positive_int(trigger.get("after_seconds"), field_name="trigger.after_seconds")
-    elif trigger.get("after_minutes") is not None:
-        minutes = _normalize_positive_int(trigger.get("after_minutes"), field_name="trigger.after_minutes")
-        seconds = minutes * 60
-    elif trigger.get("after") is not None:
-        seconds = _parse_duration_to_seconds(trigger.get("after"))
-    elif out.get("after_seconds") is not None:
-        seconds = _normalize_positive_int(out.get("after_seconds"), field_name="after_seconds")
-    elif out.get("after_minutes") is not None:
-        minutes = _normalize_positive_int(out.get("after_minutes"), field_name="after_minutes")
-        seconds = minutes * 60
-    elif out.get("after") is not None:
-        seconds = _parse_duration_to_seconds(out.get("after"))
-
-    if seconds is None:
-        raise MCPError(
-            code="invalid_request",
-            message="One-time trigger requires trigger.at or trigger.after_minutes / trigger.after_seconds / trigger.after",
-        )
-
-    fire_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
-    trigger.pop("after_seconds", None)
-    trigger.pop("after_minutes", None)
-    trigger.pop("after", None)
-    trigger["at"] = fire_at
-    out["trigger"] = trigger
-    out.pop("after_seconds", None)
-    out.pop("after_minutes", None)
-    out.pop("after", None)
-    return out
-
-
-def _normalize_automation_action_shortcuts(action: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(action)
-    action_type = str(out.get("type") or "").strip()
-    if action_type in {"create_rule", "update_rule"}:
-        rule = out.get("rule")
-        if isinstance(rule, dict):
-            out["rule"] = _normalize_automation_rule_shortcuts(rule)
-        return out
-    if action_type == "replace_all_rules":
-        ruleset = out.get("ruleset")
-        if not isinstance(ruleset, dict):
-            return out
-        next_ruleset = dict(ruleset)
-        rules_raw = ruleset.get("rules")
-        if isinstance(rules_raw, list):
-            next_rules: List[Any] = []
-            for rule in rules_raw:
-                if isinstance(rule, dict):
-                    next_rules.append(_normalize_automation_rule_shortcuts(rule))
-                else:
-                    next_rules.append(rule)
-            next_ruleset["rules"] = next_rules
-        out["ruleset"] = next_ruleset
-        return out
-    return out
 
 
 def _assert_agent_notify_only_actions(actions: List[Dict[str, Any]]) -> None:
@@ -1135,7 +939,7 @@ def _map_simple_automation_op_to_action(arguments: Dict[str, Any]) -> Optional[D
     if op == "replace_all":
         ruleset = arguments.get("ruleset")
         if not isinstance(ruleset, dict):
-            raise MCPError(code="invalid_request", message="op=replace_all requires reminderset object (ruleset)")
+            raise MCPError(code="invalid_request", message="op=replace_all requires reminder set object (ruleset)")
         return {"type": "replace_all_rules", "ruleset": ruleset}
     raise MCPError(
         code="invalid_request",
@@ -1815,16 +1619,16 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_group_set_state",
-        "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete, automation disabled), paused (user paused). Foreman should set to 'idle' when task is complete.",
+        "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete, automation disabled), paused (user paused), stopped (stop all actor runtimes). Foreman should set to 'idle' when task is complete.",
 	        "inputSchema": {
 	            "type": "object",
 	            "properties": {
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
 	                "state": {
 	                    "type": "string",
-	                    "enum": ["active", "idle", "paused"],
-	                    "description": "New state: active (work in progress), idle (task complete), paused (user paused)",
+	                    "enum": ["active", "idle", "paused", "stopped"],
+	                    "description": "New state: active (work in progress), idle (task complete), paused (user paused), stopped (stop all actor runtimes)",
 	                },
 	            },
 	            "required": ["state"],
@@ -1849,9 +1653,9 @@ MCP_TOOLS = [
         "description": (
             "Manage automation reminders.\n"
             "Simple mode (recommended): use op=create|update|enable|disable|delete|replace_all.\n"
-            "For one-time reminders, trigger.kind='at' also accepts trigger.after_minutes / trigger.after_seconds / trigger.after (e.g. '30m').\n"
             "MCP actor writes are notify-only (operational actions are Web/Admin only).\n"
             "API field names keep protocol terms: rule / rule_id / ruleset.\n"
+            "Rules and actions must use canonical contract fields only (no legacy aliases).\n"
             "Advanced mode: pass actions[] directly."
         ),
         "inputSchema": {
@@ -2508,14 +2312,9 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
                 code="invalid_request",
                 message="provide op (simple mode) or actions[] (advanced mode)",
             )
-        normalized_actions: List[Dict[str, Any]] = []
-        for i, action in enumerate(actions):
-            if not isinstance(action, dict):
-                raise MCPError(code="invalid_request", message=f"actions[{i}] must be an object")
-            normalized_actions.append(_normalize_automation_action_shortcuts(action))
-        _assert_action_trigger_compat(normalized_actions)
+        _assert_action_trigger_compat(actions)
         if by != "user":
-            _assert_agent_notify_only_actions(normalized_actions)
+            _assert_agent_notify_only_actions(actions)
         expected_version_raw = arguments.get("expected_version")
         expected_version: Optional[int] = None
         if expected_version_raw is not None:
@@ -2526,7 +2325,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return automation_manage(
             group_id=gid,
             by=by,
-            actions=normalized_actions,
+            actions=actions,
             expected_version=expected_version,
         )
 
@@ -2537,7 +2336,10 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     # context.* namespace
     if name == "cccc_context_get":
         gid = _resolve_group_id(arguments)
-        return context_get(group_id=gid, include_archived=bool(arguments.get("include_archived")))
+        return context_get(
+            group_id=gid,
+            include_archived=coerce_bool(arguments.get("include_archived"), default=False),
+        )
 
     if name == "cccc_context_sync":
         gid = _resolve_group_id(arguments)
@@ -2545,7 +2347,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return context_sync(
             group_id=gid,
             ops=list(ops_raw) if isinstance(ops_raw, list) else [],
-            dry_run=bool(arguments.get("dry_run")),
+            dry_run=coerce_bool(arguments.get("dry_run"), default=False),
         )
 
     if name == "cccc_vision_update":
@@ -2594,7 +2396,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return task_list(
             group_id=gid,
             task_id=arguments.get("task_id"),
-            include_archived=bool(arguments.get("include_archived")),
+            include_archived=coerce_bool(arguments.get("include_archived"), default=False),
         )
 
     if name == "cccc_task_create":
@@ -2732,7 +2534,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             message=str(arguments.get("message") or ""),
             target_actor_id=arguments.get("target_actor_id"),
             priority=str(arguments.get("priority") or "normal"),
-            requires_ack=bool(arguments.get("requires_ack")),
+            requires_ack=coerce_bool(arguments.get("requires_ack"), default=False),
         )
 
     if name == "cccc_notify_ack":
@@ -2753,7 +2555,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             actor_id=aid,
             target_actor_id=str(arguments.get("target_actor_id") or ""),
             max_chars=min(max(int(arguments.get("max_chars") or 8000), 1), 100000),
-            strip_ansi=bool(arguments.get("strip_ansi", True)),
+            strip_ansi=coerce_bool(arguments.get("strip_ansi"), default=True),
         )
 
     # debug.* namespace (developer mode)

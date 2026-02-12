@@ -32,6 +32,7 @@ from ...kernel.registry import load_registry
 from ...paths import ensure_home
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ...util.conv import coerce_bool
 from ..delivery import THROTTLE, clear_preamble_sent
 
 
@@ -224,13 +225,15 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
 
     # Delivery toggles
     if "auto_mark_on_delivery" in settings:
-        patch["auto_mark_on_delivery"] = bool(settings.get("auto_mark_on_delivery"))
+        patch["auto_mark_on_delivery"] = coerce_bool(settings.get("auto_mark_on_delivery"), default=False)
 
     # Terminal transcript policy
     if "terminal_transcript_visibility" in settings:
         patch["terminal_transcript_visibility"] = str(settings.get("terminal_transcript_visibility") or "").strip()
     if "terminal_transcript_notify_tail" in settings:
-        patch["terminal_transcript_notify_tail"] = bool(settings.get("terminal_transcript_notify_tail"))
+        patch["terminal_transcript_notify_tail"] = coerce_bool(
+            settings.get("terminal_transcript_notify_tail"), default=False
+        )
     if "terminal_transcript_notify_lines" in settings:
         try:
             n = int(settings.get("terminal_transcript_notify_lines"))
@@ -263,7 +266,7 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     for k, v in patch.items():
         if k in delivery_keys:
             if k == "auto_mark_on_delivery":
-                delivery[k] = bool(v)
+                delivery[k] = coerce_bool(v, default=False)
             else:
                 delivery[k] = int(v)
         if k in automation_keys:

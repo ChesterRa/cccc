@@ -85,6 +85,38 @@ prompts: {{}}
             else:
                 os.environ["CCCC_HOME"] = old_home
 
+    def test_apply_settings_replace_coerces_falsey_string_toggles(self) -> None:
+        from cccc.daemon.ops.template_ops import _apply_settings_replace
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                reg = load_registry()
+                group = create_group(reg, title="t", topic="")
+
+                patch = _apply_settings_replace(
+                    group,
+                    {
+                        "auto_mark_on_delivery": "false",
+                        "terminal_transcript_notify_tail": "false",
+                    },
+                )
+                self.assertFalse(bool(patch.get("auto_mark_on_delivery")))
+                self.assertFalse(bool(patch.get("terminal_transcript_notify_tail")))
+
+                delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+                self.assertFalse(bool(delivery.get("auto_mark_on_delivery")))
+                terminal = group.doc.get("terminal_transcript") if isinstance(group.doc.get("terminal_transcript"), dict) else {}
+                self.assertFalse(bool(terminal.get("notify_tail")))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
 
 if __name__ == "__main__":
     unittest.main()

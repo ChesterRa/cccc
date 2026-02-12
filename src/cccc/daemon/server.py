@@ -8,11 +8,10 @@ import os
 import re
 import socket
 import sys
-import time
 import signal
+import time
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -100,6 +99,18 @@ _OBS_LOCK = threading.Lock()
 _OBSERVABILITY: Dict[str, Any] = {}
 _AUTO_WAKE_LOCK = threading.Lock()
 _AUTO_WAKE_IN_PROGRESS: set[tuple[str, str]] = set()
+
+
+def _safe_int(value: Any, *, default: int, min_value: int = 0, max_value: Optional[int] = None) -> int:
+    try:
+        out = int(value)
+    except Exception:
+        out = int(default)
+    if out < int(min_value):
+        out = int(min_value)
+    if max_value is not None and out > int(max_value):
+        out = int(max_value)
+    return out
 
 
 def _get_observability() -> Dict[str, Any]:
@@ -730,6 +741,36 @@ def _validate_automation_rule_action_trigger(rule: AutomationRule) -> None:
         raise ValueError(f'rule "{rid}": action.kind={action_kind} only supports trigger.kind=at')
 
 
+def _reject_legacy_automation_rule_shape(rule_raw: Dict[str, Any], *, loc: str) -> None:
+    legacy_root: list[str] = []
+    if "name" in rule_raw:
+        legacy_root.append("name->id")
+    if "actions" in rule_raw:
+        legacy_root.append("actions->action")
+    if "schedule" in rule_raw:
+        legacy_root.append("schedule->trigger")
+    if "every_minutes" in rule_raw:
+        legacy_root.append("every_minutes->trigger.every_seconds")
+
+    trigger = rule_raw.get("trigger")
+    if isinstance(trigger, dict) and "every_minutes" in trigger:
+        legacy_root.append("trigger.every_minutes->trigger.every_seconds")
+
+    action = rule_raw.get("action")
+    if isinstance(action, dict):
+        if "type" in action:
+            legacy_root.append("action.type->action.kind")
+        if "message_template" in action:
+            legacy_root.append("action.message_template->action.snippet_ref or action.message")
+
+    if legacy_root:
+        hints = ", ".join(legacy_root)
+        raise ValueError(
+            f"{loc}: legacy automation rule shape is not supported; use canonical fields "
+            f"(id, trigger, action, rule_id, ruleset). Details: {hints}"
+        )
+
+
 def _reconcile_automation_state_after_ruleset_change(
     group: Any,
     *,
@@ -797,280 +838,6 @@ def _reconcile_automation_state_after_ruleset_change(
     state["rules"] = rules_state
     state["updated_at"] = utc_now_iso()
     atomic_write_json(state_path, state)
-
-
-def _normalize_automation_positive_int(raw: Any, *, field_name: str) -> int:
-    try:
-        value = int(raw)
-    except Exception as e:
-        raise ValueError(f"{field_name} must be a positive integer") from e
-    if value <= 0:
-        raise ValueError(f"{field_name} must be >= 1")
-    return value
-
-
-def _parse_automation_duration_seconds(raw: Any) -> int:
-    text = str(raw or "").strip().lower()
-    if not text:
-        raise ValueError("trigger.after cannot be empty")
-    m = re.fullmatch(r"(\d+)\s*([smhd]?)", text)
-    if m is None:
-        raise ValueError("trigger.after must be like 30m / 2h / 45s / 1d")
-    amount = _normalize_automation_positive_int(m.group(1), field_name="trigger.after")
-    unit = m.group(2) or "m"
-    mult = 60
-    if unit == "s":
-        mult = 1
-    elif unit == "m":
-        mult = 60
-    elif unit == "h":
-        mult = 3600
-    elif unit == "d":
-        mult = 86400
-    return amount * mult
-
-
-def _normalize_automation_rule_id(raw: Any) -> str:
-    text = str(raw or "").strip().lower()
-    if not text:
-        return ""
-    text = re.sub(r"\s+", "_", text)
-    text = re.sub(r"[^a-z0-9_-]+", "_", text).strip("_")
-    text = re.sub(r"_+", "_", text)
-    if not text:
-        text = f"rule_{int(time.time())}"
-    return text[:64]
-
-
-def _normalize_legacy_automation_action_doc(raw_action: Dict[str, Any]) -> Dict[str, Any]:
-    action = dict(raw_action)
-    kind = str(action.get("kind") or action.get("type") or "").strip().lower()
-    if not kind:
-        kind = "notify"
-
-    if kind in {"notify", "send_message", "message", "send"}:
-        title = str(action.get("title") or action.get("subject") or "").strip()
-        message = str(
-            action.get("message")
-            or action.get("text")
-            or action.get("content")
-            or action.get("body")
-            or ""
-        ).strip()
-        out: Dict[str, Any] = {"kind": "notify"}
-        if title:
-            out["title"] = title
-        if message:
-            out["message"] = message
-        return out
-
-    if kind in {"group_state", "set_group_state"}:
-        state = str(action.get("state") or action.get("value") or "paused").strip().lower()
-        return {"kind": "group_state", "state": state}
-
-    if kind in {"actor_control", "runtime_control"}:
-        operation = str(action.get("operation") or action.get("op") or "restart").strip().lower()
-        targets_raw = action.get("targets")
-        if isinstance(targets_raw, list):
-            targets = [str(x).strip() for x in targets_raw if str(x).strip()]
-        else:
-            targets = ["@all"]
-        return {"kind": "actor_control", "operation": operation, "targets": targets or ["@all"]}
-
-    return action
-
-
-def _normalize_legacy_automation_trigger_doc(raw_trigger: Dict[str, Any]) -> Dict[str, Any]:
-    trigger = dict(raw_trigger)
-    kind = str(trigger.get("kind") or "").strip().lower()
-    if not kind:
-        if trigger.get("cron") is not None:
-            kind = "cron"
-        elif trigger.get("at") is not None or trigger.get("after_minutes") is not None or trigger.get("after_seconds") is not None:
-            kind = "at"
-        elif trigger.get("every_minutes") is not None or trigger.get("interval_minutes") is not None:
-            kind = "interval"
-    if kind == "interval":
-        if trigger.get("every_seconds") is None:
-            minutes_raw = trigger.get("every_minutes", trigger.get("interval_minutes"))
-            if minutes_raw is not None:
-                minutes = _normalize_automation_positive_int(minutes_raw, field_name="trigger.every_minutes")
-                trigger["every_seconds"] = minutes * 60
-        trigger["kind"] = "interval"
-        trigger.pop("every_minutes", None)
-        trigger.pop("interval_minutes", None)
-        return trigger
-    if kind == "cron":
-        trigger["kind"] = "cron"
-        return trigger
-    if kind == "at":
-        trigger["kind"] = "at"
-        return trigger
-    return trigger
-
-
-def _normalize_legacy_automation_rule_doc(raw_rule: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(raw_rule)
-
-    if not str(out.get("id") or "").strip():
-        alias_id = out.get("name") or out.get("rule_id")
-        normalized_id = _normalize_automation_rule_id(alias_id)
-        if normalized_id:
-            out["id"] = normalized_id
-    out.pop("name", None)
-
-    if not isinstance(out.get("action"), dict):
-        actions_raw = out.get("actions")
-        if isinstance(actions_raw, list) and actions_raw:
-            first_action = actions_raw[0]
-            if isinstance(first_action, dict):
-                out["action"] = _normalize_legacy_automation_action_doc(first_action)
-    out.pop("actions", None)
-    if isinstance(out.get("action"), dict):
-        out["action"] = _normalize_legacy_automation_action_doc(out["action"])
-
-    if not isinstance(out.get("trigger"), dict):
-        schedule = out.get("schedule")
-        if isinstance(schedule, dict):
-            out["trigger"] = dict(schedule)
-    out.pop("schedule", None)
-
-    trigger_raw = out.get("trigger")
-    if not isinstance(trigger_raw, dict):
-        return out
-    trigger = _normalize_legacy_automation_trigger_doc(trigger_raw)
-    kind = str(trigger.get("kind") or "").strip().lower()
-    if kind != "at":
-        out["trigger"] = trigger
-        return out
-
-    at_raw = str(trigger.get("at") or "").strip()
-    if at_raw:
-        out["trigger"] = trigger
-        return out
-
-    seconds: Optional[int] = None
-    if trigger.get("after_seconds") is not None:
-        seconds = _normalize_automation_positive_int(trigger.get("after_seconds"), field_name="trigger.after_seconds")
-    elif trigger.get("after_minutes") is not None:
-        minutes = _normalize_automation_positive_int(trigger.get("after_minutes"), field_name="trigger.after_minutes")
-        seconds = minutes * 60
-    elif trigger.get("after") is not None:
-        seconds = _parse_automation_duration_seconds(trigger.get("after"))
-    elif out.get("after_seconds") is not None:
-        seconds = _normalize_automation_positive_int(out.get("after_seconds"), field_name="after_seconds")
-    elif out.get("after_minutes") is not None:
-        minutes = _normalize_automation_positive_int(out.get("after_minutes"), field_name="after_minutes")
-        seconds = minutes * 60
-    elif out.get("after") is not None:
-        seconds = _parse_automation_duration_seconds(out.get("after"))
-
-    if seconds is None:
-        raise ValueError("One-time trigger requires trigger.at or trigger.after_minutes / trigger.after_seconds / trigger.after")
-
-    fire_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
-    trigger.pop("after_seconds", None)
-    trigger.pop("after_minutes", None)
-    trigger.pop("after", None)
-    trigger["at"] = fire_at
-    out["trigger"] = trigger
-    out.pop("after_seconds", None)
-    out.pop("after_minutes", None)
-    out.pop("after", None)
-    return out
-
-
-def _normalize_legacy_automation_manage_action(raw_action: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(raw_action)
-    action_type = str(out.get("type") or out.get("op") or "").strip().lower()
-    if not action_type:
-        return out
-
-    if action_type in {"create", "create_rule"}:
-        rule = out.get("rule")
-        if not isinstance(rule, dict):
-            raise ValueError("create_rule requires rule")
-        return {"type": "create_rule", "rule": _normalize_legacy_automation_rule_doc(rule)}
-
-    if action_type in {"update", "update_rule"}:
-        rule = out.get("rule")
-        if not isinstance(rule, dict):
-            raise ValueError("update_rule requires rule")
-        return {"type": "update_rule", "rule": _normalize_legacy_automation_rule_doc(rule)}
-
-    if action_type in {"enable", "disable"}:
-        rule_id = str(out.get("rule_id") or "").strip()
-        if not rule_id:
-            raise ValueError(f"{action_type} requires rule_id")
-        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": action_type == "enable"}
-
-    if action_type == "set_rule_enabled":
-        rule_id = str(out.get("rule_id") or "").strip()
-        if not rule_id:
-            raise ValueError("set_rule_enabled requires rule_id")
-        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": bool(coerce_bool(out.get("enabled"), default=False))}
-
-    if action_type in {"delete", "delete_rule"}:
-        rule_id = str(out.get("rule_id") or "").strip()
-        if not rule_id:
-            raise ValueError("delete_rule requires rule_id")
-        return {"type": "delete_rule", "rule_id": rule_id}
-
-    if action_type in {"replace_all", "replace_all_rules"}:
-        ruleset = out.get("ruleset")
-        if not isinstance(ruleset, dict):
-            raise ValueError("replace_all_rules requires ruleset")
-        next_ruleset = dict(ruleset)
-        rules_raw = ruleset.get("rules")
-        if isinstance(rules_raw, list):
-            next_rules: list[Any] = []
-            for rule in rules_raw:
-                if isinstance(rule, dict):
-                    next_rules.append(_normalize_legacy_automation_rule_doc(rule))
-                else:
-                    next_rules.append(rule)
-            next_ruleset["rules"] = next_rules
-        return {"type": "replace_all_rules", "ruleset": next_ruleset}
-
-    out["type"] = action_type
-    return out
-
-
-def _map_simple_automation_manage_op(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    op = str(args.get("op") or "").strip().lower()
-    if not op:
-        return None
-    if op == "create":
-        rule = args.get("rule")
-        if not isinstance(rule, dict):
-            raise ValueError("op=create requires reminder object (rule)")
-        return {"type": "create_rule", "rule": rule}
-    if op == "update":
-        rule = args.get("rule")
-        if not isinstance(rule, dict):
-            raise ValueError("op=update requires reminder object (rule)")
-        return {"type": "update_rule", "rule": rule}
-    if op == "enable":
-        rule_id = str(args.get("rule_id") or "").strip()
-        if not rule_id:
-            raise ValueError("op=enable requires rule_id")
-        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": True}
-    if op == "disable":
-        rule_id = str(args.get("rule_id") or "").strip()
-        if not rule_id:
-            raise ValueError("op=disable requires rule_id")
-        return {"type": "set_rule_enabled", "rule_id": rule_id, "enabled": False}
-    if op == "delete":
-        rule_id = str(args.get("rule_id") or "").strip()
-        if not rule_id:
-            raise ValueError("op=delete requires rule_id")
-        return {"type": "delete_rule", "rule_id": rule_id}
-    if op == "replace_all":
-        ruleset = args.get("ruleset")
-        if not isinstance(ruleset, dict):
-            raise ValueError("op=replace_all requires reminderset object (ruleset)")
-        return {"type": "replace_all_rules", "ruleset": ruleset}
-    raise ValueError("op must be one of: create, update, enable, disable, delete, replace_all")
 
 
 def _actor_role_or_none(group: Any, actor_id: str) -> str:
@@ -2060,7 +1827,7 @@ def _auto_wake_recipients(group: Any, to: list[str], by: str) -> list[str]:
         try:
             # Re-check enabled flag under lockless snapshot: another request may have
             # already enabled/restarted this actor.
-            if bool(actor.get("enabled", True)):
+            if coerce_bool(actor.get("enabled"), default=True):
                 continue
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
@@ -2655,24 +2422,24 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         tt = get_terminal_transcript_settings(group.doc)
         combined_settings = {
             "default_send_to": get_default_send_to(group.doc),
-            "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
-            "reply_required_nudge_after_seconds": int(automation.get("reply_required_nudge_after_seconds", 300)),
-            "attention_ack_nudge_after_seconds": int(automation.get("attention_ack_nudge_after_seconds", 600)),
-            "unread_nudge_after_seconds": int(automation.get("unread_nudge_after_seconds", 900)),
-            "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
-            "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
-            "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
-            "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
-            "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
-            "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
-            "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
-            "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
-            "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
-            "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
+            "nudge_after_seconds": _safe_int(automation.get("nudge_after_seconds", 300), default=300, min_value=0),
+            "reply_required_nudge_after_seconds": _safe_int(automation.get("reply_required_nudge_after_seconds", 300), default=300, min_value=0),
+            "attention_ack_nudge_after_seconds": _safe_int(automation.get("attention_ack_nudge_after_seconds", 600), default=600, min_value=0),
+            "unread_nudge_after_seconds": _safe_int(automation.get("unread_nudge_after_seconds", 900), default=900, min_value=0),
+            "nudge_digest_min_interval_seconds": _safe_int(automation.get("nudge_digest_min_interval_seconds", 120), default=120, min_value=0),
+            "nudge_max_repeats_per_obligation": _safe_int(automation.get("nudge_max_repeats_per_obligation", 3), default=3, min_value=0),
+            "nudge_escalate_after_repeats": _safe_int(automation.get("nudge_escalate_after_repeats", 2), default=2, min_value=0),
+            "actor_idle_timeout_seconds": _safe_int(automation.get("actor_idle_timeout_seconds", 600), default=600, min_value=0),
+            "keepalive_delay_seconds": _safe_int(automation.get("keepalive_delay_seconds", 120), default=120, min_value=0),
+            "keepalive_max_per_actor": _safe_int(automation.get("keepalive_max_per_actor", 3), default=3, min_value=0),
+            "silence_timeout_seconds": _safe_int(automation.get("silence_timeout_seconds", 600), default=600, min_value=0),
+            "help_nudge_interval_seconds": _safe_int(automation.get("help_nudge_interval_seconds", 600), default=600, min_value=0),
+            "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
+            "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),
             "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
             "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
             "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
-            "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
+            "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
         }
         
         ev = append_event(
@@ -2704,6 +2471,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         try:
             require_group_permission(group, by=by, action="group.settings_update")
+            if isinstance(raw, dict):
+                raw_rules = raw.get("rules")
+                if isinstance(raw_rules, list):
+                    for i, raw_rule in enumerate(raw_rules):
+                        if isinstance(raw_rule, dict):
+                            _reject_legacy_automation_rule_shape(raw_rule, loc=f"ruleset.rules[{i}]")
             ruleset = AutomationRuleSet.model_validate(raw)
             for rule in ruleset.rules:
                 _validate_automation_rule_action_trigger(rule)
@@ -2807,12 +2580,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group_id = str(args.get("group_id") or "").strip()
         by = str(args.get("by") or "user").strip()
         actions: list[Any] = []
-        try:
-            mapped = _map_simple_automation_manage_op(args)
-        except Exception as e:
-            return _error("invalid_request", str(e)), False
-        if isinstance(mapped, dict):
-            actions.append(mapped)
         actions_raw = args.get("actions")
         if isinstance(actions_raw, list):
             actions.extend(actions_raw)
@@ -2827,15 +2594,9 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("missing_group_id", "missing group_id"), False
         if not actions:
             return _error("invalid_request", "actions must be a non-empty array"), False
-        normalized_actions: list[Dict[str, Any]] = []
-        try:
-            for idx, action in enumerate(actions):
-                if not isinstance(action, dict):
-                    raise ValueError(f"action[{idx}] must be an object")
-                normalized_actions.append(_normalize_legacy_automation_manage_action(action))
-        except Exception as e:
-            return _error("invalid_request", str(e)), False
-        actions = normalized_actions
+        for idx, action in enumerate(actions):
+            if not isinstance(action, dict):
+                return _error("invalid_request", f"action[{idx}] must be an object"), False
 
         group = load_group(group_id)
         if group is None:
@@ -2926,6 +2687,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     rule_raw = raw_action.get("rule")
                     if not isinstance(rule_raw, dict):
                         raise ValueError("create_rule requires rule")
+                    _reject_legacy_automation_rule_shape(rule_raw, loc="action.create_rule.rule")
                     rule = AutomationRule.model_validate(rule_raw)
                     rid = str(rule.id or "").strip()
                     if not rid:
@@ -2945,6 +2707,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     rule_raw = raw_action.get("rule")
                     if not isinstance(rule_raw, dict):
                         raise ValueError("update_rule requires rule")
+                    _reject_legacy_automation_rule_shape(rule_raw, loc="action.update_rule.rule")
                     rule = AutomationRule.model_validate(rule_raw)
                     rid = str(rule.id or "").strip()
                     if not rid:
@@ -2996,6 +2759,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     ruleset_raw = raw_action.get("ruleset")
                     if not isinstance(ruleset_raw, dict):
                         raise ValueError("replace_all_rules requires ruleset")
+                    raw_rules = ruleset_raw.get("rules")
+                    if isinstance(raw_rules, list):
+                        for i, raw_rule in enumerate(raw_rules):
+                            if isinstance(raw_rule, dict):
+                                _reject_legacy_automation_rule_shape(raw_rule, loc=f"action.replace_all_rules.ruleset.rules[{i}]")
                     replacement = AutomationRuleSet.model_validate(ruleset_raw)
                     seen: set[str] = set()
                     new_order: list[str] = []

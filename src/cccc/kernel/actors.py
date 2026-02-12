@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from ..contracts.v1 import Actor, ActorRole, ActorSubmit, RunnerKind, AgentRuntime
 from ..util.time import utc_now_iso
+from ..util.conv import coerce_bool
 from .group import Group
 from .runtime import get_runtime_command_with_flags
 
@@ -37,6 +38,9 @@ def validate_actor_id(actor_id: str) -> str:
     
     if len(aid) > 32:
         raise ValueError("Name must be 32 characters or less")
+
+    if aid[0] in ("-", "_"):
+        raise ValueError("Name must start with a letter or number")
     
     if " " in aid or "\t" in aid or "\n" in aid:
         raise ValueError("Name cannot contain spaces")
@@ -126,7 +130,7 @@ def get_effective_role(group: Group, actor_id: str) -> ActorRole:
         if not isinstance(actor, dict):
             continue
         # Skip disabled actors when determining foreman
-        if not bool(actor.get("enabled", True)):
+        if not coerce_bool(actor.get("enabled"), default=True):
             continue
         aid = str(actor.get("id") or "").strip()
         if not aid:
@@ -151,7 +155,7 @@ def find_foreman(group: Group) -> Optional[Dict[str, Any]]:
     for actor in actors:
         if not isinstance(actor, dict):
             continue
-        if not bool(actor.get("enabled", True)):
+        if not coerce_bool(actor.get("enabled"), default=True):
             continue
         aid = str(actor.get("id") or "").strip()
         if aid:
@@ -194,7 +198,7 @@ def add_actor(
         env=dict(env or {}),
         default_scope_key=default_scope_key.strip(),
         submit=submit,
-        enabled=bool(enabled),
+        enabled=coerce_bool(enabled, default=True),
         runner=runner,
         runtime=runtime,
         created_at=now,
@@ -311,7 +315,7 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             raise ValueError("invalid submit")
 
     if "enabled" in patch:
-        item["enabled"] = bool(patch.get("enabled"))
+        item["enabled"] = coerce_bool(patch.get("enabled"), default=False)
 
     if "runner" in patch:
         runner = patch.get("runner")

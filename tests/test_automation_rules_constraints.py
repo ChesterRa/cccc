@@ -49,15 +49,19 @@ class TestAutomationRulesConstraints(unittest.TestCase):
                         "args": {
                             "group_id": gid,
                             "by": "user",
-                            "op": "create",
-                            "rule": {
-                                "id": "bad_group_state_interval",
-                                "enabled": True,
-                                "scope": "group",
-                                "to": ["@foreman"],
-                                "trigger": {"kind": "interval", "every_seconds": 60},
-                                "action": {"kind": "group_state", "state": "paused"},
-                            },
+                            "actions": [
+                                {
+                                    "type": "create_rule",
+                                    "rule": {
+                                        "id": "bad_group_state_interval",
+                                        "enabled": True,
+                                        "scope": "group",
+                                        "to": ["@foreman"],
+                                        "trigger": {"kind": "interval", "every_seconds": 60},
+                                        "action": {"kind": "group_state", "state": "paused"},
+                                    },
+                                }
+                            ],
                         },
                     }
                 )
@@ -68,6 +72,26 @@ class TestAutomationRulesConstraints(unittest.TestCase):
             self.assertIn("only supports trigger.kind=at", str(err.get("message") or ""))
         finally:
             cleanup()
+
+    def test_group_state_active_treats_running_string_false_as_not_running(self) -> None:
+        from pathlib import Path
+        from cccc.daemon.automation import AutomationManager
+        from cccc.kernel.group import Group
+
+        manager = AutomationManager()
+        group = Group(group_id="g_test", path=Path("."), doc={})
+        loaded = Group(group_id="g_test", path=Path("."), doc={"running": "false"})
+
+        with patch("cccc.daemon.automation.load_group", return_value=loaded), patch.object(
+            manager, "_daemon_automation_call", return_value=(True, "")
+        ) as mock_call:
+            ok, err = manager._execute_group_state_action(group, target_state="active")
+            self.assertTrue(ok)
+            self.assertEqual(err, "")
+
+        self.assertEqual(mock_call.call_count, 2)
+        self.assertEqual(mock_call.call_args_list[0].kwargs.get("op"), "group_start")
+        self.assertEqual(mock_call.call_args_list[1].kwargs.get("op"), "group_set_state")
 
     def test_at_rule_retime_clears_completion_state(self) -> None:
         from cccc.contracts.v1 import DaemonRequest

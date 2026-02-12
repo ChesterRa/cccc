@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint:fix": "eslint src --ext .ts,.tsx --fix"
   },
   "dependencies": {

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ..util.conv import coerce_bool
 from .actors import get_effective_role, list_actors
 from .group import Group
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
@@ -28,7 +29,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     actors = list_actors(group)
     enabled_actor_ids: List[str] = []
     for a in actors:
-        if not isinstance(a, dict) or not bool(a.get("enabled", True)):
+        if not isinstance(a, dict) or not coerce_bool(a.get("enabled"), default=True):
             continue
         aid = str(a.get("id") or "").strip()
         if aid:

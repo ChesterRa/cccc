@@ -36,6 +36,7 @@ from .kernel.registry import load_registry
 from .kernel.scope import detect_scope
 from .kernel.system_prompt import render_system_prompt
 from .paths import ensure_home
+from .util.conv import coerce_bool
 
 
 def _print_json(obj: Any) -> None:
@@ -167,6 +168,10 @@ def _resolve_group_id(explicit: str) -> str:
         return gid
     active = load_active()
     return str(active.get("active_group_id") or "").strip()
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    return coerce_bool(os.environ.get(name), default=default)
 
 
 def _is_first_run() -> bool:
@@ -449,7 +454,7 @@ def _default_entry() -> int:
     host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
     port = int(os.environ.get("CCCC_WEB_PORT") or 8848)
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
-    reload_mode = bool(os.environ.get("CCCC_WEB_RELOAD"))
+    reload_mode = _env_flag("CCCC_WEB_RELOAD", default=False)
     
     # Run web. Let uvicorn own signal handling; set a bounded graceful timeout to
     # avoid hanging forever on long-lived connections (e.g. SSE/WebSocket).
@@ -743,7 +748,7 @@ def cmd_group_stop(args: argparse.Namespace) -> int:
 
 
 def cmd_group_set_state(args: argparse.Namespace) -> int:
-    """Set group state (active/idle/paused)."""
+    """Set group state (active/idle/paused/stopped)."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -754,7 +759,10 @@ def cmd_group_set_state(args: argparse.Namespace) -> int:
     if not _ensure_daemon_running():
         _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
         return 2
-    resp = call_daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
+    if state == "stopped":
+        resp = call_daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+    else:
+        resp = call_daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
@@ -2653,8 +2661,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_group_stop.add_argument("--by", default="user", help="Requester (default: user)")
     p_group_stop.set_defaults(func=cmd_group_stop)
 
-    p_group_set_state = group_sub.add_parser("set-state", help="Set group state (active/idle/paused)")
-    p_group_set_state.add_argument("state", choices=["active", "idle", "paused"], help="New state")
+    p_group_set_state = group_sub.add_parser("set-state", help="Set group state (active/idle/paused/stopped)")
+    p_group_set_state.add_argument("state", choices=["active", "idle", "paused", "stopped"], help="New state")
     p_group_set_state.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_group_set_state.add_argument("--by", default="user", help="Requester (default: user)")
     p_group_set_state.set_defaults(func=cmd_group_set_state)

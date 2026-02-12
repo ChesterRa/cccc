@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal
 from .actors import list_actors
 from .group import Group
 from .inbox import is_message_for_actor
+from ..util.conv import coerce_bool
 
 
 DefaultSendTo = Literal["foreman", "broadcast"]
@@ -26,7 +27,7 @@ def _enabled_actor_ids(group: Group) -> List[str]:
     for a in list_actors(group):
         if not isinstance(a, dict):
             continue
-        if not bool(a.get("enabled", True)):
+        if not coerce_bool(a.get("enabled"), default=True):
             continue
         aid = str(a.get("id") or "").strip()
         if aid:
@@ -39,7 +40,7 @@ def _disabled_actor_ids(group: Group) -> List[str]:
     for a in list_actors(group):
         if not isinstance(a, dict):
             continue
-        if bool(a.get("enabled", True)):
+        if coerce_bool(a.get("enabled"), default=True):
             continue
         aid = str(a.get("id") or "").strip()
         if aid:

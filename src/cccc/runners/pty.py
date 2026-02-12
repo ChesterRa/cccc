@@ -484,9 +484,11 @@ class PtySession:
             client = _PtyClient(sock=sock, writer=writer, outbuf=outbuf)
             self._clients[fileno] = client
 
-        events = selectors.EVENT_WRITE if outbuf else 0
-        if writer:
-            events |= selectors.EVENT_READ
+        # Always register READ so the socket stays attached and disconnects can be observed.
+        # WRITE is enabled only when there is pending backlog to flush.
+        events = selectors.EVENT_READ
+        if outbuf:
+            events |= selectors.EVENT_WRITE
         try:
             self._selector.register(sock, events, data=("client", fileno))
         except Exception:

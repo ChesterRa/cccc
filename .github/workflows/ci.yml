@@ -23,6 +23,8 @@ jobs:
       - name: Build Web UI (bundled)
         run: |
           npm ci --prefix web
+          npm -C web run lint
+          npm -C web run typecheck
           npm -C web run build
           test -f src/cccc/ports/web/dist/index.html
 
@@ -34,6 +36,11 @@ jobs:
       - name: Install build deps
         run: |
           python -m pip install -U pip build twine
+          python -m pip install -e . pytest
+
+      - name: Run test suite
+        run: |
+          python -m pytest -q
 
       - name: Build
         run: |

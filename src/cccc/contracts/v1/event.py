@@ -19,6 +19,9 @@ EventKind = Literal[
     "group.set_active_scope",
     "group.start",
     "group.stop",
+    "group.set_state",
+    "group.settings_update",
+    "group.automation_update",
     "actor.add",
     "actor.update",
     "actor.set_role",
@@ -86,6 +89,29 @@ class GroupStartData(BaseModel):
 
 class GroupStopData(BaseModel):
     stopped: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GroupSetStateData(BaseModel):
+    old_state: str = ""
+    new_state: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GroupSettingsUpdateData(BaseModel):
+    patch: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GroupAutomationUpdateData(BaseModel):
+    rules: List[str] = Field(default_factory=list)
+    snippets: List[str] = Field(default_factory=list)
+    version: Optional[int] = None
+    actions: List[Dict[str, Any]] = Field(default_factory=list)
+    source: str = ""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -179,6 +205,9 @@ _KIND_TO_MODEL = {
     "group.set_active_scope": GroupSetActiveScopeData,
     "group.start": GroupStartData,
     "group.stop": GroupStopData,
+    "group.set_state": GroupSetStateData,
+    "group.settings_update": GroupSettingsUpdateData,
+    "group.automation_update": GroupAutomationUpdateData,
     "actor.add": ActorAddData,
     "actor.update": ActorUpdateData,
     "actor.set_role": ActorSetRoleData,

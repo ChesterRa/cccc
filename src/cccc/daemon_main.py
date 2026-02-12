@@ -13,18 +13,18 @@ from .daemon.server import DaemonPaths, call_daemon, default_paths, read_pid, se
 
 def _spawn_daemon(paths: DaemonPaths) -> int:
     paths.daemon_dir.mkdir(parents=True, exist_ok=True)
-    log_f = paths.log_path.open("a", encoding="utf-8")
     env = os.environ.copy()
     env["CCCC_HOME"] = str(paths.home)
-    p = subprocess.Popen(
-        [sys.executable, "-m", "cccc.daemon_main", "run"],
-        stdout=log_f,
-        stderr=log_f,
-        stdin=subprocess.DEVNULL,
-        env=env,
-        start_new_session=True,
-        cwd=str(paths.home),
-    )
+    with paths.log_path.open("a", encoding="utf-8") as log_f:
+        p = subprocess.Popen(
+            [sys.executable, "-m", "cccc.daemon_main", "run"],
+            stdout=log_f,
+            stderr=log_f,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            start_new_session=True,
+            cwd=str(paths.home),
+        )
     return int(p.pid)
 
 
@@ -53,6 +53,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         if pid > 0:
             try:
                 os.kill(pid, 0)  # Check if process exists
+                print(f"ccccd: pid file points to a live process (pid={pid}) but IPC is not responding; refusing to spawn duplicate daemon")
+                return 1
             except OSError:
                 # Process doesn't exist, clean up stale files
                 print("ccccd: cleaning up stale state from crashed daemon")

@@ -34,10 +34,18 @@ class RuntimePoolEntry:
     
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "RuntimePoolEntry":
+        try:
+            priority = int(d.get("priority") or 999)
+        except Exception:
+            priority = 999
+        scenarios_raw = d.get("scenarios")
+        scenarios: List[str] = []
+        if isinstance(scenarios_raw, list):
+            scenarios = [str(s).strip() for s in scenarios_raw if isinstance(s, str) and str(s).strip()]
         return cls(
             runtime=str(d.get("runtime") or ""),
-            priority=int(d.get("priority") or 999),
-            scenarios=list(d.get("scenarios") or []),
+            priority=priority,
+            scenarios=scenarios,
             notes=str(d.get("notes") or ""),
         )
 
@@ -111,6 +119,18 @@ DEFAULT_RUNTIME_POOL: List[RuntimePoolEntry] = [
         notes="Kilo Code CLI; MCP support",
     ),
 ]
+
+
+def _copy_runtime_pool(pool: List[RuntimePoolEntry]) -> List[RuntimePoolEntry]:
+    return [
+        RuntimePoolEntry(
+            runtime=str(entry.runtime),
+            priority=int(entry.priority),
+            scenarios=list(entry.scenarios),
+            notes=str(entry.notes),
+        )
+        for entry in pool
+    ]
 
 # ---------------------------------------------------------------------------
 # Observability / Developer mode (global)
@@ -286,7 +306,7 @@ def get_runtime_pool() -> List[RuntimePoolEntry]:
     pool_raw = settings.get("runtime_pool")
     
     if not isinstance(pool_raw, list) or not pool_raw:
-        return DEFAULT_RUNTIME_POOL
+        return _copy_runtime_pool(DEFAULT_RUNTIME_POOL)
     
     pool: List[RuntimePoolEntry] = []
     for item in pool_raw:
@@ -294,7 +314,7 @@ def get_runtime_pool() -> List[RuntimePoolEntry]:
             pool.append(RuntimePoolEntry.from_dict(item))
     
     if not pool:
-        return DEFAULT_RUNTIME_POOL
+        return _copy_runtime_pool(DEFAULT_RUNTIME_POOL)
     
     # Sort by priority
     pool.sort(key=lambda x: x.priority)

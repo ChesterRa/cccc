@@ -191,6 +191,43 @@ class PresenceData:
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
+def _coerce_milestone_status(value: Any) -> MilestoneStatus:
+    raw = str(value or "planned").strip().lower()
+    if raw == "pending":
+        raw = "planned"
+    try:
+        return MilestoneStatus(raw)
+    except Exception:
+        return MilestoneStatus.PLANNED
+
+
+def _coerce_task_status(value: Any) -> TaskStatus:
+    raw = str(value or "planned").strip().lower()
+    if raw == "pending":
+        raw = "planned"
+    try:
+        return TaskStatus(raw)
+    except Exception:
+        return TaskStatus.PLANNED
+
+
+def _coerce_step_status(value: Any) -> StepStatus:
+    raw = str(value or "pending").strip().lower()
+    if raw in ("planned",):
+        raw = "pending"
+    try:
+        return StepStatus(raw)
+    except Exception:
+        return StepStatus.PENDING
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
 # =============================================================================
 # Context Storage
 # =============================================================================
@@ -305,16 +342,18 @@ class ContextStorage:
                 meta = self._default_meta()
 
             milestones = []
-            for m in data.get("milestones", []):
-                raw_status = str(m.get("status", "planned") or "planned")
-                if raw_status.lower() == "pending":
-                    raw_status = "planned"
+            milestones_raw = data.get("milestones")
+            if not isinstance(milestones_raw, list):
+                milestones_raw = []
+            for m in milestones_raw:
+                if not isinstance(m, dict):
+                    continue
                 milestones.append(
                     Milestone(
                         id=m.get("id", ""),
                         name=m.get("name", ""),
                         description=m.get("description", ""),
-                        status=MilestoneStatus(raw_status.lower()),
+                        status=_coerce_milestone_status(m.get("status")),
                         archived_from=m.get("archived_from"),
                         started=m.get("started"),
                         completed=m.get("completed"),
@@ -475,25 +514,28 @@ class ContextStorage:
             self._tasks_raw[path.name] = data
 
             steps = []
-            for s in data.get("steps", []):
+            steps_raw = data.get("steps")
+            if not isinstance(steps_raw, list):
+                steps_raw = []
+            for s in steps_raw:
+                if not isinstance(s, dict):
+                    continue
                 steps.append(
                     Step(
                         id=s.get("id", ""),
                         name=s.get("name", ""),
                         acceptance=s.get("acceptance", ""),
-                        status=StepStatus(s.get("status", "pending")),
+                        status=_coerce_step_status(s.get("status")),
                     )
                 )
 
-            raw_status = str(data.get("status", "planned") or "planned").strip().lower()
-            if raw_status == "pending":
-                raw_status = "planned"
+            task_status = _coerce_task_status(data.get("status", "planned"))
 
             return Task(
                 id=data.get("id", ""),
                 name=data.get("name", ""),
                 goal=data.get("goal", ""),
-                status=TaskStatus(raw_status),
+                status=task_status,
                 archived_from=data.get("archived_from"),
                 milestone=data.get("milestone") or data.get("milestone_id"),
                 assignee=data.get("assignee"),
@@ -569,7 +611,12 @@ class ContextStorage:
                 return PresenceData()
 
             agents = []
-            for a in data.get("agents", []):
+            agents_raw = data.get("agents")
+            if not isinstance(agents_raw, list):
+                agents_raw = []
+            for a in agents_raw:
+                if not isinstance(a, dict):
+                    continue
                 agents.append(
                     AgentPresence(
                         id=a.get("id", ""),
@@ -580,7 +627,7 @@ class ContextStorage:
 
             return PresenceData(
                 agents=agents,
-                heartbeat_timeout_seconds=data.get("heartbeat_timeout_seconds", 300),
+                heartbeat_timeout_seconds=max(0, _coerce_int(data.get("heartbeat_timeout_seconds", 300), 300)),
             )
         except Exception:
             return PresenceData()

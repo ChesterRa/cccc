@@ -28,8 +28,10 @@ AgentRuntime = Literal[
     "custom",
 ]
 
-# Group state controls automation behavior
-GroupState = Literal["active", "idle", "paused"]
+# Group state controls automation/runtime behavior.
+# - active/idle/paused are logical workflow states
+# - stopped means all runtimes are stopped
+GroupState = Literal["active", "idle", "paused", "stopped"]
 
 
 class Actor(BaseModel):

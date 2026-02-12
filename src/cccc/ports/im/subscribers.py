@@ -11,6 +11,15 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ...util.conv import coerce_bool
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
 
 class Subscriber:
     """Represents a subscribed chat."""
@@ -47,11 +56,11 @@ class Subscriber:
     def from_dict(cls, chat_id: str, data: Dict[str, Any]) -> "Subscriber":
         return cls(
             chat_id=chat_id,
-            subscribed=bool(data.get("subscribed", True)),
-            verbose=bool(data.get("verbose", True)),
+            subscribed=coerce_bool(data.get("subscribed"), default=True),
+            verbose=coerce_bool(data.get("verbose"), default=True),
             subscribed_at=data.get("subscribed_at"),
             chat_title=str(data.get("chat_title", "")),
-            thread_id=int(data.get("thread_id") or 0),
+            thread_id=_safe_int(data.get("thread_id"), 0),
             platform=str(data.get("platform") or ""),
         )
 
@@ -102,7 +111,7 @@ class SubscriberManager:
                     continue
 
                 # If thread_id was encoded in the key, prefer it (but still allow stored thread_id field).
-                stored_thread_id = int(sub_data.get("thread_id") or 0)
+                stored_thread_id = _safe_int(sub_data.get("thread_id"), 0)
                 effective_thread_id = thread_id or stored_thread_id
 
                 sub = Subscriber.from_dict(chat_id, sub_data)

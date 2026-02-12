@@ -20,6 +20,7 @@ GroupAction = Literal[
     "group.start",
     "group.stop",
     "group.update",
+    "group.settings_update",
     "group.detach_scope",
     "group.delete",
     "group.set_state",

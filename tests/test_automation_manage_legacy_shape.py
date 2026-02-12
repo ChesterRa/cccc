@@ -33,7 +33,7 @@ class TestAutomationManageLegacyShape(unittest.TestCase):
         self.assertTrue(group_id)
         return group_id
 
-    def test_manage_accepts_legacy_rule_shape_via_simple_mode(self) -> None:
+    def test_manage_rejects_simple_mode_and_legacy_rule_shape(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.server import handle_request
 
@@ -61,26 +61,139 @@ class TestAutomationManageLegacyShape(unittest.TestCase):
                     }
                 )
             )
-            self.assertTrue(manage_resp.ok, getattr(manage_resp, "error", None))
+            self.assertFalse(manage_resp.ok)
+            err = manage_resp.error.model_dump() if manage_resp.error else {}
+            self.assertEqual(str(err.get("code") or ""), "invalid_request")
+            self.assertIn("actions must be a non-empty array", str(err.get("message") or ""))
+        finally:
+            cleanup()
 
-            state_resp, _ = handle_request(
+    def test_manage_rejects_legacy_rule_fields_in_actions(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_id()
+
+            manage_resp, _ = handle_request(
                 DaemonRequest.model_validate(
-                    {"op": "group_automation_state", "args": {"group_id": group_id, "by": "user"}}
+                    {
+                        "op": "group_automation_manage",
+                        "args": {
+                            "group_id": group_id,
+                            "by": "user",
+                            "actions": [
+                                {
+                                    "type": "create_rule",
+                                    "rule": {
+                                        "name": "Tokyo Weather Report",
+                                        "enabled": True,
+                                        "scope": "group",
+                                        "to": ["@foreman"],
+                                        "trigger": {"kind": "interval", "every_minutes": 30},
+                                        "actions": [{"type": "send_message", "message": "30 minutes check"}],
+                                    },
+                                }
+                            ],
+                        },
+                    }
                 )
             )
-            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
-            ruleset = (state_resp.result or {}).get("ruleset") if isinstance(state_resp.result, dict) else {}
-            rules = ruleset.get("rules") if isinstance(ruleset, dict) else []
-            matched = [r for r in rules if isinstance(r, dict) and str(r.get("id") or "") == "tokyo_weather_report"]
-            self.assertEqual(len(matched), 1)
-            rule = matched[0]
-            self.assertEqual(str(rule.get("id") or ""), "tokyo_weather_report")
-            trigger = rule.get("trigger") if isinstance(rule.get("trigger"), dict) else {}
-            self.assertEqual(str(trigger.get("kind") or ""), "interval")
-            self.assertEqual(int(trigger.get("every_seconds") or 0), 1800)
-            action = rule.get("action") if isinstance(rule.get("action"), dict) else {}
-            self.assertEqual(str(action.get("kind") or ""), "notify")
-            self.assertEqual(str(action.get("message") or ""), "30 minutes check")
+            self.assertFalse(manage_resp.ok)
+            err = manage_resp.error.model_dump() if manage_resp.error else {}
+            self.assertEqual(str(err.get("code") or ""), "group_automation_manage_failed")
+            message = str(err.get("message") or "")
+            self.assertIn("legacy automation rule shape is not supported", message)
+            self.assertIn("name->id", message)
+            self.assertIn("actions->action", message)
+        finally:
+            cleanup()
+
+    def test_update_rejects_legacy_rule_fields_in_ruleset(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_id()
+
+            update_resp, _ = handle_request(
+                DaemonRequest.model_validate(
+                    {
+                        "op": "group_automation_update",
+                        "args": {
+                            "group_id": group_id,
+                            "by": "user",
+                            "ruleset": {
+                                "rules": [
+                                    {
+                                        "name": "legacy",
+                                        "enabled": True,
+                                        "scope": "group",
+                                        "to": ["@foreman"],
+                                        "trigger": {"kind": "interval", "every_minutes": 30},
+                                        "actions": [{"type": "send_message", "message": "hello"}],
+                                    }
+                                ],
+                                "snippets": {},
+                            },
+                        },
+                    }
+                )
+            )
+            self.assertFalse(update_resp.ok)
+            err = update_resp.error.model_dump() if update_resp.error else {}
+            self.assertEqual(str(err.get("code") or ""), "group_automation_update_failed")
+            message = str(err.get("message") or "")
+            self.assertIn("legacy automation rule shape is not supported", message)
+            self.assertIn("ruleset.rules[0]", message)
+        finally:
+            cleanup()
+
+    def test_replace_all_rejects_legacy_rule_fields_in_ruleset(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_id()
+
+            manage_resp, _ = handle_request(
+                DaemonRequest.model_validate(
+                    {
+                        "op": "group_automation_manage",
+                        "args": {
+                            "group_id": group_id,
+                            "by": "user",
+                            "actions": [
+                                {
+                                    "type": "replace_all_rules",
+                                    "ruleset": {
+                                        "rules": [
+                                            {
+                                                "name": "legacy",
+                                                "enabled": True,
+                                                "scope": "group",
+                                                "to": ["@foreman"],
+                                                "trigger": {"kind": "interval", "every_minutes": 30},
+                                                "actions": [{"type": "send_message", "message": "hello"}],
+                                            }
+                                        ],
+                                        "snippets": {},
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            self.assertFalse(manage_resp.ok)
+            err = manage_resp.error.model_dump() if manage_resp.error else {}
+            self.assertEqual(str(err.get("code") or ""), "group_automation_manage_failed")
+            message = str(err.get("message") or "")
+            self.assertIn("legacy automation rule shape is not supported", message)
+            self.assertIn("action.replace_all_rules.ruleset.rules[0]", message)
         finally:
             cleanup()
 

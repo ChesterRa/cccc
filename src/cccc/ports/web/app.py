@@ -240,6 +240,18 @@ def _normalize_reply_required(v: Any) -> bool:
         return False
     return False
 
+
+def _safe_int(value: Any, *, default: int, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    try:
+        n = int(value)
+    except Exception:
+        n = default
+    if min_value is not None and n < min_value:
+        n = min_value
+    if max_value is not None and n > max_value:
+        n = max_value
+    return n
+
 class ObservabilityUpdateRequest(BaseModel):
     by: str = Field(default="user")
     developer_mode: Optional[bool] = None
@@ -1315,24 +1327,24 @@ def create_app() -> FastAPI:
             "result": {
                 "settings": {
                     "default_send_to": get_default_send_to(group.doc),
-                    "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
-                    "reply_required_nudge_after_seconds": int(automation.get("reply_required_nudge_after_seconds", 300)),
-                    "attention_ack_nudge_after_seconds": int(automation.get("attention_ack_nudge_after_seconds", 600)),
-                    "unread_nudge_after_seconds": int(automation.get("unread_nudge_after_seconds", 900)),
-                    "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
-                    "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
-                    "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
-                    "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
-                    "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
-                    "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
-                    "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
-                    "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
-                    "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
-                    "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
+                    "nudge_after_seconds": _safe_int(automation.get("nudge_after_seconds", 300), default=300, min_value=0),
+                    "reply_required_nudge_after_seconds": _safe_int(automation.get("reply_required_nudge_after_seconds", 300), default=300, min_value=0),
+                    "attention_ack_nudge_after_seconds": _safe_int(automation.get("attention_ack_nudge_after_seconds", 600), default=600, min_value=0),
+                    "unread_nudge_after_seconds": _safe_int(automation.get("unread_nudge_after_seconds", 900), default=900, min_value=0),
+                    "nudge_digest_min_interval_seconds": _safe_int(automation.get("nudge_digest_min_interval_seconds", 120), default=120, min_value=0),
+                    "nudge_max_repeats_per_obligation": _safe_int(automation.get("nudge_max_repeats_per_obligation", 3), default=3, min_value=0),
+                    "nudge_escalate_after_repeats": _safe_int(automation.get("nudge_escalate_after_repeats", 2), default=2, min_value=0),
+                    "actor_idle_timeout_seconds": _safe_int(automation.get("actor_idle_timeout_seconds", 600), default=600, min_value=0),
+                    "keepalive_delay_seconds": _safe_int(automation.get("keepalive_delay_seconds", 120), default=120, min_value=0),
+                    "keepalive_max_per_actor": _safe_int(automation.get("keepalive_max_per_actor", 3), default=3, min_value=0),
+                    "silence_timeout_seconds": _safe_int(automation.get("silence_timeout_seconds", 600), default=600, min_value=0),
+                    "help_nudge_interval_seconds": _safe_int(automation.get("help_nudge_interval_seconds", 600), default=600, min_value=0),
+                    "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
+                    "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),
                     "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
-                    "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
+                    "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
                 }
             }
         }

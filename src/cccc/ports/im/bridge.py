@@ -570,11 +570,11 @@ class IMBridge:
         verbose_str = "on" if sub.verbose else "off"
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
         if platform == "telegram":
-            tip = "Tip: use /send <message> to talk to agents (plain chat is ignored)."
+            tip = "Tip: in groups @mention the bot, and in DM plain text is sent to foreman by default."
         elif platform in ("slack", "discord"):
-            tip = "Channel tip: mention the bot and use /send (e.g. @bot /send hello)."
+            tip = "Channel tip: @mention the bot to route plain text. Use /send for explicit recipients."
         else:
-            tip = "Tip: use /send <message> to talk to agents."
+            tip = "Tip: plain text routes to foreman by default; use /send for explicit recipients."
         self.adapter.send_message(
             chat_id,
             f"✅ Subscribed to {self.group.doc.get('title', self.group.group_id)}\n"

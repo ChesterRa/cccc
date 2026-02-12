@@ -19,6 +19,7 @@ from .prompt_files import (
 from .terminal_transcript import get_terminal_transcript_settings
 from .messaging import get_default_send_to
 from ..util.time import utc_now_iso
+from ..util.conv import coerce_bool
 
 
 def _normalize_command(cmd: Any) -> List[str]:
@@ -30,6 +31,13 @@ def _normalize_command(cmd: Any) -> List[str]:
         s = cmd.strip()
         return shlex.split(s) if s else []
     return []
+
+
+def _as_int(v: Any, default: int) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return int(default)
 
 
 def parse_group_template(text: str) -> GroupTemplate:
@@ -72,7 +80,7 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
                 "runner": str(a.get("runner") or "pty"),
                 "command": list(a.get("command") or []) if isinstance(a.get("command"), list) else [],
                 "submit": str(a.get("submit") or "enter"),
-                "enabled": bool(a.get("enabled", True)),
+                "enabled": coerce_bool(a.get("enabled"), default=True),
             }
         )
 
@@ -83,24 +91,24 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
 
     settings: dict[str, Any] = {
         "default_send_to": default_send_to,
-        "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
-        "reply_required_nudge_after_seconds": int(automation.get("reply_required_nudge_after_seconds", 300)),
-        "attention_ack_nudge_after_seconds": int(automation.get("attention_ack_nudge_after_seconds", 600)),
-        "unread_nudge_after_seconds": int(automation.get("unread_nudge_after_seconds", 900)),
-        "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
-        "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
-        "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
-        "auto_mark_on_delivery": bool(delivery.get("auto_mark_on_delivery", False)),
-        "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
-        "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
-        "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
-        "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
-        "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
-        "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
-        "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
+        "nudge_after_seconds": _as_int(automation.get("nudge_after_seconds", 300), 300),
+        "reply_required_nudge_after_seconds": _as_int(automation.get("reply_required_nudge_after_seconds", 300), 300),
+        "attention_ack_nudge_after_seconds": _as_int(automation.get("attention_ack_nudge_after_seconds", 600), 600),
+        "unread_nudge_after_seconds": _as_int(automation.get("unread_nudge_after_seconds", 900), 900),
+        "nudge_digest_min_interval_seconds": _as_int(automation.get("nudge_digest_min_interval_seconds", 120), 120),
+        "nudge_max_repeats_per_obligation": _as_int(automation.get("nudge_max_repeats_per_obligation", 3), 3),
+        "nudge_escalate_after_repeats": _as_int(automation.get("nudge_escalate_after_repeats", 2), 2),
+        "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
+        "actor_idle_timeout_seconds": _as_int(automation.get("actor_idle_timeout_seconds", 600), 600),
+        "keepalive_delay_seconds": _as_int(automation.get("keepalive_delay_seconds", 120), 120),
+        "keepalive_max_per_actor": _as_int(automation.get("keepalive_max_per_actor", 3), 3),
+        "silence_timeout_seconds": _as_int(automation.get("silence_timeout_seconds", 600), 600),
+        "help_nudge_interval_seconds": _as_int(automation.get("help_nudge_interval_seconds", 600), 600),
+        "help_nudge_min_messages": _as_int(automation.get("help_nudge_min_messages", 10), 10),
+        "min_interval_seconds": _as_int(delivery.get("min_interval_seconds", 0), 0),
         "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
-        "terminal_transcript_notify_tail": bool(tt.get("notify_tail", True)),
-        "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
+        "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=True),
+        "terminal_transcript_notify_lines": _as_int(tt.get("notify_lines", 20), 20),
     }
 
     def _prompt_value(filename: str) -> Optional[str]:
@@ -178,7 +186,7 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
             changed = True
         if str(cur.get("runner") or "pty") != str(a.runner or "pty"):
             changed = True
-        if bool(cur.get("enabled", True)) != bool(a.enabled):
+        if coerce_bool(cur.get("enabled"), default=True) != coerce_bool(a.enabled, default=True):
             changed = True
         if str(cur.get("submit") or "enter") != str(a.submit or "enter"):
             changed = True
@@ -197,24 +205,24 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
     default_send_to = get_default_send_to(group.doc)
     current_settings: Dict[str, Any] = {
         "default_send_to": default_send_to,
-        "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
-        "reply_required_nudge_after_seconds": int(automation.get("reply_required_nudge_after_seconds", 300)),
-        "attention_ack_nudge_after_seconds": int(automation.get("attention_ack_nudge_after_seconds", 600)),
-        "unread_nudge_after_seconds": int(automation.get("unread_nudge_after_seconds", 900)),
-        "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
-        "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
-        "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
-        "auto_mark_on_delivery": bool(delivery.get("auto_mark_on_delivery", False)),
-        "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
-        "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
-        "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
-        "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
-        "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
-        "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
-        "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
+        "nudge_after_seconds": _as_int(automation.get("nudge_after_seconds", 300), 300),
+        "reply_required_nudge_after_seconds": _as_int(automation.get("reply_required_nudge_after_seconds", 300), 300),
+        "attention_ack_nudge_after_seconds": _as_int(automation.get("attention_ack_nudge_after_seconds", 600), 600),
+        "unread_nudge_after_seconds": _as_int(automation.get("unread_nudge_after_seconds", 900), 900),
+        "nudge_digest_min_interval_seconds": _as_int(automation.get("nudge_digest_min_interval_seconds", 120), 120),
+        "nudge_max_repeats_per_obligation": _as_int(automation.get("nudge_max_repeats_per_obligation", 3), 3),
+        "nudge_escalate_after_repeats": _as_int(automation.get("nudge_escalate_after_repeats", 2), 2),
+        "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
+        "actor_idle_timeout_seconds": _as_int(automation.get("actor_idle_timeout_seconds", 600), 600),
+        "keepalive_delay_seconds": _as_int(automation.get("keepalive_delay_seconds", 120), 120),
+        "keepalive_max_per_actor": _as_int(automation.get("keepalive_max_per_actor", 3), 3),
+        "silence_timeout_seconds": _as_int(automation.get("silence_timeout_seconds", 600), 600),
+        "help_nudge_interval_seconds": _as_int(automation.get("help_nudge_interval_seconds", 600), 600),
+        "help_nudge_min_messages": _as_int(automation.get("help_nudge_min_messages", 10), 10),
+        "min_interval_seconds": _as_int(delivery.get("min_interval_seconds", 0), 0),
         "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
-        "terminal_transcript_notify_tail": bool(tt.get("notify_tail", True)),
-        "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
+        "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=True),
+        "terminal_transcript_notify_lines": _as_int(tt.get("notify_lines", 20), 20),
     }
     desired_settings = template.settings.model_dump()
     settings_changed: Dict[str, Tuple[Any, Any]] = {}

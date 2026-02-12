@@ -23,8 +23,10 @@ from ...kernel.context import (
     StepStatus,
     Note,
     Reference,
+    AgentPresence,
 )
 from ...kernel.ledger import append_event
+from ...util.conv import coerce_bool
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -181,7 +183,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "system").strip() or "system"
     ops = args.get("ops") or []
-    dry_run = bool(args.get("dry_run", False))
+    dry_run = coerce_bool(args.get("dry_run"), default=False)
 
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -203,6 +205,22 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
     def _mark_change(idx: int, op_name: str, detail: str) -> None:
         changes.append({"index": idx, "op": op_name, "detail": detail})
+
+    def _apply_presence_update(agent_id: str, status: str) -> None:
+        canonical_id = storage._canonicalize_agent_id(agent_id)  # noqa: SLF001
+        if not canonical_id:
+            raise ValueError("agent_id must be a non-empty string")
+        status_norm = " ".join(str(status or "").split())
+        agent = None
+        for existing in presence.agents:
+            if existing.id == canonical_id:
+                agent = existing
+                break
+        if agent is None:
+            agent = AgentPresence(id=canonical_id)
+            presence.agents.append(agent)
+        agent.status = status_norm
+        agent.updated_at = _utc_now_iso()
 
     try:
         for idx, item in enumerate(ops):
@@ -479,15 +497,13 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             elif op_name == "presence.update":
                 agent_id = str(item.get("agent_id") or "")
                 status = str(item.get("status") or "")
-                if not dry_run:
-                    storage.update_agent_presence(agent_id, status)
+                _apply_presence_update(agent_id, status)
                 presence_dirty = True
                 _mark_change(idx, op_name, f"Updated presence for {agent_id}")
 
             elif op_name == "presence.clear":
                 agent_id = str(item.get("agent_id") or "")
-                if not dry_run:
-                    storage.clear_agent_status(agent_id)
+                _apply_presence_update(agent_id, "")
                 presence_dirty = True
                 _mark_change(idx, op_name, f"Cleared presence for {agent_id}")
 
@@ -500,6 +516,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             for task_id in sorted(dirty_task_ids):
                 if task_id in tasks_by_id:
                     storage.save_task(tasks_by_id[task_id])
+            if presence_dirty:
+                storage.save_presence(presence)
 
         version = storage.compute_version()
 

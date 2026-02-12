@@ -104,6 +104,8 @@ def resolve_blob_attachment_path(group: Group, *, rel_path: str) -> Path:
         raise ValueError("attachment is not a blob")
     abs_path = (group.path / rp).resolve()
     base = group.path.resolve()
-    if not str(abs_path).startswith(str(base) + "/"):
+    try:
+        abs_path.relative_to(base)
+    except Exception:
         raise ValueError("invalid attachment path")
     return abs_path

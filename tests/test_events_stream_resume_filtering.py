@@ -142,6 +142,52 @@ class TestEventsStreamResumeFiltering(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
+    def test_resume_falls_back_to_since_ts_when_event_id_missing(self) -> None:
+        from cccc.daemon.streaming import _resume_candidates
+        from cccc.kernel.group import create_group
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+
+                reg = load_registry()
+                group = create_group(reg, title="resume-fallback")
+
+                ev1 = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "m1", "to": []},
+                )
+                ev2 = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "m2", "to": []},
+                )
+
+                since_ts = str(ev1.get("ts") or "")
+                out = _resume_candidates(
+                    group.group_id,
+                    since_event_id="01NONEXISTENT",
+                    since_ts=since_ts,
+                    kinds=None,
+                )
+                out_ids = [str(ev.get("id") or "") for ev in out if isinstance(ev, dict)]
+                self.assertEqual(out_ids, [str(ev2.get("id") or "")])
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
 
 if __name__ == "__main__":
     unittest.main()

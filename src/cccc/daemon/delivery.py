@@ -62,8 +62,13 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
     delivery = group.doc.get("delivery")
     if not isinstance(delivery, dict):
         delivery = {}
+    try:
+        min_interval = int(delivery.get("min_interval_seconds", DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS))
+    except Exception:
+        min_interval = int(DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS)
+    min_interval = max(0, min_interval)
     return {
-        "min_interval_seconds": int(delivery.get("min_interval_seconds", DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS)),
+        "min_interval_seconds": min_interval,
         "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
     }
 

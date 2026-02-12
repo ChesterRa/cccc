@@ -1030,8 +1030,12 @@ class AutomationManager:
         for aid, idle_seconds in to_notify:
             tt = get_terminal_transcript_settings(group.doc)
             msg = f"Actor {aid} has been quiet for {int(idle_seconds)}s. They might be stuck or waiting for input."
-            if bool(tt.get("notify_tail", False)) and str(tt.get("visibility") or "foreman") != "off":
-                n_lines = int(tt.get("notify_lines") or 20)
+            if coerce_bool(tt.get("notify_tail"), default=False) and str(tt.get("visibility") or "foreman") != "off":
+                try:
+                    n_lines = int(tt.get("notify_lines") or 20)
+                except Exception:
+                    n_lines = 20
+                n_lines = max(1, min(80, n_lines))
                 snippet = _terminal_tail_snippet(group, actor_id=aid, lines=n_lines)
                 if snippet:
                     msg = f"{msg}\n\n---\nTerminal tail ({aid}, last {n_lines} lines):\n{snippet}"
@@ -1255,7 +1259,7 @@ class AutomationManager:
             )
 
         group_now = load_group(group.group_id)
-        running = bool(group_now.doc.get("running")) if group_now is not None else False
+        running = coerce_bool(group_now.doc.get("running"), default=False) if group_now is not None else False
         if state == "active" and not running:
             ok, err = self._daemon_automation_call(
                 op="group_start",
