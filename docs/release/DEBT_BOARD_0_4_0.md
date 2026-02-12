@@ -58,5 +58,7 @@ These files are large and should stay under active watch during GA hardening:
 ## Current Progress
 
 - `D1` started: group lifecycle invariant test and several non-runtime-behavior tests now use `runner=headless`.
-- `D4` in progress: `AutomationTab` extracted shared utilities and dedicated subcomponents (`AutomationRuleList`, `AutomationRuleEditorModal`, `AutomationSnippetModal`, `AutomationPoliciesSection`) while preserving behavior.
+- `D2` completed: MCP tool dispatcher is split by namespace and tool schema moved out of `mcp/server.py` to `mcp/toolspecs.py`.
+- `D3` in progress: `group_automation_*` operation family extracted from `daemon/server.py` into `daemon/ops/automation_ops.py` (behavior-preserving slice).
+- `D4` completed: `AutomationTab` extracted shared utilities and dedicated subcomponents (`AutomationRuleList`, `AutomationRuleEditorModal`, `AutomationSnippetModal`, `AutomationPoliciesSection`) while preserving behavior.
 - Remaining items are tracked here and should be landed in small, reviewable PRs.
