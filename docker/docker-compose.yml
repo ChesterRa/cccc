@@ -1,0 +1,24 @@
+services:
+  cccc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+    image: cccc
+    container_name: cccc
+    restart: unless-stopped
+    ports:
+      - "${CCCC_PORT:-8848}:8848"
+    volumes:
+      - cccc-data:/data
+      - ${WORKSPACE_PATH:-.}:/workspace
+    environment:
+      - CCCC_WEB_TOKEN=${CCCC_WEB_TOKEN:?Set CCCC_WEB_TOKEN in .env or environment}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+
+volumes:
+  cccc-data:

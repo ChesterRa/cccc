@@ -26,6 +26,15 @@ CCCC offers two ways to get started:
 - Great for CI/CD integration
 - Power user features
 
+### [Docker Deployment](./docker)
+
+**For servers and teams**
+
+- One-command deployment
+- Pre-installed AI agent CLIs
+- Persistent data with volumes
+- Docker Compose and K8s ready
+
 </div>
 
 ## Prerequisites
@@ -94,6 +103,7 @@ This checks Python version, available runtimes, and system configuration.
 
 - [Web UI Quick Start](./web) - Get started with the visual interface
 - [CLI Quick Start](./cli) - Get started with the command line
+- [Docker Deployment](./docker) - Deploy CCCC in a Docker container
 - [Use Cases](/guide/use-cases) - Learn high-ROI real-world patterns
 - [Operations Runbook](/guide/operations) - Run CCCC with operator-grade reliability
 - [Positioning](/reference/positioning) - Decide where CCCC should sit in your stack

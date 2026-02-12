@@ -1,5 +1,7 @@
 # Stage 1: Build WebUI
 FROM node:20-slim AS web-builder
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 WORKDIR /web
 COPY web/package*.json ./
 RUN npm ci
@@ -8,6 +10,8 @@ RUN npm run build
 
 # Stage 2: Final image
 FROM python:3.11-slim
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 
 # Install dependencies + Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -63,9 +67,9 @@ ENV CCCC_DAEMON_PORT=9765
 
 # Web server - 0.0.0.0 for external access
 ENV CCCC_WEB_HOST=0.0.0.0
-ENV CCCC_WEB_PORT=8765
+ENV CCCC_WEB_PORT=8848
 
-EXPOSE 8765 9765
+EXPOSE 8848 9765
 VOLUME ["/data", "/workspace"]
 
 # cccc (without args) starts both daemon and web server

@@ -40,7 +40,8 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/guide/getting-started/' },
             { text: 'Web UI Quick Start', link: '/guide/getting-started/web' },
-            { text: 'CLI Quick Start', link: '/guide/getting-started/cli' }
+            { text: 'CLI Quick Start', link: '/guide/getting-started/cli' },
+            { text: 'Docker Deployment', link: '/guide/getting-started/docker' }
           ]
         },
         {
