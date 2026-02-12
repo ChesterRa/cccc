@@ -16,7 +16,7 @@ services:
       - ${WORKSPACE_PATH:-.}:/workspace
     environment:
       - CCCC_WEB_TOKEN=${CCCC_WEB_TOKEN:?Set CCCC_WEB_TOKEN in .env or environment}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
@@ -24,3 +24,4 @@ services:
 
 volumes:
   cccc-data:
+    external: true

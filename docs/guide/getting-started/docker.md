@@ -31,7 +31,7 @@ Ask each one individually:
 1. "What port do you want the Web UI on? (default: 8848)"
 2. "Set a CCCC_WEB_TOKEN for authentication (any random string you choose):"
 3. "Where are your project files? (absolute path, will be mounted to /workspace)"
-4. "Which AI agent API keys do you have? (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY)"
+4. "Which AI agent API keys do you have? (ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY / GEMINI_API_KEY)"
 
 ## Step 4: Run the container
 Build the docker run command from the user's answers:
@@ -58,10 +58,12 @@ Run these and report results:
 
 ## Optional: Docker Compose
 If user prefers Compose, point them to the bundled docker/docker-compose.yml:
-  cd docker
-  cp .env.example .env
-  # Edit .env with their values (CCCC_WEB_TOKEN, API keys, port, workspace path, proxy)
-  docker compose up -d
+  cp docker/.env.example docker/.env
+  # Edit docker/.env with their values (CCCC_WEB_TOKEN, API keys, port, workspace path, proxy)
+  # From project root:
+  docker compose --env-file docker/.env -f docker/docker-compose.yml up -d --build
+  # Or from docker directory:
+  cd docker && docker compose up -d --build
 
 ## Key environment variables reference:
 | Variable | Default | Description |
@@ -73,6 +75,9 @@ If user prefers Compose, point them to the bundled docker/docker-compose.yml:
 | CCCC_DAEMON_TRANSPORT | tcp | IPC transport |
 | CCCC_DAEMON_HOST | 127.0.0.1 | Daemon bind address |
 | CCCC_DAEMON_PORT | 9765 | Daemon IPC port |
+| ANTHROPIC_AUTH_TOKEN | (none) | Auth token for Claude |
+| OPENAI_API_KEY | (none) | API key for Codex runtime |
+| GEMINI_API_KEY | (none) | API key for Gemini CLI runtime |
 
 ## Tone: concise, practical, one step at a time. Confirm each step succeeds before moving on.
 ```
@@ -82,7 +87,7 @@ If user prefers Compose, point them to the bundled docker/docker-compose.yml:
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) installed (20.10+)
-- At least one AI agent API key (e.g. `ANTHROPIC_API_KEY` for Claude)
+- At least one AI agent API key (e.g. `ANTHROPIC_AUTH_TOKEN` for Claude)
 
 ## Quick Start
 
@@ -106,7 +111,7 @@ docker run -d \
   -v cccc-data:/data \
   -v /path/to/your/projects:/workspace \
   -e CCCC_WEB_TOKEN=your-secret-token \
-  -e ANTHROPIC_API_KEY=sk-ant-xxx \
+  -e ANTHROPIC_AUTH_TOKEN=sk-ant-xxx \
   --name cccc \
   cccc
 ```
@@ -136,7 +141,7 @@ docker exec cccc cccc doctor
 | `CCCC_DAEMON_TRANSPORT` | `tcp` | Daemon IPC transport (`tcp` or `unix`) |
 | `CCCC_DAEMON_HOST` | `127.0.0.1` | Daemon bind address |
 | `CCCC_DAEMON_PORT` | `9765` | Daemon IPC port |
-| `ANTHROPIC_API_KEY` | _(none)_ | API key for Claude Code runtime |
+| `ANTHROPIC_AUTH_TOKEN` | _(none)_ | Auth token for Claude Code runtime (do not set together with `ANTHROPIC_API_KEY`) |
 | `ANTHROPIC_BASE_URL` | _(none)_ | Custom API endpoint for Claude Code |
 | `OPENAI_API_KEY` | _(none)_ | API key for Codex runtime |
 | `OPENAI_BASE_URL` | _(none)_ | Custom API endpoint for Codex |
@@ -191,20 +196,55 @@ docker cp ~/.claude.json cccc:/home/cccc/.claude.json
 
 ### Run with Docker Compose
 
-The repo ships a ready-to-use `docker/docker-compose.yml`:
+The repo ships a ready-to-use `docker/docker-compose.yml`. First copy and edit the env file:
 
 ```bash
-cd docker
-cp .env.example .env
-# Edit .env — set CCCC_WEB_TOKEN and other values
-docker compose up -d
+cp docker/.env.example docker/.env
+# Edit docker/.env — set CCCC_WEB_TOKEN, API keys, workspace path, etc.
 ```
+
+Create the data volume (required on first run, as the compose file uses `external: true`):
+
+```bash
+docker volume create cccc-data
+```
+
+Then choose either way to start:
+
+```bash
+# Option A: Run from project root (recommended)
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d --build
+
+# Option B: Run from docker directory
+cd docker
+docker compose up -d --build
+```
+
+::: info First Run vs Update
+`--build` builds the image from source. On subsequent runs, you can omit it if the image hasn't changed — `docker compose up -d` will reuse the existing image.
+:::
 
 The `.env` file controls ports, volumes, API keys, and build-time proxy. See `docker/.env.example` for all options.
 
 ::: tip Build Behind a Proxy
-Set `HTTP_PROXY` and `HTTPS_PROXY` in `.env` to pass proxy settings during `docker compose build`.
+Set `HTTP_PROXY` and `HTTPS_PROXY` in `.env` to pass proxy settings during `docker compose build`. Both build stages (Node.js and Python) will use the proxy for `curl`, `npm`, and `pip`.
 :::
+
+#### Daily Operations
+
+```bash
+# Update deployment (build + restart)
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d --build
+
+# Force full rebuild (no cache)
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d --build --no-cache
+
+# View logs
+docker compose --env-file docker/.env -f docker/docker-compose.yml logs -f
+
+# Stop
+docker compose --env-file docker/.env -f docker/docker-compose.yml down
+```
 
 ### K8s Sidecar Pattern
 

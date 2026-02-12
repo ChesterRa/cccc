@@ -2,6 +2,7 @@
 FROM node:20-slim AS web-builder
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
+ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
 WORKDIR /web
 COPY web/package*.json ./
 RUN npm ci
@@ -12,6 +13,7 @@ RUN npm run build
 FROM python:3.11-slim
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
+ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
 
 # Install dependencies + Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -44,6 +46,9 @@ RUN pip install --no-cache-dir .
 WORKDIR /workspace
 RUN rm -rf /app
 
+# Clear build-time proxy
+ENV http_proxy="" https_proxy=""
+
 # Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash cccc \
     && mkdir -p /data /workspace \
@@ -51,9 +56,12 @@ RUN useradd -m -s /bin/bash cccc \
 
 USER cccc
 ENV HOME=/home/cccc
+ENV PATH="/home/cccc/.local/bin:${PATH}"
 
-# Pre-configure Claude CLI (skip onboarding prompt)
-RUN echo '{"hasCompletedOnboarding":true}' > /home/cccc/.claude.json
+# Set up Claude CLI for non-root user
+RUN mkdir -p /home/cccc/.local/bin \
+    && ln -s /usr/local/bin/claude /home/cccc/.local/bin/claude \
+    && echo '{"hasCompletedOnboarding":true}' > /home/cccc/.claude.json
 
 # Configuration
 ENV CCCC_HOME=/data
