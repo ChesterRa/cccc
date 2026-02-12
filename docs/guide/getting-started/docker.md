@@ -137,7 +137,9 @@ docker exec cccc cccc doctor
 | `CCCC_DAEMON_HOST` | `127.0.0.1` | Daemon bind address |
 | `CCCC_DAEMON_PORT` | `9765` | Daemon IPC port |
 | `ANTHROPIC_API_KEY` | _(none)_ | API key for Claude Code runtime |
+| `ANTHROPIC_BASE_URL` | _(none)_ | Custom API endpoint for Claude Code |
 | `OPENAI_API_KEY` | _(none)_ | API key for Codex runtime |
+| `OPENAI_BASE_URL` | _(none)_ | Custom API endpoint for Codex |
 | `GEMINI_API_KEY` | _(none)_ | API key for Gemini CLI runtime |
 
 ### Volume Mounts
