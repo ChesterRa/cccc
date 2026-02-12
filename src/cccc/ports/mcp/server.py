@@ -128,12 +128,11 @@ def _resolve_self_actor_id(arguments: Dict[str, Any]) -> str:
     return _validate_self_actor_id(aid)
 
 
-def _resolve_by_actor_id(arguments: Dict[str, Any]) -> str:
-    """Resolve the caller 'by' actor id from env or tool arguments (env wins).
+def _resolve_caller_from_by(arguments: Dict[str, Any]) -> str:
+    """Resolve caller identity from ``by`` arg or CCCC_ACTOR_ID env only.
 
-    Only reads the ``by`` argument -- NOT ``actor_id``, which in many tools
-    (actor_add, actor_start, actor_stop, actor_restart) refers to the
-    *target* actor, not the caller.
+    Use for tools where ``actor_id`` refers to a *target* actor, not the
+    caller (actor_add, actor_remove, actor_start, actor_stop, actor_restart).
     """
     env_aid = _env_str("CCCC_ACTOR_ID")
     arg_by = str(arguments.get("by") or "").strip()
@@ -145,6 +144,35 @@ def _resolve_by_actor_id(arguments: Dict[str, Any]) -> str:
             code="actor_id_mismatch",
             message="by mismatch (tool args must match CCCC_ACTOR_ID)",
             details={"env": env_aid, "arg": arg_by},
+        )
+    return _validate_self_actor_id(aid)
+
+
+def _resolve_caller_actor_id(arguments: Dict[str, Any]) -> str:
+    """Resolve caller identity from ``by``, ``actor_id``, or CCCC_ACTOR_ID env.
+
+    Accepts both ``by`` and ``actor_id`` as caller identity for compatibility.
+    Use for tools where ``actor_id`` means the caller itself
+    (group_set_state, automation_manage, etc.).
+    """
+    env_aid = _env_str("CCCC_ACTOR_ID")
+    arg_by = str(arguments.get("by") or "").strip()
+    arg_actor_id = str(arguments.get("actor_id") or "").strip()
+    if arg_by and arg_actor_id and arg_by != arg_actor_id:
+        raise MCPError(
+            code="actor_id_mismatch",
+            message="by/actor_id mismatch (tool args must use one consistent actor id)",
+            details={"by": arg_by, "actor_id": arg_actor_id},
+        )
+    arg_aid = arg_by or arg_actor_id
+    aid = env_aid or arg_aid
+    if not aid:
+        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by/actor_id)")
+    if env_aid and arg_aid and arg_aid != env_aid:
+        raise MCPError(
+            code="actor_id_mismatch",
+            message="actor id mismatch (tool args must match CCCC_ACTOR_ID)",
+            details={"env": env_aid, "arg": arg_aid},
         )
     return _validate_self_actor_id(aid)
 
@@ -2219,7 +2247,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_actor_add":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_from_by(arguments)
         cmd_raw = arguments.get("command")
         env_raw = arguments.get("env")
         return actor_add(
@@ -2236,7 +2264,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_actor_remove":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_from_by(arguments)
         target = str(arguments.get("actor_id") or "").strip() or by
         return actor_remove(
             group_id=gid,
@@ -2246,7 +2274,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_actor_start":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_from_by(arguments)
         return actor_start(
             group_id=gid,
             by=by,
@@ -2255,7 +2283,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_actor_stop":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_from_by(arguments)
         return actor_stop(
             group_id=gid,
             by=by,
@@ -2264,7 +2292,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_actor_restart":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_from_by(arguments)
         return actor_restart(
             group_id=gid,
             by=by,
@@ -2276,7 +2304,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_group_set_state":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_actor_id(arguments)
         return group_set_state(
             group_id=gid,
             by=by,
@@ -2285,12 +2313,12 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "cccc_automation_state":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_actor_id(arguments)
         return automation_state(group_id=gid, by=by)
 
     if name == "cccc_automation_manage":
         gid = _resolve_group_id(arguments)
-        by = _resolve_by_actor_id(arguments)
+        by = _resolve_caller_actor_id(arguments)
         actions: List[Dict[str, Any]] = []
         mapped = _map_simple_automation_op_to_action(arguments)
         if isinstance(mapped, dict):
