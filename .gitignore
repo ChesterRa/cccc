@@ -59,6 +59,6 @@ uv.lock
 AGENTS.md
 .claude/skills
 .shared/
-.agent/
+.agents/
 .codex/
 .windsurf/

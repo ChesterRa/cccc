@@ -1,7 +1,6 @@
 {
   "agentNotFound": "Agent not found",
-  "loadingAgent": "Loading agent\u2026",
-
+  "loadingAgent": "Loading agent…",
   "foreman": "foreman",
   "running": "Running",
   "stopped": "Stopped",
@@ -9,17 +8,14 @@
   "custom": "Custom",
   "noPresenceYet": "No presence yet",
   "agentPresence": "Agent presence",
-
   "headlessAgent": "Headless Agent",
   "headlessDescription": "This agent runs without a terminal. It communicates via MCP tools and the inbox system.",
   "statusRunning": "Status: Running",
-
   "agentNotRunning": "Agent Not Running",
   "agentStoppedDescription": "This agent is currently stopped.",
   "launchAgent": "Launch Agent",
   "launching": "Launching...",
   "launch": "Launch",
-
   "quit": "Quit",
   "quitAgent": "Quit agent",
   "sendInterruptTitle": "Send Ctrl+C to interrupt",
@@ -28,14 +24,11 @@
   "relaunchAgent": "Relaunch agent",
   "editAgentConfig": "Edit agent configuration",
   "launchAgentLabel": "Launch agent",
-
   "inbox": "Inbox",
   "openInbox": "Open inbox",
   "unreadMessages": ", {{count}} unread messages",
-
   "stopBeforeRemoving": "Stop the agent before removing",
   "removeAgent": "Remove agent",
-
   "addAiAgent": "Add AI Agent",
   "chooseRuntime": "Choose an AI runtime to add to your team",
   "agentName": "Agent Name",
@@ -43,9 +36,8 @@
   "leaveEmptyToUse": "Leave empty to use:",
   "aiRuntime": "AI Runtime",
   "notInstalled": "(not installed)",
-
   "manualMcpRequired": "Manual MCP install required",
-  "customCommandHint": "Provide a command for your runtime in <1>Advanced options \u2192 Command Override</1>.",
+  "customCommandHint": "Provide a command for your runtime in <1>Advanced options → Command Override</1>.",
   "configureMcpStdio": "Configure your runtime to add an MCP stdio server named",
   "thatRuns": "that runs",
   "createEditFile": "1) Create/edit",
@@ -54,26 +46,22 @@
   "addMcpConfigOrFlag": "2) Add this MCP server config (or pass it via",
   "inProjectRoot": "in this project root",
   "restartAfterConfig": "Restart the runtime after updating this config.",
-
   "role": "Role",
-  "foremanRole": "\u2605 Foreman",
+  "foremanRole": "★ Foreman",
   "foremanExists": "(exists)",
   "peerRole": "Peer",
   "needForemanFirst": "(need foreman first)",
   "foremanLeads": "Foreman leads the team. Peers are worker agents.",
   "firstAgentForeman": "First agent must be the foreman (team leader).",
-
   "advancedOptions": "Advanced options",
   "commandOverride": "Command Override",
   "enterCommand": "Enter command...",
   "default": "Default:",
-
   "secretsWriteOnly": "Secrets (write-only)",
-  "secretsStoredLocally": "Stored locally under <1>CCCC_HOME/state/\u2026</1> (not in group ledger). Values are never shown again.",
+  "secretsStoredLocally": "Stored locally under <1>CCCC_HOME/state/…</1> (not in group ledger). Values are never shown again.",
   "secretsFormat": "Supports <1>KEY=VALUE</1> and shell-style <2>export KEY=VALUE</2> (quotes / semicolons / inline comments).",
   "adding": "Adding...",
   "addAgent": "Add Agent",
-
   "editAgent": "Edit Agent: {{actorId}}",
   "changeSettings": "Change settings for this agent",
   "displayName": "Display Name",
@@ -92,9 +80,7 @@
   "saveAndRestart": "Save & Restart",
   "saveFailed": "Save failed",
   "failedToLoadSecrets": "Failed to load secret env metadata",
-
-  "secretsStoredLocallyEdit": "Stored locally under <1>CCCC_HOME/state/\u2026</1> (not in group ledger).",
-
+  "secretsStoredLocallyEdit": "Stored locally under <1>CCCC_HOME/state/…</1> (not in group ledger).",
   "deleteGroupConfirm": "Delete group \"{{name}}\"?",
   "saveAndRestartConfirm": "Save changes and restart \"{{label}}\" now? This will interrupt any running work.",
   "saveSecretsAndRestartConfirm": "Save changes, apply secrets, and restart \"{{label}}\" now? This will interrupt any running work.",

@@ -3,6 +3,7 @@ import { Actor, GroupDoc } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { LanguageSwitcher } from "../LanguageSwitcher";
 import {
   SearchIcon,
   ClipboardIcon,
@@ -162,16 +163,24 @@ export function MobileMenuSheet({
             </button>
           </div>
 
-          <button
-            className={classNames(
-              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-              isDark ? "text-slate-200" : "text-gray-800"
-            )}
-            onClick={onToggleTheme}
-          >
-            {isDark ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-            <span>{isDark ? t('lightMode') : t('darkMode')}</span>
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <LanguageSwitcher
+              isDark={isDark}
+              showLabel
+              className={isDark ? "text-slate-200" : "text-gray-800"}
+            />
+
+            <button
+              className={classNames(
+                "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+                isDark ? "text-slate-200" : "text-gray-800"
+              )}
+              onClick={onToggleTheme}
+            >
+              {isDark ? <SunIcon size={18} /> : <MoonIcon size={18} />}
+              <span>{isDark ? t('lightMode') : t('darkMode')}</span>
+            </button>
+          </div>
 
           <button
             className={classNames(

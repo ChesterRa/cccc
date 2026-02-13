@@ -11,8 +11,8 @@
     "pathPlaceholder": "/项目/路径",
     "blueprintLabel": "从蓝图创建工作组（可选）",
     "loadingBlueprint": "加载蓝图中…",
-    "blueprintHint": "应用 actor、设置、自动化规则/代码片段，以及 CCCC_HOME 下的工作组引导覆盖（CCCC_PREAMBLE.md / CCCC_HELP.md）。",
-    "creating": "创建中...",
+    "blueprintHint": "应用 actor、设置、自动化规则/模板，以及 CCCC_HOME 下的工作组引导覆盖（CCCC_PREAMBLE.md / CCCC_HELP.md）。",
+    "creating": "创建中…",
     "createFromBlueprint": "从蓝图创建工作组",
     "createGroup": "创建工作组"
   },
@@ -82,10 +82,10 @@
     "createButton": "创建",
     "writePlaceholder": "在此编写项目章程…",
     "vision": "愿景",
-    "visionPlaceholder": "描述项目愿景...",
+    "visionPlaceholder": "描述项目愿景…",
     "noVision": "未设置愿景",
     "sketch": "架构草案",
-    "sketchPlaceholder": "技术草案或架构笔记...",
+    "sketchPlaceholder": "技术草案或架构笔记…",
     "noSketch": "未设置架构草案",
     "milestones": "里程碑",
     "statusActive": "进行中",
@@ -102,7 +102,7 @@
     "restore": "恢复",
     "started": "开始于 {{time}}",
     "completed": "完成于 {{time}}",
-    "outcomes": "成果：",
+    "outcomes": "成果： ",
     "tasks": "任务",
     "tasksSummary": "共 {{total}} · 进行中 {{active}} · 计划中 {{planned}} · 已完成 {{done}}",
     "noActiveTask": "没有进行中的任务",
@@ -146,6 +146,6 @@
     "title": "PROJECT.md 已保存",
     "projectUpdatedAria": "项目已更新",
     "notifyAgents": "在聊天中通知 agent（@all）",
-    "working": "处理中..."
+    "working": "处理中…"
   }
 }
