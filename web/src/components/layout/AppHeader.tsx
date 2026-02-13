@@ -228,7 +228,6 @@ export function AppHeader({
             </div>
 
             <div className="hidden md:flex items-center gap-1">
-              <LanguageSwitcher isDark={isDark} />
               <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
             </div>
 
@@ -243,6 +242,11 @@ export function AppHeader({
             >
               <SettingsIcon size={18} />
             </button>
+
+            <div className={`hidden md:block w-px h-4 ${isDark ? "bg-white/10" : "bg-black/10"}`} />
+            <div className="hidden md:block">
+              <LanguageSwitcher isDark={isDark} />
+            </div>
 
             <button
               className={classNames(
