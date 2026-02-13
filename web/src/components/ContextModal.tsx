@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiJson, contextSync, fetchTasks } from "../services/api";
 import { GroupContext, ProjectMdInfo, Task } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
@@ -34,6 +35,7 @@ export function ContextModal({
   busy,
   isDark,
 }: ContextModalProps) {
+  const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [editingVision, setEditingVision] = useState(false);
   const [editingSketch, setEditingSketch] = useState(false);
@@ -79,8 +81,8 @@ export function ContextModal({
   }, [projectMd?.path]);
 
   const notifyMessage = useMemo(() => {
-    return `PROJECT.md updated. Please re-read and align. (${projectPathLabel})`;
-  }, [projectPathLabel]);
+    return t("context.projectUpdatedNotify", { path: projectPathLabel });
+  }, [projectPathLabel, t]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -108,7 +110,7 @@ export function ContextModal({
       if (cancelled) return;
       if (!resp.ok) {
         setProjectMd(null);
-        setProjectError(resp.error?.message || "Failed to load PROJECT.md");
+        setProjectError(resp.error?.message || t("context.failedToLoadProject"));
         setProjectBusy(false);
       } else {
         setProjectMd(resp.result);
@@ -121,7 +123,7 @@ export function ContextModal({
       if (cancelled) return;
       if (!resp.ok) {
         setTasks(null);
-        setTasksError(resp.error?.message || "Failed to load tasks");
+        setTasksError(resp.error?.message || t("context.failedToLoadTasks"));
         setTasksBusy(false);
         return;
       }
@@ -132,7 +134,7 @@ export function ContextModal({
     return () => {
       cancelled = true;
     };
-  }, [groupId, isOpen]);
+  }, [groupId, isOpen, t]);
 
   const tasksByStatus = useMemo(() => {
     const list = Array.isArray(tasks) ? tasks : [];
@@ -142,13 +144,13 @@ export function ContextModal({
     const done: Task[] = [];
     const archived: Task[] = [];
     const other: Task[] = [];
-    for (const t of list) {
-      const st = normalize(t.status);
-      if (st === "active") active.push(t);
-      else if (st === "done") done.push(t);
-      else if (st === "archived") archived.push(t);
-      else if (st === "planned") planned.push(t);
-      else other.push(t);
+    for (const tk of list) {
+      const st = normalize(tk.status);
+      if (st === "active") active.push(tk);
+      else if (st === "done") done.push(tk);
+      else if (st === "archived") archived.push(tk);
+      else if (st === "planned") planned.push(tk);
+      else other.push(tk);
     }
     return { active, planned, done, archived, other };
   }, [tasks]);
@@ -185,7 +187,7 @@ export function ContextModal({
     try {
       const resp = await contextSync(groupId, ops);
       if (!resp.ok) {
-        setSyncError(resp.error?.message || "Failed to apply changes");
+        setSyncError(resp.error?.message || t("context.failedToApplyChanges"));
         return false;
       }
       await onRefreshContext();
@@ -196,7 +198,7 @@ export function ContextModal({
         if (tResp.ok) {
           setTasks(Array.isArray(tResp.result?.tasks) ? tResp.result.tasks : []);
         } else {
-          setTasksError(tResp.error?.message || "Failed to load tasks");
+          setTasksError(tResp.error?.message || t("context.failedToLoadTasks"));
         }
       }
       return true;
@@ -210,7 +212,7 @@ export function ContextModal({
 
   const handleArchiveTask = async (taskId: string) => {
     const prevTasks = tasks;
-    setTasks((prev) => (Array.isArray(prev) ? prev.map((t) => (t.id === taskId ? { ...t, status: "archived" } : t)) : prev));
+    setTasks((prev) => (Array.isArray(prev) ? prev.map((tk) => (tk.id === taskId ? { ...tk, status: "archived" } : tk)) : prev));
     const ok = await runOps([{ op: "task.update", task_id: taskId, status: "archived" }]);
     if (!ok) {
       // Rollback on failure
@@ -248,7 +250,7 @@ export function ContextModal({
   };
 
   const handleRemoveNote = async (noteId: string) => {
-    const okConfirm = window.confirm(`Delete note ${noteId}?`);
+    const okConfirm = window.confirm(t("context.deleteNoteConfirm", { id: noteId }));
     if (!okConfirm) return;
     await runOps([{ op: "note.remove", note_id: noteId }]);
   };
@@ -285,7 +287,7 @@ export function ContextModal({
   };
 
   const handleRemoveRef = async (refId: string) => {
-    const okConfirm = window.confirm(`Delete reference ${refId}?`);
+    const okConfirm = window.confirm(t("context.deleteRefConfirm", { id: refId }));
     if (!okConfirm) return;
     await runOps([{ op: "reference.remove", reference_id: refId }]);
   };
@@ -342,7 +344,7 @@ export function ContextModal({
         body: JSON.stringify({ content: projectText, by: "user" }),
       });
       if (!resp.ok) {
-        setProjectError(resp.error?.message || "Failed to save PROJECT.md");
+        setProjectError(resp.error?.message || t("context.failedToSaveProject"));
         return;
       }
       setProjectMd(resp.result);
@@ -368,7 +370,7 @@ export function ContextModal({
           body: JSON.stringify({ text: notifyMessage, by: "user", to: ["@all"], path: "" }),
         });
         if (!resp.ok) {
-          setNotifyError(resp.error?.message || "Failed to notify agents");
+          setNotifyError(resp.error?.message || t("context.failedToNotify"));
           return;
         }
       }
@@ -386,8 +388,8 @@ export function ContextModal({
         isDark={isDark}
         onClose={onClose}
         titleId="context-modal-title"
-        title="📋 Project Context"
-        closeAriaLabel="Close context modal"
+        title={`📋 ${t("context.title")}`}
+        closeAriaLabel={t("context.closeAria")}
         panelClassName="w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-2xl"
         modalRef={modalRef}
       >
@@ -397,7 +399,7 @@ export function ContextModal({
 
           <details id="context-presence" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              Presence
+              {t("context.presence")}
             </summary>
             <div className="mt-2">
               {context?.presence?.agents && context.presence.agents.length > 0 ? (
@@ -414,7 +416,7 @@ export function ContextModal({
                             )}
                             title={formatFullTime(a.updated_at)}
                           >
-                            Updated {formatTime(a.updated_at)}
+                            {t("context.updated", { time: formatTime(a.updated_at) })}
                           </span>
                         ) : null}
                       </div>
@@ -425,14 +427,14 @@ export function ContextModal({
                           className={classNames("text-xs mt-1", isDark ? "text-slate-300" : "text-gray-700")}
                         />
                       ) : (
-                        <div className={`text-xs mt-1 italic ${isDark ? "text-slate-500" : "text-gray-500"}`}>No presence yet</div>
+                        <div className={`text-xs mt-1 italic ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("context.noPresenceYet")}</div>
                       )}
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                  No presence
+                  {t("context.noPresence")}
                 </div>
               )}
             </div>
@@ -441,13 +443,13 @@ export function ContextModal({
           {/* PROJECT.md */}
           <details id="context-project" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              PROJECT.md
+              {t("context.projectMd")}
             </summary>
             <div className="mt-2">
               <div className="flex items-center justify-between mb-2 gap-2">
                 <div className="min-w-0">
                   <div className={`text-[11px] truncate ${isDark ? "text-slate-500" : "text-gray-500"}`} title={projectPathLabel}>
-                    {projectBusy ? "Loading…" : projectMd?.found ? projectPathLabel : projectMd?.path ? `Missing: ${projectMd.path}` : "Missing"}
+                    {projectBusy ? t("common:loading") : projectMd?.found ? projectPathLabel : projectMd?.path ? t("context.missingPath", { path: projectMd.path }) : t("context.missingLabel")}
                   </div>
                 </div>
                 {!editingProject && (
@@ -461,7 +463,7 @@ export function ContextModal({
                     className={`text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50 ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                       }`}
                   >
-                    {projectMd?.found ? "✏️ Edit" : "＋ Create"}
+                    {projectMd?.found ? `✏️ ${t("context.editButton")}` : `＋ ${t("context.createButton")}`}
                   </button>
                 )}
               </div>
@@ -480,7 +482,7 @@ export function ContextModal({
                       ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                       }`}
-                    placeholder="Write your project constitution here…"
+                    placeholder={t("context.writePlaceholder")}
                   />
                   <div className="flex gap-2">
                     <button
@@ -488,7 +490,7 @@ export function ContextModal({
                       disabled={projectBusy || !groupId}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
                     >
-                      {projectBusy ? "Saving..." : "Save"}
+                      {projectBusy ? t("common:loading") : t("common:save")}
                     </button>
                     <button
                       onClick={() => setEditingProject(false)}
@@ -498,7 +500,7 @@ export function ContextModal({
                         : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                         }`}
                     >
-                      Cancel
+                      {t("common:cancel")}
                     </button>
                   </div>
                 </div>
@@ -511,7 +513,7 @@ export function ContextModal({
                       isDark={isDark}
                     />
                   ) : (
-                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No PROJECT.md found</span>
+                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noProjectMd")}</span>
                   )}
                 </div>
               )}
@@ -521,7 +523,7 @@ export function ContextModal({
           {/* Vision */}
           <details id="context-vision" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              Vision
+              {t("context.vision")}
             </summary>
             <div className="mt-2">
               {!editingVision && (
@@ -535,7 +537,7 @@ export function ContextModal({
                     className={`text-xs min-h-[36px] px-2 rounded transition-colors ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                       }`}
                   >
-                    ✏️ Edit
+                    ✏️ {t("context.editButton")}
                   </button>
                 </div>
               )}
@@ -548,7 +550,7 @@ export function ContextModal({
                       ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                       }`}
-                    placeholder="Describe the project vision..."
+                    placeholder={t("context.visionPlaceholder")}
                   />
                   <div className="flex gap-2">
                     <button
@@ -556,7 +558,7 @@ export function ContextModal({
                       disabled={busy}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
                     >
-                      {busy ? "Saving..." : "Save"}
+                      {busy ? t("common:loading") : t("common:save")}
                     </button>
                     <button
                       onClick={() => setEditingVision(false)}
@@ -565,7 +567,7 @@ export function ContextModal({
                         : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                         }`}
                     >
-                      Cancel
+                      {t("common:cancel")}
                     </button>
                   </div>
                 </div>
@@ -575,7 +577,7 @@ export function ContextModal({
                   {context?.vision ? (
                     <MarkdownRenderer content={context.vision} isDark={isDark} />
                   ) : (
-                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No vision set</span>
+                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noVision")}</span>
                   )}
                 </div>
               )}
@@ -585,7 +587,7 @@ export function ContextModal({
           {/* Sketch */}
           <details id="context-sketch" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              Sketch
+              {t("context.sketch")}
             </summary>
             <div className="mt-2">
               {!editingSketch && (
@@ -599,7 +601,7 @@ export function ContextModal({
                     className={`text-xs min-h-[36px] px-2 rounded transition-colors ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                       }`}
                   >
-                    ✏️ Edit
+                    ✏️ {t("context.editButton")}
                   </button>
                 </div>
               )}
@@ -612,7 +614,7 @@ export function ContextModal({
                       ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                       }`}
-                    placeholder="Technical sketch or architecture notes..."
+                    placeholder={t("context.sketchPlaceholder")}
                   />
                   <div className="flex gap-2">
                     <button
@@ -620,7 +622,7 @@ export function ContextModal({
                       disabled={busy}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
                     >
-                      {busy ? "Saving..." : "Save"}
+                      {busy ? t("common:loading") : t("common:save")}
                     </button>
                     <button
                       onClick={() => setEditingSketch(false)}
@@ -629,7 +631,7 @@ export function ContextModal({
                         : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                         }`}
                     >
-                      Cancel
+                      {t("common:cancel")}
                     </button>
                   </div>
                 </div>
@@ -639,7 +641,7 @@ export function ContextModal({
                   {context?.sketch ? (
                     <MarkdownRenderer content={context.sketch} isDark={isDark} />
                   ) : (
-                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No sketch set</span>
+                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noSketch")}</span>
                   )}
                 </div>
               )}
@@ -648,19 +650,19 @@ export function ContextModal({
 
           <details id="context-milestones">
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              Milestones
+              {t("context.milestones")}
             </summary>
             <div className="mt-2">
               {(context?.milestones && context.milestones.length > 0) ? (
                 <div className="space-y-2">
                   <details open>
                     <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                      active ({milestonesByStatus.active.length})
+                      {t("context.statusActive")} ({milestonesByStatus.active.length})
                     </summary>
                     <div className="mt-2 space-y-2">
                       {milestonesByStatus.active.length === 0 ? (
                         <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                          No active milestones
+                          {t("context.noActiveMilestones")}
                         </div>
                       ) : (
                         milestonesByStatus.active.map((m) => (
@@ -682,14 +684,14 @@ export function ContextModal({
                                   isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                 )}
                               >
-                                Archive
+                                {t("context.archive")}
                               </button>
                             </div>
                             {(m.started || m.completed) && (
                               <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                {m.started ? `started ${m.started}` : ""}
+                                {m.started ? t("context.started", { time: m.started }) : ""}
                                 {m.started && m.completed ? " · " : ""}
-                                {m.completed ? `completed ${m.completed}` : ""}
+                                {m.completed ? t("context.completed", { time: m.completed }) : ""}
                               </div>
                             )}
                             {m.description && (
@@ -707,12 +709,12 @@ export function ContextModal({
 
                   <details open>
                     <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                      planned ({milestonesByStatus.planned.length})
+                      {t("context.statusPlanned")} ({milestonesByStatus.planned.length})
                     </summary>
                     <div className="mt-2 space-y-2">
                       {milestonesByStatus.planned.length === 0 ? (
                         <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                          No planned milestones
+                          {t("context.noPlannedMilestones")}
                         </div>
                       ) : (
                         milestonesByStatus.planned.map((m) => (
@@ -734,14 +736,14 @@ export function ContextModal({
                                   isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                 )}
                               >
-                                Archive
+                                {t("context.archive")}
                               </button>
                             </div>
                             {(m.started || m.completed) && (
                               <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                {m.started ? `started ${m.started}` : ""}
+                                {m.started ? t("context.started", { time: m.started }) : ""}
                                 {m.started && m.completed ? " · " : ""}
-                                {m.completed ? `completed ${m.completed}` : ""}
+                                {m.completed ? t("context.completed", { time: m.completed }) : ""}
                               </div>
                             )}
                             {m.description && (
@@ -753,7 +755,7 @@ export function ContextModal({
                             )}
                             {m.outcomes && (
                               <div className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
-                                <span className="font-medium">outcomes: </span>
+                                <span className="font-medium">{t("context.outcomes")}</span>
                                 <MarkdownRenderer
                                   content={String(m.outcomes)}
                                   isDark={isDark}
@@ -768,12 +770,12 @@ export function ContextModal({
 
                   <details>
                     <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                      done ({milestonesByStatus.done.length})
+                      {t("context.statusDone")} ({milestonesByStatus.done.length})
                     </summary>
                     <div className="mt-2 space-y-2">
                       {milestonesByStatus.done.length === 0 ? (
                         <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                          No done milestones
+                          {t("context.noDoneMilestones")}
                         </div>
                       ) : (
                         milestonesByStatus.done.map((m) => (
@@ -795,14 +797,14 @@ export function ContextModal({
                                   isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                 )}
                               >
-                                Archive
+                                {t("context.archive")}
                               </button>
                             </div>
                             {(m.started || m.completed) && (
                               <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                {m.started ? `started ${m.started}` : ""}
+                                {m.started ? t("context.started", { time: m.started }) : ""}
                                 {m.started && m.completed ? " · " : ""}
-                                {m.completed ? `completed ${m.completed}` : ""}
+                                {m.completed ? t("context.completed", { time: m.completed }) : ""}
                               </div>
                             )}
                             {m.description && (
@@ -814,7 +816,7 @@ export function ContextModal({
                             )}
                             {m.outcomes && (
                               <div className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
-                                <span className="font-medium">outcomes: </span>
+                                <span className="font-medium">{t("context.outcomes")}</span>
                                 <MarkdownRenderer
                                   content={String(m.outcomes)}
                                   isDark={isDark}
@@ -829,12 +831,12 @@ export function ContextModal({
 
                   <details>
                     <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                      archived ({milestonesByStatus.archived.length})
+                      {t("context.statusArchived")} ({milestonesByStatus.archived.length})
                     </summary>
                     <div className="mt-2 space-y-2">
                       {milestonesByStatus.archived.length === 0 ? (
                         <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                          No archived milestones
+                          {t("context.noArchivedMilestones")}
                         </div>
                       ) : (
                         milestonesByStatus.archived.map((m) => (
@@ -856,14 +858,14 @@ export function ContextModal({
                                   isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                 )}
                               >
-                                Restore
+                                {t("context.restore")}
                               </button>
                             </div>
                             {(m.started || m.completed) && (
                               <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                {m.started ? `started ${m.started}` : ""}
+                                {m.started ? t("context.started", { time: m.started }) : ""}
                                 {m.started && m.completed ? " · " : ""}
-                                {m.completed ? `completed ${m.completed}` : ""}
+                                {m.completed ? t("context.completed", { time: m.completed }) : ""}
                               </div>
                             )}
                             {m.description && (
@@ -875,7 +877,7 @@ export function ContextModal({
                             )}
                             {m.outcomes && (
                               <div className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
-                                <span className="font-medium">outcomes: </span>
+                                <span className="font-medium">{t("context.outcomes")}</span>
                                 <MarkdownRenderer
                                   content={String(m.outcomes)}
                                   isDark={isDark}
@@ -890,7 +892,7 @@ export function ContextModal({
                 </div>
               ) : (
                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                  No milestones
+                  {t("context.noMilestones")}
                 </div>
               )}
             </div>
@@ -898,13 +900,13 @@ export function ContextModal({
 
           <details id="context-tasks" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              Tasks
+              {t("context.tasks")}
             </summary>
             <div className="mt-2">
               {context?.tasks_summary ? (
                 <div className="space-y-2">
                   <div className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"}`}>
-                    total {context.tasks_summary.total} · active {context.tasks_summary.active} · planned {context.tasks_summary.planned} · done {context.tasks_summary.done}
+                    {t("context.tasksSummary", { total: context.tasks_summary.total, active: context.tasks_summary.active, planned: context.tasks_summary.planned, done: context.tasks_summary.done })}
                   </div>
 
                   {context.active_task ? (
@@ -936,9 +938,9 @@ export function ContextModal({
                       </div>
                       {(context.active_task.assignee || context.active_task.milestone) && (
                         <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                          {context.active_task.milestone ? `milestone ${context.active_task.milestone}` : ""}
+                          {context.active_task.milestone ? t("context.milestoneLabel", { id: context.active_task.milestone }) : ""}
                           {context.active_task.milestone && context.active_task.assignee ? " · " : ""}
-                          {context.active_task.assignee ? `assignee ${context.active_task.assignee}` : ""}
+                          {context.active_task.assignee ? t("context.assigneeLabel", { name: context.active_task.assignee }) : ""}
                         </div>
                       )}
                       {Array.isArray(context.active_task.steps) && context.active_task.steps.length > 0 && (
@@ -965,7 +967,7 @@ export function ContextModal({
                   ) : (
                     <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
                       }`}>
-                      No active task
+                      {t("context.noActiveTask")}
                     </div>
                   )}
 
@@ -975,58 +977,58 @@ export function ContextModal({
                     </div>
                   ) : tasksBusy ? (
                     <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                      Loading tasks…
+                      {t("context.loadingTasks")}
                     </div>
                   ) : (
                     <div className="space-y-2">
                       {(tasksByStatus.active.length + tasksByStatus.planned.length + tasksByStatus.done.length + tasksByStatus.archived.length + tasksByStatus.other.length) === 0 ? (
                         <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                          No tasks
+                          {t("context.noTasks")}
                         </div>
                       ) : (
                         <>
                           <details open>
                             <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                              active ({tasksByStatus.active.length})
+                              {t("context.statusActive")} ({tasksByStatus.active.length})
                             </summary>
                             <div className="mt-2 space-y-2">
                               {tasksByStatus.active.length === 0 ? (
                                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                  No active tasks
+                                  {t("context.noActiveTask")}s
                                 </div>
-                              ) : tasksByStatus.active.map((t) => (
-                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                              ) : tasksByStatus.active.map((tk) => (
+                                <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
                                   <div className="flex items-start gap-2">
                                     <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                      {t.id}
+                                      {tk.id}
                                     </span>
                                     <div className="min-w-0 flex-1">
-                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                      {t.goal ? (
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{tk.name}</div>
+                                      {tk.goal ? (
                                         <MarkdownRenderer
-                                          content={String(t.goal)}
+                                          content={String(tk.goal)}
                                           isDark={isDark}
                                           className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
                                         />
                                       ) : null}
-                                      {(t.milestone || t.assignee) ? (
+                                      {(tk.milestone || tk.assignee) ? (
                                         <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                          {t.milestone ? `milestone ${t.milestone}` : ""}
-                                          {t.milestone && t.assignee ? " · " : ""}
-                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                          {tk.milestone ? t("context.milestoneLabel", { id: tk.milestone }) : ""}
+                                          {tk.milestone && tk.assignee ? " · " : ""}
+                                          {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
                                         </div>
                                       ) : null}
                                     </div>
                                     <button
                                       type="button"
                                       disabled={syncBusy}
-                                      onClick={() => void handleArchiveTask(t.id)}
+                                      onClick={() => void handleArchiveTask(tk.id)}
                                       className={classNames(
                                         "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
                                         isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                       )}
                                     >
-                                      Archive
+                                      {t("context.archive")}
                                     </button>
                                   </div>
                                 </div>
@@ -1036,46 +1038,46 @@ export function ContextModal({
 
                           <details open>
                             <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                              planned ({tasksByStatus.planned.length})
+                              {t("context.statusPlanned")} ({tasksByStatus.planned.length})
                             </summary>
                             <div className="mt-2 space-y-2">
                               {tasksByStatus.planned.length === 0 ? (
                                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                  No planned tasks
+                                  {t("context.noPlannedTasks")}
                                 </div>
-                              ) : tasksByStatus.planned.map((t) => (
-                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                              ) : tasksByStatus.planned.map((tk) => (
+                                <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
                                   <div className="flex items-start gap-2">
                                     <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                      {t.id}
+                                      {tk.id}
                                     </span>
                                     <div className="min-w-0 flex-1">
-                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                      {t.goal ? (
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{tk.name}</div>
+                                      {tk.goal ? (
                                         <MarkdownRenderer
-                                          content={String(t.goal)}
+                                          content={String(tk.goal)}
                                           isDark={isDark}
                                           className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
                                         />
                                       ) : null}
-                                      {(t.milestone || t.assignee) ? (
+                                      {(tk.milestone || tk.assignee) ? (
                                         <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                          {t.milestone ? `milestone ${t.milestone}` : ""}
-                                          {t.milestone && t.assignee ? " · " : ""}
-                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                          {tk.milestone ? t("context.milestoneLabel", { id: tk.milestone }) : ""}
+                                          {tk.milestone && tk.assignee ? " · " : ""}
+                                          {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
                                         </div>
                                       ) : null}
                                     </div>
                                     <button
                                       type="button"
                                       disabled={syncBusy}
-                                      onClick={() => void handleArchiveTask(t.id)}
+                                      onClick={() => void handleArchiveTask(tk.id)}
                                       className={classNames(
                                         "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
                                         isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                       )}
                                     >
-                                      Archive
+                                      {t("context.archive")}
                                     </button>
                                   </div>
                                 </div>
@@ -1085,46 +1087,46 @@ export function ContextModal({
 
                           <details>
                             <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                              done ({tasksByStatus.done.length})
+                              {t("context.statusDone")} ({tasksByStatus.done.length})
                             </summary>
                             <div className="mt-2 space-y-2">
                               {tasksByStatus.done.length === 0 ? (
                                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                  No done tasks
+                                  {t("context.noDoneTasks")}
                                 </div>
-                              ) : tasksByStatus.done.map((t) => (
-                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                              ) : tasksByStatus.done.map((tk) => (
+                                <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
                                   <div className="flex items-start gap-2">
                                     <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                      {t.id}
+                                      {tk.id}
                                     </span>
                                     <div className="min-w-0 flex-1">
-                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                      {t.goal ? (
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{tk.name}</div>
+                                      {tk.goal ? (
                                         <MarkdownRenderer
-                                          content={String(t.goal)}
+                                          content={String(tk.goal)}
                                           isDark={isDark}
                                           className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
                                         />
                                       ) : null}
-                                      {(t.milestone || t.assignee) ? (
+                                      {(tk.milestone || tk.assignee) ? (
                                         <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                          {t.milestone ? `milestone ${t.milestone}` : ""}
-                                          {t.milestone && t.assignee ? " · " : ""}
-                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                          {tk.milestone ? t("context.milestoneLabel", { id: tk.milestone }) : ""}
+                                          {tk.milestone && tk.assignee ? " · " : ""}
+                                          {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
                                         </div>
                                       ) : null}
                                     </div>
                                     <button
                                       type="button"
                                       disabled={syncBusy}
-                                      onClick={() => void handleArchiveTask(t.id)}
+                                      onClick={() => void handleArchiveTask(tk.id)}
                                       className={classNames(
                                         "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
                                         isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                       )}
                                     >
-                                      Archive
+                                      {t("context.archive")}
                                     </button>
                                   </div>
                                 </div>
@@ -1134,46 +1136,46 @@ export function ContextModal({
 
                           <details>
                             <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                              archived ({tasksByStatus.archived.length})
+                              {t("context.statusArchived")} ({tasksByStatus.archived.length})
                             </summary>
                             <div className="mt-2 space-y-2">
                               {tasksByStatus.archived.length === 0 ? (
                                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                  No archived tasks
+                                  {t("context.noArchivedTasks")}
                                 </div>
-                              ) : tasksByStatus.archived.map((t) => (
-                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                              ) : tasksByStatus.archived.map((tk) => (
+                                <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
                                   <div className="flex items-start gap-2">
                                     <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                      {t.id}
+                                      {tk.id}
                                     </span>
                                     <div className="min-w-0 flex-1">
-                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                      {t.goal ? (
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{tk.name}</div>
+                                      {tk.goal ? (
                                         <MarkdownRenderer
-                                          content={String(t.goal)}
+                                          content={String(tk.goal)}
                                           isDark={isDark}
                                           className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
                                         />
                                       ) : null}
-                                      {(t.milestone || t.assignee) ? (
+                                      {(tk.milestone || tk.assignee) ? (
                                         <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                          {t.milestone ? `milestone ${t.milestone}` : ""}
-                                          {t.milestone && t.assignee ? " · " : ""}
-                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                          {tk.milestone ? t("context.milestoneLabel", { id: tk.milestone }) : ""}
+                                          {tk.milestone && tk.assignee ? " · " : ""}
+                                          {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
                                         </div>
                                       ) : null}
                                     </div>
                                     <button
                                       type="button"
                                       disabled={syncBusy}
-                                      onClick={() => void handleRestoreTask(t.id)}
+                                      onClick={() => void handleRestoreTask(tk.id)}
                                       className={classNames(
                                         "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
                                         isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                       )}
                                     >
-                                      Restore
+                                      {t("context.restore")}
                                     </button>
                                   </div>
                                 </div>
@@ -1183,46 +1185,46 @@ export function ContextModal({
 
                           <details>
                             <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                              other ({tasksByStatus.other.length})
+                              {t("context.statusOther")} ({tasksByStatus.other.length})
                             </summary>
                             <div className="mt-2 space-y-2">
                               {tasksByStatus.other.length === 0 ? (
                                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                  No other tasks
+                                  {t("context.noOtherTasks")}
                                 </div>
-                              ) : tasksByStatus.other.map((t) => (
-                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                              ) : tasksByStatus.other.map((tk) => (
+                                <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
                                   <div className="flex items-start gap-2">
                                     <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                      {t.id}
+                                      {tk.id}
                                     </span>
                                     <div className="min-w-0 flex-1">
-                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                      {t.goal ? (
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{tk.name}</div>
+                                      {tk.goal ? (
                                         <MarkdownRenderer
-                                          content={String(t.goal)}
+                                          content={String(tk.goal)}
                                           isDark={isDark}
                                           className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
                                         />
                                       ) : null}
-                                      {(t.milestone || t.assignee) ? (
+                                      {(tk.milestone || tk.assignee) ? (
                                         <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                          {t.milestone ? `milestone ${t.milestone}` : ""}
-                                          {t.milestone && t.assignee ? " · " : ""}
-                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                          {tk.milestone ? t("context.milestoneLabel", { id: tk.milestone }) : ""}
+                                          {tk.milestone && tk.assignee ? " · " : ""}
+                                          {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
                                         </div>
                                       ) : null}
                                     </div>
                                     <button
                                       type="button"
                                       disabled={syncBusy}
-                                      onClick={() => void handleArchiveTask(t.id)}
+                                      onClick={() => void handleArchiveTask(tk.id)}
                                       className={classNames(
                                         "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
                                         isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                       )}
                                     >
-                                      Archive
+                                      {t("context.archive")}
                                     </button>
                                   </div>
                                 </div>
@@ -1237,7 +1239,7 @@ export function ContextModal({
               ) : (
                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
                   }`}>
-                  No task summary
+                  {t("context.noTaskSummary")}
                 </div>
               )}
             </div>
@@ -1245,7 +1247,7 @@ export function ContextModal({
 
           <details id="context-notes" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              Notes
+              {t("context.notes")}
             </summary>
             <div className="mt-2">
               {syncError && (
@@ -1268,7 +1270,7 @@ export function ContextModal({
                       isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                     )}
                   >
-                    ＋ Add
+                    ＋ {t("context.addButton")}
                   </button>
                 </div>
               ) : (
@@ -1278,7 +1280,7 @@ export function ContextModal({
                     onChange={(e) => setNewNoteContent(e.target.value)}
                     className={`w-full h-28 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                       }`}
-                    placeholder="Note…"
+                    placeholder={t("context.notePlaceholderShort")}
                   />
                   <div className="flex justify-end gap-2">
                     <button
@@ -1287,7 +1289,7 @@ export function ContextModal({
                       onClick={() => void handleAddNote()}
                       className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
                     >
-                      {syncBusy ? "Saving…" : "Save"}
+                      {syncBusy ? t("common:loading") : t("common:save")}
                     </button>
                     <button
                       type="button"
@@ -1298,7 +1300,7 @@ export function ContextModal({
                         isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                       )}
                     >
-                      Cancel
+                      {t("common:cancel")}
                     </button>
                   </div>
                 </div>
@@ -1324,7 +1326,7 @@ export function ContextModal({
                                   isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                 )}
                               >
-                                Edit
+                                {t("common:edit")}
                               </button>
                               <button
                                 type="button"
@@ -1335,7 +1337,7 @@ export function ContextModal({
                                   isDark ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/40" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
                                 )}
                               >
-                                Delete
+                                {t("common:delete")}
                               </button>
                             </>
                           )}
@@ -1357,7 +1359,7 @@ export function ContextModal({
                               onClick={() => void handleSaveEditNote()}
                               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
                             >
-                              {syncBusy ? "Saving…" : "Save"}
+                              {syncBusy ? t("common:loading") : t("common:save")}
                             </button>
                             <button
                               type="button"
@@ -1368,7 +1370,7 @@ export function ContextModal({
                                 isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                               )}
                             >
-                              Cancel
+                              {t("common:cancel")}
                             </button>
                           </div>
                         </div>
@@ -1385,7 +1387,7 @@ export function ContextModal({
               ) : (
                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
                   }`}>
-                  No notes
+                  {t("context.noNotes")}
                 </div>
               )}
             </div>
@@ -1393,7 +1395,7 @@ export function ContextModal({
 
           <details id="context-references" open>
             <summary className={classNames("cursor-pointer select-none text-sm font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-              References
+              {t("context.references")}
             </summary>
             <div className="mt-2">
               {syncError && (
@@ -1417,7 +1419,7 @@ export function ContextModal({
                       isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                     )}
                   >
-                    ＋ Add
+                    ＋ {t("context.addButton")}
                   </button>
                 </div>
               ) : (
@@ -1427,14 +1429,14 @@ export function ContextModal({
                     onChange={(e) => setNewRefUrl(e.target.value)}
                     className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                       }`}
-                    placeholder="https://…"
+                    placeholder={t("context.refUrlPlaceholder")}
                   />
                   <textarea
                     value={newRefNote}
                     onChange={(e) => setNewRefNote(e.target.value)}
                     className={`w-full h-24 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                       }`}
-                    placeholder="Note (optional)…"
+                    placeholder={t("context.refNotePlaceholder")}
                   />
                   <div className="flex justify-end gap-2">
                     <button
@@ -1443,7 +1445,7 @@ export function ContextModal({
                       onClick={() => void handleAddRef()}
                       className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
                     >
-                      {syncBusy ? "Saving…" : "Save"}
+                      {syncBusy ? t("common:loading") : t("common:save")}
                     </button>
                     <button
                       type="button"
@@ -1454,7 +1456,7 @@ export function ContextModal({
                         isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                       )}
                     >
-                      Cancel
+                      {t("common:cancel")}
                     </button>
                   </div>
                 </div>
@@ -1489,7 +1491,7 @@ export function ContextModal({
                                   isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                                 )}
                               >
-                                Edit
+                                {t("common:edit")}
                               </button>
                               <button
                                 type="button"
@@ -1500,7 +1502,7 @@ export function ContextModal({
                                   isDark ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/40" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
                                 )}
                               >
-                                Delete
+                                {t("common:delete")}
                               </button>
                             </>
                           )}
@@ -1528,7 +1530,7 @@ export function ContextModal({
                               onClick={() => void handleSaveEditRef()}
                               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
                             >
-                              {syncBusy ? "Saving…" : "Save"}
+                              {syncBusy ? t("common:loading") : t("common:save")}
                             </button>
                             <button
                               type="button"
@@ -1539,7 +1541,7 @@ export function ContextModal({
                                 isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                               )}
                             >
-                              Cancel
+                              {t("common:cancel")}
                             </button>
                           </div>
                         </div>
@@ -1556,7 +1558,7 @@ export function ContextModal({
               ) : (
                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
                   }`}>
-                  No references
+                  {t("context.noReferences")}
                 </div>
               )}
             </div>
@@ -1567,7 +1569,7 @@ export function ContextModal({
               "text-[11px] italic",
               isDark ? "text-slate-500" : "text-gray-500"
             )}>
-              Applying changes…
+              {t("context.applyingChanges")}
             </div>
           )}
         </div>

@@ -1,18 +1,20 @@
+import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc, Theme } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { ThemeToggleCompact } from "../ThemeToggle";
-import { 
-  ClipboardIcon, 
+import { LanguageSwitcher } from "../LanguageSwitcher";
+import {
+  ClipboardIcon,
   SearchIcon,
-  RocketIcon, 
-  PlayIcon, 
-  PauseIcon, 
-  StopIcon, 
-  SettingsIcon, 
+  RocketIcon,
+  PlayIcon,
+  PauseIcon,
+  StopIcon,
+  SettingsIcon,
   EditIcon,
   MoreIcon,
-  MenuIcon 
+  MenuIcon
 } from "../Icons";
 
 export interface AppHeaderProps {
@@ -68,6 +70,7 @@ export function AppHeader({
   onOpenMobileMenu,
   sseStatus,
 }: AppHeaderProps) {
+  const { t } = useTranslation('layout');
   return (
     <header
       className="flex-shrink-0 z-20 px-4 h-14 flex items-center justify-between gap-3 glass-header"
@@ -79,7 +82,7 @@ export function AppHeader({
             isDark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
           )}
           onClick={onOpenSidebar}
-          aria-label="Open sidebar"
+          aria-label={t('openSidebar')}
         >
           <MenuIcon size={18} />
         </button>
@@ -87,7 +90,7 @@ export function AppHeader({
         <div className="min-w-0 flex flex-col">
           <div className="flex items-center gap-2">
             <h1 className={`text-sm font-semibold truncate ${isDark ? "text-slate-100" : "text-gray-900"}`}>
-              {groupDoc?.title || (selectedGroupId ? selectedGroupId : "Select a group")}
+              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('selectGroup'))}
             </h1>
             {selectedGroupId && sseStatus !== "connected" && (
               <span
@@ -95,7 +98,7 @@ export function AppHeader({
                   "flex-shrink-0 w-2 h-2 rounded-full",
                   sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"
                 )}
-                title={sseStatus === "connecting" ? "Reconnecting…" : "Disconnected"}
+                title={sseStatus === "connecting" ? t('reconnecting') : t('disconnected')}
               />
             )}
             {selectedGroupId &&
@@ -125,8 +128,8 @@ export function AppHeader({
               isDark ? "text-slate-200" : "text-gray-700"
             )}
             onClick={onOpenGroupEdit}
-            title="Edit group"
-            aria-label="Edit group"
+            title={t('editGroup')}
+            aria-label={t('editGroup')}
           >
             <EditIcon size={14} />
           </button>
@@ -146,9 +149,9 @@ export function AppHeader({
                   "p-2 rounded-xl transition-all glass-btn",
                   isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
                 )}
-                title="Search messages"
+                title={t('searchMessages')}
               >
-                <span className="sr-only">Search</span>
+                <span className="sr-only">{t('searchMessages')}</span>
                 <SearchIcon size={18} />
               </button>
 
@@ -159,9 +162,9 @@ export function AppHeader({
                   "p-2 rounded-xl transition-all glass-btn",
                   isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
                 )}
-                title="Context (Clipboard)"
+                title={t('context')}
               >
-                <span className="sr-only">Context</span>
+                <span className="sr-only">{t('context')}</span>
                 <ClipboardIcon size={18} />
               </button>
 
@@ -176,9 +179,9 @@ export function AppHeader({
                     ? "text-emerald-400 hover:bg-emerald-500/15 glass-btn"
                     : "text-emerald-600 hover:bg-emerald-50/80 glass-btn"
                 )}
-                title="Launch All Agents"
+                title={t('launchAllAgents')}
               >
-                <span className="sr-only">Launch</span>
+                <span className="sr-only">{t('launchAllAgents')}</span>
                 <RocketIcon size={18} />
               </button>
 
@@ -190,9 +193,9 @@ export function AppHeader({
                     "p-2 rounded-xl transition-all glass-btn",
                     isDark ? "text-amber-400" : "text-amber-600"
                   )}
-                  title="Resume Delivery"
+                  title={t('resumeDelivery')}
                 >
-                  <span className="sr-only">Resume</span>
+                  <span className="sr-only">{t('resumeDelivery')}</span>
                   <PlayIcon size={18} />
                 </button>
               ) : (
@@ -203,9 +206,9 @@ export function AppHeader({
                     "p-2 rounded-xl transition-all glass-btn",
                     isDark ? "text-slate-400 hover:text-amber-300" : "text-gray-400 hover:text-amber-600"
                   )}
-                  title="Pause Delivery"
+                  title={t('pauseDelivery')}
                 >
-                  <span className="sr-only">Pause</span>
+                  <span className="sr-only">{t('pauseDelivery')}</span>
                   <PauseIcon size={18} />
                 </button>
               )}
@@ -217,14 +220,15 @@ export function AppHeader({
                   "p-2 rounded-xl transition-all glass-btn",
                   isDark ? "text-slate-400 hover:text-rose-400" : "text-gray-400 hover:text-rose-600"
                 )}
-                title="Stop All Agents"
+                title={t('stopAllAgents')}
               >
-                <span className="sr-only">Stop</span>
+                <span className="sr-only">{t('stopAllAgents')}</span>
                 <StopIcon size={18} />
               </button>
             </div>
 
-            <div className="hidden md:block">
+            <div className="hidden md:flex items-center gap-1">
+              <LanguageSwitcher isDark={isDark} />
               <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
             </div>
 
@@ -235,7 +239,7 @@ export function AppHeader({
                 "hidden md:flex p-2 rounded-xl transition-all glass-btn",
                 isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
               )}
-              title="Settings"
+              title={t('settings')}
             >
               <SettingsIcon size={18} />
             </button>
@@ -246,7 +250,7 @@ export function AppHeader({
                 isDark ? "text-slate-400" : "text-gray-400"
               )}
               onClick={onOpenMobileMenu}
-              title="Menu"
+              title={t('menu')}
             >
               <MoreIcon size={18} />
             </button>
@@ -273,7 +277,7 @@ export function AppHeader({
                 isDark ? "text-rose-400" : "text-rose-600"
               )} 
               onClick={onDismissError}
-              aria-label="Dismiss error"
+              aria-label={t('dismissError')}
             >
               ×
             </button>
@@ -309,7 +313,7 @@ export function AppHeader({
                 isDark ? "text-slate-300" : "text-gray-600"
               )}
               onClick={onDismissNotice}
-              aria-label="Dismiss"
+              aria-label={t('common:dismiss')}
             >
               ×
             </button>

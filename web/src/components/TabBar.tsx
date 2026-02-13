@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import { Actor } from "../types";
 import { classNames } from "../utils/classNames";
 
@@ -13,6 +14,7 @@ interface TabBarProps {
 }
 
 export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark, onAddAgent, canAddAgent = true }: TabBarProps) {
+  const { t } = useTranslation("layout");
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -110,8 +112,8 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
           ? "border-white/10 text-slate-300 hover:bg-white/5 hover:text-white"
           : "border-black/10 text-gray-600 hover:bg-black/5 hover:text-gray-900"
       )}
-      title={actors.length === 0 ? "Add your first agent (foreman)" : "Add agent"}
-      aria-label="Add agent"
+      title={actors.length === 0 ? t("addFirstAgent") : t("addAgent")}
+      aria-label={t("addAgent")}
     >
       +
     </button>
@@ -125,7 +127,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
         isDark ? "border-white/5 bg-slate-900/70" : "border-black/5 bg-white/70"
       )}
       role="tablist"
-      aria-label="Navigation tabs"
+      aria-label={t("navigationTabs")}
     >
       {/* Scrollable tabs area */}
       <div
@@ -157,7 +159,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             role="tab"
             aria-selected={activeTab === "chat"}
           >
-            <span>Chat</span>
+            <span>{t("chat")}</span>
             {unreadChatCount > 0 && (
               <span className={classNames(
                 "text-[10px] px-1.5 py-0.5 rounded-full font-bold",

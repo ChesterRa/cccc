@@ -1,6 +1,7 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
-import type { AutomationRule, AutomationRuleAction, AutomationRuleStatus } from "../../../types";
+import type { AutomationRule, AutomationRuleStatus } from "../../../types";
 import {
   ACTOR_OPERATION_COPY,
   Chip,
@@ -56,6 +57,8 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
     onSetOneShotMode,
     onSetOneShotAfterMinutes,
   } = props;
+
+  const { t } = useTranslation("settings");
 
   if (!editingRule) return null;
 
@@ -117,15 +120,15 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
         <div className={`px-4 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"} flex items-start gap-3`}>
           <div className="min-w-0">
             <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
-              Edit Rule: <span className="font-mono">{ruleId || "unnamed"}</span>
+              {t("ruleEditor.editRule")} <span className="font-mono">{ruleId || t("ruleEditor.unnamed")}</span>
             </div>
             <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-              Last: {ruleStatus.last_fired_at || "—"} • Next: {ruleStatus.next_fire_at || "—"}{" "}
-              {ruleStatus.completed ? `• Completed: ${ruleStatus.completed_at || ruleStatus.last_fired_at || "—"}` : ""}{" "}
-              {ruleStatus.last_error ? `• Error: ${ruleStatus.last_error_at || "—"}` : ""}
+              {t("ruleEditor.last")} {ruleStatus.last_fired_at || "—"} • {t("ruleEditor.next")} {ruleStatus.next_fire_at || "—"}{" "}
+              {ruleStatus.completed ? `• ${t("ruleEditor.completed")} ${ruleStatus.completed_at || ruleStatus.last_fired_at || "—"}` : ""}{" "}
+              {ruleStatus.last_error ? `• ${t("ruleEditor.error")} ${ruleStatus.last_error_at || "—"}` : ""}
             </div>
             <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Changes apply to draft immediately. Click Save in Automation Rules to persist.
+              {t("automation.draftHint")}
             </div>
           </div>
 
@@ -148,7 +151,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 onSetEditingRuleId(null);
               }}
             >
-              Delete
+              {t("common:delete")}
             </button>
             <button
               type="button"
@@ -157,7 +160,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               }`}
               onClick={() => onSetEditingRuleId(null)}
             >
-              Close
+              {t("common:close")}
             </button>
           </div>
         </div>
@@ -168,7 +171,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
         <div className="p-3 sm:p-4 flex-1 overflow-auto space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className={labelClass(isDark)}>Rule Name (ID)</label>
+              <label className={labelClass(isDark)}>{t("ruleEditor.ruleName")}</label>
               <input
                 value={ruleId}
                 onChange={(e) => {
@@ -181,11 +184,11 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 spellCheck={false}
               />
               <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Unique name (letters, numbers, `_`, `-`).
+                {t("ruleEditor.ruleNameHint")}
               </div>
             </div>
             <div>
-              <label className={labelClass(isDark)}>Schedule Type</label>
+              <label className={labelClass(isDark)}>{t("ruleEditor.scheduleType")}</label>
               <select
                 value={scheduleSelectValue}
                 disabled={scheduleLockedToOneTime}
@@ -218,32 +221,32 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 }}
                 className={inputClass(isDark)}
               >
-                {kind === "notify" ? <option value="interval">Interval Schedule</option> : null}
-                {kind === "notify" ? <option value="cron">Recurring Schedule</option> : null}
-                <option value="at">One-Time Schedule</option>
+                {kind === "notify" ? <option value="interval">{t("ruleEditor.intervalSchedule")}</option> : null}
+                {kind === "notify" ? <option value="cron">{t("ruleEditor.recurringSchedule")}</option> : null}
+                <option value="at">{t("ruleEditor.oneTimeSchedule")}</option>
               </select>
               <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                 {scheduleLockedToOneTime
-                  ? "This action supports one-time scheduling only."
+                  ? t("ruleEditor.oneTimeOnly")
                   : activeTriggerKind === "interval"
-                    ? "Interval: repeat every N minutes."
+                    ? t("ruleEditor.intervalHint")
                     : activeTriggerKind === "cron"
-                      ? "Recurring: run daily, weekly, or monthly."
-                      : "One-Time: run once by countdown or exact time."}
+                      ? t("ruleEditor.recurringHint")
+                      : t("ruleEditor.oneTimeHint")}
               </div>
             </div>
           </div>
 
           {scope === "personal" ? (
             <div className={`text-[11px] ${isDark ? "text-amber-300" : "text-amber-700"}`}>
-              Personal rule (owner: <span className="font-mono">{ownerActorId || "unknown"}</span>). Scope is controlled by permissions.
+              {t("ruleEditor.personalRule", { owner: ownerActorId || "unknown" })}
             </div>
           ) : null}
 
           {activeTriggerKind === "interval" ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className={labelClass(isDark)}>Repeat Every (minutes)</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.repeatEvery")}</label>
                 <input
                   type="number"
                   min={1}
@@ -260,7 +263,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 />
               </div>
               <div className={`self-end text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Current cadence: {formatDuration(everySeconds)}
+                {t("ruleEditor.currentCadence", { duration: formatDuration(everySeconds) })}
               </div>
             </div>
           ) : null}
@@ -269,7 +272,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className={labelClass(isDark)}>Pattern</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.pattern")}</label>
                   <select
                     value={schedule.preset}
                     onChange={(e) => {
@@ -285,13 +288,13 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     }}
                     className={inputClass(isDark)}
                   >
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
+                    <option value="daily">{t("ruleEditor.daily")}</option>
+                    <option value="weekly">{t("ruleEditor.weekly")}</option>
+                    <option value="monthly">{t("ruleEditor.monthly")}</option>
                   </select>
                 </div>
                 <div>
-                  <label className={labelClass(isDark)}>Time</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.time")}</label>
                   <input
                     type="time"
                     value={scheduleTime}
@@ -312,7 +315,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               </div>
               {schedule.preset === "weekly" ? (
                 <div>
-                  <label className={labelClass(isDark)}>Weekday</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.weekday")}</label>
                   <select
                     value={String(schedule.weekday)}
                     onChange={(e) => {
@@ -337,7 +340,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               ) : null}
               {schedule.preset === "monthly" ? (
                 <div>
-                  <label className={labelClass(isDark)}>Day of Month</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.dayOfMonth")}</label>
                   <input
                     type="number"
                     min={1}
@@ -363,14 +366,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           {activeTriggerKind === "at" ? (
             <div className="space-y-3">
               <div>
-                <label className={labelClass(isDark)}>One-Time Mode</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.oneTimeMode")}</label>
                 <select
                   value={oneShotMode}
                   onChange={(e) => onSetOneShotMode(ruleId, String(e.target.value || "after") as "after" | "exact")}
                   className={inputClass(isDark)}
                 >
-                  <option value="after">After countdown</option>
-                  <option value="exact">Exact time</option>
+                  <option value="after">{t("ruleEditor.afterCountdown")}</option>
+                  <option value="exact">{t("ruleEditor.exactTime")}</option>
                 </select>
               </div>
 
@@ -391,7 +394,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     ))}
                   </div>
                   <div>
-                    <label className={labelClass(isDark)}>Remind Me In (minutes)</label>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.remindMeIn")}</label>
                     <input
                       type="number"
                       min={1}
@@ -407,7 +410,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 </div>
               ) : (
                 <div>
-                  <label className={labelClass(isDark)}>Date & Time</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.dateTime")}</label>
                   <input
                     type="datetime-local"
                     value={atInput}
@@ -418,19 +421,19 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               )}
 
               <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Saved send time (UTC): <span className="font-mono break-all">{atRaw || "—"}</span>
+                {t("automation.savedSendTime")} <span className="font-mono break-all">{atRaw || "—"}</span>
               </div>
             </div>
           ) : null}
 
           <div>
-            <label className={labelClass(isDark)}>Action</label>
+            <label className={labelClass(isDark)}>{t("ruleEditor.action")}</label>
             <select
               value={kind}
               onChange={(e) => {
                 const next = String(e.target.value || "notify");
                 if (next !== "notify" && !operationalActionsEnabled) {
-                  onSetRulesErr("Set Group Status and Control Actor Runtimes are available only for One-Time schedule.");
+                  onSetRulesErr(t("automation.operationalActionsHint"));
                   return;
                 }
                 onSetRulesErr("");
@@ -450,17 +453,17 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               }}
               className={inputClass(isDark)}
             >
-              <option value="notify">Send Reminder</option>
+              <option value="notify">{t("ruleEditor.sendReminder")}</option>
               <option value="group_state" disabled={!operationalActionsEnabled}>
-                Set Group Status{operationalActionsEnabled ? "" : " (One-Time only)"}
+                {t("ruleEditor.setGroupStatus")}{operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}
               </option>
               <option value="actor_control" disabled={!operationalActionsEnabled}>
-                Control Actor Runtimes{operationalActionsEnabled ? "" : " (One-Time only)"}
+                {t("ruleEditor.controlActorRuntimes")}{operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}
               </option>
             </select>
             {!operationalActionsEnabled ? (
               <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Operational actions are available only with One-Time schedule.
+                {t("automation.operationalActionsOnly")}
               </div>
             ) : null}
           </div>
@@ -468,7 +471,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           {kind === "notify" ? (
             <>
               <div>
-                <label className={labelClass(isDark)}>Send To</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.sendTo")}</label>
                 <div className="flex flex-wrap gap-2">
                   {recipients.map((token) => (
                     <Chip
@@ -489,7 +492,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       isDark ? "bg-slate-900 text-slate-200 border border-slate-800" : "bg-white text-gray-800 border border-gray-200"
                     }`}
                   >
-                    <option value="">+ Add recipient...</option>
+                    <option value="">{t("automation.addRecipient")}</option>
                     {actorTargetOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
@@ -500,14 +503,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               </div>
 
               <div>
-                <label className={labelClass(isDark)}>Notification Source</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.notificationSource")}</label>
                 <select
                   value={contentMode}
                   onChange={(e) => {
                     const nextMode = String(e.target.value || "custom");
                     if (nextMode === "snippet") {
                       if (snippetIds.length === 0) {
-                        onSetRulesErr("Create at least one snippet before selecting Snippet.");
+                        onSetRulesErr(t("automation.createSnippetFirst"));
                         return;
                       }
                       onSetRulesErr("");
@@ -522,14 +525,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   }}
                   className={inputClass(isDark)}
                 >
-                  <option value="snippet">Message Snippet</option>
-                  <option value="custom">Type text</option>
+                  <option value="snippet">{t("ruleEditor.messageSnippet")}</option>
+                  <option value="custom">{t("ruleEditor.typeText")}</option>
                 </select>
               </div>
 
               {contentMode === "snippet" ? (
                 <div>
-                  <label className={labelClass(isDark)}>Message Snippet</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.selectSnippet")}</label>
                   <select
                     value={snippetRef}
                     onChange={(e) =>
@@ -546,19 +549,19 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   </select>
                   {snippetIds.length === 0 ? (
                     <div className={`mt-1 text-[11px] ${isDark ? "text-amber-300" : "text-amber-700"}`}>
-                      No snippets yet. Create one in Snippets first.
+                      {t("automation.noSnippetsYet")}
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <div>
-                  <label className={labelClass(isDark)}>Message</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.messageLabel")}</label>
                   <textarea
                     value={message}
                     onChange={(e) => onRulePatch(ruleId, { action: { ...notifyAction, message: e.target.value } })}
                     className={`${inputClass(isDark)} font-mono text-[12px]`}
                     style={{ minHeight: 140 }}
-                    placeholder="Write the message sent when this rule runs."
+                    placeholder={t("automation.messagePlaceholder")}
                     spellCheck={false}
                   />
                 </div>
@@ -568,7 +571,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
 
           {kind === "group_state" ? (
             <div>
-              <label className={labelClass(isDark)}>Group Status Target</label>
+              <label className={labelClass(isDark)}>{t("ruleEditor.groupStatusTarget")}</label>
               <select
                 value={groupStateValue}
                 onChange={(e) =>
@@ -592,7 +595,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           {kind === "actor_control" ? (
             <div className="space-y-3">
               <div>
-                <label className={labelClass(isDark)}>Runtime Operation</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.runtimeOperation")}</label>
                 <select
                   value={actorOperation}
                   onChange={(e) =>
@@ -615,7 +618,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 </div>
               </div>
               <div>
-                <label className={labelClass(isDark)}>Target Actors</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.targetActors")}</label>
                 <div className="flex flex-wrap gap-2">
                   {actorTargets.map((token) => (
                     <Chip
@@ -651,7 +654,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       isDark ? "bg-slate-900 text-slate-200 border border-slate-800" : "bg-white text-gray-800 border border-gray-200"
                     }`}
                   >
-                    <option value="">+ Add target...</option>
+                    <option value="">{t("automation.addTarget")}</option>
                     {actorTargetOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}

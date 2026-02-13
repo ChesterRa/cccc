@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Actor, ChatMessageData, GroupMeta, LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import * as api from "../../services/api";
@@ -25,6 +26,7 @@ export function RelayMessageModal({
   onCancel,
   onSubmit,
 }: RelayMessageModalProps) {
+  const { t } = useTranslation("modals");
   const dstGroups = useMemo(() => {
     return (groups || [])
       .map((g) => ({ group_id: String(g.group_id || ""), title: String(g.title || "") }))
@@ -117,10 +119,10 @@ export function RelayMessageModal({
       >
         <div className={classNames("px-6 py-4 border-b safe-area-inset-top", isDark ? "border-slate-700/50" : "border-gray-200")}>
           <div id="relay-modal-title" className={classNames("text-lg font-semibold", isDark ? "text-white" : "text-gray-900")}>
-            Relay Message
+            {t("relay.title")}
           </div>
           <div className={classNames("text-xs mt-1", isDark ? "text-slate-400" : "text-gray-500")}>
-            Send a copy to another group with a provenance link.
+            {t("relay.subtitle")}
           </div>
         </div>
 
@@ -128,20 +130,20 @@ export function RelayMessageModal({
           {/* Source preview */}
           <div className={classNames("rounded-xl border p-4", isDark ? "border-white/10 bg-slate-900/40" : "border-black/10 bg-gray-50")}>
             <div className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-              Source
+              {t("relay.source")}
             </div>
             <div className={classNames("text-[11px] mt-1", isDark ? "text-slate-400" : "text-gray-600")}>
               {srcGroupId} · {srcEventId ? srcEventId : "—"} · {srcBy || "—"}
             </div>
             <div className={classNames("mt-2 text-sm whitespace-pre-wrap break-words", isDark ? "text-slate-100" : "text-gray-800")}>
-              {srcText || "(empty message)"}
+              {srcText || t("relay.emptyMessage")}
             </div>
           </div>
 
           {/* Destination group */}
           <div>
             <label className={classNames("block text-xs font-medium mb-2", isDark ? "text-slate-300" : "text-gray-700")}>
-              Destination group
+              {t("relay.destinationGroup")}
             </label>
             <select
               value={dstGroupId}
@@ -158,7 +160,7 @@ export function RelayMessageModal({
               disabled={busy || dstGroups.length === 0}
             >
               {dstGroups.length === 0 ? (
-                <option value="">No other groups available</option>
+                <option value="">{t("relay.noOtherGroups")}</option>
               ) : null}
               {dstGroups.map((g) => (
                 <option key={g.group_id} value={g.group_id}>
@@ -172,7 +174,7 @@ export function RelayMessageModal({
           <div>
             <div className="flex items-center justify-between gap-3">
               <label className={classNames("block text-xs font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
-                Recipients
+                {t("relay.recipients")}
               </label>
               <button
                 type="button"
@@ -180,16 +182,16 @@ export function RelayMessageModal({
                 onClick={() => setToTokens([])}
                 disabled={busy}
               >
-                Clear
+                {t("common:reset")}
               </button>
             </div>
 
             <div className={classNames("mt-2 flex flex-wrap gap-2", dstActorsBusy ? "opacity-60" : "")}>
-              {availableTokens.map((t) => {
-                const active = toTokens.includes(t);
+              {availableTokens.map((tok) => {
+                const active = toTokens.includes(tok);
                 return (
                   <button
-                    key={t}
+                    key={tok}
                     type="button"
                     className={classNames(
                       "text-xs px-2.5 py-1.5 rounded-full border transition-colors",
@@ -201,24 +203,24 @@ export function RelayMessageModal({
                           ? "bg-slate-900/30 border-white/10 text-slate-300 hover:bg-slate-900/50"
                           : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     )}
-                    onClick={() => toggleToken(t)}
+                    onClick={() => toggleToken(tok)}
                     disabled={busy}
-                    title={t}
+                    title={tok}
                   >
-                    {t}
+                    {tok}
                   </button>
                 );
               })}
             </div>
             <div className={classNames("mt-2 text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-              {toTokens.length ? `Selected: ${toTokens.join(", ")}` : "Selected: (broadcast)"}
+              {toTokens.length ? t("relay.selectedTokens", { tokens: toTokens.join(", ") }) : t("relay.selectedBroadcast")}
             </div>
           </div>
 
           {/* Optional note */}
           <div>
             <label className={classNames("block text-xs font-medium mb-2", isDark ? "text-slate-300" : "text-gray-700")}>
-              Note (optional)
+              {t("relay.noteLabel")}
             </label>
             <textarea
               value={note}
@@ -228,7 +230,7 @@ export function RelayMessageModal({
                 "w-full rounded-xl border px-3 py-2.5 text-sm transition-colors",
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white" : "bg-white border-gray-300 text-gray-900"
               )}
-              placeholder="Add context for the destination group…"
+              placeholder={t("relay.notePlaceholder")}
               disabled={busy}
             />
           </div>
@@ -242,14 +244,14 @@ export function RelayMessageModal({
               onClick={onCancel}
               disabled={busy}
             >
-              Cancel
+              {t("common:cancel")}
             </button>
             <button
               className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[44px]"
               onClick={() => onSubmit(dstGroupId, toTokens, note)}
               disabled={!canSubmit}
             >
-              {busy ? "Sending…" : "Relay"}
+              {busy ? t("relay.sending") : t("relay.relay")}
             </button>
           </div>
         </div>

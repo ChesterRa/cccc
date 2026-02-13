@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Terminal, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { useTranslation } from "react-i18next";
 import { Actor, PresenceAgent, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
@@ -58,6 +59,7 @@ export function AgentTab({
   isSmallScreen,
   onStatusChange,
 }: AgentTabProps) {
+  const { t } = useTranslation('actors');
   // Derived state (must be defined before refs that use them)
   const isRunning = actor.running ?? actor.enabled ?? false;
   const isHeadless = actor.runner === "headless";
@@ -644,13 +646,13 @@ export function AgentTab({
               <span className={classNames("font-semibold truncate min-w-0", color.text)}>{actor.title || actor.id}</span>
               {actor.role === "foreman" && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-medium">
-                  foreman
+                  {t('foreman')}
                 </span>
               )}
             </div>
             <div className={classNames("mt-0.5 text-xs truncate", isDark ? "text-slate-400" : "text-gray-500")}>
-              {rtInfo?.label || "Custom"} • {isRunning ? "Running" : "Stopped"}
-              {isHeadless && " • Headless"}
+              {rtInfo?.label || t('custom')} • {isRunning ? t('running') : t('stopped')}
+              {isHeadless && ` • ${t('headless')}`}
             </div>
             {/* Mobile-only: condensed single-line presence */}
             <div
@@ -660,9 +662,9 @@ export function AgentTab({
                   ? isDark ? "text-slate-300" : "text-gray-600"
                   : isDark ? "text-slate-500 italic" : "text-gray-400 italic"
               )}
-              title={presenceAgent?.status || "No presence yet"}
+              title={presenceAgent?.status || t('noPresenceYet')}
             >
-              {presenceAgent?.status || "No presence yet"}
+              {presenceAgent?.status || t('noPresenceYet')}
             </div>
           </div>
 
@@ -671,7 +673,7 @@ export function AgentTab({
               "hidden sm:flex flex-shrink-0 px-3 py-2 rounded-xl border shadow-sm backdrop-blur-sm max-w-[min(420px,36vw)]",
               isDark ? "bg-slate-950/30 border-white/10" : "bg-white/70 border-black/10"
             )}
-            aria-label="Agent presence"
+            aria-label={t('agentPresence')}
           >
             <div
               className={classNames(
@@ -687,11 +689,11 @@ export function AgentTab({
               style={statusClamp2Style}
               title={
                 presenceAgent?.updated_at
-                  ? `${presenceAgent?.status || "No presence yet"}\nUpdated: ${formatFullTime(presenceAgent.updated_at)}`
-                  : (presenceAgent?.status || "No presence yet")
+                  ? `${presenceAgent?.status || t('noPresenceYet')}\nUpdated: ${formatFullTime(presenceAgent.updated_at)}`
+                  : (presenceAgent?.status || t('noPresenceYet'))
               }
             >
-              <span>{presenceAgent?.status ? presenceAgent.status : "No presence yet"}</span>
+              <span>{presenceAgent?.status ? presenceAgent.status : t('noPresenceYet')}</span>
               {presenceAgent?.updated_at ? (
                 <span className={classNames("ml-2 text-[11px] tabular-nums font-normal", isDark ? "text-slate-400" : "text-gray-600")}>
                   · {formatTime(presenceAgent.updated_at)}
@@ -709,13 +711,13 @@ export function AgentTab({
           // Headless agent - show status
           <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
             <div className="mb-4"><RocketIcon size={48} /></div>
-            <div className="text-lg font-medium mb-2">Headless Agent</div>
+            <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
             <div className="text-sm text-center max-w-md">
-              This agent runs without a terminal. It communicates via MCP tools and the inbox system.
+              {t('headlessDescription')}
             </div>
             {isRunning && (
               <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", isDark ? "bg-emerald-900/30 text-emerald-300" : "bg-emerald-50 text-emerald-600")}>
-                Status: Running
+                {t('statusRunning')}
               </div>
             )}
           </div>
@@ -736,19 +738,19 @@ export function AgentTab({
           // Stopped agent
           <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
             <div className="mb-4"><TerminalIcon size={48} /></div>
-            <div className="text-lg font-medium mb-2">Agent Not Running</div>
+            <div className="text-lg font-medium mb-2">{t('agentNotRunning')}</div>
             <div className="text-sm text-center max-w-md mb-4">
-              This agent is currently stopped.
+              {t('agentStoppedDescription')}
             </div>
             {canControl ? (
               <button
                 onClick={onLaunch}
                 disabled={isBusy}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
-                aria-label="Launch agent"
+                aria-label={t('launchAgentLabel')}
               >
                 <PlayIcon size={16} />
-                {isBusy ? "Launching..." : "Launch Agent"}
+                {isBusy ? t('launching') : t('launchAgent')}
               </button>
             ) : null}
           </div>
@@ -774,10 +776,10 @@ export function AgentTab({
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
                 )}
-                aria-label="Quit agent"
+                aria-label={t('quitAgent')}
               >
                 <StopIcon size={16} />
-                {!isSmallScreen && "Quit"}
+                {!isSmallScreen && t('quit')}
               </button>
               <button
                 onClick={sendInterrupt}
@@ -786,8 +788,8 @@ export function AgentTab({
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
                 )}
-                title="Send Ctrl+C to interrupt"
-                aria-label="Send interrupt signal"
+                title={t('sendInterruptTitle')}
+                aria-label={t('sendInterruptLabel')}
               >
                 ⌃C
               </button>
@@ -798,10 +800,10 @@ export function AgentTab({
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
                 )}
-                aria-label="Relaunch agent"
+                aria-label={t('relaunchAgent')}
               >
                 <RefreshIcon size={16} />
-                {!isSmallScreen && "Relaunch"}
+                {!isSmallScreen && t('relaunch')}
               </button>
               <button
                 onClick={onEdit}
@@ -810,10 +812,10 @@ export function AgentTab({
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
                 )}
-                aria-label="Edit agent configuration"
+                aria-label={t('editAgentConfig')}
               >
                 <EditIcon size={16} />
-                {!isSmallScreen && "Edit"}
+                {!isSmallScreen && t('common:edit')}
               </button>
             </>
           ) : (
@@ -822,10 +824,10 @@ export function AgentTab({
                 onClick={onLaunch}
                 disabled={isBusy}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap"
-                aria-label="Launch agent"
+                aria-label={t('launchAgentLabel')}
               >
                 <PlayIcon size={16} />
-                {isBusy ? "Launching..." : "Launch"}
+                {isBusy ? t('launching') : t('launch')}
               </button>
               <button
                 onClick={onEdit}
@@ -834,9 +836,9 @@ export function AgentTab({
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors",
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
                 )}
-                aria-label="Edit agent configuration"
+                aria-label={t('editAgentConfig')}
               >
-                <EditIcon size={16} /> Edit
+                <EditIcon size={16} /> {t('common:edit')}
               </button>
             </>
           )}
@@ -852,10 +854,10 @@ export function AgentTab({
                   ? "bg-slate-800 hover:bg-slate-700 text-slate-200"
                   : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
             )}
-            aria-label={`Open inbox${unreadCount > 0 ? `, ${unreadCount} unread messages` : ""}`}
+            aria-label={`${t('openInbox')}${unreadCount > 0 ? t('unreadMessages', { count: unreadCount }) : ""}`}
           >
             <InboxIcon size={16} />
-            {!isSmallScreen && "Inbox"}
+            {!isSmallScreen && t('inbox')}
             {unreadCount > 0 && (
               <span
                 className={classNames(
@@ -876,11 +878,11 @@ export function AgentTab({
               "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
               isDark ? "hover:bg-rose-900/30 text-rose-400" : "hover:bg-rose-50 text-rose-600"
             )}
-            title={isRunning ? "Stop the agent before removing" : "Remove agent"}
-            aria-label="Remove agent"
+            title={isRunning ? t('stopBeforeRemoving') : t('removeAgent')}
+            aria-label={t('removeAgent')}
           >
             <TrashIcon size={16} />
-            {!isSmallScreen && "Remove"}
+            {!isSmallScreen && t('common:remove')}
           </button>
         </ScrollFade>
       ) : null}

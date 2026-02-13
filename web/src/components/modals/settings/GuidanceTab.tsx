@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { apiJson } from "../../../services/api";
 import { cardClass, inputClass, labelClass, primaryButtonClass, preClass } from "./types";
 
@@ -18,6 +19,7 @@ type PromptsResponse = {
 };
 
 export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: string }) {
+  const { t } = useTranslation("settings");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [prompts, setPrompts] = useState<Record<PromptKind, PromptInfo> | null>(null);
@@ -30,20 +32,20 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     try {
       const resp = await apiJson<PromptsResponse>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts`);
       if (!resp.ok) {
-        setErr(resp.error?.message || "Failed to load guidance");
+        setErr(resp.error?.message || t("guidance.failedToLoad"));
         setPrompts(null);
         return;
       }
       const p = resp.result?.preamble;
       const h = resp.result?.help;
       if (!p || !h) {
-        setErr("Invalid guidance response");
+        setErr(t("guidance.invalidResponse"));
         setPrompts(null);
         return;
       }
       setPrompts({ preamble: p, help: h });
     } catch {
-      setErr("Failed to load guidance");
+      setErr(t("guidance.failedToLoad"));
       setPrompts(null);
     } finally {
       setBusy(false);
@@ -66,12 +68,12 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         body: JSON.stringify(body),
       });
       if (!resp.ok) {
-        setErr(resp.error?.message || `Failed to save ${kind}`);
+        setErr(resp.error?.message || t("guidance.failedToSave", { kind }));
         return;
       }
       await load();
     } catch {
-      setErr(`Failed to save ${kind}`);
+      setErr(t("guidance.failedToSave", { kind }));
     } finally {
       setBusy(false);
     }
@@ -80,7 +82,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const reset = async (kind: PromptKind) => {
     if (!groupId) return;
     const filename = prompts?.[kind]?.filename || kind;
-    const ok = window.confirm(`Reset ${kind}? This will delete ${filename} override under CCCC_HOME. This cannot be undone.`);
+    const ok = window.confirm(t("automation.resetGuidanceConfirm", { kind, filename }));
     if (!ok) return;
 
     setBusy(true);
@@ -91,12 +93,12 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         { method: "DELETE" }
       );
       if (!resp.ok) {
-        setErr(resp.error?.message || `Failed to reset ${kind}`);
+        setErr(resp.error?.message || t("guidance.failedToReset", { kind }));
         return;
       }
       await load();
     } catch {
-      setErr(`Failed to reset ${kind}`);
+      setErr(t("guidance.failedToReset", { kind }));
     } finally {
       setBusy(false);
     }
@@ -110,7 +112,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   if (!groupId) {
     return (
       <div className={cardClass(isDark)}>
-        <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>Open this tab from a group.</div>
+        <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("guidance.openFromGroup")}</div>
       </div>
     );
   }
@@ -142,11 +144,11 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
               }`}
               onClick={() => setExpandedKind(kind)}
               disabled={busy}
-              title="Open full-screen editor"
+              title={t("guidance.expandTitle")}
             >
-              Expand
+              {t("guidance.expand")}
             </button>
-            <div className={`px-2 py-1 rounded-md text-[11px] ${badge}`}>{source === "home" ? "Override" : "Built-in"}</div>
+            <div className={`px-2 py-1 rounded-md text-[11px] ${badge}`}>{source === "home" ? t("guidance.overrideBadge") : t("guidance.builtinBadge")}</div>
           </div>
         </div>
 
@@ -157,7 +159,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         )}
 
         <div className="mt-3">
-          <label className={labelClass(isDark)}>Markdown</label>
+          <label className={labelClass(isDark)}>{t("guidance.markdown")}</label>
           <textarea
             className={`${inputClass(isDark)} font-mono text-[12px]`}
             style={{ minHeight: 220 }}
@@ -169,7 +171,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
 
         <div className="mt-3 flex items-center gap-2">
           <button className={primaryButtonClass(busy)} onClick={() => save(kind)} disabled={busy}>
-            Save
+            {t("common:save")}
           </button>
           <button
             className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium disabled:opacity-50 ${
@@ -177,9 +179,9 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
             }`}
             onClick={() => reset(kind)}
             disabled={busy || source !== "home"}
-            title={source === "home" ? "Delete override file and fall back to built-in" : "No override file to delete"}
+            title={source === "home" ? t("guidance.resetHint") : t("guidance.noOverride")}
           >
-            Reset
+            {t("common:reset")}
           </button>
           <button
             className={`ml-auto px-3 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${
@@ -187,9 +189,9 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
             }`}
             onClick={load}
             disabled={busy}
-            title="Discard local edits and reload from server"
+            title={t("guidance.discardChanges")}
           >
-            Discard Changes
+            {t("guidance.discardChanges")}
           </button>
         </div>
       </div>
@@ -202,10 +204,10 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     <div className="space-y-4">
       {err && <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>}
       <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-        Guidance overrides are stored under <span className="font-mono">CCCC_HOME</span> (per-group).
+        <Trans i18nKey="guidance.overridesHint" ns="settings" components={[<span className="font-mono" />]} />
       </div>
-      {one("preamble", "Bootstrap (Preamble)", "Injected automatically before the first delivery after start/restart.")}
-      {one("help", "Help (Reference)", "Returned by cccc_help (on-demand).")}
+      {one("preamble", t("guidance.preambleTitle"), t("guidance.preambleHint"))}
+      {one("help", t("guidance.helpTitle"), t("guidance.helpHint"))}
 
       {expandedKind && expanded ? (
         <div
@@ -225,7 +227,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
             <div className={`px-4 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"} flex items-start gap-3`}>
               <div className="min-w-0">
                 <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
-                  Edit {expandedKind}
+                  {t("guidance.editKind", { kind: expandedKind })}
                 </div>
                 {expanded.path ? (
                   <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"} break-all font-mono`}>
@@ -239,9 +241,9 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                   className={primaryButtonClass(busy)}
                   onClick={() => save(expandedKind)}
                   disabled={busy}
-                  title="Save override under CCCC_HOME"
+                  title={t("guidance.saveOverrideTitle")}
                 >
-                  Save
+                  {t("common:save")}
                 </button>
                 <button
                   type="button"
@@ -250,9 +252,9 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                   }`}
                   onClick={() => reset(expandedKind)}
                   disabled={busy || expanded.source !== "home"}
-                  title={expanded.source === "home" ? "Delete override and fall back to built-in" : "No override file to delete"}
+                  title={expanded.source === "home" ? t("guidance.resetHint") : t("guidance.noOverride")}
                 >
-                  Reset
+                  {t("common:reset")}
                 </button>
                 <button
                   type="button"
@@ -261,7 +263,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                   }`}
                   onClick={() => setExpandedKind(null)}
                 >
-                  Close
+                  {t("common:close")}
                 </button>
               </div>
             </div>

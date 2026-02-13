@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 import type { AutomationRule, AutomationRuleStatus } from "../../../types";
 import {
@@ -40,6 +41,7 @@ export function AutomationRuleList({
   onEditRule,
   onDeleteRule,
 }: AutomationRuleListProps) {
+  const { t } = useTranslation("settings");
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-end gap-2 flex-wrap">
@@ -54,7 +56,7 @@ export function AutomationRuleList({
             onChange={(e) => onToggleShowCompleted(Boolean(e.target.checked))}
             className="h-3 w-3"
           />
-          Show Completed
+          {t("ruleList.showCompleted")}
         </label>
         <button
           type="button"
@@ -63,14 +65,14 @@ export function AutomationRuleList({
           } disabled:opacity-50`}
           onClick={onClearCompleted}
           disabled={rulesBusy || completedOneTimeRuleIds.length === 0}
-          title="Clear completed one-time reminders"
+          title={t("ruleList.clearCompletedTitle")}
         >
-          Clear Completed ({completedOneTimeRuleIds.length})
+          {t("ruleList.clearCompleted", { count: completedOneTimeRuleIds.length })}
         </button>
       </div>
 
       {visibleRules.length === 0 ? (
-        <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>No rules yet. Create one or reset to defaults.</div>
+        <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("ruleList.noRules")}</div>
       ) : null}
 
       {visibleRules.map((rule) => {
@@ -137,9 +139,9 @@ export function AutomationRuleList({
           <div key={ruleId} className={cardClass(isDark)}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{ruleId || "Rule"}</div>
+                <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{ruleId || t("ruleList.rule")}</div>
                 <div className={`mt-0.5 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                  {scheduleLabel} • {enabled ? "On" : "Off"} {completed ? "• Completed" : ""}
+                  {scheduleLabel} • {enabled ? t("ruleList.on") : t("ruleList.off")} {completed ? `• ${t("ruleList.completedLabel")}` : ""}
                 </div>
               </div>
 
@@ -159,7 +161,7 @@ export function AutomationRuleList({
                   }`}
                   onClick={() => onEditRule(ruleId)}
                 >
-                  Edit
+                  {t("common:edit")}
                 </button>
                 <button
                   type="button"
@@ -167,9 +169,9 @@ export function AutomationRuleList({
                     isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
                   }`}
                   onClick={() => onDeleteRule(ruleId)}
-                  title="Delete rule"
+                  title={t("automation.deleteRuleTitle")}
                 >
-                  Delete
+                  {t("common:delete")}
                 </button>
               </div>
             </div>
@@ -182,7 +184,7 @@ export function AutomationRuleList({
             </div>
             {completed ? (
               <div className={`mt-1 text-[11px] ${isDark ? "text-emerald-300" : "text-emerald-700"}`}>
-                Completed at: {completedAt || lastFireAt || "—"}
+                {t("ruleList.completedAt")} {completedAt || lastFireAt || "—"}
               </div>
             ) : null}
             {hasError ? (

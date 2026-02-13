@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { InfoIcon } from "../../Icons";
 import { ScrollFade } from "../../ScrollFade";
 import type { SettingsScope } from "./types";
@@ -29,12 +30,13 @@ export function SettingsNavigation({
   onScopeChange,
   onTabChange,
 }: SettingsNavigationProps) {
+  const { t } = useTranslation("settings");
   return (
     <>
       <aside className={`hidden sm:flex sm:flex-col w-48 border-r flex-shrink-0 ${isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-50/50 border-gray-100"}`}>
         <div className="p-3 space-y-3">
           <div className={`px-3 text-[10px] font-bold uppercase tracking-wider opacity-30 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            Target Scope
+            {t("navigation.targetScope")}
           </div>
           <div className="flex flex-col gap-1">
             <button
@@ -51,13 +53,13 @@ export function SettingsNavigation({
                     : "hover:bg-gray-100 text-gray-600"
               } disabled:opacity-40`}
             >
-              <span>This group</span>
+              <span>{t("navigation.thisGroup")}</span>
               <ScopeTooltip
                 isDark={isDark}
-                title="Group Scope"
+                title={t("navigation.groupScopeTitle")}
                 content={
                   <>
-                    Applies to <span className="font-mono text-emerald-500">{scopeRootUrl || groupId}</span> only. Useful for group-specific timeouts and integrations.
+                    {t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}
                   </>
                 }
               >
@@ -88,11 +90,11 @@ export function SettingsNavigation({
                     : "hover:bg-gray-100 text-gray-600"
               }`}
             >
-              <span>Global</span>
+              <span>{t("navigation.global")}</span>
               <ScopeTooltip
                 isDark={isDark}
-                title="Global Scope"
-                content={<>Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.</>}
+                title={t("navigation.globalScopeTitle")}
+                content={<>{t("navigation.globalScopeContent")}</>}
               >
                 {(getReferenceProps, setReference) => (
                   <div
@@ -150,14 +152,14 @@ export function SettingsNavigation({
                     : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
               } disabled:opacity-40`}
             >
-              <span>This group</span>
+              <span>{t("navigation.thisGroup")}</span>
               <div className="absolute right-1 top-1/2 -translate-y-1/2">
                 <ScopeTooltip
                   isDark={isDark}
-                  title="Group Scope"
+                  title={t("navigation.groupScopeTitle")}
                   content={
                     <>
-                      Applies to <span className="font-mono text-emerald-500">{scopeRootUrl || groupId}</span> only. Useful for group-specific timeouts and integrations.
+                      {t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}
                     </>
                   }
                 >
@@ -189,12 +191,12 @@ export function SettingsNavigation({
                     : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
               }`}
             >
-              <span>Global</span>
+              <span>{t("navigation.global")}</span>
               <div className="absolute right-1 top-1/2 -translate-y-1/2">
                 <ScopeTooltip
                   isDark={isDark}
-                  title="Global Scope"
-                  content={<>Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.</>}
+                  title={t("navigation.globalScopeTitle")}
+                  content={<>{t("navigation.globalScopeContent")}</>}
                 >
                   {(getReferenceProps, setReference) => (
                     <div

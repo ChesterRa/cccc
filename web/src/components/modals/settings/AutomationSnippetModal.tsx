@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 import { AUTOMATION_VAR_HELP } from "./automationUtils";
 import { cardClass, inputClass } from "./types";
@@ -34,6 +35,8 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
     onUpdateSnippet,
   } = props;
 
+  const { t } = useTranslation("settings");
+
   if (!open) return null;
 
   return (
@@ -53,9 +56,9 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
       >
         <div className={`px-4 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"} flex items-start gap-3`}>
           <div className="min-w-0">
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>Snippets</div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("snippetModal.title")}</div>
             <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-              Reusable notification messages for automation rules.
+              {t("snippetModal.description")}
             </div>
           </div>
           <button
@@ -65,7 +68,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
             }`}
             onClick={onClose}
           >
-            Close
+            {t("common:close")}
           </button>
         </div>
 
@@ -86,13 +89,13 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
               }`}
               onClick={onAddSnippet}
             >
-              + Add Snippet
+              {t("snippetModal.addSnippet")}
             </button>
           </div>
 
           {supportedVars.length > 0 ? (
             <div className={`rounded-lg border p-2.5 text-[11px] ${isDark ? "border-slate-800 bg-slate-900/60 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
-              <div className={`font-semibold mb-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>Available placeholders</div>
+              <div className={`font-semibold mb-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("snippetModal.availablePlaceholders")}</div>
               <div className="space-y-1">
                 {supportedVars.map((v) => {
                   const help = AUTOMATION_VAR_HELP[v];
@@ -108,7 +111,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
             </div>
           ) : null}
 
-          {snippetIds.length === 0 ? <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>No snippets yet.</div> : null}
+          {snippetIds.length === 0 ? <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("snippetModal.noSnippets")}</div> : null}
 
           <div className="space-y-3">
             {snippetIds.map((snippetId) => (
@@ -121,9 +124,9 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                       isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
                     }`}
                     onClick={() => onDeleteSnippet(snippetId)}
-                    title="Delete snippet"
+                    title={t("snippetModal.deleteSnippet")}
                   >
-                    Delete
+                    {t("common:delete")}
                   </button>
                 </div>
                 <textarea

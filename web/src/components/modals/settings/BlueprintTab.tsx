@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { cardClass, labelClass, primaryButtonClass } from "./types";
 import { TemplatePreviewDetails } from "../../TemplatePreviewDetails";
@@ -28,6 +29,7 @@ function downloadTextFile(filename: string, text: string) {
 }
 
 export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps) {
+  const { t } = useTranslation("settings");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<TemplatePreviewResult | null>(null);
   const [err, setErr] = useState("");
@@ -44,12 +46,12 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
     try {
       const resp = await api.previewGroupTemplate(groupId, f);
       if (!resp.ok) {
-        setErr(resp.error?.message || "Failed to preview template");
+        setErr(resp.error?.message || t("blueprint.failedToPreview"));
         return;
       }
       setPreview(resp.result as TemplatePreviewResult);
     } catch {
-      setErr("Failed to preview template");
+      setErr(t("blueprint.failedToPreview"));
     } finally {
       setBusy(false);
     }
@@ -63,15 +65,15 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
     try {
       const resp = await api.exportGroupTemplate(groupId);
       if (!resp.ok) {
-        setErr(resp.error?.message || "Failed to export template");
+        setErr(resp.error?.message || t("blueprint.failedToExport"));
         return;
       }
       const filename = resp.result?.filename || `cccc-group-template--${groupTitle || groupId}.yaml`;
       downloadTextFile(filename, String(resp.result?.template || ""));
-      setExportInfo("Downloaded");
+      setExportInfo(t("blueprint.downloaded"));
       window.setTimeout(() => setExportInfo(""), 1200);
     } catch {
-      setErr("Failed to export template");
+      setErr(t("blueprint.failedToExport"));
     } finally {
       setBusy(false);
     }
@@ -79,9 +81,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
 
   const handleImportReplace = async () => {
     if (!groupId || !file) return;
-    const ok = window.confirm(
-      `Replace this group’s actors, settings, automation rules, and guidance using "${file.name}"?\n\nThis will stop running agents and then apply group guidance overrides under CCCC_HOME:\n- CCCC_PREAMBLE.md\n- CCCC_HELP.md`
-    );
+    const ok = window.confirm(t("blueprint.replaceConfirm", { filename: file.name }));
     if (!ok) return;
 
     setBusy(true);
@@ -89,15 +89,15 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
     try {
       const resp = await api.importGroupTemplateReplace(groupId, file);
       if (!resp.ok) {
-        setErr(resp.error?.message || "Failed to import template");
+        setErr(resp.error?.message || t("blueprint.failedToImport"));
         return;
       }
       setFile(null);
       setPreview(null);
-      setExportInfo("Applied");
+      setExportInfo(t("blueprint.applied"));
       window.setTimeout(() => setExportInfo(""), 1200);
     } catch {
-      setErr("Failed to import template");
+      setErr(t("blueprint.failedToImport"));
     } finally {
       setBusy(false);
     }
@@ -106,7 +106,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
   if (!canUse) {
     return (
       <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-        Open this tab from a group.
+        {t("blueprint.openFromGroup")}
       </div>
     );
   }
@@ -119,26 +119,26 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
       {err && <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>}
 
       <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Export</div>
+        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("blueprint.exportTitle")}</div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-          Save this group’s actors, settings, automation rules, and guidance as a single portable file.
+          {t("blueprint.exportDescription")}
         </div>
         <div className="mt-3 flex items-center gap-2">
           <button className={primaryButtonClass(busy)} onClick={handleExport} disabled={busy}>
-            Export Blueprint
+            {t("blueprint.exportBlueprint")}
           </button>
           {exportInfo && <div className={`text-xs ${isDark ? "text-emerald-300" : "text-emerald-700"}`}>{exportInfo}</div>}
         </div>
       </div>
 
       <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Import (Replace)</div>
+        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("blueprint.importTitle")}</div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-          Applies a blueprint by replacing actors, settings, automation rules/snippets, and group guidance overrides (CCCC_HOME). Ledger history is never modified.
+          {t("blueprint.importDescription")}
         </div>
 
         <div className="mt-3">
-          <label className={labelClass(isDark)}>Blueprint file</label>
+          <label className={labelClass(isDark)}>{t("blueprint.blueprintFile")}</label>
           <input
             key={file ? file.name : "none"}
             type="file"
@@ -155,7 +155,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
           />
         </div>
 
-        {busy && <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>Working…</div>}
+        {busy && <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("blueprint.working")}</div>}
 
         {tpl && diff && (
           <div className="mt-3">
@@ -168,9 +168,9 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
             className={primaryButtonClass(busy)}
             onClick={handleImportReplace}
             disabled={busy || !file || !preview}
-            title={!preview ? "Pick a file to preview first" : ""}
+            title={!preview ? t("blueprint.pickFileFirst") : ""}
           >
-            Apply (Replace)
+            {t("blueprint.applyReplace")}
           </button>
           <button
             type="button"
@@ -184,7 +184,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
               setErr("");
             }}
           >
-            Clear
+            {t("common:close")}
           </button>
         </div>
       </div>

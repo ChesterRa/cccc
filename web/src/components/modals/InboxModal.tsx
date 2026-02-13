@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { MarkdownRenderer } from "../MarkdownRenderer";
@@ -39,6 +40,7 @@ export interface InboxModalProps {
 }
 
 export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+  const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
   // Helper to get display name for actor
   const getDisplayName = useMemo(() => {
@@ -73,9 +75,9 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
         <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div className="min-w-0">
             <div id="inbox-title" className={`text-lg font-semibold truncate ${isDark ? "text-white" : "text-gray-900"}`}>
-              Inbox · {actorId}
+              {t("inbox.title", { actorId })}
             </div>
-            <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>{messages.length} unread messages</div>
+            <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("inbox.unreadMessages", { count: messages.length })}</div>
           </div>
           <div className="flex gap-2">
             <button
@@ -84,14 +86,14 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
               onClick={onMarkAllRead}
               disabled={!messages.length || busy.startsWith("inbox")}
             >
-              Mark all read
+              {t("inbox.markAllRead")}
             </button>
             <button
               className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] ${isDark ? "bg-slate-600 hover:bg-slate-500 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-800"
                 }`}
               onClick={onClose}
             >
-              Close
+              {t("common:close")}
             </button>
           </div>
         </div>
@@ -120,7 +122,7 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
           {!messages.length && (
             <div className="text-center py-8">
               <div className="text-3xl mb-2">📭</div>
-              <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>No unread messages</div>
+              <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("inbox.noUnread")}</div>
             </div>
           )}
         </div>

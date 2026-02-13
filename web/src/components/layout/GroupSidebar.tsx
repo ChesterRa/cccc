@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from 'react-i18next';
 import {
   DndContext,
   closestCenter,
@@ -48,6 +49,8 @@ export function GroupSidebar({
   onToggleCollapse,
   onReorder,
 }: GroupSidebarProps) {
+  const { t } = useTranslation('layout');
+
   // Memoize sortable item IDs to avoid unnecessary re-renders
   const sortableIds = useMemo(
     () => orderedGroups.map((g) => String(g.group_id || "")),
@@ -122,10 +125,10 @@ export function GroupSidebar({
                       isDark ? "text-cyan-300" : "text-cyan-700"
                     )}
                     onClick={onCreateGroup}
-                    title="Create new working group"
-                    aria-label="Create new working group"
+                    title={t('createNewGroup')}
+                    aria-label={t('createNewGroup')}
                   >
-                    + New
+                    {t('newGroup')}
                   </button>
                 )}
                 {/* Collapse button - desktop only */}
@@ -135,8 +138,8 @@ export function GroupSidebar({
                     isDark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
                   )}
                   onClick={onToggleCollapse}
-                  aria-label="Collapse sidebar"
-                  title="Collapse sidebar"
+                  aria-label={t('collapseSidebar')}
+                  title={t('collapseSidebar')}
                 >
                   <ChevronLeftIcon size={16} />
                 </button>
@@ -147,7 +150,7 @@ export function GroupSidebar({
                     isDark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
                   )}
                   onClick={onClose}
-                  aria-label="Close sidebar"
+                  aria-label={t('closeSidebar')}
                 >
                   <CloseIcon size={18} />
                 </button>
@@ -165,8 +168,8 @@ export function GroupSidebar({
                 isDark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
               )}
               onClick={onToggleCollapse}
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
+              aria-label={t('expandSidebar')}
+              title={t('expandSidebar')}
             >
               <ChevronRightIcon size={18} />
             </button>
@@ -177,8 +180,8 @@ export function GroupSidebar({
                   isDark ? "text-cyan-300" : "text-cyan-700"
                 )}
                 onClick={onCreateGroup}
-                aria-label="Create new working group"
-                title="Create new working group"
+                aria-label={t('createNewGroup')}
+                title={t('createNewGroup')}
               >
                 <PlusIcon size={18} />
               </button>
@@ -193,7 +196,7 @@ export function GroupSidebar({
         )}>
           {!isCollapsed && (
             <div className={`text-[10px] font-medium uppercase tracking-wider mb-3 px-2 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Working Groups
+              {t('workingGroups')}
             </div>
           )}
 
@@ -240,9 +243,9 @@ export function GroupSidebar({
               )}>
                 <FolderIcon size={32} />
               </div>
-              <div className={`text-sm mb-2 font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>No working groups yet</div>
+              <div className={`text-sm mb-2 font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t('noGroupsYet')}</div>
               <div className={`text-xs mb-5 max-w-[200px] mx-auto leading-relaxed ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                A working group is a collaboration space where multiple AI agents work together on a project.
+                {t('noGroupsDescription')}
               </div>
               {!readOnly && onCreateGroup && (
                 <button
@@ -252,7 +255,7 @@ export function GroupSidebar({
                   )}
                   onClick={onCreateGroup}
                 >
-                  Create Your First Group
+                  {t('createFirstGroup')}
                 </button>
               )}
             </div>

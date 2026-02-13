@@ -1,4 +1,5 @@
 import { RuntimeInfo, SupportedRuntime, SUPPORTED_RUNTIMES, RUNTIME_INFO } from "../../types";
+import { useTranslation } from "react-i18next";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { useEffect, useState } from "react";
 import * as api from "../../services/api";
@@ -61,6 +62,7 @@ export function EditActorModal({
   onSaveAndRestart,
   onCancel,
 }: EditActorModalProps) {
+  const { t } = useTranslation('actors');
   const { modalRef } = useModalA11y(isOpen, onCancel);
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
   const [secretsSetText, setSecretsSetText] = useState("");
@@ -75,7 +77,7 @@ export function EditActorModal({
     if (!groupId || !actorId) return;
     const resp = await api.fetchActorPrivateEnvKeys(groupId, actorId);
     if (!resp.ok) {
-      setSecretsError(resp.error?.message || "Failed to load secret env metadata");
+      setSecretsError(resp.error?.message || t('failedToLoadSecrets'));
       return;
     }
     setSecretKeys(Array.isArray(resp.result?.keys) ? resp.result.keys : []);
@@ -121,7 +123,7 @@ export function EditActorModal({
         clear: secretsClearAll,
       });
     } catch (e) {
-      setSecretsError(e instanceof Error ? e.message : "Save failed");
+      setSecretsError(e instanceof Error ? e.message : t('saveFailed'));
       return;
     } finally {
       setSecretsBusy(false);
@@ -146,13 +148,13 @@ export function EditActorModal({
       >
         <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div id="edit-actor-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
-            Edit Agent: {actorId}
+            {t('editAgent', { actorId })}
           </div>
-          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Change settings for this agent</div>
+          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('changeSettings')}</div>
         </div>
         <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Display Name</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('displayName')}</label>
             <input
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
@@ -162,12 +164,12 @@ export function EditActorModal({
               placeholder={actorId}
             />
             <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Leave empty to use the agent ID as display name
+              {t('leaveEmptyForId')}
             </div>
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Runtime</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('runtime')}</label>
             <select
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
@@ -189,7 +191,7 @@ export function EditActorModal({
                 return (
                   <option key={rt} value={rt} disabled={!selectable}>
                     {info?.label || rt}
-                    {!available && rt !== "custom" ? " (not installed)" : ""}
+                    {!available && rt !== "custom" ? ` ${t('notInstalled')}` : ""}
                   </option>
                 );
               })}
@@ -201,48 +203,48 @@ export function EditActorModal({
                   isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
                 }`}
               >
-                <div className="font-medium">Manual MCP install required</div>
+                <div className="font-medium">{t('manualMcpRequired')}</div>
                 {runtime === "custom" ? (
                   <>
                     <div className="mt-1">
-                      Configure your runtime to add an MCP stdio server named{" "}
+                      {t('configureMcpStdio')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc</code>{" "}
-                      that runs <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc mcp</code>.
+                      {t('thatRuns')} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc mcp</code>.
                     </div>
                   </>
                 ) : runtime === "cursor" ? (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
+                      {t('createEditFile')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.cursor/mcp.json</code> (or{" "}
-                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.cursor/mcp.json</code> in this project)
+                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.cursor/mcp.json</code> {t('orInProject')})
                     </div>
-                    <div className="mt-1">2) Add this MCP server config:</div>
+                    <div className="mt-1">{t('addMcpConfig')}</div>
                   </>
                 ) : runtime === "kilocode" ? (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
-                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.kilocode/mcp.json</code> in this project root
+                      {t('createEditFile')}{" "}
+                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.kilocode/mcp.json</code> {t('inProjectRoot')}
                     </div>
-                    <div className="mt-1">2) Add this MCP server config:</div>
+                    <div className="mt-1">{t('addMcpConfig')}</div>
                   </>
                 ) : runtime === "opencode" ? (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
+                      {t('createEditFile')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.config/opencode/opencode.json</code>
                     </div>
-                    <div className="mt-1">2) Add this MCP server config:</div>
+                    <div className="mt-1">{t('addMcpConfig')}</div>
                   </>
                 ) : (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
+                      {t('createEditFile')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.copilot/mcp-config.json</code>
                     </div>
                     <div className="mt-1">
-                      2) Add this MCP server config (or pass it via{" "}
+                      {t('addMcpConfigOrFlag')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>--additional-mcp-config</code>):
                     </div>
                   </>
@@ -259,30 +261,30 @@ export function EditActorModal({
                   </pre>
                 ) : null}
                 <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>
-                  Restart the runtime after updating this config.
+                  {t('restartAfterConfig')}
                 </div>
               </div>
             )}
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Command</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('command')}</label>
             <input
               className={`w-full rounded-xl border px-4 py-2.5 text-sm font-mono min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
               }`}
               value={command}
               onChange={(e) => onChangeCommand(e.target.value)}
-              placeholder={defaultCommand || "Enter command..."}
+              placeholder={defaultCommand || t('enterCommand')}
             />
             {isRunning ? (
               <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Runtime/command changes take effect after restart. Use "Save & Restart" to apply immediately.
+                {t('runtimeChangesNote')}
               </div>
             ) : null}
             {defaultCommand.trim() ? (
               <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Default:{" "}
+                {t('default')}{" "}
                 <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{defaultCommand}</code>
               </div>
             ) : null}
@@ -290,35 +292,35 @@ export function EditActorModal({
 
           <div>
             <div className="flex items-center justify-between gap-3">
-              <label className={`block text-xs font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>Secrets (write-only)</label>
+              <label className={`block text-xs font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('secretsWriteOnly')}</label>
               <button
                 className={`text-xs px-2 py-1 rounded-lg border transition-colors ${
                   isDark ? "border-slate-600/50 text-slate-300 hover:bg-slate-800" : "border-gray-200 text-gray-700 hover:bg-gray-50"
                 }`}
                 onClick={() => void refreshSecretKeys()}
                 disabled={secretsBusy}
-                title="Refresh configured keys"
+                title={t('refreshConfiguredKeys')}
               >
-                Refresh
+                {t('refresh')}
               </button>
             </div>
             <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Stored locally under <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>CCCC_HOME/state/…</code> (not in group ledger).{" "}
+              {t('secretsStoredLocallyEdit').replace(/<1>|<\/1>/g, '')}{" "}
               {secretKeys.length ? (
                 <>
-                  Configured keys:{" "}
+                  {t('configuredKeys')}{" "}
                   <span className={isDark ? "text-slate-300" : "text-gray-700"}>{secretKeys.join(", ")}</span>
                 </>
               ) : (
-                <>No keys configured.</>
+                <>{t('noKeysConfigured')}</>
               )}
             </div>
             <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Secrets are applied when you click <span className={isDark ? "text-slate-300" : "text-gray-700"}>Save &amp; Restart</span> below.
+              {t('secretsAppliedNote').replace(/<1>|<\/1>/g, '')}
             </div>
 
             <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Set / Update (supports KEY=VALUE, export, quotes, semicolons)
+              {t('setUpdate')}
             </label>
             <textarea
               className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors ${
@@ -330,7 +332,7 @@ export function EditActorModal({
             />
 
             <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Unset (supports unset KEY / KEY / KEY=, with semicolons)
+              {t('unset')}
             </label>
             <textarea
               className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[72px] transition-colors ${
@@ -348,7 +350,7 @@ export function EditActorModal({
                 onChange={(e) => setSecretsClearAll(e.target.checked)}
                 disabled={secretsBusy || busy === "actor-update"}
               />
-              Clear all secret keys on save
+              {t('clearAllKeys')}
             </label>
 
             {secretsError ? (
@@ -368,7 +370,7 @@ export function EditActorModal({
               onClick={() => void saveAndRestart()}
               disabled={busy === "actor-update" || secretsBusy || (requireCommand && !command.trim())}
             >
-              Save & Restart
+              {t('saveAndRestart')}
             </button>
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
@@ -376,7 +378,7 @@ export function EditActorModal({
               }`}
               onClick={onCancel}
             >
-              Cancel
+              {t('common:cancel')}
             </button>
           </div>
         </div>

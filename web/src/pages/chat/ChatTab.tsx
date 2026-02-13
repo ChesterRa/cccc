@@ -8,6 +8,7 @@ import { classNames } from "../../utils/classNames";
 import { SetupChecklist } from "./SetupChecklist";
 import { ChatComposer } from "./ChatComposer";
 import { useChatTab } from "../../hooks/useChatTab";
+import { useTranslation } from 'react-i18next';
 
 export interface ChatTabProps {
   // UI configuration
@@ -152,6 +153,8 @@ export function ChatTab({
     chatScrollMemoryRef,
   });
 
+  const { t } = useTranslation('chat');
+
   // Empty state: show full-screen setup guidance.
   if (chatMessages.length === 0 && showSetupCard) {
     return (
@@ -160,17 +163,17 @@ export function ChatTab({
           ref={scrollRef}
           className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
           role="log"
-          aria-label="Chat messages"
+          aria-label={t('chatMessages')}
         >
           <div className="flex flex-col items-center justify-center h-full text-center pb-20">
             <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
               <div className="text-4xl mb-4">&#x1F9ED;</div>
               <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                Next steps
+                {t('nextSteps')}
               </div>
               {readOnly ? (
                 <div className={classNames("mt-3 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
-                  No messages yet.
+                  {t('noMessagesYet')}
                 </div>
               ) : (
                 <SetupChecklist
@@ -244,18 +247,18 @@ export function ChatTab({
                 isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70"
               )}
               role="status"
-              aria-label="Viewing message context window"
+              aria-label={t('viewingMessage')}
             >
               <div className="min-w-0">
                 <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                  Viewing a message
+                  {t('viewingMessage')}
                 </div>
                 <div className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}>
                   {isLoadingHistory
-                    ? "Loading context\u2026"
+                    ? t('loadingContext')
                     : chatWindowProps.hasMoreBefore || chatWindowProps.hasMoreAfter
-                      ? "Context is truncated."
-                      : "Context loaded."}
+                      ? t('contextTruncated')
+                      : t('contextLoaded')}
                 </div>
               </div>
               {!readOnly && (
@@ -269,7 +272,7 @@ export function ChatTab({
                   )}
                   onClick={exitChatWindow}
                 >
-                  Return to latest
+                  {t('returnToLatest')}
                 </button>
               )}
             </div>
@@ -285,10 +288,10 @@ export function ChatTab({
                 isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70"
               )}
               role="region"
-              aria-label="Setup checklist"
+              aria-label={t('setupChecklist')}
             >
               <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                Next steps
+                {t('nextSteps')}
               </div>
               <SetupChecklist
                 isDark={isDark}
@@ -318,7 +321,7 @@ export function ChatTab({
                 isDark ? "border-white/5" : "border-black/5"
               )}
               role="tablist"
-              aria-label="Chat filters"
+              aria-label={t('chatFilters')}
             >
               <div className={classNames(
                 "inline-flex items-center gap-1 rounded-full border p-1 backdrop-blur-md",
@@ -327,10 +330,10 @@ export function ChatTab({
                   : "border-gray-200/80 bg-white/70"
               )}>
                 {[
-                  ["all", "All"],
-                  ["to_user", "To user"],
-                  ["attention", "Important"],
-                  ["task", "Need Reply"],
+                  ["all", t('filterAll')],
+                  ["to_user", t('filterToUser')],
+                  ["attention", t('filterImportant')],
+                  ["task", t('filterNeedReply')],
                 ].map(([key, label]) => {
                   const k = key as "all" | "to_user" | "attention" | "task";
                   const active = chatFilter === k;
@@ -368,13 +371,13 @@ export function ChatTab({
                     : "border-gray-200/80 bg-white/70 shadow-gray-200/50"
                 )}
                 role="tablist"
-                aria-label="Chat filters"
+                aria-label={t('chatFilters')}
               >
                 {[
-                  ["all", "All"],
-                  ["to_user", "To user"],
-                  ["attention", "Important"],
-                  ["task", "Need Reply"],
+                  ["all", t('filterAll')],
+                  ["to_user", t('filterToUser')],
+                  ["attention", t('filterImportant')],
+                  ["task", t('filterNeedReply')],
                 ].map(([key, label]) => {
                   const k = key as "all" | "to_user" | "attention" | "task";
                   const active = chatFilter === k;

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 
@@ -14,19 +15,20 @@ export interface RecipientsModalProps {
 }
 
 export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, statusKind, entries, onClose }: RecipientsModalProps) {
+  const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
   const isAck = statusKind === "ack";
   const isReply = statusKind === "reply";
-  const title = isReply ? "Reply Status" : isAck ? "Acknowledgements" : "Recipients";
+  const title = isReply ? t("recipients.replyStatus") : isAck ? t("recipients.acknowledgements") : t("recipients.recipients");
 
   return (
     <div
       className={classNames("fixed inset-0 z-50 flex animate-fade-in", isSmallScreen ? "items-end justify-center" : "items-center justify-center p-4")}
       role="dialog"
       aria-modal="true"
-      aria-label="Recipient status"
+      aria-label={t("recipients.recipientStatusAria")}
     >
       <div className={classNames("absolute inset-0", isDark ? "bg-black/60" : "bg-black/40")} onPointerDown={onClose} aria-hidden="true" />
       <div
@@ -40,8 +42,8 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
         <div className={classNames("px-5 py-4 border-b flex items-center justify-between gap-3", isDark ? "border-slate-800" : "border-gray-200")}>
           <div className="min-w-0">
             <div className={classNames("text-sm font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>{title}</div>
-            <div className={classNames("text-[11px] truncate", isDark ? "text-slate-500" : "text-gray-500")} title={`to ${toLabel}`}>
-              to {toLabel}
+            <div className={classNames("text-[11px] truncate", isDark ? "text-slate-500" : "text-gray-500")} title={t("recipients.toLabel", { label: toLabel })}>
+              {t("recipients.toLabel", { label: toLabel })}
             </div>
           </div>
           <button
@@ -51,7 +53,7 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
               isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
             )}
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("common:close")}
           >
             ×
           </button>
@@ -76,15 +78,15 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
               ))}
             </div>
           ) : (
-            <div className={classNames("text-sm py-6 text-center", isDark ? "text-slate-400" : "text-gray-500")}>No recipient tracking for this message.</div>
+            <div className={classNames("text-sm py-6 text-center", isDark ? "text-slate-400" : "text-gray-500")}>{t("recipients.noTracking")}</div>
           )}
 
           <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>
             {isReply
-              ? "Legend: ○ pending · ↩ replied"
+              ? t("recipients.legendReply")
               : isAck
-                ? "Legend: ○ pending · ✓ acknowledged"
-                : "Legend: ✓ pending · ✓✓ read"}
+                ? t("recipients.legendAck")
+                : t("recipients.legendRead")}
           </div>
         </div>
       </div>
