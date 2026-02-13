@@ -61,7 +61,7 @@ ENV PATH="/home/cccc/.local/bin:${PATH}"
 # Set up Claude CLI for non-root user
 RUN mkdir -p /home/cccc/.local/bin \
     && ln -s /usr/local/bin/claude /home/cccc/.local/bin/claude \
-    && echo '{"hasCompletedOnboarding":true}' > /home/cccc/.claude.json
+     && echo '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > /home/cccc/.claude.json
 
 # Configuration
 ENV CCCC_HOME=/data
