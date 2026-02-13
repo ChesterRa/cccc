@@ -1,4 +1,5 @@
 // TranscriptTab configures terminal transcript visibility and viewing.
+import { useTranslation } from "react-i18next";
 import { Actor } from "../../../types";
 import { inputClass, primaryButtonClass, cardClass, preClass } from "./types";
 
@@ -63,22 +64,24 @@ export function TranscriptTab({
   onCopyTail,
   onClearTail,
 }: TranscriptTabProps) {
+  const { t } = useTranslation("settings");
+
   return (
     <div className="space-y-4">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Terminal transcript</h3>
+        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("transcript.title")}</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Readable tail for troubleshooting. User can always view; agent access is controlled by the policy below.
+          {t("transcript.description")}
         </p>
       </div>
 
       {/* Policy */}
       <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Policy</div>
+        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("transcript.policy")}</div>
 
         <div className="mt-3 space-y-3">
           <div>
-            <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>Visibility to agents</label>
+            <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("transcript.visibilityLabel")}</label>
             <select
               value={terminalVisibility}
               onChange={(e) => {
@@ -87,12 +90,12 @@ export function TranscriptTab({
               }}
               className={inputClass(isDark)}
             >
-              <option value="off">off (agents cannot read others)</option>
-              <option value="foreman">foreman (foreman can read peers)</option>
-              <option value="all">all (any agent can read others)</option>
+              <option value="off">{t("transcript.visibilityOff")}</option>
+              <option value="foreman">{t("transcript.visibilityForeman")}</option>
+              <option value="all">{t("transcript.visibilityAll")}</option>
             </select>
             <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Tip: This only affects agents. The Web UI user can always view transcripts.
+              {t("transcript.visibilityTip")}
             </div>
           </div>
 
@@ -104,10 +107,10 @@ export function TranscriptTab({
                 onChange={(e) => setTerminalNotifyTail(e.target.checked)}
                 className="h-4 w-4"
               />
-              Include tail in idle notifications
+              {t("transcript.includeTail")}
             </label>
             <div>
-              <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>Notification lines</label>
+              <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("transcript.notificationLines")}</label>
               <input
                 type="number"
                 value={terminalNotifyLines}
@@ -125,7 +128,7 @@ export function TranscriptTab({
             disabled={busy}
             className={primaryButtonClass(busy)}
           >
-            {busy ? "Saving..." : "Save transcript settings"}
+            {busy ? t("common:saving") : t("transcript.saveTranscript")}
           </button>
         </div>
       </div>
@@ -134,9 +137,9 @@ export function TranscriptTab({
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Tail viewer</div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("transcript.tailViewer")}</div>
             <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Best-effort transcript tail from the actor PTY ring buffer.
+              {t("transcript.tailViewerHint")}
             </div>
           </div>
           <div className="flex gap-2">
@@ -147,7 +150,7 @@ export function TranscriptTab({
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
               } disabled:opacity-50`}
             >
-              {tailBusy ? "Loading..." : "Refresh"}
+              {tailBusy ? t("common:loading") : t("transcript.refresh")}
             </button>
             <button
               onClick={() => onCopyTail(50)}
@@ -156,13 +159,13 @@ export function TranscriptTab({
                 isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
               } disabled:opacity-50`}
             >
-              Copy last 50 lines
+              {t("transcript.copyLast50")}
             </button>
           </div>
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-2">
-          <label className={`block text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>Actor</label>
+          <label className={`block text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("transcript.actor")}</label>
           <select
             value={tailActorId}
             onChange={(e) => setTailActorId(e.target.value)}
@@ -173,12 +176,12 @@ export function TranscriptTab({
                 {a.id}{a.role ? ` (${a.role})` : ""}
               </option>
             ))}
-            {!devActors.length && <option value="">(no actors)</option>}
+            {!devActors.length && <option value="">{t("transcript.noActors")}</option>}
           </select>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>Max chars</label>
+              <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("transcript.maxChars")}</label>
               <input
                 type="number"
                 value={tailMaxChars}
@@ -196,7 +199,7 @@ export function TranscriptTab({
                   isDark ? "bg-rose-900/30 hover:bg-rose-900/40 text-rose-200 border border-rose-900/30" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
                 } disabled:opacity-50`}
               >
-                Clear (truncate)
+                {t("transcript.clearTruncate")}
               </button>
             </div>
           </div>
@@ -209,7 +212,7 @@ export function TranscriptTab({
                 onChange={(e) => setTailStripAnsi(e.target.checked)}
                 className="h-4 w-4"
               />
-              Strip ANSI
+              {t("transcript.stripAnsi")}
             </label>
             <label className={`inline-flex items-center gap-2 text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
               <input
@@ -219,7 +222,7 @@ export function TranscriptTab({
                 onChange={(e) => setTailCompact(e.target.checked)}
                 className="h-4 w-4"
               />
-              Compact repeated frames
+              {t("transcript.compactFrames")}
             </label>
           </div>
         </div>

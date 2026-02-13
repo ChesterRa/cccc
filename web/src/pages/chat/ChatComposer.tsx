@@ -5,6 +5,7 @@ import { Actor, GroupMeta, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
+import { useTranslation } from 'react-i18next';
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -95,6 +96,7 @@ export function ChatComposer({
   const isUserInputRef = useRef(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
+  const { t } = useTranslation('chat');
 
   // Auto-adjust textarea height when composerText changes programmatically
   // (e.g. mention selection). Skips when handleChange already handled resize.
@@ -286,9 +288,9 @@ export function ChatComposer({
 
   type MessageMode = "normal" | "attention" | "task";
   const modeOptions: Array<{ key: MessageMode; label: string; description: string }> = [
-    { key: "normal", label: "Normal", description: "Routine update" },
-    { key: "attention", label: "Important", description: "Needs acknowledgement" },
-    { key: "task", label: "Need Reply", description: "Needs concrete response" },
+    { key: "normal", label: t('modeNormal'), description: t('modeNormalDesc') },
+    { key: "attention", label: t('modeImportant'), description: t('modeImportantDesc') },
+    { key: "task", label: t('modeNeedReply'), description: t('modeNeedReplyDesc') },
   ];
 
   const messageMode: MessageMode = replyRequired
@@ -312,16 +314,16 @@ export function ChatComposer({
   };
   const activeMode = modeOptions.find((opt) => opt.key === messageMode) || modeOptions[0];
   const modeNotice = messageMode === "task"
-    ? "Need Reply: recipients are expected to send a concrete reply."
+    ? t('modeNoticeNeedReply')
     : messageMode === "attention"
-      ? "Important: recipients are expected to acknowledge this message."
+      ? t('modeNoticeImportant')
       : "";
 
   const fileDisabledReason = (() => {
-    if (!selectedGroupId) return "Select a group first.";
-    if (busy === "send") return "Busy.";
-    if (isCrossGroup) return "Attachments cannot be sent cross-group yet.";
-    return "Attach file";
+    if (!selectedGroupId) return t('selectGroupFirst');
+    if (busy === "send") return t('busy');
+    if (isCrossGroup) return t('crossGroupAttachment');
+    return t('attachFile');
   })();
 
   const groupOptions = useMemo(() => {
@@ -344,10 +346,10 @@ export function ChatComposer({
       const gid = String(g.group_id || "").trim();
       const title = String(g.title || "").trim();
       const topic = String(g.topic || "").trim();
-      const label = title || topic || "Untitled group";
+      const label = title || topic || t('untitledGroup');
       return { gid, label };
     });
-  }, [groups, selectedGroupId]);
+  }, [groups, selectedGroupId, t]);
 
   const groupSelectClass = useMemo(() => {
     if (!canChooseDestGroup || groupOptions.length === 0) {
@@ -387,7 +389,7 @@ export function ChatComposer({
         )}>
           <ReplyIcon size={14} className="flex-shrink-0 opacity-60" />
           <span className="font-medium truncate flex-1">
-            <span className="opacity-60 mr-1">Replying to</span>
+            <span className="opacity-60 mr-1">{t('replyingTo')}</span>
             <span className={isDark ? "text-slate-300" : "text-gray-700"}>{replyByDisplayName}</span>
             <span className="mx-1 opacity-40">"</span>
             <span className="italic opacity-80">{replyTarget.text}</span>
@@ -399,8 +401,8 @@ export function ChatComposer({
               isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-black/10 text-gray-400 hover:text-gray-600"
             )}
             onClick={onCancelReply}
-            title="Cancel reply"
-            aria-label="Cancel reply"
+            title={t('cancelReply')}
+            aria-label={t('cancelReply')}
           >
             <CloseIcon size={14} />
           </button>
@@ -410,7 +412,7 @@ export function ChatComposer({
       {/* Recipient Selector Row */}
       <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-2">
         <ScrollFade className="-mx-4 sm:mx-0" innerClassName="flex items-center gap-1.5 sm:gap-2 px-4 sm:px-0" fadeWidth={20}>
-          <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0 opacity-50", isDark ? "text-slate-400" : "text-gray-500")}>To</div>
+          <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0 opacity-50", isDark ? "text-slate-400" : "text-gray-500")}>{t('to', 'To')}</div>
 
           {/* Group Selector - Styled to match buttons */}
           <div className="relative flex-shrink-0">
@@ -425,7 +427,7 @@ export function ChatComposer({
                 groupSelectClass
               )}
               disabled={!canChooseDestGroup || groupOptions.length === 0}
-              aria-label="Destination group"
+              aria-label={t('destinationGroup')}
             >
               {groupOptions.map((g) => (
                 <option key={g.gid} value={g.gid}>
@@ -502,7 +504,7 @@ export function ChatComposer({
                 )}
                 onClick={onClearRecipients}
                 disabled={busy === "send"}
-                title="Clear recipients"
+                title={t('clearRecipients')}
               >
                 <CloseIcon size={14} />
               </button>
@@ -597,14 +599,14 @@ export function ChatComposer({
                 ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/40 focus:border-blue-500/50"
                 : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/40 focus:border-blue-400/50"
             )}
-            placeholder={isSmallScreen ? "Message…" : "Message… (@ mention, Ctrl+Enter send)"}
+            placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
             rows={1}
             value={composerText}
             onPaste={handlePaste}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
-            aria-label="Message input"
+            aria-label={t('messageInput')}
           />
 
           {/* Message Type Selector */}
@@ -631,10 +633,10 @@ export function ChatComposer({
               )}
               disabled={busy === "send" || !selectedGroupId}
               onClick={() => setShowModeMenu((v) => !v)}
-              aria-label="Message type"
+              aria-label={t('messageType')}
               aria-haspopup="menu"
               aria-expanded={showModeMenu}
-              title={`Message mode: ${activeMode.label}`}
+              title={t('messageMode', { mode: activeMode.label })}
             >
               {messageMode === "task" ? (
                 <ReplyIcon size={12} className="opacity-95" />
@@ -652,7 +654,7 @@ export function ChatComposer({
                   isDark ? "bg-slate-900/95 border-white/10" : "bg-white/95 border-black/10"
                 )}
                 role="menu"
-                aria-label="Message type options"
+                aria-label={t('messageTypeOptions')}
               >
                 {modeOptions.map((opt) => {
                   const active = messageMode === opt.key;
@@ -760,15 +762,15 @@ export function ChatComposer({
           )}
           onClick={onSendMessage}
           disabled={busy === "send" || !canSend}
-          aria-label="Send message"
-          title="Send message"
+          aria-label={t('sendMessage')}
+          title={t('sendMessage')}
         >
           {busy === "send" ? (
             <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
             <>
               <SendIcon size={18} className="sm:hidden" />
-              <span className="hidden sm:inline font-bold">Send</span>
+              <span className="hidden sm:inline font-bold">{t('send')}</span>
             </>
           )}
         </button>

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { DirItem, DirSuggestion } from "../../types";
 import { TemplatePreviewDetails } from "../TemplatePreviewDetails";
 import type { TemplatePreviewDetailsProps } from "../TemplatePreviewDetails";
@@ -53,6 +54,7 @@ export function CreateGroupModal({
   onClose,
   onCancelAndReset,
 }: CreateGroupModalProps) {
+  const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
@@ -74,14 +76,14 @@ export function CreateGroupModal({
       >
         <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div id="create-group-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
-            Create Working Group
+            {t("createGroup.title")}
           </div>
-          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Select a project directory to start collaborating</div>
+          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("createGroup.subtitle")}</div>
         </div>
         <div className="p-6 space-y-5 overflow-y-auto min-h-0 flex-1">
           {dirSuggestions.length > 0 && !createGroupPath && (
             <div>
-              <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Quick Select</label>
+              <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("createGroup.quickSelect")}</label>
               <div className="grid grid-cols-2 gap-2">
                 {dirSuggestions.slice(0, 6).map((s) => (
                   <button
@@ -108,7 +110,7 @@ export function CreateGroupModal({
             </div>
           )}
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Project Directory</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("createGroup.projectDirectory")}</label>
             <div className="flex gap-2">
               <input
                 className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-mono min-h-[44px] transition-colors ${
@@ -124,7 +126,7 @@ export function CreateGroupModal({
                     setCreateGroupName(dirName);
                   }
                 }}
-                placeholder="/path/to/your/project"
+                placeholder={t("createGroup.pathPlaceholder")}
                 autoFocus
               />
               <button
@@ -133,7 +135,7 @@ export function CreateGroupModal({
                 }`}
                 onClick={() => onFetchDirContents(createGroupPath || "~")}
               >
-                Browse
+                {t("createGroup.browse")}
               </button>
             </div>
           </div>
@@ -164,7 +166,7 @@ export function CreateGroupModal({
                 </button>
               )}
               {dirItems.filter((d) => d.is_dir).length === 0 && (
-                <div className={`px-3 py-4 text-center text-sm ${isDark ? "text-slate-500" : "text-gray-500"}`}>No subdirectories</div>
+                <div className={`px-3 py-4 text-center text-sm ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("createGroup.noSubdirectories")}</div>
               )}
               {dirItems
                 .filter((d) => d.is_dir)
@@ -185,7 +187,7 @@ export function CreateGroupModal({
             </div>
           )}
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Group Name</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("createGroup.groupName")}</label>
             <input
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark
@@ -194,13 +196,13 @@ export function CreateGroupModal({
               }`}
               value={createGroupName}
               onChange={(e) => setCreateGroupName(e.target.value)}
-              placeholder="Auto-filled from directory name"
+              placeholder={t("createGroup.groupNamePlaceholder")}
             />
           </div>
 
           <div>
               <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                Create Group From Blueprint (optional)
+                {t("createGroup.blueprintLabel")}
               </label>
             <div
               className={`rounded-xl border px-4 py-3 ${
@@ -228,12 +230,12 @@ export function CreateGroupModal({
                     disabled={templateBusy || busy === "create"}
                     onClick={() => onSelectTemplate(null)}
                   >
-                    Clear
+                    {t("common:reset")}
                   </button>
                 )}
               </div>
               {templateBusy && (
-                <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>Loading blueprint…</div>
+                <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("createGroup.loadingBlueprint")}</div>
               )}
               {!templateBusy && templateError && (
                 <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-red-600"}`}>{templateError}</div>
@@ -249,7 +251,7 @@ export function CreateGroupModal({
                 </div>
               )}
               <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Applies actors, settings, automation rules/snippets, and group guidance overrides under CCCC_HOME (CCCC_PREAMBLE.md / CCCC_HELP.md).
+                {t("createGroup.blueprintHint")}
               </div>
             </div>
           </div>
@@ -267,7 +269,7 @@ export function CreateGroupModal({
                 (!!createGroupTemplateFile && !!templateError)
               }
             >
-              {busy === "create" ? "Creating..." : createGroupTemplateFile ? "Create Group From Blueprint" : "Create Group"}
+              {busy === "create" ? t("createGroup.creating") : createGroupTemplateFile ? t("createGroup.createFromBlueprint") : t("createGroup.createGroup")}
             </button>
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
@@ -275,7 +277,7 @@ export function CreateGroupModal({
               }`}
               onClick={onCancelAndReset}
             >
-              Cancel
+              {t("common:cancel")}
             </button>
           </div>
         </div>

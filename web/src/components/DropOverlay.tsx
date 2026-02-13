@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { classNames } from "../utils/classNames";
 
 export interface DropOverlayProps {
@@ -7,6 +8,8 @@ export interface DropOverlayProps {
 }
 
 export function DropOverlay({ isOpen, isDark, maxFileMb }: DropOverlayProps) {
+  const { t } = useTranslation('layout');
+
   if (!isOpen) return null;
 
   return (
@@ -19,14 +22,14 @@ export function DropOverlay({ isOpen, isDark, maxFileMb }: DropOverlayProps) {
             isDark ? "bg-slate-900/90 border-slate-700 text-slate-100" : "bg-white/90 border-gray-200 text-gray-900"
           )}
           role="dialog"
-          aria-label="Drop files to attach"
+          aria-label={t('dropFilesToAttach')}
         >
           <div className="text-3xl mb-2">📎</div>
-          <div className="text-sm font-semibold">Drop files to attach</div>
+          <div className="text-sm font-semibold">{t('dropFilesToAttach')}</div>
           <div className={classNames("text-xs mt-1", isDark ? "text-slate-400" : "text-gray-500")}>
-            Added to the composer. Click Send when ready.
+            {t('dropFilesHint')}
           </div>
-          <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>Max {maxFileMb}MB per file.</div>
+          <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>{t('maxFileSize', { size: maxFileMb })}</div>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
+import { useTranslation } from 'react-i18next';
 
 import {
     useFloating,
@@ -40,6 +41,7 @@ function ImagePreview({
     isDark: boolean;
 }) {
     const [loadError, setLoadError] = useState(false);
+    const { t } = useTranslation('chat');
 
     if (loadError) {
         // Fallback to file download link on error
@@ -54,7 +56,7 @@ function ImagePreview({
                             ? "bg-slate-900/50 hover:bg-slate-900 text-slate-300 border border-slate-700"
                             : "bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200"
                 )}
-                title={`Download ${alt}`}
+                title={t('download', { name: alt })}
                 download
             >
                 <ImageIcon size={14} className="opacity-70 flex-shrink-0" />
@@ -161,6 +163,7 @@ export const MessageBubble = memo(function MessageBubble({
     });
     const dismiss = useDismiss(context);
     const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
+    const { t } = useTranslation('chat');
 
 
     // Treat data as ChatMessageData.
@@ -371,7 +374,7 @@ export const MessageBubble = memo(function MessageBubble({
                                 isDark ? "bg-amber-900/60 text-amber-200 border-amber-700/50" : "bg-amber-50 text-amber-700 border-amber-200"
                             )}
                         >
-                            Important
+                            {t('important')}
                         </span>
                     )}
                 <div
@@ -406,11 +409,11 @@ export const MessageBubble = memo(function MessageBubble({
                             )}
                             onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
                             disabled={!onOpenSource}
-                            title="Open original message"
+                            title={t('openOriginalMessage')}
                         >
                             <span className="opacity-70">↗</span>
                             <span className="truncate">
-                                Relayed from {srcGroupId} · {srcEventId.slice(0, 8)}
+                                {t('relayedFrom', { groupId: srcGroupId, eventId: srcEventId.slice(0, 8) })}
                             </span>
                         </button>
                     ) : null}
@@ -426,11 +429,11 @@ export const MessageBubble = memo(function MessageBubble({
                                         ? "border-white/10 bg-slate-900/40 text-slate-300"
                                         : "border-black/10 bg-gray-50 text-gray-700"
                                 )}
-                                title={`Sent to ${dstGroupId} (${dstToLabel})`}
+                                title={t('sentTo', { label: dstGroupId, to: dstToLabel })}
                             >
                                 <span className="opacity-70">↗</span>
                                 <span className="truncate">
-                                    Sent to {dstLabel} · {dstToLabel}
+                                    {t('sentTo', { label: dstLabel, to: dstToLabel })}
                                 </span>
                             </div>
                         );
@@ -503,7 +506,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                                 ? "bg-slate-900/50 hover:bg-slate-900 text-slate-300 border border-slate-700"
                                                                 : "bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200"
                                                     )}
-                                                    title={`Download ${label}`}
+                                                    title={t('download', { name: label })}
                                                     download
                                                 >
                                                     <FileIcon size={14} className="opacity-70 flex-shrink-0" />
@@ -542,7 +545,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                 : "text-amber-600"
                                     )}
                                 >
-                                    {obligationSummary.kind === "reply" ? "Reply" : "Ack"} {obligationSummary.done}/{obligationSummary.total}
+                                    {obligationSummary.kind === "reply" ? t('reply') : t('ack')} {obligationSummary.done}/{obligationSummary.total}
                                 </span>
                             </div>
                         ) : (
@@ -553,7 +556,7 @@ export const MessageBubble = memo(function MessageBubble({
                                     isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
                                 )}
                                 onClick={onShowRecipients}
-                                aria-label="Show obligation status"
+                                aria-label={t('showObligationStatus')}
                             >
                                 <span
                                     className={classNames(
@@ -567,7 +570,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                 : "text-amber-600"
                                     )}
                                 >
-                                    {obligationSummary.kind === "reply" ? "Reply" : "Ack"} {obligationSummary.done}/{obligationSummary.total}
+                                    {obligationSummary.kind === "reply" ? t('reply') : t('ack')} {obligationSummary.done}/{obligationSummary.total}
                                 </span>
                             </button>
                         )
@@ -586,7 +589,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                 : "text-amber-600"
                                     )}
                                 >
-                                    Ack {ackSummary.done}/{ackSummary.total}
+                                    {t('ack')} {ackSummary.done}/{ackSummary.total}
                                 </span>
                             </div>
                         ) : (
@@ -597,7 +600,7 @@ export const MessageBubble = memo(function MessageBubble({
                                     isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
                                 )}
                                 onClick={onShowRecipients}
-                                aria-label="Show acknowledgement status"
+                                aria-label={t('showAckStatus')}
                             >
                                 <span
                                     className={classNames(
@@ -611,7 +614,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                 : "text-amber-600"
                                     )}
                                 >
-                                    Ack {ackSummary.done}/{ackSummary.total}
+                                    {t('ack')} {ackSummary.done}/{ackSummary.total}
                                 </span>
                             </button>
                         )
@@ -633,7 +636,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                             ? "text-slate-500"
                                                             : "text-gray-500"
                                                 )}
-                                                aria-label={cleared ? "read" : "pending"}
+                                                aria-label={cleared ? t('read') : t('pending')}
                                             >
                                                 {cleared ? "✓✓" : "✓"}
                                             </span>
@@ -654,7 +657,7 @@ export const MessageBubble = memo(function MessageBubble({
                                     isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
                                 )}
                                 onClick={onShowRecipients}
-                                aria-label="Show recipient status"
+                                aria-label={t('showRecipientStatus')}
                             >
                                 <div className="flex items-center gap-2 min-w-0">
                                     {readPreviewEntries.map(([id, cleared]) => (
@@ -671,7 +674,7 @@ export const MessageBubble = memo(function MessageBubble({
                                                             ? "text-slate-500"
                                                             : "text-gray-500"
                                                 )}
-                                                aria-label={cleared ? "read" : "pending"}
+                                                aria-label={cleared ? t('read') : t('pending')}
                                             >
                                                 {cleared ? "✓✓" : "✓"}
                                             </span>
@@ -694,7 +697,7 @@ export const MessageBubble = memo(function MessageBubble({
                                 isDark ? "text-violet-300" : "text-violet-700"
                             )}
                         >
-                            Need Reply
+                            {t('needReply')}
                         </span>
                     )}
 
@@ -710,11 +713,11 @@ export const MessageBubble = memo(function MessageBubble({
                                         : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
                                 )}
                                 onClick={() => onAck?.(String(ev.id))}
-                                aria-label="Acknowledge important message"
+                                aria-label={t('acknowledgeImportant')}
                                 disabled={!onAck}
-                                title="Acknowledge"
+                                title={t('acknowledge')}
                             >
-                                Acknowledge
+                                {t('acknowledge')}
                             </button>
                         )}
                         {ev.id && onCopyLink ? (
@@ -725,9 +728,9 @@ export const MessageBubble = memo(function MessageBubble({
                                     isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
                                 )}
                                 onClick={() => onCopyLink(String(ev.id))}
-                                title="Copy link"
+                                title={t('copyLink')}
                             >
-                                Copy link
+                                {t('copyLink')}
                             </button>
                         ) : null}
                         {ev.id && onRelay ? (
@@ -738,9 +741,9 @@ export const MessageBubble = memo(function MessageBubble({
                                     isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
                                 )}
                                 onClick={() => onRelay(ev)}
-                                title="Relay to another group"
+                                title={t('relayToGroup')}
                             >
-                                Relay
+                                {t('relay')}
                             </button>
                         ) : null}
                         <button
@@ -751,7 +754,7 @@ export const MessageBubble = memo(function MessageBubble({
                             )}
                             onClick={onReply}
                         >
-                            Reply
+                            {t('reply')}
                         </button>
                       </div>
                     )}
@@ -786,14 +789,14 @@ export const MessageBubble = memo(function MessageBubble({
                                     )}
                                     title={formatFullTime(presenceAgent.updated_at)}
                                 >
-                                    Updated {formatTime(presenceAgent.updated_at)}
+                                    {t('updated', { time: formatTime(presenceAgent.updated_at) })}
                                 </div>
                             ) : null}
                         </div>
                         <div
                             className={classNames("mt-1 text-xs whitespace-pre-wrap", isDark ? "text-slate-300" : "text-gray-700")}
                         >
-                            {presenceAgent?.status ? presenceAgent.status : "No presence yet"}
+                            {presenceAgent?.status ? presenceAgent.status : t('noPresenceYet')}
                         </div>
                     </div>
                 </FloatingPortal>

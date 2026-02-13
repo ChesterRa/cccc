@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "../../MarkdownRenderer";
 import { classNames } from "../../../utils/classNames";
 
@@ -26,6 +27,7 @@ export function ProjectSavedNotifyModal({
   onDone,
   onClose,
 }: ProjectSavedNotifyModalProps) {
+  const { t } = useTranslation("modals");
   if (!isOpen) return null;
 
   return (
@@ -44,9 +46,9 @@ export function ProjectSavedNotifyModal({
         }`}
         role="dialog"
         aria-modal="true"
-        aria-label="Project updated"
+        aria-label={t("projectSaved.projectUpdatedAria")}
       >
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>PROJECT.md saved</div>
+        <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("projectSaved.title")}</div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{projectPathLabel}</div>
 
         {notifyError ? (
@@ -66,7 +68,7 @@ export function ProjectSavedNotifyModal({
             onChange={(e) => onChangeNotifyAgents(e.target.checked)}
             disabled={notifyBusy}
           />
-          Notify agents in chat (@all)
+          {t("projectSaved.notifyAgents")}
         </label>
 
         <MarkdownRenderer
@@ -81,7 +83,7 @@ export function ProjectSavedNotifyModal({
             disabled={notifyBusy}
             className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
           >
-            {notifyBusy ? "Working..." : "Done"}
+            {notifyBusy ? t("projectSaved.working") : t("common:done")}
           </button>
           <button
             onClick={onClose}
@@ -90,7 +92,7 @@ export function ProjectSavedNotifyModal({
               isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
             }`}
           >
-            Close
+            {t("common:close")}
           </button>
         </div>
       </div>

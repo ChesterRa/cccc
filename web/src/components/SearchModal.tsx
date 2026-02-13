@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from 'react-i18next';
 import { apiJson } from "../services/api";
 import { Actor, LedgerEvent } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
@@ -96,6 +97,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
   const [results, setResults] = useState<LedgerEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
+  const { t } = useTranslation('chat');
 
   const actorIds = useMemo(() => {
     const ids = actors.map((a) => String(a.id || "")).filter(Boolean);
@@ -198,7 +200,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         <div className={classNames("flex items-center justify-between px-4 pt-4 pb-3 border-b safe-area-inset-top", isDark ? "border-slate-800" : "border-gray-200")}>
           <div className="min-w-0">
             <h2 id="search-modal-title" className={classNames("text-lg font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>
-              🔍 Search Messages
+              {"🔍 "}{t('searchMessages')}
             </h2>
             <div className={classNames("text-xs mt-0.5 truncate", isDark ? "text-slate-400" : "text-gray-500")}>
               {groupId}
@@ -210,7 +212,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               "text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors",
               isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
             )}
-            aria-label="Close search modal"
+            aria-label={t('closeSearchModal')}
           >
             ×
           </button>
@@ -220,7 +222,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         <div className="px-4 py-3 border-b space-y-3 sm:space-y-0 sm:flex sm:items-end sm:gap-3">
           <div className="flex-1 min-w-0">
             <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
-              Query
+              {t('query')}
             </label>
             <div className="flex gap-2">
               <input
@@ -234,7 +236,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                   "flex-1 px-3 py-2 border rounded-lg text-sm min-h-[44px]",
                   isDark ? "bg-slate-800 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
                 )}
-                placeholder="Search text (case-insensitive)…"
+                placeholder={t('searchPlaceholder')}
               />
               <button
                 onClick={() => void doSearch({ mode: "replace" })}
@@ -244,7 +246,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                   isDark ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-emerald-600 hover:bg-emerald-500 text-white"
                 )}
               >
-                {busy ? "…" : "Search"}
+                {busy ? "…" : t('common:search')}
               </button>
             </div>
           </div>
@@ -252,13 +254,13 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
           <div className="flex flex-wrap gap-3 items-end">
             <div className="min-w-0">
               <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
-                Kind
+                {t('kind')}
               </label>
               <div className={classNames("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-slate-800/60" : "bg-gray-100")}>
                 {([
-                  ["all", "All"],
-                  ["chat", "Chat"],
-                  ["notify", "Notify"],
+                  ["all", t('kindAll')],
+                  ["chat", t('kindChat')],
+                  ["notify", t('kindNotify')],
                 ] as Array<[KindFilter, string]>).map(([id, label]) => (
                   <button
                     key={id}
@@ -283,7 +285,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
             <div className="min-w-0 flex-1 sm:flex-none">
               <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
-                By
+                {t('by')}
               </label>
               <select
                 value={by}
@@ -293,7 +295,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                   isDark ? "bg-slate-800 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
                 )}
               >
-                <option value="">Any</option>
+                <option value="">{t('any')}</option>
                 <option value="user">user</option>
                 <option value="system">system</option>
                 {actorIds.map((id) => (
@@ -324,7 +326,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               onClick={() => void loadOlder()}
               disabled={busy}
             >
-              Load older results
+              {t('loadOlderResults')}
             </button>
           )}
 
@@ -385,9 +387,9 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                         )}
                         onClick={() => onReply(ev)}
                         aria-label={`Reply to ${getDisplayName(ev.by || "") || "message"}`}
-                        title="Reply"
+                        title={t('reply')}
                       >
-                        ↩ Reply
+                        {t('replyTo')}
                       </button>
                     )}
                     {isChat && evId && onJumpToMessage ? (
@@ -399,10 +401,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                             : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
                         )}
                         onClick={() => onJumpToMessage(evId)}
-                        aria-label="Open message context"
-                        title="Open"
+                        aria-label={t('openMessageContext')}
+                        title={t('openMessage').replace('↗ ', '')}
                       >
-                        ↗ Open
+                        {t('openMessage')}
                       </button>
                     ) : null}
                     {evId && (
@@ -414,10 +416,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                             : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
                         )}
                         onClick={() => void copyToClipboard(evId)}
-                        aria-label="Copy event id"
-                        title="Copy event id"
+                        aria-label={t('copyEventId')}
+                        title={t('copyEventId')}
                       >
-                        ⧉ Copy ID
+                        {t('copyId')}
                       </button>
                     )}
                   </div>
@@ -429,9 +431,9 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
           {!busy && results.length === 0 && (
             <div className="text-center py-10">
               <div className="text-3xl mb-2">🔎</div>
-              <div className={classNames("text-sm", isDark ? "text-slate-300" : "text-gray-700")}>No results</div>
+              <div className={classNames("text-sm", isDark ? "text-slate-300" : "text-gray-700")}>{t('noResults')}</div>
               <div className={classNames("text-xs mt-1", isDark ? "text-slate-500" : "text-gray-500")}>
-                Try a different query, sender, or kind filter.
+                {t('noResultsHint')}
               </div>
             </div>
           )}

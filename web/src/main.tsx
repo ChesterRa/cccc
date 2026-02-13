@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { AuthGate } from "./components/AuthGate";
 import App from "./App";
+import "./i18n";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
 

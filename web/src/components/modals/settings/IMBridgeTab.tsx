@@ -1,4 +1,5 @@
 // IMBridgeTab configures IM bridge settings.
+import { useTranslation, Trans } from "react-i18next";
 import { IMStatus, IMPlatform } from "../../../types";
 import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
 
@@ -62,12 +63,13 @@ export function IMBridgeTab({
   onStartBridge,
   onStopBridge,
 }: IMBridgeTabProps) {
+  const { t } = useTranslation("settings");
   const getBotTokenLabel = () => {
     switch (imPlatform) {
-      case "telegram": return "Bot Token (token or env var)";
-      case "slack": return "Bot Token (xoxb- or env var)";
-      case "discord": return "Bot Token (token or env var)";
-      default: return "Bot Token";
+      case "telegram": return t("imBridge.botTokenTelegram");
+      case "slack": return t("imBridge.botTokenSlack");
+      case "discord": return t("imBridge.botTokenDiscord");
+      default: return t("imBridge.botToken");
     }
   };
 
@@ -97,9 +99,9 @@ export function IMBridgeTab({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>IM Bridge</h3>
+        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("imBridge.title")}</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Connect this group to Telegram, Slack, Discord, Feishu/Lark, or DingTalk.
+          {t("imBridge.description")}
         </p>
       </div>
 
@@ -109,7 +111,7 @@ export function IMBridgeTab({
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${imStatus.running ? "bg-emerald-500" : "bg-gray-400"}`} />
             <span className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-              {imStatus.running ? "Running" : "Stopped"}
+              {imStatus.running ? t("imBridge.running") : t("imBridge.stopped")}
             </span>
             {imStatus.running && imStatus.pid && (
               <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
@@ -119,7 +121,7 @@ export function IMBridgeTab({
           </div>
           {imStatus.configured && (
             <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              Platform: {imStatus.platform} • Subscribers: {imStatus.subscribers}
+              {t("imBridge.platform")}: {imStatus.platform} • {t("imBridge.subscribers")}: {imStatus.subscribers}
             </div>
           )}
         </div>
@@ -128,7 +130,7 @@ export function IMBridgeTab({
       {/* Configuration */}
       <div className="space-y-3">
         <div>
-          <label className={labelClass(isDark)}>Platform</label>
+          <label className={labelClass(isDark)}>{t("imBridge.platform")}</label>
           <select
             value={imPlatform}
             onChange={(e) => onPlatformChange(e.target.value as IMPlatform)}
@@ -155,8 +157,8 @@ export function IMBridgeTab({
             />
             <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
               {imPlatform === "slack"
-                ? "Paste xoxb-… token or an env var name; required for outbound messages."
-                : "Paste the bot token or an env var name; required for bot authentication."}
+                ? t("imBridge.botTokenHintSlack")
+                : t("imBridge.botTokenHint")}
             </p>
           </div>
         )}
@@ -164,7 +166,7 @@ export function IMBridgeTab({
         {/* App Token (Slack only) */}
         {imPlatform === "slack" && (
           <div>
-            <label className={labelClass(isDark)}>App Token (xapp- or env var)</label>
+            <label className={labelClass(isDark)}>{t("imBridge.appToken")}</label>
             <input
               type="text"
               value={imAppTokenEnv}
@@ -173,7 +175,7 @@ export function IMBridgeTab({
               className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
             />
             <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              Optional; needed for inbound messages (Socket Mode).
+              {t("imBridge.appTokenHint")}
             </p>
           </div>
         )}
@@ -182,24 +184,24 @@ export function IMBridgeTab({
         {imPlatform === "feishu" && (
           <>
             <div>
-              <label className={labelClass(isDark)}>API Region</label>
+              <label className={labelClass(isDark)}>{t("imBridge.apiRegion")}</label>
               <select
                 value={imFeishuDomain}
                 onChange={(e) => setImFeishuDomain(e.target.value)}
                 className={inputClass(isDark)}
               >
-                <option value="https://open.feishu.cn">Feishu (CN) • open.feishu.cn</option>
-                <option value="https://open.larkoffice.com">Lark (Global) • open.larkoffice.com</option>
+                <option value="https://open.feishu.cn">{t("imBridge.feishuCn")}</option>
+                <option value="https://open.larkoffice.com">{t("imBridge.larkGlobal")}</option>
               </select>
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                Feishu and Lark share the same APIs but use different domains. Pick the one where your app was created.
+                {t("imBridge.feishuRegionHint")}
               </p>
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                Inbound streaming requires the Python package <code>lark-oapi</code> on the host running CCCC.
+                <Trans i18nKey="imBridge.feishuPackageHint" ns="settings" components={[<code />]} />
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>App ID</label>
+              <label className={labelClass(isDark)}>{t("imBridge.appId")}</label>
               <input
                 type="text"
                 value={imFeishuAppId}
@@ -208,11 +210,11 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                App ID value or an env var name.
+                {t("imBridge.appIdHint")}
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>App Secret</label>
+              <label className={labelClass(isDark)}>{t("imBridge.appSecret")}</label>
               <input
                 type="password"
                 value={imFeishuAppSecret}
@@ -221,7 +223,7 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                App Secret value or an env var name.
+                {t("imBridge.appSecretHint")}
               </p>
             </div>
           </>
@@ -231,7 +233,7 @@ export function IMBridgeTab({
         {imPlatform === "dingtalk" && (
           <>
             <div>
-              <label className={labelClass(isDark)}>App Key</label>
+              <label className={labelClass(isDark)}>{t("imBridge.appKey")}</label>
               <input
                 type="text"
                 value={imDingtalkAppKey}
@@ -240,11 +242,11 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                App Key value or an env var name.
+                {t("imBridge.appKeyHint")}
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>App Secret</label>
+              <label className={labelClass(isDark)}>{t("imBridge.appSecret")}</label>
               <input
                 type="password"
                 value={imDingtalkAppSecret}
@@ -253,11 +255,11 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                App Secret value or an env var name.
+                {t("imBridge.appSecretHint")}
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>Robot Code (optional)</label>
+              <label className={labelClass(isDark)}>{t("imBridge.robotCode")}</label>
               <input
                 type="text"
                 value={imDingtalkRobotCode}
@@ -266,10 +268,10 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                Optional; used when the session webhook is unavailable or expired.
+                {t("imBridge.robotCodeHint")}
               </p>
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                Inbound streaming requires the Python package <code>dingtalk-stream</code> on the host running CCCC.
+                <Trans i18nKey="imBridge.dingtalkPackageHint" ns="settings" components={[<code />]} />
               </p>
             </div>
           </>
@@ -283,7 +285,7 @@ export function IMBridgeTab({
           disabled={imBusy || !canSaveIM()}
           className={primaryButtonClass(imBusy)}
         >
-          {imBusy ? "Saving..." : "Save Config"}
+          {imBusy ? t("common:saving") : t("imBridge.saveConfig")}
         </button>
 
         {imStatus?.configured && (
@@ -298,7 +300,7 @@ export function IMBridgeTab({
                     : "bg-red-100 hover:bg-red-200 text-red-700"
                 } disabled:opacity-50`}
               >
-                Stop Bridge
+                {t("imBridge.stopBridge")}
               </button>
             ) : (
               <button
@@ -310,7 +312,7 @@ export function IMBridgeTab({
                     : "bg-blue-100 hover:bg-blue-200 text-blue-700"
                 } disabled:opacity-50`}
               >
-                Start Bridge
+                {t("imBridge.startBridge")}
               </button>
             )}
 
@@ -323,7 +325,7 @@ export function IMBridgeTab({
                   : "bg-gray-200 hover:bg-gray-300 text-gray-700"
               } disabled:opacity-50`}
             >
-              Remove Config
+              {t("imBridge.removeConfig")}
             </button>
           </>
         )}
@@ -331,12 +333,12 @@ export function IMBridgeTab({
 
       {/* Help */}
       <div className={`text-xs space-y-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-        <p>To use IM Bridge:</p>
+        <p>{t("imBridge.setupGuide")}</p>
         <ol className="list-decimal list-inside space-y-0.5 ml-2">
-          <li>Create a bot on your IM platform</li>
-          <li>Set the token(s) as environment variable(s)</li>
-          <li>Save the config and start the bridge</li>
-          <li>In your IM chat, send /subscribe to receive messages</li>
+          <li>{t("imBridge.setupStep1")}</li>
+          <li>{t("imBridge.setupStep2")}</li>
+          <li>{t("imBridge.setupStep3")}</li>
+          <li>{t("imBridge.setupStep4")}</li>
         </ol>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 import { BellIcon, NumberInputRow, Section } from "./automationUtils";
 import { primaryButtonClass } from "./types";
@@ -36,134 +37,135 @@ interface AutomationPoliciesSectionProps {
 }
 
 export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps) {
+  const { t } = useTranslation("settings");
   return (
     <Section
       isDark={props.isDark}
       icon={BellIcon}
-      title="Engine Policies"
-      description="Built-in follow-ups and alerts. Adjust values, then click Save Policies."
+      title={t("policies.title")}
+      description={t("policies.description")}
     >
       <NumberInputRow
         isDark={props.isDark}
-        label="Unread Follow-up (sec)"
+        label={t("policies.unreadFollowup")}
         value={props.nudgeSeconds}
         onChange={props.setNudgeSeconds}
-        helperText="Remind a member when unread messages sit too long."
+        helperText={t("policies.unreadFollowupHelp")}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <NumberInputRow
           isDark={props.isDark}
-          label="Need Reply Follow-up (sec)"
+          label={t("policies.needReplyFollowup")}
           value={props.replyRequiredNudgeSeconds}
           onChange={props.setReplyRequiredNudgeSeconds}
-          helperText="For messages marked Need Reply."
+          helperText={t("policies.needReplyFollowupHelp")}
         />
         <NumberInputRow
           isDark={props.isDark}
-          label="Important Follow-up (sec)"
+          label={t("policies.importantFollowup")}
           value={props.attentionAckNudgeSeconds}
           onChange={props.setAttentionAckNudgeSeconds}
-          helperText="For important messages awaiting acknowledgement."
+          helperText={t("policies.importantFollowupHelp")}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <NumberInputRow
           isDark={props.isDark}
-          label="Backlog Digest Follow-up (sec)"
+          label={t("policies.backlogDigest")}
           value={props.unreadNudgeSeconds}
           onChange={props.setUnreadNudgeSeconds}
-          helperText="For regular unread backlog digests."
+          helperText={t("policies.backlogDigestHelp")}
         />
         <NumberInputRow
           isDark={props.isDark}
-          label="Digest Minimum Gap (sec)"
+          label={t("policies.digestMinGap")}
           value={props.nudgeDigestMinIntervalSeconds}
           onChange={props.setNudgeDigestMinIntervalSeconds}
-          helperText="Minimum gap between digests for the same member."
+          helperText={t("policies.digestMinGapHelp")}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <NumberInputRow
           isDark={props.isDark}
-          label="Max Repeats Per Item"
+          label={t("policies.maxRepeats")}
           value={props.nudgeMaxRepeatsPerObligation}
           onChange={props.setNudgeMaxRepeatsPerObligation}
           formatValue={false}
-          helperText="Maximum follow-ups for one pending item."
+          helperText={t("policies.maxRepeatsHelp")}
         />
         <NumberInputRow
           isDark={props.isDark}
-          label="Escalate To Foreman After"
+          label={t("policies.escalateAfter")}
           value={props.nudgeEscalateAfterRepeats}
           onChange={props.setNudgeEscalateAfterRepeats}
           formatValue={false}
-          helperText="Escalate when repeat count reaches this value."
+          helperText={t("policies.escalateAfterHelp")}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <NumberInputRow
           isDark={props.isDark}
-          label="Keepalive Delay (sec)"
+          label={t("policies.keepaliveDelay")}
           value={props.keepaliveSeconds}
           onChange={props.setKeepaliveSeconds}
-          helperText="Wait time after an actor says 'Next:'."
+          helperText={t("policies.keepaliveDelayHelp")}
         />
         <NumberInputRow
           isDark={props.isDark}
-          label="Keepalive Max Retries"
+          label={t("policies.keepaliveMaxRetries")}
           value={props.keepaliveMax}
           onChange={props.setKeepaliveMax}
           formatValue={false}
-          helperText={props.keepaliveMax <= 0 ? "Infinite retries" : `Retry up to ${props.keepaliveMax} times`}
+          helperText={props.keepaliveMax <= 0 ? t("policies.keepaliveInfinite") : t("policies.keepaliveRetryUp", { count: props.keepaliveMax })}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <NumberInputRow
           isDark={props.isDark}
-          label="Help Refresh Interval (sec)"
+          label={t("policies.helpRefreshInterval")}
           value={props.helpNudgeIntervalSeconds}
           onChange={props.setHelpNudgeIntervalSeconds}
-          helperText="Time since last help follow-up."
+          helperText={t("policies.helpRefreshIntervalHelp")}
         />
         <NumberInputRow
           isDark={props.isDark}
-          label="Help Refresh Min Msgs"
+          label={t("policies.helpRefreshMinMsgs")}
           value={props.helpNudgeMinMessages}
           onChange={props.setHelpNudgeMinMessages}
           formatValue={false}
-          helperText="Minimum accumulated messages."
+          helperText={t("policies.helpRefreshMinMsgsHelp")}
         />
       </div>
 
-      <div className={`pt-2 text-xs font-semibold ${props.isDark ? "text-slate-300" : "text-gray-700"}`}>Foreman Alerts</div>
+      <div className={`pt-2 text-xs font-semibold ${props.isDark ? "text-slate-300" : "text-gray-700"}`}>{t("policies.foremanAlerts")}</div>
       <NumberInputRow
         isDark={props.isDark}
-        label="Actor Idle Alert (sec)"
+        label={t("policies.actorIdleAlert")}
         value={props.idleSeconds}
         onChange={props.setIdleSeconds}
-        helperText="Alert foreman if actor is inactive for this long."
+        helperText={t("policies.actorIdleAlertHelp")}
       />
 
       <NumberInputRow
         isDark={props.isDark}
-        label="Group Silence Check (sec)"
+        label={t("policies.groupSilenceCheck")}
         value={props.silenceSeconds}
         onChange={props.setSilenceSeconds}
-        helperText="Alert foreman if the entire group is silent."
+        helperText={t("policies.groupSilenceCheckHelp")}
       />
       <div className="pt-2 flex items-center justify-end">
         <button
           onClick={props.onSavePolicies}
           disabled={props.busy}
-          className={`${primaryButtonClass(props.busy)} w-full sm:w-auto`}
-          title="Save engine policy settings"
+          className={`${primaryButtonClass(props.busy)} w-full sm:w-auto whitespace-nowrap`}
+          title={t("policies.savePoliciesTitle")}
         >
-          {props.busy ? "Saving..." : "Save Policies"}
+          {props.busy ? t("automation.saving") : t("policies.savePolicies")}
         </button>
       </div>
     </Section>

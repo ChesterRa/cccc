@@ -4,6 +4,7 @@ import {
   SUPPORTED_RUNTIMES,
   RUNTIME_INFO,
 } from "../../types";
+import { useTranslation } from "react-i18next";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -72,6 +73,7 @@ export function AddActorModal({
   onClose,
   onCancelAndReset,
 }: AddActorModalProps) {
+  const { t } = useTranslation('actors');
   const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
@@ -95,9 +97,9 @@ export function AddActorModal({
       >
         <div className={`px-6 py-4 border-b sticky top-0 safe-area-inset-top ${isDark ? "border-slate-700/50 bg-slate-800" : "border-gray-200 bg-white"}`}>
           <div id="add-actor-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
-            Add AI Agent
+            {t('addAiAgent')}
           </div>
-          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Choose an AI runtime to add to your team</div>
+          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('chooseRuntime')}</div>
         </div>
         <div className="p-6 space-y-5">
           {addActorError && (
@@ -119,7 +121,7 @@ export function AddActorModal({
 
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              Agent Name <span className={isDark ? "text-slate-500" : "text-gray-400"}>(supports Unicode, incl. CJK)</span>
+              {t('agentName')} <span className={isDark ? "text-slate-500" : "text-gray-400"}>{t('unicodeSupport')}</span>
             </label>
             <input
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
@@ -132,13 +134,13 @@ export function AddActorModal({
               placeholder={suggestedActorId}
             />
             <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Leave empty to use:{" "}
+              {t('leaveEmptyToUse')}{" "}
               <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{suggestedActorId}</code>
             </div>
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>AI Runtime</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('aiRuntime')}</label>
             <select
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
@@ -158,7 +160,7 @@ export function AddActorModal({
                 return (
                   <option key={rt} value={rt} disabled={!selectable}>
                     {info?.label || rt}
-                    {!available && rt !== "custom" ? " (not installed)" : ""}
+                    {!available && rt !== "custom" ? ` ${t('notInstalled')}` : ""}
                   </option>
                 );
               })}
@@ -177,51 +179,51 @@ export function AddActorModal({
                   isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
                 }`}
               >
-                <div className="font-medium">Manual MCP install required</div>
+                <div className="font-medium">{t('manualMcpRequired')}</div>
                 {newActorRuntime === "custom" ? (
                   <>
                     <div className="mt-1">
-                      Provide a command for your runtime in <span className="font-medium">Advanced options → Command Override</span>.
+                      {t('customCommandHint').replace(/<1>|<\/1>/g, '')}
                     </div>
                     <div className="mt-1">
-                      Configure your runtime to add an MCP stdio server named{" "}
-                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc</code> that runs{" "}
+                      {t('configureMcpStdio')}{" "}
+                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc</code> {t('thatRuns')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc mcp</code>.
                     </div>
                   </>
                 ) : newActorRuntime === "cursor" ? (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
+                      {t('createEditFile')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.cursor/mcp.json</code> (or{" "}
-                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.cursor/mcp.json</code> in this project)
+                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.cursor/mcp.json</code> {t('orInProject')})
                     </div>
-                    <div className="mt-1">2) Add this MCP server config:</div>
+                    <div className="mt-1">{t('addMcpConfig')}</div>
                   </>
                 ) : newActorRuntime === "kilocode" ? (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
-                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.kilocode/mcp.json</code> in this project root
+                      {t('createEditFile')}{" "}
+                      <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.kilocode/mcp.json</code> {t('inProjectRoot')}
                     </div>
-                    <div className="mt-1">2) Add this MCP server config:</div>
+                    <div className="mt-1">{t('addMcpConfig')}</div>
                   </>
                 ) : newActorRuntime === "opencode" ? (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
+                      {t('createEditFile')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.config/opencode/opencode.json</code>
                     </div>
-                    <div className="mt-1">2) Add this MCP server config:</div>
+                    <div className="mt-1">{t('addMcpConfig')}</div>
                   </>
                 ) : (
                   <>
                     <div className="mt-1">
-                      1) Create/edit{" "}
+                      {t('createEditFile')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.copilot/mcp-config.json</code>
                     </div>
                     <div className="mt-1">
-                      2) Add this MCP server config (or pass it via{" "}
+                      {t('addMcpConfigOrFlag')}{" "}
                       <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>--additional-mcp-config</code>):
                     </div>
                   </>
@@ -240,14 +242,14 @@ export function AddActorModal({
                 ) : null}
 
                 <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>
-                  Restart the runtime after updating this config.
+                  {t('restartAfterConfig')}
                 </div>
               </div>
             )}
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Role</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('role')}</label>
             <div className="flex gap-2">
               <button
                 className={classNames(
@@ -267,7 +269,7 @@ export function AddActorModal({
                 }}
                 disabled={hasForeman}
               >
-                ★ Foreman {hasForeman && "(exists)"}
+                {t('foremanRole')} {hasForeman && t('foremanExists')}
               </button>
               <button
                 className={classNames(
@@ -287,11 +289,11 @@ export function AddActorModal({
                 }}
                 disabled={!hasForeman}
               >
-                Peer {!hasForeman && "(need foreman first)"}
+                {t('peerRole')} {!hasForeman && t('needForemanFirst')}
               </button>
             </div>
             <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              {hasForeman ? "Foreman leads the team. Peers are worker agents." : "First agent must be the foreman (team leader)."}
+              {hasForeman ? t('foremanLeads') : t('firstAgentForeman')}
             </div>
           </div>
 
@@ -300,13 +302,13 @@ export function AddActorModal({
             onClick={() => setShowAdvancedActor(!showAdvancedActor)}
           >
             <span className={classNames("transition-transform", showAdvancedActor && "rotate-90")}>▶</span>
-            Advanced options
+            {t('advancedOptions')}
           </button>
 
           {showAdvancedActor && (
             <div className={`space-y-4 pl-4 border-l-2 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
               <div>
-                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Command Override</label>
+                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('commandOverride')}</label>
                 <input
                   className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[44px] transition-colors ${
                     isDark
@@ -315,18 +317,18 @@ export function AddActorModal({
                   }`}
                   value={newActorCommand}
                   onChange={(e) => setNewActorCommand(e.target.value)}
-                  placeholder={defaultCommand || "Enter command..."}
+                  placeholder={defaultCommand || t('enterCommand')}
                 />
                 {defaultCommand.trim() ? (
                   <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                    Default:{" "}
+                    {t('default')}{" "}
                     <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{defaultCommand}</code>
                   </div>
                 ) : null}
               </div>
 
               <div>
-                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Secrets (write-only)</label>
+                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('secretsWriteOnly')}</label>
                 <textarea
                   className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors ${
                     isDark
@@ -338,11 +340,10 @@ export function AddActorModal({
                   placeholder={'export OPENAI_API_KEY="...";\nexport ANTHROPIC_API_KEY="...";'}
                 />
                 <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                  Stored locally under{" "}
-                  <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>CCCC_HOME/state/…</code> (not in group ledger). Values are never shown again.
+                  {t('secretsStoredLocally').replace(/<1>|<\/1>/g, '')}
                 </div>
                 <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                  Supports <code>KEY=VALUE</code> and shell-style <code>export KEY=VALUE</code> (quotes / semicolons / inline comments).
+                  {t('secretsFormat').replace(/<1>|<\/1>|<2>|<\/2>/g, '')}
                 </div>
               </div>
             </div>
@@ -355,7 +356,7 @@ export function AddActorModal({
                 onClick={onAddActor}
                 disabled={!canAddActor}
               >
-                {busy === "actor-add" ? "Adding..." : "Add Agent"}
+                {busy === "actor-add" ? t('adding') : t('addAgent')}
               </button>
               {addActorDisabledReason && <div className="text-[10px] text-amber-500 mt-1.5">{addActorDisabledReason}</div>}
             </div>
@@ -365,7 +366,7 @@ export function AddActorModal({
               }`}
               onClick={onCancelAndReset}
             >
-              Cancel
+              {t('common:cancel')}
             </button>
           </div>
         </div>

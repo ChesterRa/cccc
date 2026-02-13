@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { classNames } from "../../../utils/classNames";
 
 interface ContextSectionJumpBarProps {
@@ -5,19 +6,20 @@ interface ContextSectionJumpBarProps {
   onScrollToSection: (id: string) => void;
 }
 
-const SECTION_ITEMS: Array<{ id: string; label: string }> = [
-  { id: "context-project", label: "PROJECT" },
-  { id: "context-vision", label: "Vision" },
-  { id: "context-sketch", label: "Sketch" },
-  { id: "context-tasks", label: "Tasks" },
-  { id: "context-notes", label: "Notes" },
-  { id: "context-references", label: "References" },
+const SECTION_KEYS: Array<{ id: string; key: string }> = [
+  { id: "context-project", key: "jumpBar.project" },
+  { id: "context-vision", key: "jumpBar.vision" },
+  { id: "context-sketch", key: "jumpBar.sketch" },
+  { id: "context-tasks", key: "jumpBar.tasks" },
+  { id: "context-notes", key: "jumpBar.notes" },
+  { id: "context-references", key: "jumpBar.references" },
 ];
 
 export function ContextSectionJumpBar({ isDark, onScrollToSection }: ContextSectionJumpBarProps) {
+  const { t } = useTranslation("modals");
   return (
     <div className="flex flex-wrap gap-2">
-      {SECTION_ITEMS.map((item) => (
+      {SECTION_KEYS.map((item) => (
         <button
           key={item.id}
           type="button"
@@ -27,7 +29,7 @@ export function ContextSectionJumpBar({ isDark, onScrollToSection }: ContextSect
           )}
           onClick={() => onScrollToSection(item.id)}
         >
-          {item.label}
+          {t(item.key)}
         </button>
       ))}
     </div>

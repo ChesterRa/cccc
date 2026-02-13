@@ -1,4 +1,5 @@
 // DeveloperTab configures developer mode.
+import { useTranslation } from "react-i18next";
 import { inputClass, labelClass, primaryButtonClass, cardClass, preClass } from "./types";
 
 interface DeveloperTabProps {
@@ -78,6 +79,7 @@ export function DeveloperTab({
   onPreviewRegistry,
   onReconcileRegistry,
 }: DeveloperTabProps) {
+  const { t } = useTranslation("settings");
   const missing = Array.isArray(registryResult?.missing_group_ids) ? registryResult!.missing_group_ids : [];
   const corrupt = Array.isArray(registryResult?.corrupt_group_ids) ? registryResult!.corrupt_group_ids : [];
   const removed = Array.isArray(registryResult?.removed_group_ids) ? registryResult!.removed_group_ids : [];
@@ -85,16 +87,16 @@ export function DeveloperTab({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Developer Mode (Global)</h3>
+        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("developer.title")}</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          These settings apply to the whole CCCC instance (daemon + Web). Use this only when debugging.
+          {t("developer.description")}
         </p>
         <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
           isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
         }`}>
-          <div className="font-medium">Warning</div>
+          <div className="font-medium">{t("developer.warningTitle")}</div>
           <div className="mt-1">
-            Developer mode enables verbose logs and extra diagnostics. Only enable it when you need it.
+            {t("developer.warningText")}
           </div>
         </div>
       </div>
@@ -103,9 +105,9 @@ export function DeveloperTab({
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Enable developer mode</div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.enableDeveloperMode")}</div>
             <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Enables debug snapshot and log tail tools.
+              {t("developer.enableHint")}
             </div>
           </div>
           <label className="inline-flex items-center cursor-pointer">
@@ -128,7 +130,7 @@ export function DeveloperTab({
         </div>
 
         <div className="mt-3">
-          <label className={labelClass(isDark)}>Log level</label>
+          <label className={labelClass(isDark)}>{t("developer.logLevel")}</label>
           <select
             value={logLevel}
             onChange={(e) => setLogLevel((e.target.value === "DEBUG" ? "DEBUG" : "INFO"))}
@@ -141,15 +143,15 @@ export function DeveloperTab({
 
         <div className={`mt-4 pt-3 border-t ${isDark ? "border-slate-800" : "border-gray-200"}`}>
           <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>
-            Terminal buffers
+            {t("developer.terminalBuffers")}
           </div>
           <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-            Controls how much terminal history is kept. Larger buffers use more memory (scales with running actors and opened terminals).
+            {t("developer.terminalBuffersHint")}
           </div>
 
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className={labelClass(isDark)}>PTY backlog (MiB / actor)</label>
+              <label className={labelClass(isDark)}>{t("developer.ptyBacklog")}</label>
               <input
                 type="number"
                 value={terminalBacklogMiB}
@@ -159,11 +161,11 @@ export function DeveloperTab({
                 className={inputClass(isDark)}
               />
               <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Affects initial history and transcript tail. Takes full effect after restarting an actor.
+                {t("developer.ptyBacklogHint")}
               </div>
             </div>
             <div>
-              <label className={labelClass(isDark)}>Web scrollback (lines)</label>
+              <label className={labelClass(isDark)}>{t("developer.webScrollback")}</label>
               <input
                 type="number"
                 value={terminalScrollbackLines}
@@ -173,7 +175,7 @@ export function DeveloperTab({
                 className={inputClass(isDark)}
               />
               <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                Controls how far you can scroll up in the Web terminal.
+                {t("developer.webScrollbackHint")}
               </div>
             </div>
           </div>
@@ -185,7 +187,7 @@ export function DeveloperTab({
             disabled={obsBusy}
             className={primaryButtonClass(obsBusy)}
           >
-            {obsBusy ? "Saving..." : "Save Developer Settings"}
+            {obsBusy ? t("common:saving") : t("developer.saveDeveloperSettings")}
           </button>
         </div>
       </div>
@@ -194,9 +196,9 @@ export function DeveloperTab({
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Registry maintenance</div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.registryTitle")}</div>
             <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Scan missing/corrupt groups in registry. Cleanup only removes missing entries.
+              {t("developer.registryDescription")}
             </div>
           </div>
           <div className="flex gap-2">
@@ -207,14 +209,14 @@ export function DeveloperTab({
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
               } disabled:opacity-50`}
             >
-              {registryBusy ? "Scanning..." : "Scan"}
+              {registryBusy ? t("developer.scanning") : t("developer.scan")}
             </button>
             <button
               onClick={onReconcileRegistry}
               disabled={registryBusy || missing.length === 0}
               className={primaryButtonClass(registryBusy || missing.length === 0)}
             >
-              {registryBusy ? "Cleaning..." : "Clean Missing"}
+              {registryBusy ? t("developer.cleaning") : t("developer.cleanMissing")}
             </button>
           </div>
         </div>
@@ -228,24 +230,24 @@ export function DeveloperTab({
             isDark ? "border-slate-800 bg-slate-900/40 text-slate-300" : "border-gray-200 bg-white text-gray-700"
           }`}>
             <div>
-              scanned={registryResult.scanned_groups} · missing={missing.length} · corrupt={corrupt.length}
-              {removed.length > 0 ? ` · removed=${removed.length}` : ""}
+              {t("developer.scanned")}={registryResult.scanned_groups} · {t("developer.missing")}={missing.length} · {t("developer.corrupt")}={corrupt.length}
+              {removed.length > 0 ? ` · ${t("developer.removed")}=${removed.length}` : ""}
             </div>
             {missing.length > 0 ? (
               <div className="mt-2 break-all">
-                <span className={isDark ? "text-amber-300" : "text-amber-700"}>missing:</span>{" "}
+                <span className={isDark ? "text-amber-300" : "text-amber-700"}>{t("developer.missing")}:</span>{" "}
                 {missing.join(", ")}
               </div>
             ) : null}
             {corrupt.length > 0 ? (
               <div className="mt-2 break-all">
-                <span className={isDark ? "text-rose-300" : "text-rose-700"}>corrupt:</span>{" "}
+                <span className={isDark ? "text-rose-300" : "text-rose-700"}>{t("developer.corrupt")}:</span>{" "}
                 {corrupt.join(", ")}
               </div>
             ) : null}
             {removed.length > 0 ? (
               <div className="mt-2 break-all">
-                <span className={isDark ? "text-emerald-300" : "text-emerald-700"}>removed:</span>{" "}
+                <span className={isDark ? "text-emerald-300" : "text-emerald-700"}>{t("developer.removed")}:</span>{" "}
                 {removed.join(", ")}
               </div>
             ) : null}
@@ -257,9 +259,9 @@ export function DeveloperTab({
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Debug snapshot (this group)</div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.debugSnapshot")}</div>
             <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Shows daemon/actors state + delivery throttle summary (developer mode only).
+              {t("developer.debugSnapshotHint")}
             </div>
           </div>
           <div className="flex gap-2">
@@ -270,7 +272,7 @@ export function DeveloperTab({
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
               } disabled:opacity-50`}
             >
-              {debugSnapshotBusy ? "Loading..." : "Refresh"}
+              {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
             </button>
             <button
               onClick={onClearDebugSnapshot}
@@ -279,14 +281,14 @@ export function DeveloperTab({
                 isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
               } disabled:opacity-50`}
             >
-              Clear
+              {t("developer.clear")}
             </button>
           </div>
         </div>
 
         {!groupId && (
           <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-            Open Settings from an active group to view group-scoped debug info.
+            {t("developer.openFromGroup")}
           </div>
         )}
 
@@ -303,9 +305,9 @@ export function DeveloperTab({
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Log tail</div>
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.logTail")}</div>
             <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Tails local log files (developer mode only). Component "im" is group-scoped.
+              {t("developer.logTailHint")}
             </div>
           </div>
           <div className="flex gap-2">
@@ -316,7 +318,7 @@ export function DeveloperTab({
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
               } disabled:opacity-50`}
             >
-              {logBusy ? "Loading..." : "Refresh"}
+              {logBusy ? t("common:loading") : t("developer.refresh")}
             </button>
             <button
               onClick={onClearLogs}
@@ -325,14 +327,14 @@ export function DeveloperTab({
                 isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
               } disabled:opacity-50`}
             >
-              Clear (truncate)
+              {t("developer.clearTruncate")}
             </button>
           </div>
         </div>
 
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
-            <label className={labelClass(isDark)}>Component</label>
+            <label className={labelClass(isDark)}>{t("developer.component")}</label>
             <select
               value={logComponent}
               onChange={(e) => setLogComponent((e.target.value === "im" ? "im" : e.target.value === "web" ? "web" : "daemon"))}
@@ -344,7 +346,7 @@ export function DeveloperTab({
             </select>
           </div>
           <div>
-            <label className={labelClass(isDark)}>Lines</label>
+            <label className={labelClass(isDark)}>{t("developer.lines")}</label>
             <input
               type="number"
               value={logLines}
@@ -358,7 +360,7 @@ export function DeveloperTab({
 
         {logComponent === "im" && !groupId && (
           <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-            IM logs require a group_id; open Settings from a group.
+            {t("developer.imLogsRequireGroup")}
           </div>
         )}
 

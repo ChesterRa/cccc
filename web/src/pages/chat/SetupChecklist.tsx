@@ -1,5 +1,6 @@
 // SetupChecklist renders the setup guidance steps.
 import { classNames } from "../../utils/classNames";
+import { useTranslation } from 'react-i18next';
 
 export interface SetupChecklistProps {
   isDark: boolean;
@@ -35,6 +36,7 @@ export function SetupChecklist({
   variant = "compact",
 }: SetupChecklistProps) {
   const isCompact = variant === "compact";
+  const { t } = useTranslation('chat');
   const attachCmd = `cccc attach . --group ${selectedGroupId}`;
 
   // Nothing to show.
@@ -42,7 +44,7 @@ export function SetupChecklist({
     if (!isCompact) {
       return (
         <div className={classNames("text-xs mt-4", isDark ? "text-slate-400" : "text-gray-500")}>
-          Team is ready. Say hi to your agents.
+          {t('teamReady')}
         </div>
       );
     }
@@ -62,9 +64,9 @@ export function SetupChecklist({
           )}
         >
           <div className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>
-            {isCompact ? "Attach a project folder" : ""}
+            {isCompact ? t('attachProjectFolder') : ""}
           </div>
-          {!isCompact && <div className="text-xs font-semibold">Attach a project folder</div>}
+          {!isCompact && <div className="text-xs font-semibold">{t('attachProjectFolder')}</div>}
           <div className={classNames(
             "flex items-center justify-between gap-2 text-[11px]",
             isCompact ? "mt-1" : "mt-2",
@@ -81,7 +83,7 @@ export function SetupChecklist({
               )}
               onClick={() => copyCommand(attachCmd)}
             >
-              Copy
+              {t('common:copy')}
             </button>
           </div>
         </div>
@@ -101,14 +103,14 @@ export function SetupChecklist({
         >
           <div className={isCompact ? "min-w-0" : ""}>
             <div className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>
-              {isCompact ? "Add an agent" : ""}
+              {isCompact ? t('addAgent') : ""}
             </div>
-            {!isCompact && <div className="text-xs font-semibold">Add an agent</div>}
+            {!isCompact && <div className="text-xs font-semibold">{t('addAgent')}</div>}
             <div className={classNames(
               isCompact ? "text-[11px] truncate" : "mt-1 text-[11px]",
               isDark ? "text-slate-500" : "text-gray-500"
             )}>
-              Add a foreman first, then peers.
+              {t('addForemanFirst')}
             </div>
           </div>
           <button
@@ -119,7 +121,7 @@ export function SetupChecklist({
             )}
             onClick={onAddAgent}
           >
-            Add Agent
+            {t('addAgentButton')}
           </button>
         </div>
       )}
@@ -138,14 +140,14 @@ export function SetupChecklist({
         >
           <div className={isCompact ? "min-w-0" : ""}>
             <div className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>
-              {isCompact ? "Start the group" : ""}
+              {isCompact ? t('startGroup') : ""}
             </div>
-            {!isCompact && <div className="text-xs font-semibold">Start the group</div>}
+            {!isCompact && <div className="text-xs font-semibold">{t('startGroup')}</div>}
             <div className={classNames(
               isCompact ? "text-[11px] truncate" : "mt-1 text-[11px]",
               isDark ? "text-slate-500" : "text-gray-500"
             )}>
-              Launch your agents and begin chatting.
+              {t('launchAgents')}
             </div>
           </div>
           <button
@@ -158,7 +160,7 @@ export function SetupChecklist({
             onClick={onStartGroup}
             disabled={busy === "group-start"}
           >
-            {busy === "group-start" ? "Starting…" : isCompact ? "Start" : "Start Group"}
+            {busy === "group-start" ? t('starting') : isCompact ? t('start') : t('startGroupButton')}
           </button>
         </div>
       )}

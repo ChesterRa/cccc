@@ -1,5 +1,6 @@
 // AutomationTab configures proactive system behaviors (nudges/alerts) and user-defined rules.
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import * as api from "../../../services/api";
 import type { Actor, AutomationRule, AutomationRuleAction, AutomationRuleSet, AutomationRuleStatus } from "../../../types";
@@ -57,6 +58,7 @@ interface AutomationTabProps {
 
 export function AutomationTab(props: AutomationTabProps) {
   const { isDark } = props;
+  const { t } = useTranslation("settings");
 
   const [rulesBusy, setRulesBusy] = useState(false);
   const [rulesErr, setRulesErr] = useState("");
@@ -80,7 +82,7 @@ export function AutomationTab(props: AutomationTabProps) {
     try {
       const resp = await api.fetchAutomation(props.groupId);
       if (!resp.ok) {
-        setRulesErr(resp.error?.message || "Failed to load automation rules");
+        setRulesErr(resp.error?.message || t("automation.failedToLoad"));
         return;
       }
       setRuleset(resp.result.ruleset);
@@ -89,7 +91,7 @@ export function AutomationTab(props: AutomationTabProps) {
       setConfigPath(String(resp.result.config_path || ""));
       setSupportedVars(Array.isArray(resp.result.supported_vars) ? resp.result.supported_vars.map(String) : []);
     } catch {
-      setRulesErr("Failed to load automation rules");
+      setRulesErr(t("automation.failedToLoad"));
     } finally {
       setRulesBusy(false);
     }
@@ -186,11 +188,11 @@ export function AutomationTab(props: AutomationTabProps) {
     const id = newSnippetId.trim();
     if (!id) return;
     if (!isValidId(id)) {
-      setTemplateErr("Snippet name is invalid. Use letters/numbers/_/- (max 64 chars).");
+      setTemplateErr(t("automation.snippetInvalid"));
       return;
     }
     if (draft.snippets[id] !== undefined) {
-      setTemplateErr(`Snippet already exists: ${id}`);
+      setTemplateErr(t("automation.snippetExists", { id }));
       return;
     }
     setTemplateErr("");
@@ -203,7 +205,7 @@ export function AutomationTab(props: AutomationTabProps) {
   };
 
   const deleteSnippet = (id: string) => {
-    const ok = window.confirm(`Delete snippet "${id}"?`);
+    const ok = window.confirm(t("automation.deleteSnippetConfirm", { id }));
     if (!ok) return;
     const next = { ...draft.snippets };
     delete next[id];
@@ -299,15 +301,15 @@ export function AutomationTab(props: AutomationTabProps) {
         const code = String(resp.error?.code || "").trim();
           if (code === "version_conflict") {
             await loadRules();
-            setRulesErr("Automation rules were updated elsewhere. Latest version loaded; please reapply your edits.");
+            setRulesErr(t("automation.versionConflict"));
             return;
           }
-        setRulesErr(resp.error?.message || "Failed to save automation rules");
+        setRulesErr(resp.error?.message || t("automation.failedToSave"));
         return;
       }
       await loadRules();
     } catch {
-      setRulesErr("Failed to save automation rules");
+      setRulesErr(t("automation.failedToSave"));
     } finally {
       setRulesBusy(false);
     }
@@ -316,10 +318,10 @@ export function AutomationTab(props: AutomationTabProps) {
   const clearCompletedRules = async () => {
     if (!props.groupId) return;
     if (completedOneTimeRuleIds.length <= 0) {
-      setRulesErr("No completed one-time reminders to clear.");
+      setRulesErr(t("automation.noCompletedToClear"));
       return;
     }
-    const ok = window.confirm(`Clear ${completedOneTimeRuleIds.length} completed one-time reminder(s)?`);
+    const ok = window.confirm(t("automation.clearCompletedConfirm", { count: completedOneTimeRuleIds.length }));
     if (!ok) return;
     const removing = new Set(completedOneTimeRuleIds);
     const nextRules = draft.rules.filter((rule) => !removing.has(String(rule.id || "").trim()));
@@ -332,10 +334,10 @@ export function AutomationTab(props: AutomationTabProps) {
         const code = String(resp.error?.code || "").trim();
         if (code === "version_conflict") {
           await loadRules();
-          setRulesErr("Automation rules were updated elsewhere. Latest version loaded.");
+          setRulesErr(t("automation.versionConflictShort"));
           return;
         }
-        setRulesErr(resp.error?.message || "Failed to clear completed reminders");
+        setRulesErr(resp.error?.message || t("automation.failedToClear"));
         return;
       }
       if (editingRuleId && removing.has(editingRuleId)) {
@@ -343,7 +345,7 @@ export function AutomationTab(props: AutomationTabProps) {
       }
       await loadRules();
     } catch {
-      setRulesErr("Failed to clear completed reminders");
+      setRulesErr(t("automation.failedToClear"));
     } finally {
       setRulesBusy(false);
     }
@@ -351,7 +353,7 @@ export function AutomationTab(props: AutomationTabProps) {
 
   const resetToBaseline = async () => {
     if (!props.groupId) return;
-    const ok = window.confirm("Reset automation rules and message snippets to defaults? This replaces your current setup.");
+    const ok = window.confirm(t("automation.resetConfirm"));
     if (!ok) return;
     setRulesBusy(true);
     setRulesErr("");
@@ -361,15 +363,15 @@ export function AutomationTab(props: AutomationTabProps) {
         const code = String(resp.error?.code || "").trim();
           if (code === "version_conflict") {
             await loadRules();
-            setRulesErr("Automation rules were updated elsewhere. Latest version loaded.");
+            setRulesErr(t("automation.versionConflictShort"));
             return;
           }
-        setRulesErr(resp.error?.message || "Failed to reset defaults");
+        setRulesErr(resp.error?.message || t("automation.failedToReset"));
         return;
       }
       await loadRules();
     } catch {
-      setRulesErr("Failed to reset defaults");
+      setRulesErr(t("automation.failedToReset"));
     } finally {
       setRulesBusy(false);
     }
@@ -392,7 +394,7 @@ export function AutomationTab(props: AutomationTabProps) {
   if (!props.groupId) {
     return (
       <div className={cardClass(isDark)}>
-        <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>Open this tab from a group.</div>
+        <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("automation.openFromGroup")}</div>
       </div>
     );
   }
@@ -403,18 +405,18 @@ export function AutomationTab(props: AutomationTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Automation</h3>
+        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("automation.title")}</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Configure automation rules and policies. Settings are stored in{" "}
-          <span className="font-mono break-all">{configPath || "CCCC_HOME/.../group.yaml"}</span>.
+          {t("automation.description")}{" "}
+          <span className="font-mono break-all">{configPath || t("automation.configPathFallback")}</span>.
         </p>
       </div>
 
       <Section
         isDark={isDark}
         icon={SparkIcon}
-        title="Automation Rules"
-        description="Define trigger conditions and actions (notify, group state, actor control)."
+        title={t("automation.rulesTitle")}
+        description={t("automation.rulesDescription")}
       >
         {rulesErr ? <div className={`text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{rulesErr}</div> : null}
 
@@ -423,7 +425,7 @@ export function AutomationTab(props: AutomationTabProps) {
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <button
                 type="button"
-                className={`w-full px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                className={`w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
                 } disabled:opacity-50`}
                 onClick={() => {
@@ -432,43 +434,43 @@ export function AutomationTab(props: AutomationTabProps) {
                   setRulesErr("");
                 }}
                 disabled={rulesBusy}
-                title="Create a rule"
+                title={t("automation.createRuleTitle")}
               >
-                <span className="whitespace-nowrap">New Rule</span>
+                {t("automation.newRule")}
               </button>
               <button
                 type="button"
-                className={`w-full px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                className={`w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
                 } disabled:opacity-50`}
                 onClick={openSnippetManager}
                 disabled={rulesBusy}
-                title="Manage snippets"
+                title={t("automation.manageSnippetsTitle")}
               >
-                <span className="whitespace-nowrap">Snippets</span>
+                {t("automation.snippets")}
               </button>
             </div>
 
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <button
                 type="button"
-                className={`w-full px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                className={`w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                   isDark ? "bg-rose-900/40 hover:bg-rose-900/60 text-rose-200 border border-rose-800" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
                 } disabled:opacity-50`}
                 onClick={resetToBaseline}
                 disabled={rulesBusy}
-                title="Reset rules and snippets to defaults"
+                title={t("automation.resetTitle")}
               >
-                Reset to Defaults
+                {t("automation.resetToDefaults")}
               </button>
               <button
                 type="button"
-                className={`${primaryButtonClass(rulesBusy)} w-full sm:w-auto`}
+                className={`${primaryButtonClass(rulesBusy)} w-full sm:w-auto whitespace-nowrap`}
                 onClick={saveRules}
                 disabled={rulesBusy}
-                title="Save automation rules and snippets"
+                title={t("automation.saveTitle")}
               >
-                {rulesBusy ? "Saving..." : "Save"}
+                {rulesBusy ? t("automation.saving") : t("common:save")}
               </button>
             </div>
           </div>
@@ -492,7 +494,7 @@ export function AutomationTab(props: AutomationTabProps) {
         />
 
         <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Edit opens full settings in a modal to keep this list clean. Message snippets are managed in Snippets.
+          {t("automation.editHint")}
         </div>
       </Section>
 

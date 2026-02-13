@@ -1,5 +1,6 @@
 // AppModals renders all modal components in one place.
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
 import { SearchModal } from "./SearchModal";
@@ -54,6 +55,7 @@ export function AppModals({
   onSetGroupState,
   fetchContext,
 }: AppModalsProps) {
+  const { t } = useTranslation('actors');
   // Stores
   const {
     groups,
@@ -310,7 +312,7 @@ export function AppModals({
 
   const handleDeleteGroup = async () => {
     if (!selectedGroupId) return;
-    if (!window.confirm(`Delete group "${groupDoc?.title || selectedGroupId}"?`)) return;
+    if (!window.confirm(t('deleteGroupConfirm', { name: groupDoc?.title || selectedGroupId }))) return;
     setBusy("group-delete");
     try {
       const resp = await api.deleteGroup(selectedGroupId);
@@ -340,8 +342,8 @@ export function AppModals({
 
     const willChangeSecrets = clear || setKeys.length > 0 || unsetKeys.length > 0;
     const msg = willChangeSecrets
-      ? `Save changes, apply secrets, and restart "${label}" now? This will interrupt any running work.`
-      : `Save changes and restart "${label}" now? This will interrupt any running work.`;
+      ? t('saveSecretsAndRestartConfirm', { label })
+      : t('saveAndRestartConfirm', { label });
     if (!window.confirm(msg)) return;
     setBusy("actor-update");
     try {
@@ -386,7 +388,7 @@ export function AppModals({
       setCurrentDir(resp.result.path || path);
       setParentDir(resp.result.parent || null);
     } else {
-      showError(resp.error?.message || "Failed to list directory");
+      showError(resp.error?.message || t('failedToListDir'));
     }
   };
 
@@ -400,12 +402,12 @@ export function AppModals({
     try {
       const resp = await api.previewTemplate(file);
       if (!resp.ok) {
-        setCreateTemplateError(resp.error?.message || "Invalid template");
+        setCreateTemplateError(resp.error?.message || t('invalidTemplate'));
         return;
       }
       setCreateTemplatePreview(resp.result?.template || null);
     } catch {
-      setCreateTemplateError("Failed to load template");
+      setCreateTemplateError(t('failedToLoadTemplate'));
     } finally {
       setCreateTemplateBusy(false);
     }
@@ -426,7 +428,7 @@ export function AppModals({
           if (resp.error?.code === "scope_already_attached") {
             const existing = getErrorDetailGroupId(resp.error);
             if (existing) {
-              showError("This directory already has a working group. Opening it instead.");
+              showError(t('scopeAlreadyAttached'));
               closeModal("createGroup");
               resetCreateGroupForm();
               setCreateTemplatePreview(null);
@@ -450,7 +452,7 @@ export function AppModals({
         groupId = resp.result.group_id;
         const attachResp = await api.attachScope(groupId, path);
         if (!attachResp.ok) {
-          showError(`Created group but failed to attach: ${attachResp.error.message}`);
+          showError(t('createdButFailedAttach', { message: attachResp.error.message }));
         }
       }
 
@@ -490,7 +492,7 @@ export function AppModals({
         Object.keys(secretsSetVars).length ? secretsSetVars : undefined
       );
       if (!resp.ok) {
-        setAddActorError(resp.error?.message || "Failed to add agent");
+        setAddActorError(resp.error?.message || t('failedToAddAgent'));
         return;
       }
 
@@ -527,10 +529,10 @@ export function AppModals({
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
     if (newActorRuntime === "custom" && !newActorCommand.trim()) {
-      return "Custom runtime requires a command.";
+      return t('customRuntimeRequiresCommand');
     }
     if (!available && !newActorCommand.trim()) {
-      return `${RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime} is not installed.`;
+      return t('runtimeNotInstalled', { runtime: RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime });
     }
     return "";
   })();
@@ -561,7 +563,7 @@ export function AppModals({
     if (!src || !srcGroupId || !srcEventId) return;
     if (!dstGroup) return;
     if (dstGroup === srcGroupId) {
-      showError("Destination group must be different from the source group.");
+      showError(t('destGroupDifferent'));
       return;
     }
 
@@ -570,7 +572,7 @@ export function AppModals({
     const noteText = String(note || "").trim();
     const relayText = (noteText ? noteText + "\n\n" : "") + String(srcText || "");
     if (!relayText.trim()) {
-      showError("Relay message text is empty.");
+      showError(t('relayTextEmpty'));
       return;
     }
 

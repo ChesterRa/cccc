@@ -1,3 +1,4 @@
+import json
 import re
 import unittest
 from pathlib import Path
@@ -13,17 +14,42 @@ def _contains_all_tokens(haystack: str, phrase: str) -> bool:
     return bool(need_tokens) and all(t in hay_tokens for t in need_tokens)
 
 
+def _resolve_i18n_label(raw: str, i18n_dict: dict[str, object]) -> str:
+    """Resolve a raw option label that may be a t() i18n call.
+
+    If *raw* looks like ``{t("namespace.key")}`` or ``{t('key')}``, look up
+    the English translation from *i18n_dict* (a flat or nested dict keyed by
+    namespace/key).  Falls back to the raw string for plain-text labels.
+    """
+    m = re.match(r'^\{t\(["\'](?:(\w+)\.)?(\w+)["\']\)\}$', raw.strip())
+    if not m:
+        return raw
+    ns, key = m.group(1), m.group(2)
+    bucket = i18n_dict.get(ns) if ns else i18n_dict
+    if isinstance(bucket, dict):
+        val = bucket.get(key)
+        if isinstance(val, str):
+            return val
+    return raw
+
+
 class TestWebAutomationDocsParity(unittest.TestCase):
     def test_web_guide_covers_editor_labels(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         editor_path = repo_root / "web" / "src" / "components" / "modals" / "settings" / "AutomationRuleEditorModal.tsx"
         guide_path = repo_root / "docs" / "guide" / "web-ui.md"
+        settings_i18n_path = repo_root / "web" / "src" / "i18n" / "locales" / "en" / "settings.json"
 
         editor_text = editor_path.read_text(encoding="utf-8")
         guide_text = guide_path.read_text(encoding="utf-8")
 
+        # Load English i18n dict for resolving t() calls.
+        i18n_dict: dict[str, object] = {}
+        if settings_i18n_path.exists():
+            i18n_dict = json.loads(settings_i18n_path.read_text(encoding="utf-8"))
+
         schedule_labels = {
-            str(label or "").strip()
+            _resolve_i18n_label(str(label or "").strip(), i18n_dict)
             for _, label in re.findall(
                 r'<option value="(interval|cron|at)">(.*?)</option>',
                 editor_text,
@@ -31,7 +57,7 @@ class TestWebAutomationDocsParity(unittest.TestCase):
             if str(label or "").strip()
         }
         action_labels = {
-            str(label or "").strip()
+            _resolve_i18n_label(str(label or "").strip(), i18n_dict)
             for _, label in re.findall(
                 r'<option value="(notify|group_state|actor_control)">(.*?)</option>',
                 editor_text,

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
@@ -53,6 +54,7 @@ export function MobileMenuSheet({
   onSetGroupState,
 }: MobileMenuSheetProps) {
   const { modalRef } = useModalA11y(isOpen, onClose);
+  const { t } = useTranslation('layout');
   if (!isOpen) return null;
 
   return (
@@ -70,7 +72,7 @@ export function MobileMenuSheet({
         className="absolute bottom-0 left-0 right-0 rounded-t-3xl glass-modal animate-slide-up transform transition-transform"
         role="dialog"
         aria-modal="true"
-        aria-label="Menu"
+        aria-label={t('menu')}
       >
         <div className="flex justify-center pt-3 pb-1" onClick={onClose}>
           <div className={`w-12 h-1.5 rounded-full ${isDark ? "bg-white/20" : "bg-black/15"}`} />
@@ -79,7 +81,7 @@ export function MobileMenuSheet({
         <div className="px-6 pb-4 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className={classNames("text-lg font-bold truncate", isDark ? "text-slate-100" : "text-gray-900")}>
-              {groupDoc?.title || (selectedGroupId ? selectedGroupId : "Menu")}
+              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('menu'))}
             </div>
             {selectedGroupId && groupDoc && (
               <div className="flex items-center gap-2 mt-1">
@@ -100,7 +102,7 @@ export function MobileMenuSheet({
               "p-2 rounded-full transition-colors glass-btn",
               isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
             )}
-            aria-label="Close menu"
+            aria-label={t('closeMenu')}
           >
             <CloseIcon size={20} />
           </button>
@@ -109,7 +111,7 @@ export function MobileMenuSheet({
         <div className="p-4 space-y-2 safe-area-inset-bottom">
           {!selectedGroupId && (
             <div className={classNames("text-sm px-1 pb-2", isDark ? "text-slate-400" : "text-gray-500")}>
-              Select a group to enable actions.
+              {t('selectGroupToEnable')}
             </div>
           )}
 
@@ -125,7 +127,7 @@ export function MobileMenuSheet({
             disabled={!selectedGroupId}
           >
             <SearchIcon size={18} />
-            <span>Search Messages</span>
+            <span>{t('searchMessagesButton')}</span>
           </button>
 
           <div className="grid grid-cols-2 gap-2">
@@ -141,7 +143,7 @@ export function MobileMenuSheet({
               disabled={!selectedGroupId}
             >
               <ClipboardIcon size={18} />
-              <span>Context</span>
+              <span>{t('contextButton')}</span>
             </button>
 
             <button
@@ -156,7 +158,7 @@ export function MobileMenuSheet({
               disabled={!selectedGroupId}
             >
               <SettingsIcon size={18} />
-              <span>Settings</span>
+              <span>{t('settingsButton')}</span>
             </button>
           </div>
 
@@ -168,7 +170,7 @@ export function MobileMenuSheet({
             onClick={onToggleTheme}
           >
             {isDark ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-            <span>{isDark ? "Light Mode" : "Dark Mode"}</span>
+            <span>{isDark ? t('lightMode') : t('darkMode')}</span>
           </button>
 
           <button
@@ -183,7 +185,7 @@ export function MobileMenuSheet({
             disabled={!selectedGroupId}
           >
             <EditIcon size={18} />
-            <span>Edit Group Details</span>
+            <span>{t('editGroupDetails')}</span>
           </button>
 
           <div className={classNames("h-px my-3 mx-2", isDark ? "bg-white/10" : "bg-black/10")} />
@@ -208,7 +210,7 @@ export function MobileMenuSheet({
               disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
             >
               <PlayIcon size={20} />
-              <span>Launch All</span>
+              <span>{t('launchAll')}</span>
             </button>
 
             <button
@@ -223,7 +225,7 @@ export function MobileMenuSheet({
               disabled={!selectedGroupId || busy === "group-stop"}
             >
               <StopIcon size={20} />
-              <span>Quit All</span>
+              <span>{t('quitAll')}</span>
             </button>
           </div>
 
@@ -247,7 +249,7 @@ export function MobileMenuSheet({
               disabled={!selectedGroupId || busy === "group-state"}
             >
               <PlayIcon size={18} />
-              <span>Resume Message Delivery</span>
+              <span>{t('resumeMessageDelivery')}</span>
             </button>
           ) : (
             <button
@@ -262,7 +264,7 @@ export function MobileMenuSheet({
               disabled={!selectedGroupId || busy === "group-state"}
             >
               <PauseIcon size={18} />
-              <span>Pause Message Delivery</span>
+              <span>{t('pauseMessageDelivery')}</span>
             </button>
           )}
         </div>

@@ -1,5 +1,6 @@
 // SettingsModal renders the settings modal.
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
@@ -44,6 +45,7 @@ export function SettingsModal({
   groupId,
   groupDoc,
 }: SettingsModalProps) {
+  const { t } = useTranslation("settings");
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
   const [groupTab, setGroupTab] = useState<GroupTabId>("automation");
@@ -349,7 +351,7 @@ export function SettingsModal({
     try {
       if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
         await navigator.clipboard.writeText(payload);
-        setToast(`Copied last ${n} lines`);
+        setToast(t("automation.copiedLines", { n }));
         return;
       }
     } catch {
@@ -367,9 +369,9 @@ export function SettingsModal({
       el.select();
       const ok = document.execCommand("copy");
       document.body.removeChild(el);
-      setToast(ok ? `Copied last ${n} lines` : "Copy failed");
+      setToast(ok ? t("automation.copiedLines", { n }) : t("common:copyFailed"));
     } catch {
-      setToast("Copy failed");
+      setToast(t("common:copyFailed"));
     }
   };
 
@@ -385,12 +387,12 @@ export function SettingsModal({
       } else {
         setTailText("");
         setTailHint("");
-        setTailErr(resp.error?.message || "Failed to load terminal transcript");
+        setTailErr(resp.error?.message || t("automation.failedToLoadTranscript"));
       }
     } catch {
       setTailText("");
       setTailHint("");
-      setTailErr("Failed to load terminal transcript");
+      setTailErr(t("automation.failedToLoadTranscript"));
     } finally {
       setTailBusy(false);
     }
@@ -403,13 +405,13 @@ export function SettingsModal({
     try {
       const resp = await api.clearTerminalTail(groupId, tailActorId);
       if (!resp.ok) {
-        setTailErr(resp.error?.message || "Failed to clear terminal transcript");
+        setTailErr(resp.error?.message || t("automation.failedToClearTranscript"));
         return;
       }
       setTailText("");
       setTailHint("");
     } catch {
-      setTailErr("Failed to clear terminal transcript");
+      setTailErr(t("automation.failedToClearTranscript"));
     } finally {
       setTailBusy(false);
     }
@@ -616,7 +618,7 @@ export function SettingsModal({
   const handleClearLogs = async () => {
     if (!developerMode) return;
     if (logComponent === "im" && !groupId) {
-      setLogErr("IM logs require a group_id; open Settings from a group.");
+      setLogErr(t("developer.imLogsRequireGroup"));
       return;
     }
     setLogBusy(true);
@@ -658,7 +660,7 @@ export function SettingsModal({
       await loadRegistryPreview();
       return;
     }
-    if (!window.confirm(`Remove ${missingCount} missing group entries from registry?`)) {
+    if (!window.confirm(t("automation.removeRegistryConfirm", { count: missingCount }))) {
       return;
     }
     setRegistryBusy(true);
@@ -695,17 +697,17 @@ export function SettingsModal({
   })();
 
   const groupTabs: { id: GroupTabId; label: string }[] = [
-    { id: "guidance", label: "Guidance" },
-    { id: "automation", label: "Automation" },
-    { id: "delivery", label: "Delivery" },
-    { id: "messaging", label: "Messaging" },
-    { id: "im", label: "IM Bridge" },
-    { id: "transcript", label: "Transcript" },
-    { id: "blueprint", label: "Blueprint" },
+    { id: "guidance", label: t("tabs.guidance") },
+    { id: "automation", label: t("tabs.automation") },
+    { id: "delivery", label: t("tabs.delivery") },
+    { id: "messaging", label: t("tabs.messaging") },
+    { id: "im", label: t("tabs.im") },
+    { id: "transcript", label: t("tabs.transcript") },
+    { id: "blueprint", label: t("tabs.blueprint") },
   ];
   const globalTabs: { id: GlobalTabId; label: string }[] = [
-    { id: "remote", label: "Remote Access" },
-    { id: "developer", label: "Developer" },
+    { id: "remote", label: t("tabs.remote") },
+    { id: "developer", label: t("tabs.developer") },
   ];
   const tabs = scope === "group" ? groupTabs : globalTabs;
   const activeTab = scope === "group" ? groupTab : globalTab;
@@ -719,8 +721,8 @@ export function SettingsModal({
       isDark={isDark}
       onClose={onClose}
       titleId="settings-modal-title"
-      title="⚙️ Settings"
-      closeAriaLabel="Close settings"
+      title={`⚙️ ${t("title")}`}
+      closeAriaLabel={t("closeAriaLabel")}
       panelClassName="w-full h-full sm:h-[640px] sm:max-w-4xl sm:max-h-[85vh]"
       modalRef={modalRef}
     >

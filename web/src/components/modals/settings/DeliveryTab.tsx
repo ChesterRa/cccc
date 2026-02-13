@@ -1,5 +1,6 @@
 // DeliveryTab configures PTY message delivery behavior (throttling + read-cursor policy).
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 import { cardClass, inputClass, labelClass, primaryButtonClass } from "./types";
 
@@ -199,6 +200,7 @@ const DeliverySection = ({
 
 export function DeliveryTab(props: DeliveryTabProps) {
   const { isDark, busy, onSave, onAutoSave } = props;
+  const { t } = useTranslation("settings");
 
   const autoSave = (field: string, getValue: () => number | boolean) => {
     if (!onAutoSave) return;
@@ -208,31 +210,31 @@ export function DeliveryTab(props: DeliveryTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Delivery</h3>
+        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("delivery.title")}</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Control how messages and system notifications are injected into PTY runtimes.
+          {t("delivery.description")}
         </p>
       </div>
 
       <DeliverySection
         isDark={isDark}
-        title="Throttle & Policy"
-        description="Tune pacing and read-cursor behavior. Set values to 0 to disable."
+        title={t("delivery.throttleTitle")}
+        description={t("delivery.throttleDescription")}
       >
         <NumberInputRow
           isDark={isDark}
-          label="Delivery Interval (sec)"
+          label={t("delivery.deliveryInterval")}
           value={props.deliveryInterval}
           onChange={props.setDeliveryInterval}
-          helperText="Minimum delay between message deliveries (throttling)."
+          helperText={t("delivery.deliveryIntervalHelp")}
           onAutoSave={() => autoSave("min_interval_seconds", () => props.deliveryInterval)}
         />
         <ToggleRow
           isDark={isDark}
-          label="Auto-mark as read on delivery"
+          label={t("delivery.autoMarkRead")}
           checked={props.autoMarkOnDelivery}
           onChange={props.setAutoMarkOnDelivery}
-          helperText="Automatically advance read cursor after a message is successfully delivered to PTY."
+          helperText={t("delivery.autoMarkReadHelp")}
           onAutoSave={(newValue) => autoSave("auto_mark_on_delivery", () => newValue)}
         />
       </DeliverySection>
@@ -240,10 +242,10 @@ export function DeliveryTab(props: DeliveryTabProps) {
       <div className="pt-2">
         <button onClick={onSave} disabled={busy} className={primaryButtonClass(busy)}>
           {busy ? (
-            "Saving..."
+            t("common:saving")
           ) : (
             <span className="flex items-center gap-2">
-              <ClockIcon className="w-4 h-4" /> Save Delivery Settings
+              <ClockIcon className="w-4 h-4" /> {t("delivery.saveDelivery")}
             </span>
           )}
         </button>

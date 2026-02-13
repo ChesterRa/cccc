@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { useTranslation } from 'react-i18next';
 import { useTheme } from "../hooks/useTheme";
 import * as api from "../services/api";
 
@@ -11,6 +12,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const calledRef = useRef(false);
+  const { t } = useTranslation('layout');
 
   // On mount: probe /api/v1/ping to determine if auth is required.
   useEffect(() => {
@@ -35,11 +37,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    const t = token.trim();
-    if (!t) return;
+    const trimmed = token.trim();
+    if (!trimmed) return;
     setSubmitting(true);
     setError("");
-    api.setAuthToken(t);
+    api.setAuthToken(trimmed);
     const resp = await api.fetchPing();
     setSubmitting(false);
     if (resp.ok) {
@@ -48,11 +50,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       api.clearAuthToken();
       setError(
         resp.error?.code === "unauthorized"
-          ? "Token incorrect"
-          : resp.error?.message || "Connection failed",
+          ? t('tokenIncorrect')
+          : resp.error?.message || t('connectionFailed'),
       );
     }
-  }, [token]);
+  }, [token, t]);
 
   if (status === "checking") {
     return (
@@ -60,7 +62,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         isDark ? "bg-slate-950" : "bg-slate-50"
       }`}>
         <div className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-          Connecting...
+          {t('connecting')}
         </div>
       </div>
     );
@@ -88,14 +90,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             CCCC
           </h1>
           <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-            Enter access token to continue
+            {t('enterToken')}
           </p>
         </div>
         <input
           type="password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder="Access Token"
+          placeholder={t('accessToken')}
           autoFocus
           className={`w-full px-4 py-2.5 rounded-lg border text-sm outline-none transition-colors ${
             isDark
@@ -115,7 +117,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               : "bg-cyan-500 hover:bg-cyan-600 text-white"
           }`}
         >
-          {submitting ? "Verifying..." : "Sign In"}
+          {submitting ? t('verifying') : t('signIn')}
         </button>
       </form>
     </div>
