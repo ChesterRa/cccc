@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.0rc21] — 2025-07-24
+
+### Added
+- **Web i18n framework**: integrated `react-i18next` with namespace-based locale loading (`common`, `layout`, `chat`, `modals`, `actors`, `settings`) and automatic browser language detection.
+- **Chinese (zh) locale**: complete Simplified Chinese translation across all 6 namespaces (735 keys), with native-level phrasing review and unified typography (full-width `：`, Unicode `…`).
+- **Japanese (ja) locale**: complete Japanese translation across all 6 namespaces (735 keys), with native-level phrasing review and unified typography (full-width `：`, Unicode `…`, full-width `？`).
+- **Language switcher UI**: minimal trigger button showing only short label (`EN`/`中`/`日`), positioned at the rightmost of the header; dropdown panel with scale-in animation and left accent bar for active item; React Portal for proper positioning.
+- **i18n key parity test**: automated test to verify all locale files have identical key sets across languages.
+
+### Changed
+- `LanguageSwitcher` refactored from cycle-button to professional popover dropdown.
+- Language switcher moved to header rightmost position (after Settings button) with separator.
+- Shared language configuration extracted to `languages.ts`.
+- README overhaul with comprehensive project details, architecture, features, and quick start guide.
+- Installation instructions updated to use TestPyPI for release candidates.
+- Docker Claude config updated with bypass permissions flag.
+
+### Fixed
+- Chinese locale encoding unified from `\uXXXX` escape sequences to direct Unicode characters.
+- Chinese translation quality: `忙碌中`→`处理中`, `义务状态`→`回复状态`, `编辑器`→`输入框`, `代码片段`→`模板`.
+- Japanese colon typography: 39 instances of half-width `:` after CJK characters corrected to full-width `：`.
+- `to` label in chat kept as English "To" in ZH/JA (international convention).
+- Misleading "Clipboard" label corrected to "Context" in EN/ZH/JA layout.
+
 ## [0.4.0rc20] — 2026-02-13
 
 ### Added
