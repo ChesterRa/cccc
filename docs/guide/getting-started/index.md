@@ -72,15 +72,16 @@ Version 0.4.x has a completely different command structure from 0.3.x. The old `
 ### From PyPI
 
 ```bash
-python -m pip install -U cccc-pair
+pip install -U cccc-pair
 ```
 
 ### From TestPyPI (for explicit RC testing)
 
 ```bash
-python -m pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==<rc-version>
+pip install -U --pre \
+  --index-url https://test.pypi.org/simple \
+  --extra-index-url https://pypi.org/simple \
+  cccc-pair
 ```
 
 ### From Source

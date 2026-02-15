@@ -50,14 +50,16 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 ### 安装
 
 ```bash
-pip install \
+# 稳定通道（PyPI）
+pip install -U cccc-pair
+
+# RC 通道（TestPyPI）
+pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-> **注意**: CCCC `0.4.0` 处于发布候选阶段，当前发布在 [TestPyPI](https://test.pypi.org/project/cccc-pair/) 上。正式版发布后只需 `pip install cccc-pair` 即可。
->
 > **环境要求**: Python 3.9+，macOS / Linux / Windows
 
 ### 启动
@@ -325,10 +327,16 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 
 ## 安装选项
 
-### pip（推荐）
+### pip（稳定版，推荐）
 
 ```bash
-pip install \
+pip install -U cccc-pair
+```
+
+### pip（RC 版，TestPyPI）
+
+```bash
+pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair

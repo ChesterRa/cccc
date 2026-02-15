@@ -8,12 +8,13 @@ Frequently asked questions about CCCC.
 
 ```bash
 # From PyPI
-python -m pip install -U cccc-pair
+pip install -U cccc-pair
 
 # From TestPyPI (explicit RC testing)
-python -m pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==<rc-version>
+pip install -U --pre \
+  --index-url https://test.pypi.org/simple \
+  --extra-index-url https://pypi.org/simple \
+  cccc-pair
 
 # From source
 git clone https://github.com/ChesterRa/cccc

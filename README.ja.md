@@ -50,14 +50,16 @@ CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データ�
 ### インストール
 
 ```bash
-pip install \
+# 安定チャネル（PyPI）
+pip install -U cccc-pair
+
+# RC チャネル（TestPyPI）
+pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-> **注意**: CCCC `0.4.0` はリリース候補段階で、現在 [TestPyPI](https://test.pypi.org/project/cccc-pair/) で公開中です。安定版リリース後は `pip install cccc-pair` だけで OK です。
->
 > **要件**: Python 3.9+、macOS / Linux / Windows
 
 ### 起動
@@ -325,10 +327,16 @@ CCCC は**協調カーネル** — 協調レイヤーを担い、外部の CI/CD
 
 ## インストールオプション
 
-### pip（推奨）
+### pip（安定版、推奨）
 
 ```bash
-pip install \
+pip install -U cccc-pair
+```
+
+### pip（RC 版、TestPyPI）
+
+```bash
+pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair

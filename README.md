@@ -50,14 +50,16 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 ### Install
 
 ```bash
-pip install \
+# Stable channel (PyPI)
+pip install -U cccc-pair
+
+# RC channel (TestPyPI)
+pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-> **Note**: CCCC `0.4.0` is in release-candidate stage. The package is currently published to [TestPyPI](https://test.pypi.org/project/cccc-pair/). Once the stable release lands on PyPI, a simple `pip install cccc-pair` will suffice.
->
 > **Requirements**: Python 3.9+, macOS / Linux / Windows
 
 ### Launch
@@ -325,10 +327,16 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 
 ## Installation Options
 
-### pip (recommended)
+### pip (stable, recommended)
 
 ```bash
-pip install \
+pip install -U cccc-pair
+```
+
+### pip (RC from TestPyPI)
+
+```bash
+pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
