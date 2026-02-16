@@ -4,6 +4,10 @@
 
 ### Local-First Multi-Agent Collaboration Kernel
 
+**A lightweight multi-agent framework with infrastructure-grade reliability.**
+
+Chat-native, prompt-driven, and bi-directional by design.
+
 Run multiple coding agents as a **durable, coordinated system** — not a pile of disconnected terminal sessions.
 
 Three commands to go. Zero infrastructure, production-grade power.
@@ -18,6 +22,13 @@ Three commands to go. Zero infrastructure, production-grade power.
 </div>
 
 ---
+
+## Why v0.4.0 Is a Generational Upgrade
+
+- **Chat-native orchestration**: assign work in Web chat as naturally as talking to teammates, with full delivery/read/ack/reply visibility.
+- **Workflow-by-design**: configure multi-agent behavior with guidance prompts and automation rules, instead of brittle ad-hoc scripts.
+- **Bi-directional control**: CCCC orchestrates agents, while agents can also schedule and customize CCCC workflows through MCP tools.
+- **Beyond the browser**: the same operating model extends to Telegram/Slack/Discord/Feishu/DingTalk via IM bridges.
 
 ## The Problem
 
