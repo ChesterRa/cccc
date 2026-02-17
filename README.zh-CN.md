@@ -23,6 +23,16 @@
 
 ---
 
+## 使用官方 SDK 进行二次开发
+
+如果你要把 CCCC 接入应用、服务、插件或 IDE，请使用官方 SDK 仓库：
+
+- [cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
+- Python 包：`cccc-sdk`（import 名称 `cccc_sdk`）
+- TypeScript 包：`cccc-sdk`
+
+SDK 客户端会连接同一个 CCCC daemon，并共享同一个 `CCCC_HOME` 运行时状态。
+
 ## 为什么说 v0.4.0 是代际升级
 
 - **聊天式编排**：在 Web 聊天里像和同事对话一样布置任务，并实时看到送达/已读/确认/回复状态。
@@ -94,6 +104,17 @@ cccc send "请拆分任务并开始实现。" --to @all
 ```
 
 此刻你已拥有两个 agent 在一个持久化协作组中协同工作，具备完整的消息历史、触达追踪和 Web 看板。
+
+## 程序化接入（SDK）
+
+如果你要从外部应用或服务编程接入 CCCC，请使用官方 SDK：
+
+```bash
+pip install -U cccc-sdk
+npm install cccc-sdk
+```
+
+SDK 不包含 daemon，需要连接已运行的 `cccc` 本体实例。
 
 ## 架构
 
@@ -331,6 +352,7 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 | [IM 桥接配置](https://dweb-channel.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、飞书、钉钉 |
 | [运维手册](https://dweb-channel.github.io/cccc/guide/operations) | 恢复、排障、维护 |
 | [CLI 参考](https://dweb-channel.github.io/cccc/reference/cli) | 完整命令参考 |
+| [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 用官方客户端将 CCCC 接入应用与服务 |
 | [架构](https://dweb-channel.github.io/cccc/reference/architecture) | 设计决策与系统模型 |
 | [功能详解](https://dweb-channel.github.io/cccc/reference/features) | 消息、自动化、运行时深度解读 |
 | [CCCS 标准](docs/standards/CCCS_V1.md) | 协作协议规范 |

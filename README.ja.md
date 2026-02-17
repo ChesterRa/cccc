@@ -23,6 +23,16 @@
 
 ---
 
+## 公式 SDK でのアプリ統合
+
+アプリ、サービス、プラグイン、IDE から CCCC を統合する場合は、公式 SDK リポジトリを利用してください:
+
+- [cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
+- Python パッケージ: `cccc-sdk`（import 名: `cccc_sdk`）
+- TypeScript パッケージ: `cccc-sdk`
+
+SDK クライアントは同じ CCCC daemon に接続し、同じ `CCCC_HOME` ランタイム状態を共有します。
+
 ## 課題
 
 複数のコーディングエージェントを使う現実：
@@ -87,6 +97,17 @@ cccc send "タスクを分割して実装を開始してください。" --to @a
 ```
 
 これで 2 つのエージェントが永続グループ内で協調し、完全なメッセージ履歴、到達追跡、Web ダッシュボードを備えた状態になります。
+
+## プログラマブル連携（SDK）
+
+外部アプリやサービスから CCCC を連携する場合は、公式 SDK を利用してください:
+
+```bash
+pip install -U cccc-sdk
+npm install cccc-sdk
+```
+
+SDK には daemon は含まれません。実行中の `cccc` 本体に接続して利用します。
 
 ## アーキテクチャ
 
@@ -324,6 +345,7 @@ CCCC は**協調カーネル** — 協調レイヤーを担い、外部の CI/CD
 | [IM ブリッジ設定](https://dweb-channel.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Feishu、DingTalk の接続 |
 | [運用ランブック](https://dweb-channel.github.io/cccc/guide/operations) | 復旧、トラブルシューティング、メンテナンス |
 | [CLI リファレンス](https://dweb-channel.github.io/cccc/reference/cli) | 完全なコマンドリファレンス |
+| [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 公式クライアントでアプリ/サービスから daemon を利用 |
 | [アーキテクチャ](https://dweb-channel.github.io/cccc/reference/architecture) | 設計決定とシステムモデル |
 | [機能詳細](https://dweb-channel.github.io/cccc/reference/features) | メッセージング、オートメーション、ランタイムの詳細 |
 | [CCCS 標準](docs/standards/CCCS_V1.md) | 協調プロトコル仕様 |

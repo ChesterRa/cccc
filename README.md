@@ -23,6 +23,16 @@ Three commands to go. Zero infrastructure, production-grade power.
 
 ---
 
+## Build With the Official SDK
+
+For app integration, bots, IDE extensions, and background services, use the official SDK repo:
+
+- [cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
+- Python package: `cccc-sdk` (import as `cccc_sdk`)
+- TypeScript package: `cccc-sdk`
+
+SDK clients connect to the same CCCC daemon and share the same `CCCC_HOME` runtime state.
+
 ## Why v0.4.0 Is a Generational Upgrade
 
 - **Chat-native orchestration**: assign work in Web chat as naturally as talking to teammates, with full delivery/read/ack/reply visibility.
@@ -94,6 +104,17 @@ cccc send "Split the task and begin." --to @all
 ```
 
 You now have two agents collaborating in a persistent group with full message history, delivery tracking, and a web dashboard.
+
+## Programmatic Access (SDK)
+
+Use the official SDK when you need to integrate CCCC into external applications or services:
+
+```bash
+pip install -U cccc-sdk
+npm install cccc-sdk
+```
+
+The SDK does not include a daemon. It connects to a running `cccc` core instance.
 
 ## Architecture
 
@@ -331,6 +352,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [IM Bridge Setup](https://dweb-channel.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk |
 | [Operations Runbook](https://dweb-channel.github.io/cccc/guide/operations) | Recovery, troubleshooting, maintenance |
 | [CLI Reference](https://dweb-channel.github.io/cccc/reference/cli) | Complete command reference |
+| [SDK (Python/TypeScript)](https://github.com/ChesterRa/cccc-sdk) | Integrate apps/services with official daemon clients |
 | [Architecture](https://dweb-channel.github.io/cccc/reference/architecture) | Design decisions and system model |
 | [Features Deep Dive](https://dweb-channel.github.io/cccc/reference/features) | Messaging, automation, runtimes in detail |
 | [CCCS Standard](docs/standards/CCCS_V1.md) | Collaboration protocol specification |
