@@ -414,6 +414,13 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 
 > tmux-first 的 0.3.x 版本已归档至 [cccc-tmux](https://github.com/ChesterRa/cccc-tmux)。
 
+## 社区与支持
+
+Telegram 社区: [t.me/ccccpair](https://t.me/ccccpair)  
+微信: `dodd85`（添加时请备注“CCCC”，人多后会建群）
+
+欢迎在社区中分享工作流、反馈问题，并与其他 CCCC 用户交流实践。
+
 ## 贡献
 
 欢迎贡献。请注意：

@@ -414,6 +414,12 @@ Then install fresh and run `cccc doctor` to verify your environment.
 
 > The tmux-first 0.3.x line is archived at [cccc-tmux](https://github.com/ChesterRa/cccc-tmux).
 
+## Community
+
+📱 Join our Telegram group: [t.me/ccccpair](https://t.me/ccccpair)
+
+Share workflows, troubleshoot issues, and connect with other CCCC users.
+
 ## Contributing
 
 Contributions are welcome. Please:

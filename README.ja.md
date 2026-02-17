@@ -407,6 +407,12 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 
 > tmux-first の 0.3.x は [cccc-tmux](https://github.com/ChesterRa/cccc-tmux) にアーカイブ済み。
 
+## コミュニティ
+
+Telegram コミュニティ: [t.me/ccccpair](https://t.me/ccccpair)
+
+ワークフローの共有、課題の相談、他の CCCC ユーザーとの情報交換にご活用ください。
+
 ## コントリビューション
 
 コントリビューションを歓迎します：
