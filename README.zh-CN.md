@@ -15,7 +15,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
+[![Docs](https://img.shields.io/badge/docs-online-blue)](https://chesterra.github.io/cccc/)
 
 [English](README.md) | **中文** | [日本語](README.ja.md)
 
@@ -342,19 +342,19 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 
 ## 文档
 
-📚 **[完整文档](https://dweb-channel.github.io/cccc/)**
+📚 **[完整文档](https://chesterra.github.io/cccc/)**
 
 | 章节 | 说明 |
 |------|------|
-| [快速上手](https://dweb-channel.github.io/cccc/guide/getting-started/) | 安装、启动、创建第一个协作组 |
-| [场景示例](https://dweb-channel.github.io/cccc/guide/use-cases) | 实际多智能体场景 |
-| [Web UI 指南](https://dweb-channel.github.io/cccc/guide/web-ui) | 看板导航 |
-| [IM 桥接配置](https://dweb-channel.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、飞书、钉钉 |
-| [运维手册](https://dweb-channel.github.io/cccc/guide/operations) | 恢复、排障、维护 |
-| [CLI 参考](https://dweb-channel.github.io/cccc/reference/cli) | 完整命令参考 |
+| [快速上手](https://chesterra.github.io/cccc/guide/getting-started/) | 安装、启动、创建第一个协作组 |
+| [场景示例](https://chesterra.github.io/cccc/guide/use-cases) | 实际多智能体场景 |
+| [Web UI 指南](https://chesterra.github.io/cccc/guide/web-ui) | 看板导航 |
+| [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、飞书、钉钉 |
+| [运维手册](https://chesterra.github.io/cccc/guide/operations) | 恢复、排障、维护 |
+| [CLI 参考](https://chesterra.github.io/cccc/reference/cli) | 完整命令参考 |
 | [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 用官方客户端将 CCCC 接入应用与服务 |
-| [架构](https://dweb-channel.github.io/cccc/reference/architecture) | 设计决策与系统模型 |
-| [功能详解](https://dweb-channel.github.io/cccc/reference/features) | 消息、自动化、运行时深度解读 |
+| [架构](https://chesterra.github.io/cccc/reference/architecture) | 设计决策与系统模型 |
+| [功能详解](https://chesterra.github.io/cccc/reference/features) | 消息、自动化、运行时深度解读 |
 | [CCCS 标准](docs/standards/CCCS_V1.md) | 协作协议规范 |
 | [Daemon IPC 标准](docs/standards/CCCC_DAEMON_IPC_V1.md) | IPC 协议规范 |
 

@@ -15,7 +15,7 @@ Three commands to go. Zero infrastructure, production-grade power.
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
+[![Docs](https://img.shields.io/badge/docs-online-blue)](https://chesterra.github.io/cccc/)
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -342,19 +342,19 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-📚 **[Full documentation](https://dweb-channel.github.io/cccc/)**
+📚 **[Full documentation](https://chesterra.github.io/cccc/)**
 
 | Section | Description |
 |---------|-------------|
-| [Getting Started](https://dweb-channel.github.io/cccc/guide/getting-started/) | Install, launch, create your first group |
-| [Use Cases](https://dweb-channel.github.io/cccc/guide/use-cases) | Practical multi-agent scenarios |
-| [Web UI Guide](https://dweb-channel.github.io/cccc/guide/web-ui) | Navigating the dashboard |
-| [IM Bridge Setup](https://dweb-channel.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk |
-| [Operations Runbook](https://dweb-channel.github.io/cccc/guide/operations) | Recovery, troubleshooting, maintenance |
-| [CLI Reference](https://dweb-channel.github.io/cccc/reference/cli) | Complete command reference |
+| [Getting Started](https://chesterra.github.io/cccc/guide/getting-started/) | Install, launch, create your first group |
+| [Use Cases](https://chesterra.github.io/cccc/guide/use-cases) | Practical multi-agent scenarios |
+| [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
+| [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk |
+| [Operations Runbook](https://chesterra.github.io/cccc/guide/operations) | Recovery, troubleshooting, maintenance |
+| [CLI Reference](https://chesterra.github.io/cccc/reference/cli) | Complete command reference |
 | [SDK (Python/TypeScript)](https://github.com/ChesterRa/cccc-sdk) | Integrate apps/services with official daemon clients |
-| [Architecture](https://dweb-channel.github.io/cccc/reference/architecture) | Design decisions and system model |
-| [Features Deep Dive](https://dweb-channel.github.io/cccc/reference/features) | Messaging, automation, runtimes in detail |
+| [Architecture](https://chesterra.github.io/cccc/reference/architecture) | Design decisions and system model |
+| [Features Deep Dive](https://chesterra.github.io/cccc/reference/features) | Messaging, automation, runtimes in detail |
 | [CCCS Standard](docs/standards/CCCS_V1.md) | Collaboration protocol specification |
 | [Daemon IPC Standard](docs/standards/CCCC_DAEMON_IPC_V1.md) | IPC protocol specification |
 

@@ -8,8 +8,8 @@ Most questions are answered by these resources:
 |----------|---------------|
 | `cccc doctor` | Environment check — verifies Python, runtimes, daemon status |
 | `cccc --help` | Complete CLI command reference |
-| [Online docs](https://dweb-channel.github.io/cccc/) | Getting started, use cases, operations runbook, architecture |
-| [FAQ](https://dweb-channel.github.io/cccc/guide/faq) | Common questions and troubleshooting |
+| [Online docs](https://chesterra.github.io/cccc/) | Getting started, use cases, operations runbook, architecture |
+| [FAQ](https://chesterra.github.io/cccc/guide/faq) | Common questions and troubleshooting |
 
 ## Bug Reports
 
@@ -41,4 +41,4 @@ Please report security vulnerabilities privately. See [SECURITY.md](SECURITY.md)
 
 - CCCC is **local-first**. All runtime state lives under `CCCC_HOME` (default `~/.cccc/`), not in your repository.
 - The daemon is the single source of truth. If something looks wrong, check `cccc daemon status` first.
-- For recovery procedures, see the [Operations Runbook](https://dweb-channel.github.io/cccc/guide/operations).
+- For recovery procedures, see the [Operations Runbook](https://chesterra.github.io/cccc/guide/operations).

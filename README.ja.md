@@ -15,7 +15,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
+[![Docs](https://img.shields.io/badge/docs-online-blue)](https://chesterra.github.io/cccc/)
 
 [English](README.md) | [中文](README.zh-CN.md) | **日本語**
 
@@ -335,19 +335,19 @@ CCCC は**協調カーネル** — 協調レイヤーを担い、外部の CI/CD
 
 ## ドキュメント
 
-📚 **[完全なドキュメント](https://dweb-channel.github.io/cccc/)**
+📚 **[完全なドキュメント](https://chesterra.github.io/cccc/)**
 
 | セクション | 説明 |
 |-----------|------|
-| [クイックスタート](https://dweb-channel.github.io/cccc/guide/getting-started/) | インストール、起動、最初のグループ作成 |
-| [ユースケース](https://dweb-channel.github.io/cccc/guide/use-cases) | 実践的なマルチエージェントシナリオ |
-| [Web UI ガイド](https://dweb-channel.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
-| [IM ブリッジ設定](https://dweb-channel.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Feishu、DingTalk の接続 |
-| [運用ランブック](https://dweb-channel.github.io/cccc/guide/operations) | 復旧、トラブルシューティング、メンテナンス |
-| [CLI リファレンス](https://dweb-channel.github.io/cccc/reference/cli) | 完全なコマンドリファレンス |
+| [クイックスタート](https://chesterra.github.io/cccc/guide/getting-started/) | インストール、起動、最初のグループ作成 |
+| [ユースケース](https://chesterra.github.io/cccc/guide/use-cases) | 実践的なマルチエージェントシナリオ |
+| [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
+| [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Feishu、DingTalk の接続 |
+| [運用ランブック](https://chesterra.github.io/cccc/guide/operations) | 復旧、トラブルシューティング、メンテナンス |
+| [CLI リファレンス](https://chesterra.github.io/cccc/reference/cli) | 完全なコマンドリファレンス |
 | [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 公式クライアントでアプリ/サービスから daemon を利用 |
-| [アーキテクチャ](https://dweb-channel.github.io/cccc/reference/architecture) | 設計決定とシステムモデル |
-| [機能詳細](https://dweb-channel.github.io/cccc/reference/features) | メッセージング、オートメーション、ランタイムの詳細 |
+| [アーキテクチャ](https://chesterra.github.io/cccc/reference/architecture) | 設計決定とシステムモデル |
+| [機能詳細](https://chesterra.github.io/cccc/reference/features) | メッセージング、オートメーション、ランタイムの詳細 |
 | [CCCS 標準](docs/standards/CCCS_V1.md) | 協調プロトコル仕様 |
 | [Daemon IPC 標準](docs/standards/CCCC_DAEMON_IPC_V1.md) | IPC プロトコル仕様 |
 
