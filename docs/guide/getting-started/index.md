@@ -105,6 +105,7 @@ This checks Python version, available runtimes, and system configuration.
 - [Web UI Quick Start](./web) - Get started with the visual interface
 - [CLI Quick Start](./cli) - Get started with the command line
 - [Docker Deployment](./docker) - Deploy CCCC in a Docker container
+- [SDK Overview](/sdk/) - Integrate CCCC into external apps/services
 - [Use Cases](/guide/use-cases) - Learn high-ROI real-world patterns
 - [Operations Runbook](/guide/operations) - Run CCCC with operator-grade reliability
 - [Positioning](/reference/positioning) - Decide where CCCC should sit in your stack

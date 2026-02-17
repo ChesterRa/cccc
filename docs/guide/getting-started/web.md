@@ -69,7 +69,7 @@ The agent's terminal output appears in the tab.
    ```
    Hello! Please introduce yourself.
    ```
-3. Press Enter or click Send
+3. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
 
 ## Step 8: Watch the Agent Work
 

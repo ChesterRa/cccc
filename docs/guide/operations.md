@@ -50,7 +50,7 @@ Useful commands:
 ```bash
 cccc daemon status
 cccc actor list
-cccc inbox
+cccc inbox --actor-id <actor_id>
 cccc tail -n 100 -f
 ```
 

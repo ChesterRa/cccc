@@ -128,8 +128,7 @@ cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
 cccc im start
 
 # Start the task
-cccc send "@foreman Please refactor the entire authentication module.
-Report progress every hour."
+cccc send "Please refactor the entire authentication module. Report progress every hour." --to @foreman
 ```
 
 ### Monitoring

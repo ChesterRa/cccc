@@ -61,7 +61,7 @@ cccc tail -f
 Or check inbox:
 
 ```bash
-cccc inbox
+cccc inbox --actor-id assistant
 ```
 
 ## Adding More Agents
@@ -76,9 +76,9 @@ cccc actor start reviewer
 Send to specific agents:
 
 ```bash
-cccc send "@assistant Please implement the feature"
-cccc send "@reviewer Please review the code"
-cccc send "@all Status update please"
+cccc send "Please implement the feature" --to assistant
+cccc send "Please review the code" --to reviewer
+cccc send "Status update please" --to @all
 ```
 
 ## Reply to Messages
@@ -95,7 +95,8 @@ cccc reply evt_abc123 "Thanks, that looks good!"
 ```bash
 cccc groups              # List all groups
 cccc use <group_id>      # Switch group
-cccc group info          # Show current group
+cccc active              # Show active group
+cccc group show <group_id> # Show group metadata
 cccc group start         # Start all agents
 cccc group stop          # Stop all agents
 ```
@@ -114,11 +115,11 @@ cccc actor remove <id>             # Remove actor
 ### Messaging
 
 ```bash
-cccc send "message"                # Broadcast
+cccc send "message"                # No --to: default recipient policy applies (default: foreman)
 cccc send "msg" --to @all          # Explicit broadcast
 cccc send "msg" --to assistant     # To specific actor
 cccc reply <event_id> "response"   # Reply to message
-cccc inbox                         # View unread
+cccc inbox --actor-id assistant    # View unread for one actor
 cccc tail -n 50                    # Recent events
 cccc tail -f                       # Follow events
 ```
@@ -129,7 +130,6 @@ cccc tail -f                       # Follow events
 cccc daemon status    # Check status
 cccc daemon start     # Start daemon
 cccc daemon stop      # Stop daemon
-cccc daemon logs -f   # Follow logs
 ```
 
 ## Start Web UI (Optional)
@@ -174,7 +174,7 @@ cccc tail -f
 
 # Interact
 cccc reply evt_123 "Use JWT tokens please"
-cccc send "@dev What's the progress?"
+cccc send "What's the progress?" --to dev
 
 # Cleanup
 cccc group stop

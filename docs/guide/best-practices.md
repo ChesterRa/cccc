@@ -211,7 +211,7 @@ Periodically check:
 1. Check the terminal tab for errors
 2. Verify MCP setup: `cccc setup --runtime <name>`
 3. Try restarting: click Restart in Web UI
-4. Check daemon logs: `cccc daemon logs -f`
+4. Check daemon health + recent events: `cccc daemon status` and `cccc tail -n 100`
 
 ### Messages Not Delivered
 

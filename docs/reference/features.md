@@ -15,6 +15,7 @@ Detailed feature documentation for CCCC.
 
 ```bash
 # CLI
+cccc send "Hello"                 # No --to: default recipient policy applies (default foreman)
 cccc send "Hello" --to @all
 cccc reply <event_id> "Reply text"
 
@@ -98,7 +99,7 @@ im:
 | `/help` | Show help |
 
 Notes:
-- Messaging requires explicit `/send`. Plain chat is ignored.
+- In direct chats and in group chats where the bot is @mentioned, plain text is treated as implicit send to the default recipient policy (default: foreman).
 - In channels (Slack/Discord), mention the bot and then use `/send` (to avoid platform slash-commands).
 - You can configure the default recipient behavior in Web UI: Settings → Messaging → Default Recipient.
 
@@ -197,7 +198,33 @@ Notes:
 
 | Config | Default | Description |
 |--------|---------|-------------|
-| `min_interval_seconds` | 60s | Minimum interval between consecutive deliveries |
+| `min_interval_seconds` | 0s | Minimum interval between consecutive deliveries (`0` disables throttling) |
+
+## Runtime-Only Actor Secrets
+
+CCCC supports per-actor private environment variables for runtime customization (different model/API stacks per actor).
+
+- Stored in runtime state under `CCCC_HOME/state/secrets/actors/`
+- Not written into the group ledger
+- Not included in group templates/blueprints
+- Visible as key metadata only (values are never returned by read APIs)
+
+CLI surface:
+
+```bash
+cccc actor secrets <actor_id> --set KEY=VALUE
+cccc actor secrets <actor_id> --unset KEY
+cccc actor secrets <actor_id> --keys
+```
+
+## Blueprint / Group Template
+
+CCCC Web supports blueprint export/import for portable group setup.
+
+- Export captures actors, settings, automation rules/snippets, and guidance overrides.
+- Import uses replace semantics (applies the incoming configuration as the new group setup).
+- Ledger history is preserved (import does not rewrite historical events).
+- Environment secrets are intentionally excluded.
 
 ### MCP Management Surface
 

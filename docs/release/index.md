@@ -1,8 +1,10 @@
-# RC19 Release Program
+# Release Hub
 
-This section tracks the `v0.4.0rc19` release program from full-system audit to publish.
+Current stable line:
 
-## Documents
+- [v0.4.0 Release Notes](./v0.4.0_release_notes)
+
+Program artifacts (kept for audit/reproducibility):
 
 - [Technical Debt Board (`0.4.0`)](./DEBT_BOARD_0_4_0)
 - [RC19 Release Board](./RC19_RELEASE_BOARD)
@@ -17,13 +19,9 @@ This section tracks the `v0.4.0rc19` release program from full-system audit to p
 - [Rehearsal Report (R8)](./rc19_rehearsal_report)
 - [File Inventory Matrix (generated)](./rc19_file_matrix)
 
-## Quick Start
-
-Generate the latest full-file matrix and assign default owners:
+Maintenance helpers:
 
 ```bash
 ./scripts/release/gen_rc19_file_matrix.sh
 ./scripts/release/assign_rc19_matrix_owners.sh
 ```
-
-Then execute phases in `RC19_RELEASE_BOARD.md` in order (`R0` -> `R9`).

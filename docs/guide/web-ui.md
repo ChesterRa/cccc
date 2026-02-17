@@ -38,7 +38,7 @@ Click on a group in the sidebar to switch.
 1. Click the **Settings** icon in the header
 2. Configure:
    - Group title
-   - Guidance (preamble/help/standup, etc.)
+   - Guidance (preamble/help)
    - Automation rules and engine policies
    - Delivery and messaging defaults
    - IM Bridge settings
@@ -67,7 +67,7 @@ Click on an agent's tab to see its terminal output.
 ### Sending Messages
 
 1. Type in the message input at the bottom
-2. Press Enter or click Send
+2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
 
 ### @Mentions
 

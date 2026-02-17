@@ -23,6 +23,7 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/' },
       { text: 'Reference', link: '/reference/architecture' },
+      { text: 'SDK', link: '/sdk/' },
       { text: 'Release', link: '/release/' }
     ],
 
@@ -79,11 +80,21 @@ export default defineConfig({
           ]
         }
       ],
+      '/sdk/': [
+        {
+          text: 'SDK',
+          items: [
+            { text: 'Overview', link: '/sdk/' },
+            { text: 'Client SDK', link: '/sdk/CLIENT_SDK' }
+          ]
+        }
+      ],
       '/release/': [
         {
-          text: 'Release Program',
+          text: 'Release Hub',
           items: [
             { text: 'Overview', link: '/release/' },
+            { text: 'v0.4.0 Release Notes', link: '/release/v0.4.0_release_notes' },
             { text: 'Technical Debt Board (0.4.0)', link: '/release/DEBT_BOARD_0_4_0' },
             { text: 'RC19 Release Board', link: '/release/RC19_RELEASE_BOARD' },
             { text: 'Audit Method', link: '/release/RC19_AUDIT_METHOD' },

@@ -128,9 +128,9 @@ cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 Send a message.
 
 ```bash
-cccc send "Hello"                  # Broadcast to all
+cccc send "Hello"                  # No --to: default recipient policy applies (default: foreman)
 cccc send "Hello" --to @all        # Explicit broadcast
-cccc send "Hello" --to foreman     # Send to foreman
+cccc send "Hello" --to @foreman    # Send to foreman
 cccc send "Hello" --to peer-1      # Send to specific actor
 ```
 
@@ -171,8 +171,8 @@ Manage IM Bridge.
 cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
 cccc im set slack --bot-token-env SLACK_BOT_TOKEN --app-token-env SLACK_APP_TOKEN
 cccc im set discord --token-env DISCORD_BOT_TOKEN
-cccc im set feishu --app-id-env FEISHU_APP_ID --app-secret-env FEISHU_APP_SECRET
-cccc im set dingtalk --app-key-env DINGTALK_APP_KEY --app-secret-env DINGTALK_APP_SECRET
+cccc im set feishu --app-key-env FEISHU_APP_ID --app-secret-env FEISHU_APP_SECRET
+cccc im set dingtalk --app-key-env DINGTALK_APP_KEY --app-secret-env DINGTALK_APP_SECRET --robot-code-env DINGTALK_ROBOT_CODE
 
 cccc im start                      # Start IM bridge
 cccc im stop                       # Stop IM bridge

@@ -15,6 +15,9 @@ hero:
     - theme: alt
       text: High-ROI Use Cases
       link: /guide/use-cases
+    - theme: alt
+      text: SDK Integration
+      link: /sdk/
 
 features:
   - icon: 🤖

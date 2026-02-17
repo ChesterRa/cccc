@@ -93,7 +93,7 @@ cccc actor add my-agent --runtime custom --command "my-custom-cli"
 ### How do I send a message to a specific agent?
 
 ```bash
-cccc send "@agent-name Please do X"
+cccc send "Please do X" --to agent-name
 ```
 
 Or in the Web UI, type `@agent-name` in your message.

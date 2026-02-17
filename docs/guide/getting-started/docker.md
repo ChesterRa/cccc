@@ -19,7 +19,7 @@ and pre-installed AI agent CLIs (Claude Code, Gemini CLI, Codex CLI, Factory CLI
 ## Step 1: Get the source code
 Ask: "Do you already have the CCCC repo cloned? If yes, what's the path?"
 If no:
-  git clone https://github.com/dweb-channel/cccc && cd cccc
+  git clone https://github.com/ChesterRa/cccc && cd cccc
 
 ## Step 2: Build the image
   docker build -f docker/Dockerfile -t cccc .
@@ -94,7 +94,7 @@ If user prefers Compose, point them to the bundled docker/docker-compose.yml:
 ### 1. Build the Image
 
 ```bash
-git clone https://github.com/dweb-channel/cccc
+git clone https://github.com/ChesterRa/cccc
 cd cccc
 docker build -f docker/Dockerfile -t cccc .
 ```
