@@ -271,8 +271,12 @@ export function AgentTab({
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Initial fit
-    setTimeout(() => fitAddon.fit(), 0);
+    // Initial fit — use requestAnimationFrame to wait for layout completion
+    requestAnimationFrame(() => {
+      if (termRef.current && termRef.current.clientWidth > 50) {
+        fitAddon.fit();
+      }
+    });
 
     return () => {
       term.element?.removeEventListener("contextmenu", onContextMenu);
@@ -352,9 +356,10 @@ export function AgentTab({
         }, TERMINAL_SHOW_DELAY_MS);
 
         // Send initial resize (ops mode only). Exhibit should be view-only and not affect PTY size.
+        // Guard against sending tiny cols (layout not yet complete) which would break line wrapping.
         if (canControl) {
           const term = terminalRef.current;
-          if (term) {
+          if (term && term.cols >= 10) {
             ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
           }
         }
@@ -584,7 +589,7 @@ export function AgentTab({
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const fit = () => {
-      if (fitAddonRef.current) {
+      if (fitAddonRef.current && termRef.current && termRef.current.clientWidth > 0) {
         fitAddonRef.current.fit();
       }
     };
@@ -600,8 +605,18 @@ export function AgentTab({
 
     // Fit on window resize (debounced)
     window.addEventListener("resize", debouncedFit);
+
+    // Observe container resize to catch layout changes (e.g. sidebar toggle, split pane)
+    const container = termRef.current;
+    let ro: ResizeObserver | null = null;
+    if (container) {
+      ro = new ResizeObserver(() => debouncedFit());
+      ro.observe(container);
+    }
+
     return () => {
       window.removeEventListener("resize", debouncedFit);
+      if (ro) ro.disconnect();
       if (resizeTimeout) clearTimeout(resizeTimeout);
     };
   }, [isVisible]);

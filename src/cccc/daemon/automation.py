@@ -6,9 +6,9 @@ Automation levels:
 3. Rule-level: user-defined automation rules (scheduled system notifications)
 
 All automation respects group state:
-- active: All automation enabled
-- idle: Automation disabled (task complete, waiting for new work)
-- paused: Automation disabled (user paused)
+- active: All automation enabled (Level 1-4)
+- idle: Only user-defined rules (Level 4) run; internal automation (Level 1-3) disabled
+- paused: All automation disabled
 """
 from __future__ import annotations
 
@@ -670,10 +670,20 @@ class AutomationManager:
                 or headless_runner.SUPERVISOR.group_running(gid)
             ):
                 continue
-            # Check group state - skip automation if not active
+            # Check group state - gate automation by state
             state = get_group_state(group)
-            if state != "active":
+            if state == "paused":
+                continue  # paused: all automation disabled
+            if state == "idle":
+                # idle: only run user-defined rules (Level 4);
+                # internal automation (Level 1-3) stays silent
+                try:
+                    now = datetime.now(timezone.utc)
+                    self._check_rules(group, now)
+                except Exception:
+                    pass
                 continue
+            # active: run all automation (Level 1-4)
             try:
                 self._tick_group(group)
             except Exception:

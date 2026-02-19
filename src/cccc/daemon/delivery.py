@@ -14,7 +14,7 @@ Key design decisions:
 
 Group State Behavior:
 - active: All messages delivered normally
-- idle: chat.message delivered (auto-transitions to active), system.notify blocked
+- idle: chat.message + system.notify delivered (no auto state transition)
 - paused: All PTY delivery blocked (messages accumulate in inbox only)
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ def should_deliver_message(group: Group, kind: str) -> bool:
     
     State behavior:
         - active: All messages delivered
-        - idle: chat.message delivered, system.notify blocked (no auto state transition here)
+        - idle: chat.message + system.notify delivered (no auto state transition here)
         - paused: All messages blocked (inbox only)
     """
     state = get_group_state(group)
@@ -108,13 +108,14 @@ def should_deliver_message(group: Group, kind: str) -> bool:
         return False
     
     if state == "idle":
-        # Idle: only chat.message allowed (system.notify blocked).
+        # Idle: chat.message + system.notify allowed (so user-defined rule
+        # notifications can reach PTY actors); other kinds blocked.
         #
         # IMPORTANT: Do NOT auto-transition to active here. Waking an idle group is
         # handled at message-ingest time (e.g. user sends a new message), otherwise
         # agent-to-agent chatter or delayed/throttled deliveries can accidentally
         # flip idle -> active and re-enable automation.
-        return kind == "chat.message"
+        return kind in ("chat.message", "system.notify")
     
     # Active: all messages delivered
     return True

@@ -35,6 +35,8 @@ def handle_term_resize(args: Dict[str, Any]) -> DaemonResponse:
         return _error("missing_group_id", "missing group_id")
     if not actor_id:
         return _error("missing_actor_id", "missing actor_id")
+    if cols < 10 or rows < 2:
+        return _error("invalid_size", f"cols={cols} rows={rows} too small")
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
