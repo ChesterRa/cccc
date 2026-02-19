@@ -64,7 +64,12 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Remote operations** | Bridge to Telegram, Slack, Discord, Feishu, or DingTalk — manage groups from your phone |
 
-![CCCC Chat UI](screenshots/chat.png)
+
+## How CCCC looks
+
+> [!TIP]
+> **View the tutorial video to see CCCC in action:**
+> https://github.com/user-attachments/assets/8f9c3986-f1ba-4e59-a114-bcb383ff49a7
 
 ## Quick Start
 

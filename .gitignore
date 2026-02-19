@@ -43,15 +43,9 @@ uv.lock
 # Local iteration notes (not shipped)
 /docs/ITERATION_PLAN.md
 
+/docs/plan/
 # Docs: legacy vnext - whitelist only what we ship
-!/docs/vnext/
 /docs/vnext/*
-!/docs/vnext/README.md
-!/docs/vnext/STATUS.md
-!/docs/vnext/ARCHITECTURE.md
-!/docs/vnext/FEATURES.md
-!/docs/vnext/RELEASE.md
-/old_v0.3.28/
 
 # Tests
 
