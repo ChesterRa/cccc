@@ -123,6 +123,10 @@ def handle_actor_stop(
         by=by,
         data={"actor_id": actor_id},
     )
+
+    from ...kernel.events import publish_event
+    publish_event("actor.stopped", {"group_id": group.group_id, "actor_id": actor_id})
+
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
 
@@ -238,6 +242,13 @@ def handle_actor_restart(
             except Exception:
                 pass
 
+    try:
+        if group.doc.get("state") in ("paused", "idle"):
+            group.doc["state"] = "active"
+            group.save()
+    except Exception:
+        pass
+
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     event = append_event(
         group.ledger_path,
@@ -247,6 +258,10 @@ def handle_actor_restart(
         by=by,
         data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
     )
+
+    from ...kernel.events import publish_event
+    publish_event("actor.restarted", {"group_id": group.group_id, "actor_id": actor_id})
+
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
 

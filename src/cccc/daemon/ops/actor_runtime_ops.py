@@ -100,6 +100,8 @@ def start_actor_process(
 
     try:
         group.doc["running"] = True
+        if group.doc.get("state") in ("paused", "idle"):
+            group.doc["state"] = "active"
         group.save()
     except Exception:
         pass
@@ -115,6 +117,9 @@ def start_actor_process(
         by=by,
         data=start_data,
     )
+
+    from ...kernel.events import publish_event
+    publish_event("actor.started", {"group_id": group.group_id, "actor_id": actor_id})
 
     return {
         "success": True,
