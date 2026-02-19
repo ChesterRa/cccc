@@ -67,9 +67,12 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 
 ## How CCCC looks
 
-> [!TIP]
-> **View the tutorial video to see CCCC in action:**
-> https://github.com/user-attachments/assets/8f9c3986-f1ba-4e59-a114-bcb383ff49a7
+<div align="center">
+
+<video src="https://github.com/user-attachments/assets/8f9c3986-f1ba-4e59-a114-bcb383ff49a7" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
+</video>
+
+</div>
 
 ## Quick Start
 
