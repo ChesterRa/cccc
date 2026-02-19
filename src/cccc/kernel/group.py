@@ -401,7 +401,7 @@ def set_group_state(group: Group, *, state: str) -> Group:
     
     States:
     - active: Normal operation, all automation enabled
-    - idle: Task completed, automation disabled, actors stay running but don't work proactively
+    - idle: Task completed; internal automation is muted while user-defined scheduled rules may still run
     - paused: User paused, all automation disabled
     
     State transitions:

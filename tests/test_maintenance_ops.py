@@ -82,6 +82,44 @@ class TestMaintenanceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_term_resize_rejects_tiny_size(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "resize", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            tiny, _ = self._call(
+                "term_resize",
+                {"group_id": group_id, "actor_id": "peer1", "cols": 9, "rows": 1},
+            )
+            self.assertFalse(tiny.ok)
+            self.assertEqual(str(getattr(tiny.error, "code", "") or ""), "invalid_size")
+        finally:
+            cleanup()
+
+    def test_term_resize_accepts_minimum_supported_size(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "resize-min", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            ok, _ = self._call(
+                "term_resize",
+                {"group_id": group_id, "actor_id": "peer1", "cols": 10, "rows": 2},
+            )
+            self.assertTrue(ok.ok, getattr(ok, "error", None))
+            result = ok.result if isinstance(ok.result, dict) else {}
+            self.assertIsInstance(result, dict)
+            assert isinstance(result, dict)
+            self.assertEqual(int(result.get("cols") or 0), 10)
+            self.assertEqual(int(result.get("rows") or 0), 2)
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

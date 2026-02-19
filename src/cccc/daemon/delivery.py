@@ -753,7 +753,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
 
     Respects group state:
     - active: All messages delivered
-    - idle: chat.message delivered (auto-transitions to active), system.notify blocked
+    - idle: chat.message + system.notify delivered (state remains idle)
     - paused: All messages blocked (stay in queue for later)
 
     Returns True if messages were delivered.

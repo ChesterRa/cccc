@@ -592,9 +592,9 @@ class AutomationManager:
     2. Session-level: actor idle detection, keepalive, group silence detection
     
     Automation respects group state:
-    - active: All automation enabled
-    - idle: Automation disabled (task complete, waiting for new work)
-    - paused: Automation disabled (user paused)
+    - active: All automation levels enabled (Level 1-4)
+    - idle: Only user-defined rules enabled (Level 4); internal automation (Level 1-3) stays silent
+    - paused: All automation disabled
     """
     
     def __init__(self) -> None:

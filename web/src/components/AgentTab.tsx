@@ -359,7 +359,7 @@ export function AgentTab({
         // Guard against sending tiny cols (layout not yet complete) which would break line wrapping.
         if (canControl) {
           const term = terminalRef.current;
-          if (term && term.cols >= 10) {
+          if (term && term.cols >= 10 && term.rows >= 2) {
             ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
           }
         }
@@ -545,7 +545,7 @@ export function AgentTab({
 
         // Handle terminal resize - send as JSON with type "r" (resize)
         resizeDisposable = term.onResize(({ cols, rows }) => {
-          if (ws.readyState === WebSocket.OPEN) {
+          if (ws.readyState === WebSocket.OPEN && cols >= 10 && rows >= 2) {
             ws.send(JSON.stringify({ t: "r", c: cols, r: rows }));
           }
         });

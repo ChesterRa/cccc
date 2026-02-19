@@ -2241,7 +2241,7 @@ def create_app() -> FastAPI:
                         except Exception:
                             cols = 0
                             rows = 0
-                        if cols > 0 and rows > 0:
+                        if cols >= 10 and rows >= 2:
                             await asyncio.to_thread(
                                 call_daemon,
                                 {"op": "term_resize", "args": {"group_id": group_id, "actor_id": actor_id, "cols": cols, "rows": rows}},

@@ -474,7 +474,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_group_set_state",
-        "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete, automation disabled), paused (user paused), stopped (stop all actor runtimes). Foreman should set to 'idle' when task is complete.",
+        "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete; internal automation is muted while scheduled rules still run), paused (user pause; all automation blocked), stopped (stop all actor runtimes). Foreman should set to 'idle' when task is complete.",
         "inputSchema": {
             "type": "object",
             "properties": {

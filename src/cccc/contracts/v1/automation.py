@@ -1,6 +1,10 @@
 """Automation rule contracts (group-scoped).
 
-Rules are evaluated only while group state == active and do not execute arbitrary code.
+Rules do not execute arbitrary code.
+State gating:
+- active: all automation levels may run
+- idle: only user-defined rules run (internal automation stays silent)
+- paused: all automation is disabled
 Action kinds are declarative and validated by contract:
 - notify: send system.notify to selected recipients
 - group_state: set group state (or stop group runtime)
