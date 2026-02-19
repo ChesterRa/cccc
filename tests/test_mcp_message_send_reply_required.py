@@ -1,5 +1,10 @@
+import os
 import unittest
 from unittest.mock import patch
+
+# Env vars that _resolve_group_id / _resolve_self_actor_id read at runtime.
+# Tests must isolate from the host environment to avoid group_id_mismatch.
+_CLEAN_ENV = {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}
 
 
 class TestMcpMessageSendReplyRequired(unittest.TestCase):
@@ -13,7 +18,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             captured["req"] = req
             return {"ok": True, "result": {"event_id": "ev_test"}}
 
-        with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_message_send",
                 {

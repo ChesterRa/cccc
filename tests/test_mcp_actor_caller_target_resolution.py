@@ -64,7 +64,7 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.common import MCPError
 
-        with patch.dict(os.environ, {}, clear=False):
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False):
             with self.assertRaises(MCPError) as raised:
                 mcp_server.handle_tool_call(
                     "cccc_actor_add",
