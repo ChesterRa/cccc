@@ -70,6 +70,8 @@
   "command": "命令",
   "runtimeChangesNote": "运行时/命令更改在重启后生效。使用\"保存并重启\"立即应用。",
   "configuredKeys": "已配置的密钥：",
+  "hoverToPreviewMasked": "鼠标悬停在密钥名上可查看掩码预览。",
+  "maskedPreview": "掩码预览",
   "noKeysConfigured": "未配置密钥。",
   "secretsAppliedNote": "密钥在点击 <1>保存并重启</1> 后应用。",
   "setUpdate": "设置/更新（支持 KEY=VALUE、export、引号、分号）",

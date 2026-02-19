@@ -111,7 +111,7 @@ class TestActorPrivateEnv(unittest.TestCase):
                                 "group_id": group_id,
                                 "actor_id": "peer1",
                                 "by": "user",
-                                "set": {"OPENAI_API_KEY": "secret", "ANTHROPIC_API_KEY": "a"},
+                                "set": {"OPENAI_API_KEY": "supersecret", "ANTHROPIC_API_KEY": "a"},
                             },
                         }
                     )
@@ -129,6 +129,12 @@ class TestActorPrivateEnv(unittest.TestCase):
                 )
                 self.assertTrue(listed.ok, getattr(listed, "error", None))
                 self.assertEqual(set(listed.result.get("keys") or []), set(keys))
+                masked = listed.result.get("masked_values") if isinstance(listed.result, dict) else {}
+                self.assertIsInstance(masked, dict)
+                assert isinstance(masked, dict)
+                self.assertEqual(str(masked.get("OPENAI_API_KEY") or ""), "su******et")
+                self.assertEqual(str(masked.get("ANTHROPIC_API_KEY") or ""), "******")
+                self.assertNotIn("supersecret", str(masked))
 
                 # File exists under CCCC_HOME/state/... and is user-only on POSIX.
                 secret_dir = Path(td) / "state" / "secrets" / "actors" / group_id
@@ -140,7 +146,7 @@ class TestActorPrivateEnv(unittest.TestCase):
 
                 # Private env overlays actor.env (private wins).
                 merged = _merge_actor_env_with_private(group_id, "peer1", {"OPENAI_API_KEY": "public", "X": "1"})
-                self.assertEqual(merged.get("OPENAI_API_KEY"), "secret")
+                self.assertEqual(merged.get("OPENAI_API_KEY"), "supersecret")
                 self.assertEqual(merged.get("X"), "1")
 
                 # Unset one key.

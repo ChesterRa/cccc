@@ -70,6 +70,8 @@
   "command": "Command",
   "runtimeChangesNote": "Runtime/command changes take effect after restart. Use \"Save & Restart\" to apply immediately.",
   "configuredKeys": "Configured keys:",
+  "hoverToPreviewMasked": "Hover a key to preview a masked value.",
+  "maskedPreview": "Masked preview",
   "noKeysConfigured": "No keys configured.",
   "secretsAppliedNote": "Secrets are applied when you click <1>Save & Restart</1> below.",
   "setUpdate": "Set / Update (supports KEY=VALUE, export, quotes, semicolons)",

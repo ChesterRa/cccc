@@ -66,6 +66,18 @@ def coerce_private_env_value(value: Any) -> str:
     return v
 
 
+def mask_private_env_value(value: Any) -> str:
+    """Return a stable masked preview for UI metadata.
+
+    This never returns the original value. Short values are fully masked.
+    Longer values keep a tiny prefix/suffix to help users distinguish entries.
+    """
+    raw = str(value or "")
+    if len(raw) <= 6:
+        return "******"
+    return f"{raw[:2]}******{raw[-2:]}"
+
+
 def _private_env_path(group_id: str, actor_id: str) -> Path:
     home = ensure_home()
     gdir = _private_env_group_dir(home, group_id=group_id)

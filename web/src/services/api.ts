@@ -453,7 +453,7 @@ export async function restartActor(groupId: string, actorId: string) {
 }
 
 export async function fetchActorPrivateEnvKeys(groupId: string, actorId: string) {
-  return apiJson<{ group_id: string; actor_id: string; keys: string[] }>(
+  return apiJson<{ group_id: string; actor_id: string; keys: string[]; masked_values?: Record<string, string> }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/env_private?by=user`
   );
 }

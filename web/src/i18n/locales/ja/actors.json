@@ -70,6 +70,8 @@
   "command": "コマンド",
   "runtimeChangesNote": "ランタイム/コマンドの変更は再起動後に反映されます。「保存して再起動」で即時適用できます。",
   "configuredKeys": "設定されたキー：",
+  "hoverToPreviewMasked": "キーにマウスオーバーすると、マスク済みの値を確認できます。",
+  "maskedPreview": "マスク表示",
   "noKeysConfigured": "キーが設定されていません。",
   "secretsAppliedNote": "シークレットは、下の <1>保存して再起動</1> をクリックすると適用されます。",
   "setUpdate": "設定 / 更新（KEY=VALUE、export、引用符、セミコロン対応）",

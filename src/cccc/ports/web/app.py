@@ -2056,7 +2056,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/actors/{actor_id}/env_private")
     async def actor_env_private_keys(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
-        """List configured private env keys (never returns values)."""
+        """List configured private env keys + masked previews (never returns raw values)."""
         if read_only:
             raise HTTPException(
                 status_code=403,

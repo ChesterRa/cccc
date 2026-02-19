@@ -65,6 +65,7 @@ export function EditActorModal({
   const { t } = useTranslation('actors');
   const { modalRef } = useModalA11y(isOpen, onCancel);
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
+  const [secretMasks, setSecretMasks] = useState<Record<string, string>>({});
   const [secretsSetText, setSecretsSetText] = useState("");
   const [secretsUnsetText, setSecretsUnsetText] = useState("");
   const [secretsClearAll, setSecretsClearAll] = useState(false);
@@ -80,11 +81,17 @@ export function EditActorModal({
       setSecretsError(resp.error?.message || t('failedToLoadSecrets'));
       return;
     }
-    setSecretKeys(Array.isArray(resp.result?.keys) ? resp.result.keys : []);
+    const keys = Array.isArray(resp.result?.keys) ? resp.result.keys : [];
+    const masked = (resp.result?.masked_values && typeof resp.result.masked_values === "object")
+      ? resp.result.masked_values
+      : {};
+    setSecretKeys(keys);
+    setSecretMasks(masked);
   };
 
   useEffect(() => {
     setSecretsError("");
+    setSecretMasks({});
     setSecretsSetText("");
     setSecretsUnsetText("");
     setSecretsClearAll(false);
@@ -308,8 +315,22 @@ export function EditActorModal({
               {t('secretsStoredLocallyEdit').replace(/<1>|<\/1>/g, '')}{" "}
               {secretKeys.length ? (
                 <>
-                  {t('configuredKeys')}{" "}
-                  <span className={isDark ? "text-slate-300" : "text-gray-700"}>{secretKeys.join(", ")}</span>
+                  {t('configuredKeys')}
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {secretKeys.map((key) => {
+                      const masked = String(secretMasks[key] || "******");
+                      return (
+                        <span
+                          key={key}
+                          className={`inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-[10px] ${isDark ? "border-slate-600/50 text-slate-200 bg-slate-900/70" : "border-gray-300 text-gray-700 bg-gray-50"}`}
+                          title={`${t("maskedPreview")}: ${masked}`}
+                        >
+                          {key}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-1">{t('hoverToPreviewMasked')}</div>
                 </>
               ) : (
                 <>{t('noKeysConfigured')}</>

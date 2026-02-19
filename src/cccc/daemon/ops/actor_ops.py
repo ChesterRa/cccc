@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor, get_effective_role, list_actors
 from ...kernel.group import load_group
+from ..private_env_ops import mask_private_env_value
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -73,8 +74,18 @@ def handle_actor_env_private_keys(
         return _error("group_not_found", f"group not found: {group_id}")
     if find_actor(group, actor_id) is None:
         return _error("actor_not_found", f"actor not found: {actor_id}")
-    keys = sorted(load_actor_private_env(group_id, actor_id).keys())
-    return DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id, "keys": keys})
+    private_env = load_actor_private_env(group_id, actor_id)
+    keys = sorted(private_env.keys())
+    masked_values = {k: mask_private_env_value(v) for k, v in private_env.items()}
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "keys": keys,
+            "masked_values": masked_values,
+        },
+    )
 
 
 def handle_actor_env_private_update(
