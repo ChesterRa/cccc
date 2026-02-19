@@ -167,8 +167,6 @@ def handle_group_start(
     if started:
         try:
             group.doc["running"] = True
-            if group.doc.get("state") in ("paused", "idle"):
-                group.doc["state"] = "active"
             group.save()
         except Exception:
             pass
