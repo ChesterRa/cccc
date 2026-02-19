@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="screenshots/logo.png" width="160" />
+
 # CCCC
 
 ### 本地优先多智能体协作内核
@@ -51,7 +53,7 @@ SDK 客户端会连接同一个 CCCC daemon，并共享同一个 `CCCC_HOME` 运
 
 这些不是小问题。它们是绝大多数多智能体方案停留在"脆弱 demo"阶段的根本原因。
 
-## CCCC 做什么
+## CCCC 能做什么
 
 CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不需要消息队列、不强制 Docker。但它提供的运维可靠性，媲美生产级消息系统：
 
@@ -64,7 +66,14 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **远程运维** | 桥接至 Telegram、Slack、Discord、飞书、钉钉 — 手机上即可管理协作组 |
 
-![CCCC Chat UI](screenshots/chat.png)
+## CCCC 长什么样
+
+<div align="center">
+
+<video src="https://github.com/user-attachments/assets/8f9c3986-f1ba-4e59-a114-bcb383ff49a7" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
+</video>
+
+</div>
 
 ## 快速上手
 

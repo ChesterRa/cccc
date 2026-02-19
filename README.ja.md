@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="screenshots/logo.png" width="160" />
+
 # CCCC
 
 ### ローカルファースト・マルチエージェント協調カーネル
@@ -57,7 +59,14 @@ CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データ�
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **リモート運用** | Telegram、Slack、Discord、Feishu、DingTalk にブリッジ — スマートフォンからグループを管理 |
 
-![CCCC Chat UI](screenshots/chat.png)
+## CCCC の見た目
+ 
+<div align="center">
+ 
+<video src="https://github.com/user-attachments/assets/8f9c3986-f1ba-4e59-a114-bcb383ff49a7" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
+</video>
+ 
+</div>
 
 ## クイックスタート
 

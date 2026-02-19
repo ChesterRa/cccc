@@ -1,8 +1,10 @@
 <div align="center">
 
+<img src="screenshots/logo.png" width="160" />
+
 # CCCC
 
-### Local-First Multi-Agent Collaboration Kernel
+### Local-first Multi-agent Collaboration Kernel
 
 **A lightweight multi-agent framework with infrastructure-grade reliability.**
 
