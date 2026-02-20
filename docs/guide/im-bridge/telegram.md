@@ -98,16 +98,24 @@ Verify it's running:
 cccc im status
 ```
 
-### Subscribe in Telegram
+### Authorize & Subscribe in Telegram
+
+New chats must be authorized before they can use the bot:
 
 1. Open Telegram and find your bot (search by username)
 2. Start a chat with the bot
-3. Send `/subscribe`
-4. You should receive a confirmation message
+3. Send `/subscribe` — the bot replies with a one-time binding key:
+   ```
+   /bind abc123xyz
+   ```
+4. **Authorize the chat** (choose one):
+   - **Web chat (recommended):** Copy the `/bind <key>` line and paste it in the CCCC Web chat — the foreman will complete the binding automatically
+   - **CLI:** Run `cccc im bind --key <key>` on the server
+5. Once authorized, send `/subscribe` again in Telegram to complete the subscription
 
 For group chats:
 1. Add the bot to your group
-2. Send `/subscribe` in the group
+2. Follow the same authorize → subscribe flow above
 3. All subscribed chats receive messages from CCCC
 
 ## Usage
@@ -165,7 +173,8 @@ Attach files to your message. They're downloaded and stored in CCCC's blob stora
 
 | Command | Description |
 |---------|-------------|
-| `/subscribe` | Start receiving messages from CCCC |
+| `/subscribe` | Authorize & start receiving messages from CCCC |
+| `/bind <key>` | Authorize this chat using a binding key (paste in CCCC Web chat) |
 | `/unsubscribe` | Stop receiving messages |
 | `/send <message>` | Send to foreman (default) |
 | `/send @<actor> <message>` | Send to a specific agent |
@@ -220,3 +229,6 @@ Telegram has rate limits. If you're sending many messages:
 - Consider enabling 2FA on your Telegram account
 - Review who has access to chats where the bot is subscribed
 - The bot can see all messages in groups where it's added
+- **New chats require key-based authorization** before they can interact with the bot — the `/subscribe` command generates a one-time key that must be confirmed from the server side (Web chat or CLI)
+- Binding keys expire after **10 minutes**; generate a new one with `/subscribe` if it lapses
+- The bind operation must be performed via CCCC Web chat or `cccc im bind --key` on the server — Telegram users cannot self-authorize

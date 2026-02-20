@@ -1,6 +1,8 @@
 // IMBridgeTab configures IM bridge settings.
+import { useState, useEffect, useCallback } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { IMStatus, IMPlatform } from "../../../types";
+import * as api from "../../../services/api";
 import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
 
 interface IMBridgeTabProps {
@@ -37,7 +39,7 @@ interface IMBridgeTabProps {
 
 export function IMBridgeTab({
   isDark,
-  groupId: _groupId,
+  groupId,
   imStatus,
   imPlatform,
   onPlatformChange,
@@ -95,6 +97,50 @@ export function IMBridgeTab({
   };
 
   const needsBotToken = imPlatform === "telegram" || imPlatform === "slack" || imPlatform === "discord";
+
+  // Authorized chats state
+  const [authChats, setAuthChats] = useState<api.IMAuthorizedChat[]>([]);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  const loadAuthorizedChats = useCallback(async () => {
+    if (!groupId) return;
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const resp = await api.fetchIMAuthorized(groupId);
+      if (resp.ok) {
+        setAuthChats(resp.result?.authorized ?? []);
+      } else {
+        setAuthError(resp.error?.message || "Failed to load authorized chats");
+      }
+    } catch {
+      setAuthError("Failed to load authorized chats");
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [groupId]);
+
+  useEffect(() => {
+    if (imStatus?.configured) {
+      loadAuthorizedChats();
+    }
+  }, [imStatus?.configured, loadAuthorizedChats]);
+
+  const handleRevoke = async (chatId: string, threadId: number) => {
+    if (!groupId) return;
+    const key = `${chatId}:${threadId}`;
+    setRevoking(key);
+    try {
+      await api.revokeIMChat(groupId, chatId, threadId);
+      await loadAuthorizedChats();
+    } catch {
+      // ignore — list refresh will show current state
+    } finally {
+      setRevoking(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -330,6 +376,72 @@ export function IMBridgeTab({
           </>
         )}
       </div>
+
+      {/* Authorized Chats */}
+      {imStatus?.configured && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+              {t("imBridge.authorizedChats", "Authorized Chats")}
+            </h3>
+            <button
+              onClick={loadAuthorizedChats}
+              disabled={authLoading}
+              className={`text-xs px-2 py-1 rounded transition-colors ${
+                isDark
+                  ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              } disabled:opacity-50`}
+            >
+              {authLoading ? "..." : "↻"}
+            </button>
+          </div>
+
+          {authError && (
+            <p className="text-xs text-red-500">{authError}</p>
+          )}
+
+          {!authLoading && authChats.length === 0 && !authError && (
+            <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              {t("imBridge.noAuthorizedChats", "No authorized chats yet.")}
+            </p>
+          )}
+
+          {authChats.length > 0 && (
+            <div className={`${cardClass(isDark)} space-y-0 divide-y ${isDark ? "divide-slate-700" : "divide-gray-200"}`}>
+              {authChats.map((chat) => {
+                const key = `${chat.chat_id}:${chat.thread_id}`;
+                const isRevoking = revoking === key;
+                return (
+                  <div key={key} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                        {chat.chat_id}
+                        {chat.thread_id ? ` (thread: ${chat.thread_id})` : ""}
+                      </div>
+                      <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                        {chat.platform}
+                        {chat.authorized_at && ` • ${new Date(chat.authorized_at).toLocaleDateString()}`}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
+                      disabled={isRevoking}
+                      className={`ml-3 px-3 py-1 text-xs rounded-lg transition-colors font-medium shrink-0 ${
+                        isDark
+                          ? "bg-red-900/40 hover:bg-red-800/50 text-red-400"
+                          : "bg-red-50 hover:bg-red-100 text-red-600"
+                      } disabled:opacity-50`}
+                    >
+                      {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Help */}
       <div className={`text-xs space-y-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>

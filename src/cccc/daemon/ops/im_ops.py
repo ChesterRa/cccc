@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.group import Group, load_group
+from ...kernel.group import load_group
 from ...ports.im.auth import KeyManager
 
 

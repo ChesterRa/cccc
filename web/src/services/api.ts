@@ -877,6 +877,26 @@ export async function stopIMBridge(groupId: string) {
   });
 }
 
+export interface IMAuthorizedChat {
+  chat_id: string;
+  thread_id: number;
+  platform: string;
+  authorized_at: string;
+  key_used?: string;
+}
+
+export async function fetchIMAuthorized(groupId: string) {
+  return apiJson<{ authorized: IMAuthorizedChat[] }>(
+    `/api/im/authorized?group_id=${encodeURIComponent(groupId)}`
+  );
+}
+
+export async function revokeIMChat(groupId: string, chatId: string, threadId: number = 0) {
+  return apiJson(`/api/im/revoke?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&thread_id=${threadId}`, {
+    method: "POST",
+  });
+}
+
 // ============ Observability ============
 
 export interface Observability {
