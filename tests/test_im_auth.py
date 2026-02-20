@@ -175,5 +175,65 @@ class TestKeyManagerAtomicWrite(unittest.TestCase):
         self.assertEqual(tmp_files, [])
 
 
+class TestMCPImBind(unittest.TestCase):
+    """MCP cccc_im_bind tool integration (unit-level, no daemon)."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.state_dir = Path(self._td.name)
+        self.km = KeyManager(self.state_dir)
+
+    def tearDown(self) -> None:
+        self._td.cleanup()
+
+    def test_toolspecs_contains_cccc_im_bind(self) -> None:
+        from cccc.ports.mcp.toolspecs import MCP_TOOLS
+        names = [t["name"] for t in MCP_TOOLS]
+        self.assertIn("cccc_im_bind", names)
+
+    def test_bind_valid_key(self) -> None:
+        """Normal bind flow: generate key → bind → authorized."""
+        key = self.km.generate_key("500", 0, "telegram")
+        pending = self.km.get_pending_key(key)
+        self.assertIsNotNone(pending)
+        self.km.authorize("500", 0, "telegram", key)
+        self.assertTrue(self.km.is_authorized("500", 0))
+
+    def test_bind_empty_key_rejected(self) -> None:
+        """Empty key should not match any pending entry."""
+        self.assertIsNone(self.km.get_pending_key(""))
+
+    def test_bind_expired_key_rejected(self) -> None:
+        """Expired keys must return None."""
+        key = self.km.generate_key("600", 0, "telegram")
+        self.km._pending[key]["created_at"] = time.time() - KEY_TTL_SECONDS - 1
+        self.km._save_pending()
+        self.assertIsNone(self.km.get_pending_key(key))
+
+
+try:
+    from cccc.daemon.ops.im_ops import _load_km
+    _HAS_DAEMON_DEPS = True
+except ImportError:
+    _HAS_DAEMON_DEPS = False
+
+
+@unittest.skipUnless(_HAS_DAEMON_DEPS, "daemon deps (pydantic) not available")
+class TestImOpsLoadKm(unittest.TestCase):
+    """Test the _load_km factory function in im_ops."""
+
+    def test_missing_group_id_returns_error(self) -> None:
+        err, km = _load_km({})
+        self.assertIsNotNone(err)
+        self.assertFalse(err.ok)
+        self.assertIsNone(km)
+
+    def test_nonexistent_group_returns_error(self) -> None:
+        err, km = _load_km({"group_id": "g_nonexistent_xyz"})
+        self.assertIsNotNone(err)
+        self.assertFalse(err.ok)
+        self.assertIsNone(km)
+
+
 if __name__ == "__main__":
     unittest.main()

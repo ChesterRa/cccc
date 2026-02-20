@@ -1177,6 +1177,30 @@ MCP_TOOLS = [
             "required": ["target_actor_id"],
         },
     },
+    # im.* namespace - IM bridge operations
+    {
+        "name": "cccc_im_bind",
+        "description": (
+            "Bind a Telegram (or other IM) chat using a one-time key.\n\n"
+            "Typical flow: user runs /subscribe in Telegram, gets a key, pastes `/bind <key>` in CCCC Web chat, "
+            "and the foreman calls this tool to complete the binding.\n\n"
+            "The key expires after 10 minutes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "key": {
+                    "type": "string",
+                    "description": "The one-time binding key from /subscribe",
+                },
+            },
+            "required": ["key"],
+        },
+    },
     # debug.* namespace - developer mode diagnostics (user + foreman only; dev mode required)
     {
         "name": "cccc_debug_snapshot",

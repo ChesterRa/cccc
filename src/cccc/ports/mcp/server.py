@@ -857,6 +857,17 @@ def _map_simple_automation_op_to_action(arguments: Dict[str, Any]) -> Optional[D
     )
 
 
+def im_bind(*, group_id: str, key: str) -> Dict[str, Any]:
+    """Bind an IM chat using a one-time key from /subscribe."""
+    k = str(key or "").strip()
+    if not k:
+        raise MCPError(code="missing_key", message="key is required")
+    return _call_daemon_or_raise({
+        "op": "im_bind_chat",
+        "args": {"group_id": group_id, "key": k},
+    })
+
+
 def project_info(*, group_id: str) -> Dict[str, Any]:
     """Get PROJECT.md content for the group's active scope"""
     from pathlib import Path
@@ -1463,6 +1474,10 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
     if name == "cccc_project_info":
         gid = _resolve_group_id(arguments)
         return project_info(group_id=gid)
+
+    if name == "cccc_im_bind":
+        gid = _resolve_group_id(arguments)
+        return im_bind(group_id=gid, key=str(arguments.get("key") or ""))
 
     return None
 

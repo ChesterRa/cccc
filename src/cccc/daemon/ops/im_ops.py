@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.group import load_group
+from ...kernel.group import Group, load_group
 from ...ports.im.auth import KeyManager
 
 
@@ -13,21 +13,30 @@ def _error(code: str, message: str) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message))
 
 
+def _load_km(args: Dict[str, Any]) -> Tuple[Optional[DaemonResponse], Optional[KeyManager]]:
+    """Validate group_id, load group, and return a KeyManager.
+
+    Returns (error_response, None) on failure, or (None, km) on success.
+    """
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "group_id is required"), None
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}"), None
+    return None, KeyManager(group.path / "state")
+
+
 def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
     """Bind a pending key to authorize a chat."""
-    group_id = str(args.get("group_id") or "").strip()
     key = str(args.get("key") or "").strip()
-
-    if not group_id:
-        return _error("missing_group_id", "group_id is required")
     if not key:
         return _error("missing_key", "key is required")
 
-    group = load_group(group_id)
-    if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
+    err, km = _load_km(args)
+    if err is not None:
+        return err
 
-    km = KeyManager(group.path / "state")
     pending = km.get_pending_key(key)
     if pending is None:
         return _error("invalid_key", "key not found or expired")
@@ -47,37 +56,27 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
 
 def handle_im_list_authorized(args: Dict[str, Any]) -> DaemonResponse:
     """List all authorized chats for a group."""
-    group_id = str(args.get("group_id") or "").strip()
-    if not group_id:
-        return _error("missing_group_id", "group_id is required")
-
-    group = load_group(group_id)
-    if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
-
-    km = KeyManager(group.path / "state")
+    err, km = _load_km(args)
+    if err is not None:
+        return err
     return DaemonResponse(ok=True, result={"authorized": km.list_authorized()})
 
 
 def handle_im_revoke_chat(args: Dict[str, Any]) -> DaemonResponse:
     """Revoke authorization for a chat."""
-    group_id = str(args.get("group_id") or "").strip()
     chat_id = str(args.get("chat_id") or "").strip()
     try:
         thread_id = int(args.get("thread_id") or 0)
     except Exception:
         thread_id = 0
 
-    if not group_id:
-        return _error("missing_group_id", "group_id is required")
     if not chat_id:
         return _error("missing_chat_id", "chat_id is required")
 
-    group = load_group(group_id)
-    if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
+    err, km = _load_km(args)
+    if err is not None:
+        return err
 
-    km = KeyManager(group.path / "state")
     revoked = km.revoke(chat_id, thread_id)
     return DaemonResponse(ok=True, result={"revoked": revoked})
 

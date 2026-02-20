@@ -597,10 +597,11 @@ class IMBridge:
             key = self.key_manager.generate_key(chat_id, thread_id, platform)
             self.adapter.send_message(
                 chat_id,
-                f"🔑 Authorization required.\n"
-                f"Your binding key: `{key}`\n"
-                f"Run on the server:  cccc im bind --key {key}\n"
-                f"Or use the Web dashboard to bind.\n"
+                f"🔑 Authorization required.\n\n"
+                f"Copy and paste in CCCC Web chat:\n"
+                f"`/bind {key}`\n\n"
+                f"Or run in terminal:\n"
+                f"`cccc im bind --key {key}`\n\n"
                 f"Key expires in 10 minutes.",
                 thread_id=thread_id,
             )
