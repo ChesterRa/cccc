@@ -370,6 +370,10 @@ class IMBridge:
 
     def _process_inbound(self) -> None:
         """Process incoming IM messages."""
+        # Reload authorized-chat state from disk so that binds performed by the
+        # daemon (a separate process) are picked up without restarting the bridge.
+        self.key_manager._load()
+
         messages = self.adapter.poll()
 
         for msg in messages:
