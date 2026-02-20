@@ -371,7 +371,7 @@ def message_send(
                 "dst_group_id": dst,
                 "text": text,
                 "by": actor_id,
-                "to": to or [],
+                "to": to if to is not None else [],
                 "priority": prio,
                 "reply_required": reply_required_flag,
             },
@@ -384,7 +384,7 @@ def message_send(
                 "text": text,
                 "by": actor_id,
                 "reply_to": reply_to,
-                "to": to or [],
+                "to": to if to is not None else [],
                 "priority": prio,
                 "reply_required": reply_required_flag,
             },
@@ -395,7 +395,7 @@ def message_send(
             "group_id": group_id,
             "text": text,
             "by": actor_id,
-            "to": to or [],
+            "to": to if to is not None else [],
             "path": "",
             "priority": prio,
             "reply_required": reply_required_flag,
@@ -425,7 +425,7 @@ def message_reply(
             "text": text,
             "by": actor_id,
             "reply_to": reply_to,
-            "to": to or [],
+            "to": to if to is not None else [],
             "priority": prio,
             "reply_required": reply_required_flag,
         },
@@ -505,7 +505,7 @@ def file_send(
             "group_id": gid,
             "text": msg,
             "by": actor_id,
-            "to": to or [],
+            "to": to if to is not None else [],
             "path": "",
             "attachments": [att],
             "priority": prio,
@@ -1316,12 +1316,18 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
+        if isinstance(to_raw, list):
+            to_val: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
+        elif isinstance(to_raw, str) and to_raw.strip():
+            to_val = [to_raw.strip()]
+        else:
+            to_val = None
         return message_send(
             group_id=gid,
             dst_group_id=arguments.get("dst_group_id"),
             actor_id=aid,
             text=str(arguments.get("text") or ""),
-            to=list(to_raw) if isinstance(to_raw, list) else [],
+            to=to_val,
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )
@@ -1330,13 +1336,19 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
+        if isinstance(to_raw, list):
+            to_val_reply: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
+        elif isinstance(to_raw, str) and to_raw.strip():
+            to_val_reply = [to_raw.strip()]
+        else:
+            to_val_reply = None
         reply_to = str(arguments.get("event_id") or arguments.get("reply_to") or "").strip()
         return message_reply(
             group_id=gid,
             actor_id=aid,
             reply_to=reply_to,
             text=str(arguments.get("text") or ""),
-            to=list(to_raw) if isinstance(to_raw, list) else None,
+            to=to_val_reply,
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )
@@ -1345,12 +1357,18 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
+        if isinstance(to_raw, list):
+            to_val_file: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
+        elif isinstance(to_raw, str) and to_raw.strip():
+            to_val_file = [to_raw.strip()]
+        else:
+            to_val_file = None
         return file_send(
             group_id=gid,
             actor_id=aid,
             path=str(arguments.get("path") or ""),
             text=str(arguments.get("text") or ""),
-            to=list(to_raw) if isinstance(to_raw, list) else [],
+            to=to_val_file,
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )

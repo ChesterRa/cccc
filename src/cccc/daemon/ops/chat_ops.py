@@ -171,6 +171,7 @@ def handle_send(
         src_event_id = ""
     to_raw = args.get("to")
     to_tokens: list[str] = []
+    to_explicitly_set = isinstance(to_raw, list) and len(to_raw) > 0
     if isinstance(to_raw, list):
         to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
 
@@ -209,7 +210,7 @@ def handle_send(
                 except Exception:
                     pass
 
-    if not to and get_default_send_to(group.doc) == "foreman":
+    if not to and not to_explicitly_set and get_default_send_to(group.doc) == "foreman":
         to = ["@foreman"]
 
     if targets_any_agent(to):
