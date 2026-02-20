@@ -107,6 +107,10 @@ class IMAdapter(ABC):
             # Agent to user message
             return f"[{by}] {text}"
 
+    def send_chat_action(self, chat_id: str, action: str = "typing") -> bool:
+        """Send a chat action indicator. Default: no-op."""
+        return False
+
     def add_reaction(self, message_id: str, emoji_type: str) -> Optional[str]:
         """
         Add an emoji reaction to a message.

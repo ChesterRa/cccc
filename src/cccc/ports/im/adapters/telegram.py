@@ -526,6 +526,13 @@ class TelegramAdapter(IMAdapter):
         self._log(f"[reaction] Failed to remove {reaction_id} from {message_id}: {resp.get('error', 'unknown')}")
         return False
 
+    def send_chat_action(self, chat_id: str, action: str = "typing") -> bool:
+        """Send a chat action indicator (e.g. 'typing') via Telegram API."""
+        if not self._connected:
+            return False
+        resp = self._api("sendChatAction", {"chat_id": chat_id, "action": action}, timeout=10)
+        return bool(resp.get("ok"))
+
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Telegram display."""
         # Use base implementation but ensure it fits

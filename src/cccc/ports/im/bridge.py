@@ -272,6 +272,8 @@ class IMBridge:
         # Typing indicator state: chat_id -> (message_id, reaction_id)
         # Used to show a "processing" emoji on the user's message while agents work.
         self._typing_indicators: Dict[str, Tuple[str, str]] = {}
+        # Telegram sendChatAction throttle: chat_id -> last_sent_timestamp
+        self._typing_action_ts: Dict[str, float] = {}
 
     def _should_process_inbound(self, *, chat_id: str, thread_id: int, message_id: str) -> bool:
         """
@@ -344,6 +346,9 @@ class IMBridge:
         """Run one iteration of the bridge loop."""
         # Process inbound messages
         self._process_inbound()
+
+        # Refresh Telegram "typing" action for active indicators
+        self._refresh_typing_actions()
 
         # Process outbound events (throttled)
         now = time.time()
@@ -473,9 +478,9 @@ class IMBridge:
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
         subscribed = self.subscribers.get_subscribed_targets(platform=platform)
 
-        # Remove typing indicators for chats that are about to receive a reply.
-        for sub in subscribed:
-            self._remove_typing_indicator(sub.chat_id)
+        # Determine if this event is user-facing (to:user or broadcast).
+        # Agent-to-agent messages should NOT cancel typing indicators.
+        is_user_facing = not to or "user" in to
 
         for sub in subscribed:
             verbose = bool(sub.verbose)
@@ -528,10 +533,14 @@ class IMBridge:
                         ok = False
                     if ok:
                         sent_any_file = True
+                        if is_user_facing:
+                            self._remove_typing_indicator(sub.chat_id)
 
             # If we didn't send any files, or if there's text with no files, send message.
             if formatted and not sent_any_file:
                 self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id)
+                if is_user_facing:
+                    self._remove_typing_indicator(sub.chat_id)
 
     def _should_forward(self, event: Dict[str, Any], verbose: bool) -> bool:
         """Determine if event should be forwarded based on verbose setting."""
@@ -702,9 +711,24 @@ class IMBridge:
         if reaction_id:
             self._typing_indicators[chat_id] = (message_id, reaction_id)
 
+    def _send_typing_action(self, chat_id: str) -> None:
+        """Send a Telegram 'typing' chat action, throttled to once per 4 seconds."""
+        now = time.time()
+        last = self._typing_action_ts.get(chat_id, 0.0)
+        if now - last < 4.0:
+            return
+        if self.adapter.send_chat_action(chat_id):
+            self._typing_action_ts[chat_id] = now
+
+    def _refresh_typing_actions(self) -> None:
+        """Re-send 'typing' action for all active typing indicators."""
+        for chat_id in list(self._typing_indicators):
+            self._send_typing_action(chat_id)
+
     def _remove_typing_indicator(self, chat_id: str) -> None:
         """Remove the typing indicator for a chat, if any."""
         indicator = self._typing_indicators.pop(chat_id, None)
+        self._typing_action_ts.pop(chat_id, None)
         if indicator:
             message_id, reaction_id = indicator
             self.adapter.remove_reaction(message_id, reaction_id)
@@ -913,6 +937,7 @@ class IMBridge:
         else:
             # Add typing indicator to show that the message is being processed.
             self._add_typing_indicator(chat_id, message_id)
+            self._send_typing_action(chat_id)
             self._log(
                 f"[message] chat={chat_id} thread={thread_id} to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
             )
