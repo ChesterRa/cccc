@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.1] — 2026-02-20
+
+### Added
+- **Actor lifecycle event coverage**: daemon streaming now emits fuller actor/group lifecycle transitions for better observability and downstream automation hooks.
+- **Secret safety UX upgrade**: actor secret keys now support masked previews in Web edit flows, improving operator confidence without exposing plaintext.
+- **Branding assets refresh**: project logos were added and integrated into Web/README surfaces for consistent distribution identity.
+
+### Changed
+- **Automation idle semantics** were aligned with explicit group-state behavior, reducing ambiguity in scheduled reminder execution during `idle` mode.
+- **Terminal safety hardening**: resize and related terminal maintenance paths were tightened to avoid unstable behavior in mixed runtime conditions.
+- **Docs and onboarding** were updated to match current `v0.4` behavior, including SDK entry points, release hub linking, and refreshed top-level README content.
+
+### Fixed
+- Fixed lifecycle edge cases where actor/group state transitions and event emission could diverge.
+- Fixed multiple test-surface instability points (especially MCP/environment isolation), improving release reproducibility.
+
 ## [0.4.0] — 2026-02-16
 
 ### Added
