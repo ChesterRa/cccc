@@ -28,6 +28,7 @@ from .ops.group_settings_ops import try_handle_group_settings_op
 from .ops.group_ops import try_handle_group_core_op
 from .ops.group_bootstrap_ops import try_handle_group_bootstrap_op
 from .ops.registry_ops import try_handle_registry_op
+from .ops.im_ops import try_handle_im_op
 from .ops.runner_ops import try_handle_headless_op
 
 
@@ -337,6 +338,10 @@ def dispatch_request(
     context_resp = try_handle_context_op(op, args)
     if context_resp is not None:
         return context_resp, False
+
+    im_resp = try_handle_im_op(op, args)
+    if im_resp is not None:
+        return im_resp, False
 
     headless_resp = try_handle_headless_op(op, args)
     if headless_resp is not None:

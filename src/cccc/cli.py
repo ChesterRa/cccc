@@ -2562,6 +2562,69 @@ def cmd_im_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_im_bind(args: argparse.Namespace) -> int:
+    """Bind a pending authorization key to authorize a Telegram chat."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    key = str(getattr(args, "key", "") or "").strip()
+    if not key:
+        _print_json({"ok": False, "error": {"code": "missing_key", "message": "missing --key argument"}})
+        return 2
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_error", "message": "cannot reach daemon"}})
+        return 1
+
+    resp = call_daemon({"op": "im_bind_chat", "args": {"group_id": group_id, "key": key}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 1
+
+
+def cmd_im_authorized(args: argparse.Namespace) -> int:
+    """List authorized chats for a group."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_error", "message": "cannot reach daemon"}})
+        return 1
+
+    resp = call_daemon({"op": "im_list_authorized", "args": {"group_id": group_id}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 1
+
+
+def cmd_im_revoke(args: argparse.Namespace) -> int:
+    """Revoke authorization for a chat."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    chat_id = str(getattr(args, "chat_id", "") or "").strip()
+    if not chat_id:
+        _print_json({"ok": False, "error": {"code": "missing_chat_id", "message": "missing --chat-id argument"}})
+        return 2
+
+    try:
+        thread_id = int(getattr(args, "thread_id", 0) or 0)
+    except Exception:
+        thread_id = 0
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_error", "message": "cannot reach daemon"}})
+        return 1
+
+    resp = call_daemon({"op": "im_revoke_chat", "args": {"group_id": group_id, "chat_id": chat_id, "thread_id": thread_id}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 1
+
+
 def cmd_im_logs(args: argparse.Namespace) -> int:
     """Show IM bridge logs for a group."""
     from collections import deque
@@ -2871,6 +2934,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_im_logs.add_argument("-n", "--lines", type=int, default=50, help="Number of lines to show (default: 50)")
     p_im_logs.add_argument("-f", "--follow", action="store_true", help="Follow log output (like tail -f)")
     p_im_logs.set_defaults(func=cmd_im_logs)
+
+    p_im_bind = im_sub.add_parser("bind", help="Bind a pending authorization key to authorize a chat")
+    p_im_bind.add_argument("--key", required=True, help="Authorization key from /subscribe")
+    p_im_bind.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_bind.set_defaults(func=cmd_im_bind)
+
+    p_im_authorized = im_sub.add_parser("authorized", help="List authorized chats")
+    p_im_authorized.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_authorized.set_defaults(func=cmd_im_authorized)
+
+    p_im_revoke = im_sub.add_parser("revoke", help="Revoke authorization for a chat")
+    p_im_revoke.add_argument("--chat-id", required=True, dest="chat_id", help="Chat ID to revoke")
+    p_im_revoke.add_argument("--thread-id", type=int, default=0, dest="thread_id", help="Thread ID (default: 0)")
+    p_im_revoke.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_revoke.set_defaults(func=cmd_im_revoke)
 
     p_web = sub.add_parser("web", help="Run web server only (requires daemon to be running)")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")

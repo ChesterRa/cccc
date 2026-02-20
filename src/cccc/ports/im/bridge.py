@@ -39,6 +39,7 @@ from .commands import (
     format_status,
     parse_message,
 )
+from .auth import KeyManager
 from .subscribers import SubscriberManager
 from ...util.file_lock import LockUnavailableError, acquire_lockfile
 
@@ -261,6 +262,7 @@ class IMBridge:
         self.skip_pending_on_start = skip_pending_on_start
 
         self.subscribers = SubscriberManager(group.path / "state")
+        self.key_manager = KeyManager(group.path / "state")
         self.watcher = LedgerWatcher(group, log_fn=self._log)
 
         self._running = False
@@ -375,6 +377,7 @@ class IMBridge:
             text = str(msg.get("text") or "")
             chat_title = str(msg.get("chat_title") or "")
             from_user = str(msg.get("from_user") or "user")
+            from_user_id = str(msg.get("from_user_id") or "")
             chat_type = str(msg.get("chat_type") or "").strip().lower()
             try:
                 thread_id = int(msg.get("thread_id") or 0)
@@ -385,6 +388,15 @@ class IMBridge:
             if not text:
                 continue
             if not self._should_process_inbound(chat_id=chat_id, thread_id=thread_id, message_id=message_id):
+                continue
+
+            # Authorization check: unauthorized chats may only /subscribe.
+            if not self.key_manager.is_authorized(chat_id, thread_id):
+                parsed_pre = parse_message(text)
+                if parsed_pre.type == CommandType.SUBSCRIBE:
+                    self._handle_subscribe(chat_id, chat_title, thread_id=thread_id)
+                else:
+                    self._log(f"[auth] Dropped message from unauthorized chat={chat_id} thread={thread_id}")
                 continue
 
             # Parse command
@@ -413,7 +425,7 @@ class IMBridge:
                 self._handle_help(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.SEND:
                 attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
-                self._handle_message(chat_id, parsed, from_user, attachments=attachments, thread_id=thread_id, message_id=message_id)
+                self._handle_message(chat_id, parsed, from_user, attachments=attachments, thread_id=thread_id, message_id=message_id, from_user_id=from_user_id)
             elif parsed.type == CommandType.MESSAGE:
                 routed = coerce_bool(msg.get("routed"), default=False)
 
@@ -435,7 +447,7 @@ class IMBridge:
                         mentions=parsed.mentions,
                         args=implicit_args,
                     )
-                    self._handle_message(chat_id, implicit_send, from_user, attachments=attachments, thread_id=thread_id, message_id=message_id)
+                    self._handle_message(chat_id, implicit_send, from_user, attachments=attachments, thread_id=thread_id, message_id=message_id, from_user_id=from_user_id)
                     continue
 
                 # Non-routed messages are ignored.
@@ -575,6 +587,22 @@ class IMBridge:
     def _handle_subscribe(self, chat_id: str, chat_title: str, thread_id: int = 0) -> None:
         """Handle /subscribe command."""
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+
+        # If the chat is not yet authorized, generate a binding key.
+        if not self.key_manager.is_authorized(chat_id, thread_id):
+            key = self.key_manager.generate_key(chat_id, thread_id, platform)
+            self.adapter.send_message(
+                chat_id,
+                f"🔑 Authorization required.\n"
+                f"Your binding key: `{key}`\n"
+                f"Run on the server:  cccc im bind --key {key}\n"
+                f"Or use the Web dashboard to bind.\n"
+                f"Key expires in 10 minutes.",
+                thread_id=thread_id,
+            )
+            self._log(f"[subscribe] Pending auth key generated for chat={chat_id} thread={thread_id}")
+            return
+
         sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id, platform=platform)
         verbose_str = "on" if sub.verbose else "off"
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
@@ -742,9 +770,9 @@ class IMBridge:
         attachments: List[Dict[str, Any]],
         thread_id: int = 0,
         message_id: str = "",
+        from_user_id: str = "",
     ) -> None:
         """Handle /send message (explicit routing)."""
-        _ = from_user
 
         # Reload group from disk to reflect latest enabled/actor state.
         group = load_group(self.group.group_id)
@@ -939,7 +967,7 @@ class IMBridge:
             self._add_typing_indicator(chat_id, message_id)
             self._send_typing_action(chat_id)
             self._log(
-                f"[message] chat={chat_id} thread={thread_id} to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
+                f"[message] chat={chat_id} thread={thread_id} from={from_user}({from_user_id}) to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
             )
 
 

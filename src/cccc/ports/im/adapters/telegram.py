@@ -268,6 +268,7 @@ class TelegramAdapter(IMAdapter):
                         "text": text,
                         "attachments": attachments,
                         "from_user": username,
+                        "from_user_id": str(from_user.get("id", "")),
                         "message_id": composite_msg_id,
                         "update_id": update_id,
                     })

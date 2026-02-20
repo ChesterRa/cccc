@@ -2845,4 +2845,35 @@ def create_app() -> FastAPI:
 
         return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
 
+    # ----- IM auth (bind / list / revoke) -----
+
+    @app.post("/api/im/bind")
+    async def im_bind(group_id: str, key: str) -> Dict[str, Any]:
+        """Bind a pending authorization key to authorize a Telegram chat."""
+        resp = await _daemon({"op": "im_bind_chat", "args": {"group_id": group_id, "key": key}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            code = str(err.get("code") or "bind_failed")
+            msg = str(err.get("message") or "bind failed")
+            raise HTTPException(status_code=400, detail={"code": code, "message": msg})
+        return resp
+
+    @app.get("/api/im/authorized")
+    async def im_list_authorized(group_id: str) -> Dict[str, Any]:
+        """List authorized chats for a group."""
+        resp = await _daemon({"op": "im_list_authorized", "args": {"group_id": group_id}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            raise HTTPException(status_code=400, detail=err)
+        return resp
+
+    @app.post("/api/im/revoke")
+    async def im_revoke(group_id: str, chat_id: str, thread_id: int = 0) -> Dict[str, Any]:
+        """Revoke authorization for a chat."""
+        resp = await _daemon({"op": "im_revoke_chat", "args": {"group_id": group_id, "chat_id": chat_id, "thread_id": thread_id}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            raise HTTPException(status_code=400, detail=err)
+        return resp
+
     return app
