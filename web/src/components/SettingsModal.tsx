@@ -876,7 +876,7 @@ export function SettingsModal({
                 />
               )}
 
-              {activeTab === "remote" && <RemoteAccessTab isDark={isDark} />}
+              {activeTab === "remote" && <RemoteAccessTab isDark={isDark} isActive={scope === "global" && activeTab === "remote"} />}
 
               {activeTab === "developer" && (
                 <DeveloperTab

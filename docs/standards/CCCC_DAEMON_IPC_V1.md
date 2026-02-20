@@ -1444,7 +1444,7 @@ Args:
 
 Result:
 ```ts
-{ revoked: boolean }
+{ revoked: boolean; unsubscribed?: boolean }
 ```
 
 Notes:
@@ -1454,6 +1454,84 @@ Errors:
 - `missing_chat_id` – `chat_id` is empty.
 - `missing_group_id` – `group_id` is empty.
 - `group_not_found` – group does not exist.
+
+### 8.16 Remote Access (Contract-Gated)
+
+These operations are optional extensions for productized remote-access control.
+Deployments without this feature MAY return `unknown_op`.
+
+#### `remote_access_state`
+
+Read global remote-access state.
+
+Args:
+```ts
+{ by?: string }
+```
+
+Result:
+```ts
+{
+  remote_access: {
+    provider: "off" | "manual" | "tailscale"
+    mode: string
+    enforce_web_token: boolean
+    enabled: boolean
+    status: "stopped" | "running" | "not_installed" | "not_authenticated" | "misconfigured" | "error"
+    endpoint?: string | null
+    updated_at?: string | null
+    diagnostics?: Record<string, unknown>
+    next_steps?: string[]
+  }
+}
+```
+
+#### `remote_access_configure`
+
+Update global remote-access configuration.
+
+Args:
+```ts
+{
+  by?: string
+  provider?: "off" | "manual" | "tailscale"
+  mode?: string
+  enforce_web_token?: boolean
+}
+```
+
+Result:
+```ts
+{ remote_access: Record<string, unknown> }
+```
+
+#### `remote_access_start`
+
+Start remote access according to configured provider/mode.
+
+Args:
+```ts
+{ by?: string }
+```
+
+Result:
+```ts
+{ remote_access: Record<string, unknown> }
+```
+
+#### `remote_access_stop`
+
+Stop remote access service.
+
+Args:
+```ts
+{ by?: string }
+```
+
+Result:
+```ts
+{ remote_access: Record<string, unknown> }
+```
 
 ## 9. Appendix: Example Lines
 
@@ -1466,7 +1544,7 @@ Request line:
 
 Response line:
 ```json
-{"v":1,"ok":true,"result":{"version":"0.4.x","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true}},"error":null}
+{"v":1,"ok":true,"result":{"version":"0.4.x","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true,"remote_access":true}},"error":null}
 ```
 
 ### 9.2 Error

@@ -5,6 +5,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from cccc.ports.im.auth import KEY_TTL_SECONDS, KeyManager
 
@@ -209,6 +211,114 @@ class TestMCPImBind(unittest.TestCase):
         self.km._pending[key]["created_at"] = time.time() - KEY_TTL_SECONDS - 1
         self.km._save_pending()
         self.assertIsNone(self.km.get_pending_key(key))
+
+
+class TestImRevokeSemantics(unittest.TestCase):
+    """Revoke should also stop outbound subscription delivery."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.group_path = Path(self._td.name)
+        self.state_dir = self.group_path / "state"
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self._td.cleanup()
+
+    def test_revoke_also_unsubscribes_chat(self) -> None:
+        from cccc.daemon.ops import im_ops
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+
+        key = km.generate_key("chat1", 0, "telegram")
+        km.authorize("chat1", 0, "telegram", key)
+        sm.subscribe("chat1", chat_title="demo", thread_id=0, platform="telegram")
+
+        self.assertTrue(km.is_authorized("chat1", 0))
+        self.assertTrue(sm.is_subscribed("chat1", 0))
+
+        fake_group = SimpleNamespace(path=self.group_path)
+        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+            resp = im_ops.handle_im_revoke_chat({"group_id": "g_demo", "chat_id": "chat1", "thread_id": 0})
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        result = resp.result if isinstance(resp.result, dict) else {}
+        self.assertTrue(bool(result.get("revoked")))
+        self.assertTrue(bool(result.get("unsubscribed")))
+
+        # Reload managers from disk to assert persisted behavior.
+        km2 = KeyManager(self.state_dir)
+        sm2 = SubscriberManager(self.state_dir)
+        self.assertFalse(km2.is_authorized("chat1", 0))
+        self.assertFalse(sm2.is_subscribed("chat1", 0))
+
+
+class TestImBridgeOutboundAuthGuard(unittest.TestCase):
+    """Bridge should not forward outbound events to unauthorized chats."""
+
+    class _FakeAdapter:
+        platform = "telegram"
+
+        def __init__(self) -> None:
+            self.sent_messages: list[tuple[str, str, int]] = []
+
+        def format_outbound(self, by: str, to: object, text: str, is_system: bool) -> str:
+            _ = (by, to, is_system)
+            return str(text or "")
+
+        def send_file(self, chat_id: str, file_path: Path, filename: str, caption: str = "", thread_id: int = 0) -> bool:
+            _ = (chat_id, file_path, filename, caption, thread_id)
+            return False
+
+        def send_message(self, chat_id: str, text: str, thread_id: int = 0) -> bool:
+            self.sent_messages.append((str(chat_id), str(text), int(thread_id or 0)))
+            return True
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.group_path = Path(self._td.name)
+        self.state_dir = self.group_path / "state"
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.group_path / "ledger.jsonl").write_text("", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._td.cleanup()
+
+    def test_process_outbound_reloads_auth_and_blocks_revoked_chat(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        sm.subscribe("chat_auth", chat_title="auth", thread_id=0, platform="telegram")
+
+        # External revoke from daemon process (bridge still has stale in-memory auth).
+        km_external = KeyManager(self.state_dir)
+        km_external.revoke("chat_auth", 0)
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
+            {
+                "kind": "chat.message",
+                "by": "foreman",
+                "data": {"text": "hello", "to": ["user"], "attachments": []},
+            }
+        ]
+        bridge._process_outbound()
+
+        self.assertEqual(adapter.sent_messages, [])
 
 
 try:

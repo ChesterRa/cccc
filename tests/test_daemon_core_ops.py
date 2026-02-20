@@ -36,6 +36,7 @@ class TestDaemonCoreOps(unittest.TestCase):
             assert isinstance(result, dict)
             capabilities = result.get("capabilities") if isinstance(result.get("capabilities"), dict) else {}
             self.assertEqual(bool(capabilities.get("events_stream")), True)
+            self.assertEqual(bool(capabilities.get("remote_access")), True)
 
             shutdown, should_stop = self._call("shutdown", {})
             self.assertTrue(shutdown.ok, getattr(shutdown, "error", None))

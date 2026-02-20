@@ -274,6 +274,13 @@ class RegistryReconcileRequest(BaseModel):
     remove_missing: bool = False
 
 
+class RemoteAccessConfigureRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[Literal["off", "manual", "tailscale"]] = None
+    mode: Optional[str] = None
+    enforce_web_token: Optional[bool] = None
+
+
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
@@ -705,6 +712,33 @@ def create_app() -> FastAPI:
             pass
 
         return resp
+
+    @app.get("/api/v1/remote_access")
+    async def remote_access_get() -> Dict[str, Any]:
+        """Get global remote-access state."""
+        return await _daemon({"op": "remote_access_state", "args": {"by": "user"}})
+
+    @app.put("/api/v1/remote_access")
+    async def remote_access_configure(req: RemoteAccessConfigureRequest) -> Dict[str, Any]:
+        """Update global remote-access config."""
+        args: Dict[str, Any] = {"by": str(req.by or "user")}
+        if req.provider is not None:
+            args["provider"] = str(req.provider)
+        if req.mode is not None:
+            args["mode"] = str(req.mode or "").strip()
+        if req.enforce_web_token is not None:
+            args["enforce_web_token"] = bool(req.enforce_web_token)
+        return await _daemon({"op": "remote_access_configure", "args": args})
+
+    @app.post("/api/v1/remote_access/start")
+    async def remote_access_start(by: str = "user") -> Dict[str, Any]:
+        """Start remote access service."""
+        return await _daemon({"op": "remote_access_start", "args": {"by": str(by or "user")}})
+
+    @app.post("/api/v1/remote_access/stop")
+    async def remote_access_stop(by: str = "user") -> Dict[str, Any]:
+        """Stop remote access service."""
+        return await _daemon({"op": "remote_access_stop", "args": {"by": str(by or "user")}})
 
     @app.get("/api/v1/registry/reconcile")
     async def registry_reconcile_preview() -> Dict[str, Any]:

@@ -31,7 +31,10 @@ def try_handle_daemon_core_op(
                     "pid": pid_provider(),
                     "ts": now_iso(),
                     "ipc_v": 1,
-                    "capabilities": {"events_stream": True},
+                    "capabilities": {
+                        "events_stream": True,
+                        "remote_access": True,
+                    },
                 },
             ),
             False,

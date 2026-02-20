@@ -78,12 +78,19 @@ def handle_im_revoke_chat(args: Dict[str, Any]) -> DaemonResponse:
     if not chat_id:
         return _error("missing_chat_id", "chat_id is required")
 
-    err, km, _group = _load_km(args)
+    err, km, group = _load_km(args)
     if err is not None:
         return err
 
     revoked = km.revoke(chat_id, thread_id)
-    return DaemonResponse(ok=True, result={"revoked": revoked})
+
+    # Keep revoke semantics coherent:
+    # once authorization is revoked, outbound delivery subscription should also
+    # be deactivated so the chat stops receiving messages immediately.
+    sm = SubscriberManager(group.path / "state")
+    unsubscribed = sm.unsubscribe(chat_id, thread_id=thread_id)
+
+    return DaemonResponse(ok=True, result={"revoked": revoked, "unsubscribed": bool(unsubscribed)})
 
 
 def try_handle_im_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:

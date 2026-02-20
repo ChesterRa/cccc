@@ -462,6 +462,8 @@ class IMBridge:
         # Reload subscriber state from disk so that subscriptions created by the
         # daemon (e.g. auto-subscribe on bind) are picked up without restarting.
         self.subscribers._load()
+        # Reload authorized-chat state as revoke/bind is performed by daemon.
+        self.key_manager._load()
 
         events = self.watcher.poll()
 
@@ -503,6 +505,11 @@ class IMBridge:
         is_user_facing = not to or "user" in to
 
         for sub in subscribed:
+            # Safety filter: only authorized chats are allowed to receive bridge
+            # traffic even if stale subscription state exists on disk.
+            if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id):
+                continue
+
             verbose = bool(sub.verbose)
 
             # Filter based on verbose setting

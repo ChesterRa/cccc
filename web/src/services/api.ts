@@ -17,6 +17,7 @@ import type {
   IMConfig,
   IMStatus,
   IMPlatform,
+  RemoteAccessState,
 } from "../types";
 
 // ============ Token management ============
@@ -932,6 +933,38 @@ export async function updateObservability(args: {
       terminal_transcript_per_actor_bytes: args.terminalTranscriptPerActorBytes,
       terminal_ui_scrollback_lines: args.terminalUiScrollbackLines,
     }),
+  });
+}
+
+export async function fetchRemoteAccessState() {
+  return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access");
+}
+
+export async function updateRemoteAccessConfig(args: {
+  provider?: "off" | "manual" | "tailscale";
+  mode?: string;
+  enforceWebToken?: boolean;
+}) {
+  return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access", {
+    method: "PUT",
+    body: JSON.stringify({
+      by: "user",
+      provider: args.provider,
+      mode: args.mode,
+      enforce_web_token: args.enforceWebToken,
+    }),
+  });
+}
+
+export async function startRemoteAccess() {
+  return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access/start?by=user", {
+    method: "POST",
+  });
+}
+
+export async function stopRemoteAccess() {
+  return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access/stop?by=user", {
+    method: "POST",
   });
 }
 

@@ -14,6 +14,7 @@ import yaml  # type: ignore
 
 from ..paths import ensure_home
 from ..util.fs import atomic_write_text
+from ..util.time import utc_now_iso
 
 
 @dataclass
@@ -157,6 +158,19 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Remote access (global)
+# ---------------------------------------------------------------------------
+
+DEFAULT_REMOTE_ACCESS: Dict[str, Any] = {
+    "provider": "off",          # off | manual | tailscale
+    "mode": "tailnet_only",     # reserved for future extension
+    "enforce_web_token": True,  # security-first default
+    "enabled": False,           # desired state for provider control
+    "updated_at": "",           # RFC3339 UTC timestamp (best-effort)
+}
+
+
 def _as_bool(v: Any, default: bool) -> bool:
     if isinstance(v, bool):
         return v
@@ -224,6 +238,30 @@ def _merge_observability(raw: Any) -> Dict[str, Any]:
     return base
 
 
+def _merge_remote_access(raw: Any) -> Dict[str, Any]:
+    """Merge/validate remote access settings with defaults."""
+    base = dict(DEFAULT_REMOTE_ACCESS)
+    if not isinstance(raw, dict):
+        return base
+
+    provider = _as_str(raw.get("provider"), str(base["provider"])).lower()
+    if provider not in ("off", "manual", "tailscale"):
+        provider = "off"
+    base["provider"] = provider
+
+    mode = _as_str(raw.get("mode"), str(base["mode"]))
+    base["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
+
+    base["enforce_web_token"] = _as_bool(raw.get("enforce_web_token"), bool(base["enforce_web_token"]))
+    base["enabled"] = _as_bool(raw.get("enabled"), bool(base["enabled"]))
+    base["updated_at"] = _as_str(raw.get("updated_at"), str(base["updated_at"]))
+
+    if base["provider"] == "off":
+        base["enabled"] = False
+
+    return base
+
+
 def get_observability_settings() -> Dict[str, Any]:
     """Get merged observability settings (global)."""
     settings = load_settings()
@@ -275,6 +313,59 @@ def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     settings["observability"] = merged
     save_settings(settings)
     return _merge_observability(merged)
+
+
+def get_remote_access_settings() -> Dict[str, Any]:
+    """Get merged remote access settings (global)."""
+    settings = load_settings()
+    return _merge_remote_access(settings.get("remote_access"))
+
+
+def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Update remote access settings in ~/.cccc/settings.yaml and return merged result."""
+    settings = load_settings()
+    current = _merge_remote_access(settings.get("remote_access"))
+    if not isinstance(patch, dict) or not patch:
+        return current
+
+    merged = dict(current)
+    changed = False
+
+    if "provider" in patch:
+        provider = _as_str(patch.get("provider"), str(merged["provider"])).lower()
+        if provider not in ("off", "manual", "tailscale"):
+            provider = "off"
+        merged["provider"] = provider
+        changed = True
+
+    if "mode" in patch:
+        mode = _as_str(patch.get("mode"), str(merged["mode"]))
+        merged["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
+        changed = True
+
+    if "enforce_web_token" in patch:
+        merged["enforce_web_token"] = _as_bool(
+            patch.get("enforce_web_token"),
+            bool(merged["enforce_web_token"]),
+        )
+        changed = True
+
+    if "enabled" in patch:
+        merged["enabled"] = _as_bool(patch.get("enabled"), bool(merged["enabled"]))
+        changed = True
+
+    if "updated_at" in patch:
+        merged["updated_at"] = _as_str(patch.get("updated_at"), str(merged.get("updated_at") or ""))
+        changed = True
+    elif changed:
+        merged["updated_at"] = utc_now_iso()
+
+    if str(merged.get("provider") or "").strip().lower() == "off":
+        merged["enabled"] = False
+
+    settings["remote_access"] = merged
+    save_settings(settings)
+    return _merge_remote_access(merged)
 
 
 def _settings_path() -> Path:

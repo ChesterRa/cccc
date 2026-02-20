@@ -19,6 +19,7 @@ from .ops.inbox_read_ops import try_handle_inbox_read_op
 from .ops.maintenance_ops import try_handle_maintenance_op
 from .ops.diagnostics_ops import try_handle_diagnostics_op
 from .ops.daemon_core_ops import try_handle_daemon_core_op
+from .ops.remote_access_ops import try_handle_remote_access_op
 from .ops.chat_ops import try_handle_chat_op
 from .ops.system_notify_ops import try_handle_system_notify_op
 from .ops.group_state_ops import try_handle_group_state_op
@@ -114,6 +115,10 @@ def dispatch_request(
     )
     if daemon_core_resp is not None:
         return daemon_core_resp
+
+    remote_access_resp = try_handle_remote_access_op(op, args)
+    if remote_access_resp is not None:
+        return remote_access_resp, False
 
     diagnostics_resp = try_handle_diagnostics_op(
         op,

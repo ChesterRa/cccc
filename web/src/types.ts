@@ -230,6 +230,28 @@ export type GroupSettings = {
   terminal_transcript_notify_lines: number;
 };
 
+export type RemoteAccessState = {
+  provider: "off" | "manual" | "tailscale" | string;
+  mode: string;
+  enforce_web_token: boolean;
+  enabled: boolean;
+  status: "stopped" | "running" | "not_installed" | "not_authenticated" | "misconfigured" | "error" | string;
+  endpoint?: string | null;
+  updated_at?: string | null;
+  diagnostics?: {
+    web_token_present?: boolean;
+    web_host?: string;
+    web_port?: number;
+    web_public_url?: string | null;
+    web_bind_loopback?: boolean;
+    web_bind_reachable?: boolean;
+    mode_supported?: boolean;
+    tailscale_installed?: boolean | null;
+    tailscale_backend_state?: string | null;
+  } | null;
+  next_steps?: string[] | null;
+};
+
 export type AutomationRuleTriggerInterval = {
   kind: "interval";
   every_seconds: number;
