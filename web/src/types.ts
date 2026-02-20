@@ -80,10 +80,35 @@ export type Actor = {
   enabled?: boolean;
   running?: boolean;  // Actual process running status
   command?: string[];
+  env?: Record<string, string>;
   runner?: string;
   runtime?: string;
+  submit?: "enter" | "newline" | "none";
+  profile_id?: string;
+  profile_revision_applied?: number;
   updated_at?: string;
   unread_count?: number;
+};
+
+export type ActorProfile = {
+  id: string;
+  name: string;
+  runtime: SupportedRuntime | string;
+  runner: "pty" | "headless";
+  command: string[];
+  submit: "enter" | "newline" | "none";
+  env: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+  usage_count?: number;
+};
+
+export type ActorProfileUsage = {
+  group_id: string;
+  group_title?: string;
+  actor_id: string;
+  actor_title?: string;
 };
 
 export type PresenceAgent = {

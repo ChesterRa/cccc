@@ -139,6 +139,8 @@ class ActorUpdatePatch(BaseModel):
 class ActorUpdateData(BaseModel):
     actor_id: str
     patch: ActorUpdatePatch
+    profile_id: Optional[str] = None
+    profile_action: Optional[Literal["convert_to_custom"]] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -240,6 +242,8 @@ def normalize_event_data(kind: str, data: Any) -> Dict[str, Any]:
             raise ValueError("group.update patch must include title and/or topic")
     if kind == "actor.update":
         patch = payload.get("patch") if isinstance(payload, dict) else None
-        if isinstance(patch, dict) and not patch:
-            raise ValueError("actor.update patch cannot be empty")
+        profile_id = str(payload.get("profile_id") or "").strip() if isinstance(payload, dict) else ""
+        profile_action = str(payload.get("profile_action") or "").strip() if isinstance(payload, dict) else ""
+        if isinstance(patch, dict) and not patch and not profile_id and not profile_action:
+            raise ValueError("actor.update requires non-empty patch or profile action")
     return payload

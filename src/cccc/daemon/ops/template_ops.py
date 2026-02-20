@@ -33,6 +33,7 @@ from ...paths import ensure_home
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
+from ..actor_profile_store import get_actor_profile
 from ..delivery import THROTTLE, clear_preamble_sent
 
 
@@ -71,6 +72,30 @@ def group_template_export(args: Dict[str, Any]) -> DaemonResponse:
 
     try:
         tpl = build_group_template_from_group(group, cccc_version=__version__)
+        # Resolve linked actor profiles into portable inline actor runtime config.
+        # Templates remain profile-unaware and do not carry global profile references.
+        actor_map = {
+            str(a.get("id") or "").strip(): a
+            for a in (group.doc.get("actors") if isinstance(group.doc.get("actors"), list) else [])
+            if isinstance(a, dict) and str(a.get("id") or "").strip()
+        }
+        for actor_tpl in tpl.actors:
+            aid = str(actor_tpl.actor_id or "").strip()
+            if not aid:
+                continue
+            actor_doc = actor_map.get(aid)
+            if not isinstance(actor_doc, dict):
+                continue
+            profile_id = str(actor_doc.get("profile_id") or "").strip()
+            if not profile_id:
+                continue
+            profile = get_actor_profile(profile_id)
+            if not isinstance(profile, dict):
+                continue
+            actor_tpl.runtime = str(profile.get("runtime") or actor_tpl.runtime)  # type: ignore[assignment]
+            actor_tpl.runner = str(profile.get("runner") or actor_tpl.runner)  # type: ignore[assignment]
+            actor_tpl.command = list(profile.get("command") or [])
+            actor_tpl.submit = str(profile.get("submit") or actor_tpl.submit)  # type: ignore[assignment]
     except Exception as e:
         return _error("template_export_failed", str(e))
     text = dump_group_template(tpl)

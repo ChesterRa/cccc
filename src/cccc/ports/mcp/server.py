@@ -15,6 +15,7 @@ cccc.* namespace (collaboration control plane):
 - cccc_blob_path: Resolve attachment blob path
 - cccc_group_info: Get group info
 - cccc_actor_list: Get actor list
+- cccc_actor_profile_list: List reusable Actor Profiles
 - cccc_actor_add: Add new actor (foreman only)
 - cccc_actor_remove: Remove an actor (foreman/peer can only remove themselves)
 - cccc_actor_start: Start actor
@@ -610,24 +611,33 @@ def actor_list(*, group_id: str) -> Dict[str, Any]:
     return {"actors": _sanitize_actors_for_agent(actors)}
 
 
+def actor_profile_list(*, by: str) -> Dict[str, Any]:
+    """List reusable Actor Profiles."""
+    return _call_daemon_or_raise({"op": "actor_profile_list", "args": {"by": by}})
+
+
 def actor_add(
     *, group_id: str, by: str, actor_id: str,
     runtime: str = "codex", runner: str = "pty", title: str = "",
-    command: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None
+    command: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None, profile_id: str = ""
 ) -> Dict[str, Any]:
     """Add a new actor (foreman only). Role is auto-determined by position."""
+    req_args: Dict[str, Any] = {
+        "group_id": group_id,
+        "actor_id": actor_id,
+        "runtime": runtime,
+        "runner": runner,
+        "title": title,
+        "command": command or [],
+        "env": env or {},
+        "by": by,
+    }
+    pid = str(profile_id or "").strip()
+    if pid:
+        req_args["profile_id"] = pid
     return _call_daemon_or_raise({
         "op": "actor_add",
-        "args": {
-            "group_id": group_id,
-            "actor_id": actor_id,
-            "runtime": runtime,
-            "runner": runner,
-            "title": title,
-            "command": command or [],
-            "env": env or {},
-            "by": by,
-        },
+        "args": req_args,
     })
 
 
@@ -1352,6 +1362,10 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         return actor_list(group_id=gid)
 
+    if name == "cccc_actor_profile_list":
+        by = _resolve_caller_from_by(arguments)
+        return actor_profile_list(by=by)
+
     if name == "cccc_actor_add":
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_from_by(arguments)
@@ -1366,6 +1380,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             title=str(arguments.get("title") or ""),
             command=list(cmd_raw) if isinstance(cmd_raw, list) else None,
             env=dict(env_raw) if isinstance(env_raw, dict) else None,
+            profile_id=str(arguments.get("profile_id") or ""),
         )
 
     if name == "cccc_actor_remove":

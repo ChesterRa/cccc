@@ -12,6 +12,7 @@ from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ..actor_profile_runtime import resolve_linked_actor_before_start
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -36,6 +37,9 @@ def handle_group_start(
     throttle_reset_actor: Callable[..., None],
     reset_automation_timers_if_active: Callable[[Any], None],
     supported_runtimes: Sequence[str],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip()
@@ -96,10 +100,17 @@ def handle_group_start(
         started: list[str] = []
         forced_headless: list[str] = []
         for aid, cwd, cmd, env, actor, runner_kind in start_specs:
-            try:
-                update_actor(group, aid, {"enabled": True})
-            except Exception:
-                pass
+            update_actor(group, aid, {"enabled": True})
+            actor = resolve_linked_actor_before_start(
+                group,
+                aid,
+                get_actor_profile=get_actor_profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+            )
+            cmd = actor.get("command") if isinstance(actor.get("command"), list) else cmd
+            env = actor.get("env") if isinstance(actor.get("env"), dict) else env
+            runner_kind = str(actor.get("runner") or runner_kind).strip() or runner_kind
 
             runner_effective = effective_runner_kind(runner_kind)
             if runner_effective == "headless" and runner_kind != "headless" and not pty_supported():
@@ -162,7 +173,10 @@ def handle_group_start(
             throttle_reset_actor(group.group_id, aid, keep_pending=True)
             started.append(aid)
     except Exception as e:
-        return _error("group_start_failed", str(e))
+        msg = str(e)
+        if "profile not found:" in msg:
+            return _error("profile_not_found", msg)
+        return _error("group_start_failed", msg)
 
     if started:
         try:
@@ -264,6 +278,9 @@ def try_handle_group_lifecycle_op(
     supported_runtimes: Sequence[str],
     pty_state_dir_for_group: Callable[[str], Path],
     headless_state_dir_for_group: Callable[[str], Path],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> Optional[DaemonResponse]:
     if op == "group_start":
         return handle_group_start(
@@ -283,6 +300,9 @@ def try_handle_group_lifecycle_op(
             throttle_reset_actor=throttle_reset_actor,
             reset_automation_timers_if_active=reset_automation_timers_if_active,
             supported_runtimes=supported_runtimes,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
         )
     if op == "group_stop":
         return handle_group_stop(

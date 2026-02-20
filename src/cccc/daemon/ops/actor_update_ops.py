@@ -6,13 +6,21 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import list_actors, update_actor
+from ...kernel.actors import find_actor, list_actors, update_actor
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
+from ..actor_profile_runtime import (
+    PROFILE_CONTROLLED_FIELDS,
+    actor_profile_id,
+    apply_profile_link_to_actor,
+    clear_actor_link_metadata,
+    is_actor_profile_linked,
+    resolve_linked_actor_before_start,
+)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -39,33 +47,118 @@ def handle_actor_update(
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
     supported_runtimes: Sequence[str],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
     by = str(args.get("by") or "user").strip()
     patch = args.get("patch") if isinstance(args.get("patch"), dict) else {}
+    profile_id_arg = str(args.get("profile_id") or "").strip()
+    profile_action = str(args.get("profile_action") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
+    if not actor_id:
+        return _error("missing_actor_id", "missing actor_id")
     allowed = {"role", "title", "command", "env", "default_scope_key", "submit", "enabled", "runner", "runtime"}
     unknown = set(patch.keys()) - allowed
     if unknown:
         return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)})
-    if not patch:
+    if profile_action and profile_action not in ("convert_to_custom",):
+        return _error("invalid_request", "invalid profile_action")
+    if profile_action and profile_id_arg:
+        return _error("invalid_request", "profile_action and profile_id are mutually exclusive")
+    if not patch and not profile_id_arg and not profile_action:
         return _error("invalid_patch", "empty patch")
+    actor_existing = find_actor(group, actor_id)
+    if not isinstance(actor_existing, dict):
+        return _error("actor_not_found", f"actor not found: {actor_id}")
+    linked_before = is_actor_profile_linked(actor_existing)
+    controlled_patch_keys = sorted([key for key in PROFILE_CONTROLLED_FIELDS if key in patch])
+    if linked_before and controlled_patch_keys:
+        return _error(
+            "actor_profile_linked_readonly",
+            "linked actor runtime fields are read-only (convert to custom first)",
+            details={"keys": controlled_patch_keys},
+        )
+    if profile_action == "convert_to_custom" and controlled_patch_keys:
+        return _error(
+            "invalid_request",
+            "cannot combine convert_to_custom with runtime field patch",
+            details={"keys": controlled_patch_keys},
+        )
+    if profile_id_arg and controlled_patch_keys:
+        return _error(
+            "invalid_request",
+            "cannot patch runtime fields while attaching profile",
+            details={"keys": controlled_patch_keys},
+        )
     enabled_patched = "enabled" in patch
     before_foreman = foreman_id(group) if enabled_patched else ""
+    applied_profile_id = ""
+    profile_converted = False
+    actor: Dict[str, Any]
     try:
         require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
-        actor = update_actor(group, actor_id, patch)
+        if profile_action == "convert_to_custom":
+            current = find_actor(group, actor_id)
+            if not isinstance(current, dict) or not is_actor_profile_linked(current):
+                raise ValueError("actor is not linked to a profile")
+            current_profile_id = actor_profile_id(current)
+            profile = get_actor_profile(current_profile_id)
+            if not isinstance(profile, dict):
+                raise ValueError(f"profile not found: {current_profile_id}")
+            apply_profile_link_to_actor(
+                group,
+                actor_id,
+                profile_id=current_profile_id,
+                profile=profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+            )
+            clear_actor_link_metadata(group, actor_id)
+            profile_converted = True
+
+        if profile_id_arg:
+            profile = get_actor_profile(profile_id_arg)
+            if not isinstance(profile, dict):
+                raise ValueError(f"profile not found: {profile_id_arg}")
+            apply_profile_link_to_actor(
+                group,
+                actor_id,
+                profile_id=profile_id_arg,
+                profile=profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+            )
+            applied_profile_id = profile_id_arg
+
+        actor = find_actor(group, actor_id) or {}
+        if patch:
+            actor = update_actor(group, actor_id, patch)
+        else:
+            actor = dict(actor)
     except Exception as e:
         return _error("actor_update_failed", str(e))
 
     if enabled_patched:
         if coerce_bool(actor.get("enabled"), default=False):
             if coerce_bool(group.doc.get("running"), default=False):
+                try:
+                    actor = resolve_linked_actor_before_start(
+                        group,
+                        actor_id,
+                        get_actor_profile=get_actor_profile,
+                        load_actor_profile_secrets=load_actor_profile_secrets,
+                        update_actor_private_env=update_actor_private_env,
+                    )
+                except Exception as e:
+                    return _error("profile_not_found", str(e))
+
                 group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
                 if not group_scope_key:
                     return _error(
@@ -185,13 +278,22 @@ def handle_actor_update(
 
     if enabled_patched:
         maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    event_data: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "patch": patch,
+    }
+    if applied_profile_id:
+        event_data["profile_id"] = applied_profile_id
+    if profile_converted:
+        event_data["profile_action"] = "convert_to_custom"
+
     event = append_event(
         group.ledger_path,
         kind="actor.update",
         group_id=group.group_id,
         scope_key="",
         by=by,
-        data={"actor_id": actor_id, "patch": patch},
+        data=event_data,
     )
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
@@ -217,6 +319,9 @@ def try_handle_actor_update_op(
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
     supported_runtimes: Sequence[str],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> Optional[DaemonResponse]:
     if op == "actor_update":
         return handle_actor_update(
@@ -238,5 +343,8 @@ def try_handle_actor_update_op(
             remove_headless_state=remove_headless_state,
             remove_pty_state_if_pid=remove_pty_state_if_pid,
             supported_runtimes=supported_runtimes,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
         )
     return None

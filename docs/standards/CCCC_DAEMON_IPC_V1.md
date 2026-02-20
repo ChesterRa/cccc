@@ -671,6 +671,7 @@ Args:
   command?: string[]
   env?: Record<string, string>
   env_private?: Record<string, string> // write-only secrets (stored under CCCC_HOME/state; never persisted into ledger)
+  profile_id?: string            // optional Actor Profile link (runtime/runner/command/submit/env + secrets)
   default_scope_key?: string
   submit?: "enter" | "newline" | "none"
   by?: string
@@ -680,6 +681,8 @@ Args:
 Notes:
 - `env_private` is restricted to `by="user"` and values are never returned.
 - If `env_private` is provided (even empty), it is treated as authoritative for this create: it clears any existing private keys for that actor_id, then sets the provided keys.
+- `profile_id` links the actor to a global Actor Profile and applies profile-controlled runtime fields + profile secrets.
+- When `profile_id` is used, `env_private` is rejected (linked actor private env is profile-controlled).
 
 Result:
 ```ts
@@ -690,7 +693,14 @@ Result:
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; by?: string; patch: Record<string, unknown> }
+{
+  group_id: string
+  actor_id: string
+  by?: string
+  patch: Record<string, unknown>
+  profile_id?: string                      // attach/replace profile link
+  profile_action?: "convert_to_custom"     // snapshot profile config + secrets, then unlink
+}
 ```
 
 Patch keys used by CCCC v0.4.x include:
@@ -770,7 +780,166 @@ Result:
 { group_id: string; actor_id: string; keys: string[] }
 ```
 
-### 8.5 Chat Messaging
+### 8.5 Actor Profiles (Global)
+
+Actor Profiles are global reusable runtime profiles stored under `CCCC_HOME/state/actor_profiles/`.
+They are not group-local settings.
+
+#### `actor_profile_list`
+
+Args:
+```ts
+{ by?: string }
+```
+
+Result:
+```ts
+{ profiles: Array<Record<string, unknown>> } // each profile includes usage_count
+```
+
+#### `actor_profile_get`
+
+Args:
+```ts
+{ profile_id: string; by?: string }
+```
+
+Result:
+```ts
+{
+  profile: Record<string, unknown>
+  usage: Array<{
+    group_id: string
+    group_title?: string
+    actor_id: string
+    actor_title?: string
+  }>
+}
+```
+
+#### `actor_profile_upsert`
+
+Create/update a profile with optimistic concurrency.
+
+Args:
+```ts
+{
+  by?: string
+  profile: {
+    id?: string
+    name: string
+    runtime: string
+    runner: "pty" | "headless"
+    command?: string[] | string
+    submit?: "enter" | "newline" | "none"
+    env?: Record<string, string> // deprecated legacy input; values are migrated into profile secrets
+  }
+  expected_revision?: number
+}
+```
+
+Notes:
+- Runtime variables are unified as profile secrets (`actor_profile_secret_*`).
+- `profile.env` is accepted only as a legacy bridge and migrated into profile secrets; stored profile `env` is kept empty.
+
+Result:
+```ts
+{ profile: Record<string, unknown> }
+```
+
+#### `actor_profile_delete`
+
+Args:
+```ts
+{ profile_id: string; by?: string; force_detach?: boolean }
+```
+
+Notes:
+- Default behavior rejects delete when the profile is still used by linked actors (`profile_in_use`).
+- With `force_detach: true`, linked actors are converted to custom first, then the profile is deleted.
+
+Result:
+```ts
+{
+  deleted: true
+  profile_id: string
+  detached_count: number
+  detached: Array<{ group_id: string; actor_id: string }>
+}
+```
+
+#### `actor_profile_secret_keys`
+
+List profile secret keys (masked previews only).
+
+Args:
+```ts
+{ profile_id: string; by?: string }
+```
+
+Result:
+```ts
+{ profile_id: string; keys: string[]; masked_values: Record<string, string> }
+```
+
+#### `actor_profile_secret_update`
+
+Update profile-level secrets (write-only values).
+
+Args:
+```ts
+{
+  profile_id: string
+  by?: string
+  set?: Record<string, string>
+  unset?: string[]
+  clear?: boolean
+}
+```
+
+Result:
+```ts
+{ profile_id: string; keys: string[] }
+```
+
+#### `actor_profile_secret_copy_from_actor`
+
+Copy an actor's current private env map into a profile's secrets (server-side copy, values are never returned).
+
+Args:
+```ts
+{
+  profile_id: string
+  group_id: string
+  actor_id: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{ profile_id: string; group_id: string; actor_id: string; keys: string[] }
+```
+
+#### `actor_profile_secret_copy_from_profile`
+
+Copy one profile's current secret map into another profile (server-side copy, values are never returned).
+
+Args:
+```ts
+{
+  profile_id: string
+  source_profile_id: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{ profile_id: string; source_profile_id: string; keys: string[] }
+```
+
+### 8.6 Chat Messaging
 
 #### `send`
 
@@ -853,7 +1022,7 @@ Result:
 { acked: boolean; already: boolean; event: CCCSEventV1 | null }
 ```
 
-### 8.6 Inbox (Read Cursor)
+### 8.7 Inbox (Read Cursor)
 
 #### `inbox_list`
 
@@ -897,7 +1066,7 @@ Result:
 { cursor: { event_id: string; ts: string; updated_at: string }; event: CCCSEventV1 | null }
 ```
 
-### 8.7 Context and Tasks
+### 8.8 Context and Tasks
 
 #### `context_get`
 
@@ -953,7 +1122,7 @@ Result:
 { agents: Array<{ id: string; status: string; updated_at: string }>; heartbeat_timeout_seconds: number }
 ```
 
-### 8.8 Headless Runner
+### 8.9 Headless Runner
 
 #### `headless_status`
 
@@ -991,7 +1160,7 @@ Result:
 { message_id: string; acked_at: string }
 ```
 
-### 8.9 System Notifications (Not Chat)
+### 8.10 System Notifications (Not Chat)
 
 #### `system_notify`
 
@@ -1027,7 +1196,7 @@ Result:
 { event: CCCSEventV1 } // kind="system.notify_ack"
 ```
 
-### 8.10 Terminal Diagnostics and PTY Attach
+### 8.11 Terminal Diagnostics and PTY Attach
 
 #### `terminal_tail`
 
@@ -1110,7 +1279,7 @@ After a successful handshake, the connection becomes a raw PTY stream (see §4.4
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
 
-### 8.11 Ledger Maintenance
+### 8.12 Ledger Maintenance
 
 #### `ledger_snapshot`
 
@@ -1133,7 +1302,7 @@ Args:
 
 Result: implementation-defined compaction report.
 
-### 8.12 Group Templates
+### 8.13 Group Templates
 
 Templates use the portable schema in `src/cccc/contracts/v1/group_template.py`.
 
@@ -1192,7 +1361,7 @@ Result:
 { group_id: string; applied: true }
 ```
 
-### 8.13 Event Streaming (Optional)
+### 8.14 Event Streaming (Optional)
 
 #### `events_stream`
 

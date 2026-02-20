@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, HeadlessState, RunnerKind
+from .actor_profile import ActorProfile
 from .automation import AutomationAction, AutomationRule, AutomationRuleSet, AutomationTrigger
 from .event import Event
 from .group_template import GroupTemplate, GroupTemplateActor, GroupTemplatePrompts, GroupTemplateSettings
@@ -10,6 +11,7 @@ from .notify import NotifyAckData, NotifyKind, NotifyPriority, SystemNotifyData
 
 __all__ = [
     "Actor",
+    "ActorProfile",
     "ActorRole",
     "ActorSubmit",
     "AgentRuntime",

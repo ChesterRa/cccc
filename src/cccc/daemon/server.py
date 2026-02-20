@@ -52,6 +52,11 @@ from .private_env_ops import (
     delete_group_private_env as _delete_group_private_env,
     merge_actor_env_with_private as _merge_actor_env_with_private,
 )
+from .actor_profile_store import (
+    get_actor_profile as _get_actor_profile,
+    load_actor_profile_secrets as _load_actor_profile_secrets,
+)
+from .actor_profile_runtime import resolve_linked_actor_before_start as _resolve_linked_actor_before_start
 from .runner_state_ops import (
     pty_state_path as _pty_state_path,
     write_pty_state as _write_pty_state,
@@ -592,6 +597,13 @@ def _start_actor_process(
         clear_preamble_sent=clear_preamble_sent,
         throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
         supported_runtimes=SUPPORTED_RUNTIMES,
+        resolve_linked_actor_before_start=lambda grp, aid: _resolve_linked_actor_before_start(
+            grp,
+            aid,
+            get_actor_profile=_get_actor_profile,
+            load_actor_profile_secrets=_load_actor_profile_secrets,
+            update_actor_private_env=_update_actor_private_env,
+        ),
     )
 
 
@@ -657,6 +669,8 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
         private_env_max_keys=_PRIVATE_ENV_MAX_KEYS,
         start_actor_process=_start_actor_process,
         delete_actor_private_env=_delete_actor_private_env,
+        get_actor_profile=_get_actor_profile,
+        load_actor_profile_secrets=_load_actor_profile_secrets,
         warn_forced_headless=lambda group_id, actor_id: logger.warning(
             "pty runner is not supported on this platform; forcing runner=headless for %s/%s",
             group_id,

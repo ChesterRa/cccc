@@ -72,8 +72,14 @@ def handle_actor_env_private_keys(
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    if find_actor(group, actor_id) is None:
+    actor = find_actor(group, actor_id)
+    if actor is None:
         return _error("actor_not_found", f"actor not found: {actor_id}")
+    if str(actor.get("profile_id") or "").strip():
+        return _error(
+            "actor_profile_linked_readonly",
+            "linked actor private env is profile-controlled (convert to custom first)",
+        )
     private_env = load_actor_private_env(group_id, actor_id)
     keys = sorted(private_env.keys())
     masked_values = {k: mask_private_env_value(v) for k, v in private_env.items()}
@@ -108,8 +114,14 @@ def handle_actor_env_private_update(
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    if find_actor(group, actor_id) is None:
+    actor = find_actor(group, actor_id)
+    if actor is None:
         return _error("actor_not_found", f"actor not found: {actor_id}")
+    if str(actor.get("profile_id") or "").strip():
+        return _error(
+            "actor_profile_linked_readonly",
+            "linked actor private env is profile-controlled (convert to custom first)",
+        )
 
     clear = coerce_bool(args.get("clear"), default=False)
     set_raw = args.get("set")

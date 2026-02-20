@@ -1,5 +1,5 @@
 // AppModals renders all modal components in one place.
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
@@ -8,7 +8,12 @@ import type { TemplatePreviewDetailsProps } from "./TemplatePreviewDetails";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
 import { AddActorModal } from "./modals/AddActorModal";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
-import { EditActorModal } from "./modals/EditActorModal";
+import {
+  EditActorModal,
+  NO_CHANGES_SENTINEL,
+  type EditActorSavePayload,
+  type SaveActorProfileResult,
+} from "./modals/EditActorModal";
 import { GroupEditModal } from "./modals/GroupEditModal";
 import { InboxModal } from "./modals/InboxModal";
 import { RelayMessageModal } from "./modals/RelayMessageModal";
@@ -23,7 +28,7 @@ import {
 } from "../stores";
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import * as api from "../services/api";
-import { RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData } from "../types";
+import { ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, SupportedRuntime } from "../types";
 
 interface AppModalsProps {
   isDark: boolean;
@@ -82,6 +87,7 @@ export function AppModals({
     isSmallScreen,
     setBusy,
     showError,
+    showNotice,
     setActiveTab,
   } = useUIStore();
 
@@ -115,14 +121,20 @@ export function AppModals({
     newActorRole,
     newActorRuntime,
     newActorCommand,
+    newActorUseDefaultCommand,
     newActorSecretsSetText,
+    newActorUseProfile,
+    newActorProfileId,
     showAdvancedActor,
     addActorError,
     setNewActorId,
     setNewActorRole,
     setNewActorRuntime,
     setNewActorCommand,
+    setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
+    setNewActorUseProfile,
+    setNewActorProfileId,
     setShowAdvancedActor,
     setAddActorError,
     resetAddActorForm,
@@ -147,6 +159,8 @@ export function AppModals({
   const [createTemplatePreview, setCreateTemplatePreview] = useState<TemplatePreviewDetailsProps["template"] | null>(null);
   const [createTemplateError, setCreateTemplateError] = useState("");
   const [createTemplateBusy, setCreateTemplateBusy] = useState(false);
+  const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
+  const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
 
   // Computed
   const selectedGroupRunning = useGroupStore(
@@ -231,6 +245,26 @@ export function AppModals({
 
     return { toLabel, entries, statusKind: "read" as const };
   }, [actors, messageMetaEvent]);
+
+  const loadActorProfiles = async () => {
+    setActorProfilesBusy(true);
+    try {
+      const resp = await api.listActorProfiles();
+      if (!resp.ok) {
+        showError(resp.error?.message || t("failedToLoadActorProfiles"));
+        return;
+      }
+      setActorProfiles(Array.isArray(resp.result?.profiles) ? resp.result.profiles : []);
+    } finally {
+      setActorProfilesBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!modals.addActor && !editingActor) return;
+    void loadActorProfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modals.addActor, editingActor]);
 
   // Handlers
   const handleUpdateVision = async (vision: string) => {
@@ -332,49 +366,237 @@ export function AppModals({
     }
   };
 
-  const handleSaveEditActorAndRestart = async (secrets: { setVars: Record<string, string>; unsetKeys: string[]; clear: boolean }) => {
+  const handleSaveEditActor = async (
+    payload: EditActorSavePayload,
+    options: { restart: boolean }
+  ) => {
     if (!selectedGroupId || !editingActor) return;
-    const label = editingActor.title || editingActor.id;
 
-    const setKeys = Object.keys(secrets?.setVars || {});
-    const unsetKeys = Array.isArray(secrets?.unsetKeys) ? secrets.unsetKeys : [];
-    const clear = !!secrets?.clear;
+    const actorId = String(editingActor.id || "").trim();
+    if (!actorId) return;
 
-    const willChangeSecrets = clear || setKeys.length > 0 || unsetKeys.length > 0;
-    const msg = willChangeSecrets
-      ? t('saveSecretsAndRestartConfirm', { label })
-      : t('saveAndRestartConfirm', { label });
-    if (!window.confirm(msg)) return;
+    const label = String(editingActor.title || editingActor.id || actorId).trim() || actorId;
+    const mode = payload.mode === "profile" ? "profile" : "custom";
+    const profileId = String(payload.profileId || "").trim();
+    const linkedBefore = Boolean(String(editingActor.profile_id || "").trim());
+    const convertToCustom = mode === "custom" && linkedBefore && !!payload.convertToCustom;
+
+    if (mode === "profile" && !profileId) {
+      showError(t("profileRequired"));
+      return;
+    }
+    if (mode === "custom" && linkedBefore && !convertToCustom) {
+      showError(t("profileControlsRuntimeFields"));
+      return;
+    }
+
+    const setVars = payload?.setVars && typeof payload.setVars === "object" ? payload.setVars : {};
+    const setKeys = Object.keys(setVars);
+    const unsetKeys = Array.isArray(payload?.unsetKeys) ? payload.unsetKeys : [];
+    const clear = !!payload?.clear;
+    const canEditSecrets = mode === "custom" && (!linkedBefore || convertToCustom);
+    const willChangeSecrets = canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
+
+    const currentRuntime = String(editingActor.runtime || "codex").trim();
+    const currentCommand = Array.isArray(editingActor.command)
+      ? editingActor.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
+      : "";
+    const currentTitle = String(editingActor.title || "").trim();
+    const nextRuntime = String(editActorRuntime || "codex").trim();
+    const nextCommand = String(editActorCommand || "").trim();
+    const nextTitle = String(editActorTitle || "").trim();
+
+    const runtimeChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
+    const commandChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
+    const titleChanged = nextTitle !== currentTitle;
+    const profileChanged = mode === "profile" && profileId !== String(editingActor.profile_id || "").trim();
+    const hasActorMutation = convertToCustom || runtimeChanged || commandChanged || titleChanged || profileChanged;
+
+    if (!options.restart && !hasActorMutation && !willChangeSecrets) {
+      throw new Error(NO_CHANGES_SENTINEL);
+    }
+
+    if (options.restart) {
+      const msg = willChangeSecrets
+        ? t("saveSecretsAndRestartConfirm", { label })
+        : t("saveAndRestartConfirm", { label });
+      if (!window.confirm(msg)) return;
+    }
+
     setBusy("actor-update");
     try {
-      const resp = await api.updateActor(
-        selectedGroupId,
-        editingActor.id,
-        editActorRuntime,
-        editActorCommand,
-        editActorTitle
-      );
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
+      let actorSnapshot: Record<string, unknown> = editingActor as unknown as Record<string, unknown>;
+
+      if (mode === "custom" && linkedBefore && convertToCustom) {
+        const convertResp = await api.updateActor(
+          selectedGroupId,
+          actorId,
+          undefined,
+          undefined,
+          nextTitle,
+          { profileAction: "convert_to_custom" }
+        );
+        if (!convertResp.ok) {
+          showError(`${convertResp.error.code}: ${convertResp.error.message}`);
+          return;
+        }
+        const updated =
+          convertResp.result && typeof convertResp.result === "object"
+            ? (convertResp.result as { actor?: Record<string, unknown> }).actor
+            : undefined;
+        if (updated && typeof updated === "object") actorSnapshot = updated;
+      }
+
+      if (mode === "profile") {
+        const needProfilePatch = profileChanged || titleChanged;
+        if (needProfilePatch) {
+          const profileResp = await api.updateActor(
+            selectedGroupId,
+            actorId,
+            undefined,
+            undefined,
+            nextTitle,
+            { profileId }
+          );
+          if (!profileResp.ok) {
+            showError(`${profileResp.error.code}: ${profileResp.error.message}`);
+            return;
+          }
+          const updated =
+            profileResp.result && typeof profileResp.result === "object"
+              ? (profileResp.result as { actor?: Record<string, unknown> }).actor
+              : undefined;
+          if (updated && typeof updated === "object") actorSnapshot = updated;
+        }
+      } else {
+        const snapshotRuntime = String(actorSnapshot.runtime || currentRuntime || "codex").trim();
+        const snapshotCommand = Array.isArray(actorSnapshot.command)
+          ? actorSnapshot.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
+          : currentCommand;
+        const snapshotTitle = String(actorSnapshot.title || "").trim();
+        const needCustomPatch =
+          nextRuntime !== snapshotRuntime || nextCommand !== snapshotCommand || nextTitle !== snapshotTitle;
+        if (needCustomPatch) {
+          const customResp = await api.updateActor(
+            selectedGroupId,
+            actorId,
+            editActorRuntime,
+            editActorCommand,
+            nextTitle
+          );
+          if (!customResp.ok) {
+            showError(`${customResp.error.code}: ${customResp.error.message}`);
+            return;
+          }
+          const updated =
+            customResp.result && typeof customResp.result === "object"
+              ? (customResp.result as { actor?: Record<string, unknown> }).actor
+              : undefined;
+          if (updated && typeof updated === "object") actorSnapshot = updated;
+        }
       }
 
       if (willChangeSecrets) {
-        const envResp = await api.updateActorPrivateEnv(selectedGroupId, editingActor.id, secrets.setVars || {}, unsetKeys, clear);
+        const envResp = await api.updateActorPrivateEnv(selectedGroupId, actorId, setVars, unsetKeys, clear);
         if (!envResp.ok) {
           showError(`${envResp.error.code}: ${envResp.error.message}`);
           return;
         }
       }
 
-      const restartResp = await api.restartActor(selectedGroupId, editingActor.id);
-      if (!restartResp.ok) {
-        showError(`${restartResp.error.code}: ${restartResp.error.message}`);
-        return;
+      if (options.restart) {
+        const restartResp = await api.restartActor(selectedGroupId, actorId);
+        if (!restartResp.ok) {
+          showError(`${restartResp.error.code}: ${restartResp.error.message}`);
+          return;
+        }
       }
 
-      setEditingActor(null);
       await refreshActors();
+      setEditingActor(null);
+
+      if (!options.restart) {
+        const isRunning = Boolean(editingActor.running ?? editingActor.enabled ?? false);
+        const restartRequired = isRunning && (willChangeSecrets || profileChanged || runtimeChanged || commandChanged || convertToCustom);
+        if (restartRequired) {
+          showNotice({ message: t("savedRestartRequired", { label }) });
+        }
+      }
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleSaveEditActorOnly = async (payload: EditActorSavePayload) => {
+    await handleSaveEditActor(payload, { restart: false });
+  };
+
+  const handleSaveEditActorAndRestart = async (payload: EditActorSavePayload) => {
+    await handleSaveEditActor(payload, { restart: true });
+  };
+
+  const _applyEditingActor = (actor: Record<string, unknown>) => {
+    const runtime = String(actor.runtime || "").trim();
+    setEditActorRuntime((runtime || "codex") as SupportedRuntime);
+    setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
+    setEditActorTitle(String(actor.title || ""));
+    setEditingActor(actor as any);
+  };
+
+  useEffect(() => {
+    if (!editingActor) return;
+    const actorId = String(editingActor.id || "").trim();
+    if (!actorId) return;
+    const latest = actors.find((item) => String(item.id || "").trim() === actorId);
+    if (!latest) return;
+    const changed =
+      String(editingActor.profile_id || "").trim() !== String(latest.profile_id || "").trim() ||
+      Number(editingActor.profile_revision_applied || 0) !== Number(latest.profile_revision_applied || 0) ||
+      String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
+      String(editingActor.title || "") !== String(latest.title || "") ||
+      String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
+        String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "");
+    if (changed) _applyEditingActor(latest as Record<string, unknown>);
+  }, [actors, editingActor]);
+
+  const handleSaveEditActorAsProfile = async (): Promise<SaveActorProfileResult | void> => {
+    if (!editingActor || !selectedGroupId) return;
+    const suggested = String(editActorTitle || editingActor.title || editingActor.id || "New Profile").trim();
+    const name = window.prompt(t("profileNamePrompt"), suggested);
+    if (!name || !name.trim()) return;
+    setBusy("actor-profile-save");
+    try {
+      const resp = await api.upsertActorProfile({
+        name: name.trim(),
+        runtime: editActorRuntime,
+        runner: String(editingActor.runner || "pty"),
+        command: editActorCommand.trim(),
+        submit: String(editingActor.submit || "enter"),
+        env: editingActor.env && typeof editingActor.env === "object" ? editingActor.env : {},
+      });
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      const profileId = String(resp.result?.profile?.id || "").trim();
+      if (profileId) {
+        const copyResp = await api.copyActorPrivateEnvToProfile(profileId, selectedGroupId, editingActor.id);
+        if (!copyResp.ok) {
+          showError(`${copyResp.error.code}: ${copyResp.error.message}`);
+          return;
+        }
+      }
+      await loadActorProfiles();
+      const profileName = String(resp.result?.profile?.name || "").trim() || name.trim();
+      showNotice({ message: t("savedToActorProfiles") });
+      if (!profileId) return;
+      const useNow = window.confirm(
+        t("useSavedProfileNowConfirm", {
+          name: profileName,
+          actor: String(editActorTitle || editingActor.title || editingActor.id || "").trim() || editingActor.id,
+        })
+      );
+      return { profileId, profileName, useNow };
     } finally {
       setBusy("");
     }
@@ -472,24 +694,40 @@ export function AppModals({
     if (!selectedGroupId) return;
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
+    const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || "")) || null;
 
-    const parsedSecrets = parsePrivateEnvSetText(secretsText);
-    if (!parsedSecrets.ok) {
-      setAddActorError(parsedSecrets.error);
+    if (newActorUseProfile && !selectedProfile) {
+      setAddActorError(t("selectProfileFirst"));
       return;
     }
-    const secretsSetVars = parsedSecrets.setVars;
+
+    let secretsSetVars: Record<string, string> = {};
+    if (!newActorUseProfile) {
+      const parsedSecrets = parsePrivateEnvSetText(secretsText);
+      if (!parsedSecrets.ok) {
+        setAddActorError(parsedSecrets.error);
+        return;
+      }
+      secretsSetVars = parsedSecrets.setVars;
+    }
 
     setBusy("actor-add");
     setAddActorError("");
     try {
+      const commandToUse = newActorUseProfile ? "" : (newActorUseDefaultCommand ? "" : newActorCommand);
       const resp = await api.addActor(
         selectedGroupId,
         actorId,
         newActorRole,
-        newActorRuntime,
-        newActorCommand,
-        Object.keys(secretsSetVars).length ? secretsSetVars : undefined
+        newActorUseProfile ? String(selectedProfile?.runtime || "codex") : newActorRuntime,
+        commandToUse,
+        newActorUseProfile ? undefined : (Object.keys(secretsSetVars).length ? secretsSetVars : undefined),
+        newActorUseProfile
+          ? {
+              profileId: String(selectedProfile?.id || "").trim(),
+              runner: String(selectedProfile?.runner || "pty") === "headless" ? "headless" : "pty",
+            }
+          : undefined
       );
       if (!resp.ok) {
         setAddActorError(resp.error?.message || t('failedToAddAgent'));
@@ -504,9 +742,54 @@ export function AppModals({
     }
   };
 
+  const handleSaveNewActorAsProfile = async () => {
+    if (newActorUseProfile) return;
+    const suggested = String(newActorId || `${newActorRuntime}-profile`).trim();
+    const name = window.prompt(t("profileNamePrompt"), suggested);
+    if (!name || !name.trim()) return;
+    setBusy("actor-profile-save");
+    try {
+      const commandToUse = newActorUseDefaultCommand ? "" : newActorCommand.trim();
+      const resp = await api.upsertActorProfile({
+        name: name.trim(),
+        runtime: newActorRuntime,
+        runner: "pty",
+        command: commandToUse,
+        submit: "enter",
+        env: {},
+      });
+      if (!resp.ok) {
+        setAddActorError(resp.error?.message || t("failedToSaveActorProfile"));
+        return;
+      }
+      const profileId = String(resp.result?.profile?.id || "").trim();
+      if (profileId) {
+        const parsed = parsePrivateEnvSetText(newActorSecretsSetText);
+        if (!parsed.ok) {
+          setAddActorError(parsed.error);
+          return;
+        }
+        const hasSecrets = Object.keys(parsed.setVars).length > 0;
+        if (hasSecrets) {
+          const secretResp = await api.updateActorProfilePrivateEnv(profileId, parsed.setVars, [], false);
+          if (!secretResp.ok) {
+            setAddActorError(secretResp.error?.message || t("failedToSaveActorProfile"));
+            return;
+          }
+        }
+      }
+      showNotice({ message: t("savedToActorProfiles") });
+      await loadActorProfiles();
+    } finally {
+      setBusy("");
+    }
+  };
+
   // Computed for AddActorModal
   const suggestedActorId = (() => {
-    const prefix = newActorRuntime;
+    const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || "")) || null;
+    const profileRuntime = String(selectedProfile?.runtime || "").trim();
+    const prefix = newActorUseProfile ? (profileRuntime || "actor") : newActorRuntime;
     const existing = new Set(actors.map((a) => String(a.id || "")));
     for (let i = 1; i <= 999; i++) {
       const candidate = `${prefix}-${i}`;
@@ -517,21 +800,29 @@ export function AppModals({
 
   const canAddActor = (() => {
     if (busy === "actor-add") return false;
+    if (newActorUseProfile) return Boolean(String(newActorProfileId || "").trim());
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
-    if (newActorRuntime === "custom" && !newActorCommand.trim()) return false;
-    if (!available && !newActorCommand.trim()) return false;
+    if (!newActorUseDefaultCommand && !newActorCommand.trim()) return false;
+    if (newActorRuntime === "custom" && (newActorUseDefaultCommand || !newActorCommand.trim())) return false;
+    if (!available && (newActorUseDefaultCommand || !newActorCommand.trim())) return false;
     return true;
   })();
 
   const addActorDisabledReason = (() => {
     if (busy === "actor-add") return "";
+    if (newActorUseProfile && !String(newActorProfileId || "").trim()) {
+      return t("profileRequired");
+    }
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
-    if (newActorRuntime === "custom" && !newActorCommand.trim()) {
+    if (!newActorUseDefaultCommand && !newActorCommand.trim()) {
+      return t("commandOverrideRequired");
+    }
+    if (newActorRuntime === "custom" && (newActorUseDefaultCommand || !newActorCommand.trim())) {
       return t('customRuntimeRequiresCommand');
     }
-    if (!available && !newActorCommand.trim()) {
+    if (!available && (newActorUseDefaultCommand || !newActorCommand.trim())) {
       return t('runtimeNotInstalled', { runtime: RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime });
     }
     return "";
@@ -542,10 +833,9 @@ export function AppModals({
     [closeModal]
   );
 
-  const handleCancelEditActor = useCallback(
-    () => setEditingActor(null),
-    [setEditingActor]
-  );
+  const handleCancelEditActor = useCallback(() => {
+    setEditingActor(null);
+  }, [setEditingActor]);
 
   const relaySourceGroupId = useMemo(() => {
     const fromStore = relaySource?.groupId ? String(relaySource.groupId) : "";
@@ -758,7 +1048,12 @@ export function AppModals({
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
+        onSave={handleSaveEditActorOnly}
         onSaveAndRestart={handleSaveEditActorAndRestart}
+        linkedProfileId={String(editingActor?.profile_id || "") || undefined}
+        actorProfiles={actorProfiles}
+        actorProfilesBusy={actorProfilesBusy}
+        onSaveAsProfile={handleSaveEditActorAsProfile}
         onCancel={handleCancelEditActor}
       />
 
@@ -803,10 +1098,18 @@ export function AppModals({
         setNewActorId={setNewActorId}
         newActorRole={newActorRole}
         setNewActorRole={setNewActorRole}
+        newActorUseProfile={newActorUseProfile}
+        setNewActorUseProfile={setNewActorUseProfile}
+        newActorProfileId={newActorProfileId}
+        setNewActorProfileId={setNewActorProfileId}
+        actorProfiles={actorProfiles}
+        actorProfilesBusy={actorProfilesBusy}
         newActorRuntime={newActorRuntime}
         setNewActorRuntime={setNewActorRuntime}
         newActorCommand={newActorCommand}
         setNewActorCommand={setNewActorCommand}
+        newActorUseDefaultCommand={newActorUseDefaultCommand}
+        setNewActorUseDefaultCommand={setNewActorUseDefaultCommand}
         newActorSecretsSetText={newActorSecretsSetText}
         setNewActorSecretsSetText={setNewActorSecretsSetText}
         showAdvancedActor={showAdvancedActor}
@@ -816,6 +1119,7 @@ export function AppModals({
         canAddActor={canAddActor}
         addActorDisabledReason={addActorDisabledReason}
         onAddActor={handleAddActor}
+        onSaveAsProfile={handleSaveNewActorAsProfile}
         onClose={handleCloseAddActor}
         onCancelAndReset={() => {
           closeModal("addActor");

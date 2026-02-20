@@ -11,6 +11,7 @@ from ...kernel.inbox import set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import get_runtime_command_with_flags
+from ..actor_profile_runtime import apply_profile_link_to_actor
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -31,25 +32,22 @@ def handle_actor_add(
     delete_actor_private_env: Callable[[str, str], None],
     private_env_max_keys: int,
     supported_runtimes: Sequence[str],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
     warn_forced_headless: Optional[Callable[[str, str], None]] = None,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
     title = str(args.get("title") or "").strip()
     submit = str(args.get("submit") or "").strip()
-    runner = str(args.get("runner") or "").strip()
-    if not runner:
-        runner = "pty" if pty_supported() else "headless"
-    forced_headless = False
-    if runner == "pty" and not pty_supported():
-        runner = "headless"
-        forced_headless = True
+    requested_runner = str(args.get("runner") or "").strip()
     runtime = str(args.get("runtime") or "codex").strip()
     by = str(args.get("by") or "user").strip()
     command_raw = args.get("command")
     env_raw = args.get("env")
     env_private_raw = args.get("env_private")
     default_scope_key = str(args.get("default_scope_key") or "").strip()
+    profile_id = str(args.get("profile_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     group = load_group(group_id)
@@ -59,13 +57,10 @@ def handle_actor_add(
 
     try:
         require_actor_permission(group, by=by, action="actor.add")
-        if runner not in ("pty", "headless"):
-            raise ValueError("invalid runner (must be 'pty' or 'headless')")
-        if runtime not in supported_runtimes:
-            raise ValueError("invalid runtime")
-
         env_private_set: Dict[str, str] = {}
         if env_private_raw is not None:
+            if profile_id:
+                raise ValueError("env_private is not allowed when profile_id is used")
             if by != "user":
                 raise ValueError("env_private is only allowed for by=user")
             if not isinstance(env_private_raw, dict):
@@ -76,6 +71,41 @@ def handle_actor_add(
                 env_private_set[private_key] = private_value
             if len(env_private_set) > private_env_max_keys:
                 raise ValueError("too many env_private keys")
+
+        linked_profile: Optional[Dict[str, Any]] = None
+        linked_profile_id = ""
+        linked_profile_legacy_env: Dict[str, str] = {}
+        if profile_id:
+            linked_profile_id = profile_id
+            linked_profile = get_actor_profile(linked_profile_id)
+            if not isinstance(linked_profile, dict):
+                raise ValueError(f"profile not found: {linked_profile_id}")
+            runtime = str(linked_profile.get("runtime") or "codex").strip() or "codex"
+            requested_runner = str(linked_profile.get("runner") or "pty").strip() or "pty"
+            submit = str(linked_profile.get("submit") or submit or "enter").strip() or "enter"
+            linked_profile_secrets = load_actor_profile_secrets(linked_profile_id)
+            profile_env_raw = linked_profile.get("env")
+            if isinstance(profile_env_raw, dict):
+                linked_profile_legacy_env = {
+                    str(key): str(value)
+                    for key, value in profile_env_raw.items()
+                    if isinstance(key, str) and value is not None and str(key).strip()
+                }
+            merged_profile_vars: Dict[str, str] = {}
+            merged_profile_vars.update(linked_profile_legacy_env)
+            merged_profile_vars.update(linked_profile_secrets)
+            if len(merged_profile_vars) > private_env_max_keys:
+                raise ValueError("too many profile private env keys configured")
+
+        runner = requested_runner or ("pty" if pty_supported() else "headless")
+        if runner not in ("pty", "headless"):
+            raise ValueError("invalid runner (must be 'pty' or 'headless')")
+        if runtime not in supported_runtimes:
+            raise ValueError("invalid runtime")
+        forced_headless = False
+        if runner == "pty" and not pty_supported():
+            runner = "headless"
+            forced_headless = True
 
         foreman_cfg: Optional[Dict[str, Any]] = None
         if by and by != "user":
@@ -89,14 +119,20 @@ def handle_actor_add(
             actor_id = generate_actor_id(group, runtime=runtime)
 
         command: list[str] = []
-        if isinstance(command_raw, list) and all(isinstance(item, str) for item in command_raw):
+        if isinstance(linked_profile, dict):
+            profile_command = linked_profile.get("command")
+            if isinstance(profile_command, list):
+                command = [str(item) for item in profile_command if isinstance(item, str) and str(item).strip()]
+        elif isinstance(command_raw, list) and all(isinstance(item, str) for item in command_raw):
             command = [str(item) for item in command_raw if str(item).strip()]
 
         env: Dict[str, str] = {}
-        if isinstance(env_raw, dict) and all(isinstance(key, str) and isinstance(value, str) for key, value in env_raw.items()):
+        if isinstance(linked_profile, dict):
+            env = {}
+        elif isinstance(env_raw, dict) and all(isinstance(key, str) and isinstance(value, str) for key, value in env_raw.items()):
             env = {str(key): str(value) for key, value in env_raw.items()}
 
-        if isinstance(foreman_cfg, dict) and foreman_cfg.get("id") == by:
+        if isinstance(foreman_cfg, dict) and foreman_cfg.get("id") == by and not linked_profile_id:
             foreman_runtime = str(foreman_cfg.get("runtime") or "").strip()
             foreman_runner = str(foreman_cfg.get("runner") or "pty").strip() or "pty"
             foreman_runner_effective = effective_runner_kind(foreman_runner)
@@ -149,8 +185,19 @@ def handle_actor_add(
             runtime=runtime,  # type: ignore
         )
 
+        effective_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
+
+        if linked_profile_id and isinstance(linked_profile, dict):
+            actor = apply_profile_link_to_actor(
+                group,
+                effective_actor_id,
+                profile_id=linked_profile_id,
+                profile=linked_profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+            )
+
         if env_private_raw is not None:
-            effective_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
             try:
                 update_actor_private_env(
                     group.group_id,
@@ -192,13 +239,18 @@ def handle_actor_add(
         pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    start_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
+    start_runtime = str(actor.get("runtime") or runtime).strip() or runtime
+    start_runner = str(actor.get("runner") or runner).strip() or runner
+    start_command = actor.get("command") if isinstance(actor.get("command"), list) else command
+    start_env = actor.get("env") if isinstance(actor.get("env"), dict) else env
     start_result = start_actor_process(
         group,
-        actor_id,
-        command=command,
-        env=env,
-        runner=runner,
-        runtime=runtime,
+        start_actor_id,
+        command=list(start_command or []),
+        env=dict(start_env or {}),
+        runner=start_runner,
+        runtime=start_runtime,
         by=by,
     )
 
@@ -206,7 +258,7 @@ def handle_actor_add(
     if start_result["success"]:
         result["start_event"] = start_result["event"]
         result["running"] = True
-        if start_result.get("effective_runner") != runner:
+        if start_result.get("effective_runner") != start_runner:
             result["runner_effective"] = start_result.get("effective_runner")
     else:
         result["start_error"] = start_result.get("error")
@@ -231,6 +283,8 @@ def try_handle_actor_add_op(
     delete_actor_private_env: Callable[[str, str], None],
     private_env_max_keys: int,
     supported_runtimes: Sequence[str],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
     warn_forced_headless: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[DaemonResponse]:
     if op == "actor_add":
@@ -247,6 +301,8 @@ def try_handle_actor_add_op(
             delete_actor_private_env=delete_actor_private_env,
             private_env_max_keys=private_env_max_keys,
             supported_runtimes=supported_runtimes,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
             warn_forced_headless=warn_forced_headless,
         )
     return None

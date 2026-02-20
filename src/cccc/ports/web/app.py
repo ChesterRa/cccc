@@ -140,6 +140,7 @@ class ActorCreateRequest(BaseModel):
     # Write-only runtime-only secrets (stored under CCCC_HOME/state; never persisted into ledger).
     # Values are never returned by the daemon; only keys can be listed via the dedicated endpoints.
     env_private: Optional[Dict[str, str]] = None
+    profile_id: Optional[str] = None
     default_scope_key: str = Field(default="")
     submit: ActorSubmit = Field(default="enter")
     by: str = Field(default="user")
@@ -156,6 +157,14 @@ class ActorUpdateRequest(BaseModel):
     runner: Optional[RunnerKind] = None
     runtime: Optional[AgentRuntime] = None
     enabled: Optional[bool] = None
+    profile_id: Optional[str] = None
+    profile_action: Optional[Literal["convert_to_custom"]] = None
+
+
+class ActorProfileUpsertRequest(BaseModel):
+    profile: Dict[str, Any] = Field(default_factory=dict)
+    expected_revision: Optional[int] = None
+    by: str = Field(default="user")
 
 
 class InboxReadRequest(BaseModel):
@@ -1996,6 +2005,7 @@ def create_app() -> FastAPI:
     async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
         command = _normalize_command(req.command) or []
         env_private = dict(req.env_private) if isinstance(req.env_private, dict) else None
+        profile_id = str(req.profile_id or "").strip()
         return await _daemon(
             {
                 "op": "actor_add",
@@ -2009,6 +2019,7 @@ def create_app() -> FastAPI:
                     "command": command,
                     "env": dict(req.env),
                     "env_private": env_private,
+                    "profile_id": profile_id,
                     "default_scope_key": req.default_scope_key,
                     "submit": req.submit,
                     "by": req.by,
@@ -2036,7 +2047,17 @@ def create_app() -> FastAPI:
             patch["runtime"] = req.runtime
         if req.enabled is not None:
             patch["enabled"] = bool(req.enabled)
-        return await _daemon({"op": "actor_update", "args": {"group_id": group_id, "actor_id": actor_id, "patch": patch, "by": req.by}})
+        args: Dict[str, Any] = {
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "patch": patch,
+            "by": req.by,
+        }
+        if req.profile_id is not None:
+            args["profile_id"] = str(req.profile_id or "").strip()
+        if req.profile_action is not None:
+            args["profile_action"] = str(req.profile_action or "").strip()
+        return await _daemon({"op": "actor_update", "args": args})
 
     @app.delete("/api/v1/groups/{group_id}/actors/{actor_id}")
     async def actor_delete(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
@@ -2126,6 +2147,181 @@ def create_app() -> FastAPI:
                     "set": set_vars,
                     "unset": unset_keys,
                     "clear": clear,
+                },
+            }
+        )
+
+    @app.get("/api/v1/actor_profiles")
+    async def actor_profiles_list(by: str = "user") -> Dict[str, Any]:
+        return await _daemon({"op": "actor_profile_list", "args": {"by": by}})
+
+    @app.get("/api/v1/actor_profiles/{profile_id}")
+    async def actor_profiles_get(profile_id: str, by: str = "user") -> Dict[str, Any]:
+        return await _daemon({"op": "actor_profile_get", "args": {"profile_id": profile_id, "by": by}})
+
+    @app.post("/api/v1/actor_profiles")
+    async def actor_profiles_upsert(req: ActorProfileUpsertRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        args: Dict[str, Any] = {
+            "profile": dict(req.profile or {}),
+            "by": req.by,
+        }
+        if req.expected_revision is not None:
+            args["expected_revision"] = int(req.expected_revision)
+        return await _daemon({"op": "actor_profile_upsert", "args": args})
+
+    @app.delete("/api/v1/actor_profiles/{profile_id}")
+    async def actor_profiles_delete(profile_id: str, by: str = "user", force_detach: bool = False) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "actor_profile_delete",
+                "args": {"profile_id": profile_id, "by": by, "force_detach": bool(force_detach)},
+            }
+        )
+
+    @app.get("/api/v1/actor_profiles/{profile_id}/env_private")
+    async def actor_profile_secret_keys(profile_id: str, by: str = "user") -> Dict[str, Any]:
+        return await _daemon({"op": "actor_profile_secret_keys", "args": {"profile_id": profile_id, "by": by}})
+
+    @app.post("/api/v1/actor_profiles/{profile_id}/env_private")
+    async def actor_profile_secret_update(request: Request, profile_id: str) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor profile secret write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "invalid JSON body", "details": {}})
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object", "details": {}})
+
+        by = str(payload.get("by") or "user").strip() or "user"
+        clear = bool(payload.get("clear") is True)
+        set_raw = payload.get("set")
+        unset_raw = payload.get("unset")
+
+        if set_raw is not None and not isinstance(set_raw, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "set must be an object", "details": {}})
+        if unset_raw is not None and not isinstance(unset_raw, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "unset must be a list", "details": {}})
+
+        set_vars: Dict[str, str] = {}
+        if isinstance(set_raw, dict):
+            for key, value in set_raw.items():
+                k = str(key or "").strip()
+                if not k or value is None:
+                    continue
+                set_vars[k] = str(value)
+
+        unset_keys: list[str] = []
+        if isinstance(unset_raw, list):
+            for item in unset_raw:
+                k = str(item or "").strip()
+                if k:
+                    unset_keys.append(k)
+
+        return await _daemon(
+            {
+                "op": "actor_profile_secret_update",
+                "args": {
+                    "profile_id": profile_id,
+                    "by": by,
+                    "set": set_vars,
+                    "unset": unset_keys,
+                    "clear": clear,
+                },
+            }
+        )
+
+    @app.post("/api/v1/actor_profiles/{profile_id}/copy_actor_secrets")
+    async def actor_profile_secret_copy_from_actor(request: Request, profile_id: str) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "invalid JSON body", "details": {}})
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object", "details": {}})
+
+        by = str(payload.get("by") or "user").strip() or "user"
+        group_id = str(payload.get("group_id") or "").strip()
+        actor_id = str(payload.get("actor_id") or "").strip()
+        if not group_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "missing group_id", "details": {}})
+        if not actor_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_actor_id", "message": "missing actor_id", "details": {}})
+
+        return await _daemon(
+            {
+                "op": "actor_profile_secret_copy_from_actor",
+                "args": {
+                    "profile_id": profile_id,
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "by": by,
+                },
+            }
+        )
+
+    @app.post("/api/v1/actor_profiles/{profile_id}/copy_profile_secrets")
+    async def actor_profile_secret_copy_from_profile(request: Request, profile_id: str) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "invalid JSON body", "details": {}})
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object", "details": {}})
+
+        by = str(payload.get("by") or "user").strip() or "user"
+        source_profile_id = str(payload.get("source_profile_id") or "").strip()
+        if not source_profile_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "missing_source_profile_id", "message": "missing source_profile_id", "details": {}},
+            )
+
+        return await _daemon(
+            {
+                "op": "actor_profile_secret_copy_from_profile",
+                "args": {
+                    "profile_id": profile_id,
+                    "source_profile_id": source_profile_id,
+                    "by": by,
                 },
             }
         )

@@ -17,7 +17,10 @@ interface FormState {
   newActorRole: "peer" | "foreman";
   newActorRuntime: SupportedRuntime;
   newActorCommand: string;
+  newActorUseDefaultCommand: boolean;
   newActorSecretsSetText: string;
+  newActorUseProfile: boolean;
+  newActorProfileId: string;
   showAdvancedActor: boolean;
   addActorError: string;
 
@@ -45,7 +48,10 @@ interface FormState {
   setNewActorRole: (v: "peer" | "foreman") => void;
   setNewActorRuntime: (v: SupportedRuntime) => void;
   setNewActorCommand: (v: string) => void;
+  setNewActorUseDefaultCommand: (v: boolean) => void;
   setNewActorSecretsSetText: (v: string) => void;
+  setNewActorUseProfile: (v: boolean) => void;
+  setNewActorProfileId: (v: string) => void;
   setShowAdvancedActor: (v: boolean) => void;
   setAddActorError: (v: string) => void;
   resetAddActorForm: () => void;
@@ -77,7 +83,10 @@ export const useFormStore = create<FormState>((set) => ({
   newActorRole: "peer",
   newActorRuntime: "codex",
   newActorCommand: "",
+  newActorUseDefaultCommand: true,
   newActorSecretsSetText: "",
+  newActorUseProfile: false,
+  newActorProfileId: "",
   showAdvancedActor: false,
   addActorError: "",
 
@@ -105,14 +114,20 @@ export const useFormStore = create<FormState>((set) => ({
   setNewActorRole: (v) => set({ newActorRole: v }),
   setNewActorRuntime: (v) => set({ newActorRuntime: v }),
   setNewActorCommand: (v) => set({ newActorCommand: v }),
+  setNewActorUseDefaultCommand: (v) => set({ newActorUseDefaultCommand: v }),
   setNewActorSecretsSetText: (v) => set({ newActorSecretsSetText: v }),
+  setNewActorUseProfile: (v) => set({ newActorUseProfile: v }),
+  setNewActorProfileId: (v) => set({ newActorProfileId: v }),
   setShowAdvancedActor: (v) => set({ showAdvancedActor: v }),
   setAddActorError: (v) => set({ addActorError: v }),
   resetAddActorForm: () =>
     set({
       newActorId: "",
       newActorCommand: "",
+      newActorUseDefaultCommand: true,
       newActorSecretsSetText: "",
+      newActorUseProfile: false,
+      newActorProfileId: "",
       newActorRole: "peer",
       showAdvancedActor: false,
       addActorError: "",

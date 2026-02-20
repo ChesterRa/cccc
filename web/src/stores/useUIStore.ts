@@ -45,6 +45,7 @@ interface UIState {
 }
 
 let errorTimeoutId: number | null = null;
+let noticeTimeoutId: number | null = null;
 
 // localStorage key for sidebar collapsed state
 const SIDEBAR_COLLAPSED_KEY = "cccc-sidebar-collapsed";
@@ -103,8 +104,28 @@ export const useUIStore = create<UIState>((set) => ({
     set({ errorMsg: "" });
   },
 
-  showNotice: (notice) => set({ notice }),
-  dismissNotice: () => set({ notice: null }),
+  showNotice: (notice) => {
+    if (noticeTimeoutId) {
+      window.clearTimeout(noticeTimeoutId);
+      noticeTimeoutId = null;
+    }
+    set({ notice });
+    // Actionable notices remain until user dismisses/clicks action.
+    const persistent = Boolean(notice.actionId && notice.actionLabel);
+    if (!persistent) {
+      noticeTimeoutId = window.setTimeout(() => {
+        set({ notice: null });
+        noticeTimeoutId = null;
+      }, 3500);
+    }
+  },
+  dismissNotice: () => {
+    if (noticeTimeoutId) {
+      window.clearTimeout(noticeTimeoutId);
+      noticeTimeoutId = null;
+    }
+    set({ notice: null });
+  },
 
   setTransitioning: (v) => set({ isTransitioning: v }),
   setSidebarOpen: (v) => set({ sidebarOpen: v }),

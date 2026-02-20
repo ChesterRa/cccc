@@ -13,6 +13,7 @@ from ...kernel.permissions import require_actor_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
+from ..actor_profile_runtime import resolve_linked_actor_before_start
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -27,6 +28,9 @@ def handle_actor_start(
     start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
     pty_supported: Callable[[], bool],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
@@ -40,8 +44,18 @@ def handle_actor_start(
     try:
         require_actor_permission(group, by=by, action="actor.start", target_actor_id=actor_id)
         actor = update_actor(group, actor_id, {"enabled": True})
+        actor = resolve_linked_actor_before_start(
+            group,
+            actor_id,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
+        )
     except Exception as e:
-        return _error("actor_start_failed", str(e))
+        msg = str(e)
+        if "profile not found:" in msg:
+            return _error("profile_not_found", msg)
+        return _error("actor_start_failed", msg)
 
     cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
     env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
@@ -148,6 +162,9 @@ def handle_actor_restart(
     pty_backlog_bytes: Callable[[], int],
     write_headless_state: Callable[[str, str], None],
     write_pty_state: Callable[..., None],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
@@ -161,6 +178,13 @@ def handle_actor_restart(
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
         actor = update_actor(group, actor_id, {"enabled": True})
+        actor = resolve_linked_actor_before_start(
+            group,
+            actor_id,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
+        )
         runner_kind = str(actor.get("runner") or "pty").strip()
         runner_effective = effective_runner_kind(runner_kind)
         if runner_effective == "headless":
@@ -174,7 +198,10 @@ def handle_actor_restart(
         clear_preamble_sent(group, actor_id)
         throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
     except Exception as e:
-        return _error("actor_restart_failed", str(e))
+        msg = str(e)
+        if "profile not found:" in msg:
+            return _error("profile_not_found", msg)
+        return _error("actor_restart_failed", msg)
 
     if coerce_bool(group.doc.get("running"), default=False):
         group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
@@ -279,6 +306,9 @@ def try_handle_actor_lifecycle_op(
     pty_backlog_bytes: Callable[[], int],
     write_headless_state: Callable[[str, str], None],
     write_pty_state: Callable[..., None],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> Optional[DaemonResponse]:
     if op == "actor_start":
         return handle_actor_start(
@@ -288,6 +318,9 @@ def try_handle_actor_lifecycle_op(
             start_actor_process=start_actor_process,
             effective_runner_kind=effective_runner_kind,
             pty_supported=pty_supported,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
         )
     if op == "actor_stop":
         return handle_actor_stop(
@@ -316,5 +349,8 @@ def try_handle_actor_lifecycle_op(
             pty_backlog_bytes=pty_backlog_bytes,
             write_headless_state=write_headless_state,
             write_pty_state=write_pty_state,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
         )
     return None

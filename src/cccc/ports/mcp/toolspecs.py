@@ -327,6 +327,20 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_actor_profile_list",
+        "description": "List reusable Actor Profiles (global). Use before cccc_actor_add with profile_id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "cccc_actor_add",
         "description": "Add a new actor to the group. Only foreman can add actors. Role is auto-determined: first enabled actor = foreman, rest = peer. Use cccc_runtime_list first to see available runtimes.",
         "inputSchema": {
@@ -379,6 +393,10 @@ MCP_TOOLS = [
                     "type": "object",
                     "additionalProperties": {"type": "string"},
                     "description": "Environment variables",
+                },
+                "profile_id": {
+                    "type": "string",
+                    "description": "Optional Actor Profile ID. When set, runtime/runner/command/env are taken from the profile.",
                 },
             },
             "required": ["actor_id"],

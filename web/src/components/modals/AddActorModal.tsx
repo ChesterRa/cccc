@@ -1,4 +1,5 @@
 import {
+  ActorProfile,
   RuntimeInfo,
   SupportedRuntime,
   SUPPORTED_RUNTIMES,
@@ -23,11 +24,20 @@ export interface AddActorModalProps {
   newActorRole: "peer" | "foreman";
   setNewActorRole: (role: "peer" | "foreman") => void;
 
+  newActorUseProfile: boolean;
+  setNewActorUseProfile: (v: boolean) => void;
+  newActorProfileId: string;
+  setNewActorProfileId: (id: string) => void;
+  actorProfiles: ActorProfile[];
+  actorProfilesBusy: boolean;
+
   newActorRuntime: SupportedRuntime;
   setNewActorRuntime: (runtime: SupportedRuntime) => void;
 
   newActorCommand: string;
   setNewActorCommand: (cmd: string) => void;
+  newActorUseDefaultCommand: boolean;
+  setNewActorUseDefaultCommand: (v: boolean) => void;
 
   newActorSecretsSetText: string;
   setNewActorSecretsSetText: (v: string) => void;
@@ -42,6 +52,7 @@ export interface AddActorModalProps {
   addActorDisabledReason: string;
 
   onAddActor: () => void;
+  onSaveAsProfile: () => void;
   onClose: () => void;
   onCancelAndReset: () => void;
 }
@@ -57,10 +68,18 @@ export function AddActorModal({
   setNewActorId,
   newActorRole,
   setNewActorRole,
+  newActorUseProfile,
+  setNewActorUseProfile,
+  newActorProfileId,
+  setNewActorProfileId,
+  actorProfiles,
+  actorProfilesBusy,
   newActorRuntime,
   setNewActorRuntime,
   newActorCommand,
   setNewActorCommand,
+  newActorUseDefaultCommand,
+  setNewActorUseDefaultCommand,
   newActorSecretsSetText,
   setNewActorSecretsSetText,
   showAdvancedActor,
@@ -70,6 +89,7 @@ export function AddActorModal({
   canAddActor,
   addActorDisabledReason,
   onAddActor,
+  onSaveAsProfile,
   onClose,
   onCancelAndReset,
 }: AddActorModalProps) {
@@ -78,6 +98,7 @@ export function AddActorModal({
   if (!isOpen) return null;
 
   const defaultCommand = runtimes.find((r) => r.name === newActorRuntime)?.recommended_command || "";
+  const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || ""));
 
   return (
     <div
@@ -140,7 +161,68 @@ export function AddActorModal({
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('aiRuntime')}</label>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("creationMode")}</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className={classNames(
+                  "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
+                  newActorUseProfile
+                    ? isDark
+                      ? "bg-slate-900/60 border-slate-700 text-slate-300"
+                      : "bg-white border-gray-200 text-gray-700"
+                    : "bg-blue-600 text-white border-blue-600"
+                )}
+                onClick={() => setNewActorUseProfile(false)}
+              >
+                {t("customAgent")}
+              </button>
+              <button
+                type="button"
+                className={classNames(
+                  "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
+                  newActorUseProfile
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : isDark
+                      ? "bg-slate-900/60 border-slate-700 text-slate-300"
+                      : "bg-white border-gray-200 text-gray-700"
+                )}
+                onClick={() => setNewActorUseProfile(true)}
+              >
+                {t("fromActorProfile")}
+              </button>
+            </div>
+          </div>
+
+          {newActorUseProfile ? (
+            <div>
+              <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("actorProfile")}</label>
+              <select
+                className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
+                  isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                }`}
+                value={newActorProfileId}
+                onChange={(e) => setNewActorProfileId(e.target.value)}
+                disabled={actorProfilesBusy}
+              >
+                <option value="">{actorProfilesBusy ? t("loadingProfiles") : t("selectActorProfile")}</option>
+                {actorProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name || profile.id}
+                  </option>
+                ))}
+              </select>
+              {selectedProfile ? (
+                <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  {RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}
+                  {" · "}
+                  {String(selectedProfile.runner || "pty").toUpperCase()}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div>
+              <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('aiRuntime')}</label>
             <select
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
@@ -150,6 +232,7 @@ export function AddActorModal({
                 const next = e.target.value as SupportedRuntime;
                 setNewActorRuntime(next);
                 setNewActorCommand("");
+                setNewActorUseDefaultCommand(next !== "custom");
               }}
             >
               {SUPPORTED_RUNTIMES.map((rt) => {
@@ -246,8 +329,10 @@ export function AddActorModal({
                 </div>
               </div>
             )}
-          </div>
+            </div>
+          )}
 
+          {!newActorUseProfile ? (
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('role')}</label>
             <div className="flex gap-2">
@@ -296,7 +381,9 @@ export function AddActorModal({
               {hasForeman ? t('foremanLeads') : t('firstAgentForeman')}
             </div>
           </div>
+          ) : null}
 
+          {!newActorUseProfile ? (
           <button
             className={`flex items-center gap-2 text-xs min-h-[36px] ${isDark ? "text-slate-400 hover:text-slate-300" : "text-gray-500 hover:text-gray-700"}`}
             onClick={() => setShowAdvancedActor(!showAdvancedActor)}
@@ -304,24 +391,41 @@ export function AddActorModal({
             <span className={classNames("transition-transform", showAdvancedActor && "rotate-90")}>▶</span>
             {t('advancedOptions')}
           </button>
+          ) : null}
 
-          {showAdvancedActor && (
+          {!newActorUseProfile && showAdvancedActor && (
             <div className={`space-y-4 pl-4 border-l-2 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
               <div>
-                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('commandOverride')}</label>
-                <input
-                  className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[44px] transition-colors ${
-                    isDark
-                      ? "bg-slate-900/80 border-slate-600/50 text-white placeholder-slate-500 focus:border-blue-500"
-                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
-                  }`}
-                  value={newActorCommand}
-                  onChange={(e) => setNewActorCommand(e.target.value)}
-                  placeholder={defaultCommand || t('enterCommand')}
-                />
+                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('commandOverrideOptional')}</label>
+                {newActorRuntime !== "custom" ? (
+                  <label className={`inline-flex items-center gap-2 text-xs mb-2 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                    <input
+                      type="checkbox"
+                      checked={newActorUseDefaultCommand}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setNewActorUseDefaultCommand(checked);
+                        if (checked) setNewActorCommand("");
+                      }}
+                    />
+                    {t("useRuntimeDefaultCommand")}
+                  </label>
+                ) : null}
+                {!newActorUseDefaultCommand || newActorRuntime === "custom" ? (
+                  <input
+                    className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[44px] transition-colors ${
+                      isDark
+                        ? "bg-slate-900/80 border-slate-600/50 text-white placeholder-slate-500 focus:border-blue-500"
+                        : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                    }`}
+                    value={newActorCommand}
+                    onChange={(e) => setNewActorCommand(e.target.value)}
+                    placeholder={defaultCommand || t('enterCommand')}
+                  />
+                ) : null}
                 {defaultCommand.trim() ? (
                   <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                    {t('default')}{" "}
+                    {newActorUseDefaultCommand && newActorRuntime !== "custom" ? t("usingRuntimeDefaultCommand") : t('default')}{" "}
                     <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{defaultCommand}</code>
                   </div>
                 ) : null}
@@ -349,6 +453,19 @@ export function AddActorModal({
             </div>
           )}
 
+          {!newActorUseProfile ? (
+            <button
+              type="button"
+              className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[40px] ${
+                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
+              }`}
+              onClick={onSaveAsProfile}
+              disabled={busy === "actor-profile-save" || busy === "actor-add"}
+            >
+              {busy === "actor-profile-save" ? t("savingProfile") : t("addToActorProfiles")}
+            </button>
+          ) : null}
+
           <div className="flex gap-3 pt-2">
             <div className="flex-1">
               <button
@@ -356,7 +473,7 @@ export function AddActorModal({
                 onClick={onAddActor}
                 disabled={!canAddActor}
               >
-                {busy === "actor-add" ? t('adding') : t('addAgent')}
+                {busy === "actor-add" ? t('adding') : (newActorUseProfile ? t("createFromProfile") : t('addAgent'))}
               </button>
               {addActorDisabledReason && <div className="text-[10px] text-amber-500 mt-1.5">{addActorDisabledReason}</div>}
             </div>

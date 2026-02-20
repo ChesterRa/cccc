@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from ...kernel.actors import find_actor
 from ...kernel.ledger import append_event
@@ -33,6 +33,7 @@ def start_actor_process(
     clear_preamble_sent: Callable[[Any, str], None],
     throttle_reset_actor: Callable[[str, str], None],
     supported_runtimes: tuple[str, ...],
+    resolve_linked_actor_before_start: Optional[Callable[[Any, str], Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
     if not group_scope_key:
@@ -41,6 +42,15 @@ def start_actor_process(
     actor = find_actor(group, actor_id)
     if actor is None:
         return {"success": False, "error": f"actor not found: {actor_id}"}
+    if callable(resolve_linked_actor_before_start):
+        try:
+            actor = resolve_linked_actor_before_start(group, actor_id)
+            command = actor.get("command") if isinstance(actor.get("command"), list) else command
+            env = actor.get("env") if isinstance(actor.get("env"), dict) else env
+            runner = str(actor.get("runner") or runner).strip() or runner
+            runtime = str(actor.get("runtime") or runtime).strip() or runtime
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     scope_key = str(actor.get("default_scope_key") or group_scope_key).strip()
     url = find_scope_url(group, scope_key)

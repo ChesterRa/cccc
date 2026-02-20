@@ -9,6 +9,7 @@ from typing import Any, Callable, Type
 from ..contracts.v1 import DaemonRequest, DaemonResponse
 from .ops.context_ops import try_handle_context_op
 from .ops.actor_ops import try_handle_actor_aux_op
+from .ops.actor_profile_ops import try_handle_actor_profile_op
 from .ops.actor_add_ops import try_handle_actor_add_op
 from .ops.actor_lifecycle_ops import try_handle_actor_lifecycle_op
 from .ops.actor_membership_ops import try_handle_actor_membership_op
@@ -69,12 +70,14 @@ class RequestDispatchDeps:
     automation_on_resume: Callable[[Any], None]
     clear_pending_system_notifies: Callable[[str], None]
     load_actor_private_env: Callable[[str, str], dict[str, str]]
-    validate_private_env_key: Callable[[str], bool]
+    validate_private_env_key: Callable[[Any], str]
     coerce_private_env_value: Callable[[Any], str]
-    update_actor_private_env: Callable[[str, str, dict[str, Any]], int]
+    update_actor_private_env: Callable[..., dict[str, str]]
     private_env_max_keys: int
     start_actor_process: Callable[..., dict[str, Any]]
     delete_actor_private_env: Callable[[str, str], None]
+    get_actor_profile: Callable[[str], dict[str, Any] | None]
+    load_actor_profile_secrets: Callable[[str], dict[str, str]]
     warn_forced_headless: Callable[[str, str], None]
     remove_headless_state: Callable[[str, str], None]
     remove_pty_state_if_pid: Callable[..., None]
@@ -178,6 +181,9 @@ def dispatch_request(
         supported_runtimes=deps.supported_runtimes,
         pty_state_dir_for_group=deps.pty_state_dir_for_group,
         headless_state_dir_for_group=deps.headless_state_dir_for_group,
+        get_actor_profile=deps.get_actor_profile,
+        load_actor_profile_secrets=deps.load_actor_profile_secrets,
+        update_actor_private_env=deps.update_actor_private_env,
     )
     if group_lifecycle_resp is not None:
         return group_lifecycle_resp, False
@@ -204,6 +210,10 @@ def dispatch_request(
     if actor_aux_resp is not None:
         return actor_aux_resp, False
 
+    actor_profile_resp = try_handle_actor_profile_op(op, args)
+    if actor_profile_resp is not None:
+        return actor_profile_resp, False
+
     actor_add_resp = try_handle_actor_add_op(
         op,
         args,
@@ -218,6 +228,8 @@ def dispatch_request(
         delete_actor_private_env=deps.delete_actor_private_env,
         private_env_max_keys=deps.private_env_max_keys,
         supported_runtimes=deps.supported_runtimes,
+        get_actor_profile=deps.get_actor_profile,
+        load_actor_profile_secrets=deps.load_actor_profile_secrets,
         warn_forced_headless=deps.warn_forced_headless,
     )
     if actor_add_resp is not None:
@@ -256,6 +268,9 @@ def dispatch_request(
         remove_headless_state=deps.remove_headless_state,
         remove_pty_state_if_pid=deps.remove_pty_state_if_pid,
         supported_runtimes=deps.supported_runtimes,
+        get_actor_profile=deps.get_actor_profile,
+        load_actor_profile_secrets=deps.load_actor_profile_secrets,
+        update_actor_private_env=deps.update_actor_private_env,
     )
     if actor_update_resp is not None:
         return actor_update_resp, False
@@ -268,6 +283,9 @@ def dispatch_request(
         start_actor_process=deps.start_actor_process,
         effective_runner_kind=deps.effective_runner_kind,
         pty_supported=deps.pty_supported,
+        get_actor_profile=deps.get_actor_profile,
+        load_actor_profile_secrets=deps.load_actor_profile_secrets,
+        update_actor_private_env=deps.update_actor_private_env,
         remove_headless_state=deps.remove_headless_state,
         remove_pty_state_if_pid=deps.remove_pty_state_if_pid,
         clear_preamble_sent=deps.clear_preamble_sent,
