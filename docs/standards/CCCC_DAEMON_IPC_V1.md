@@ -1393,6 +1393,68 @@ Streaming mode:
 - The stream ends when the client closes the connection or the daemon exits.
 - To protect daemon responsiveness, a daemon MAY drop slow subscribers (clients SHOULD reconnect and reconcile).
 
+### 8.15 IM Authentication
+
+#### `im_bind_chat`
+
+Bind a pending one-time key to authorize an IM chat. On success the chat is also auto-subscribed for outbound message delivery.
+
+Args:
+```ts
+{ group_id: string; key: string }
+```
+
+Result:
+```ts
+{ chat_id: string; thread_id: number; platform: string }
+```
+
+Errors:
+- `missing_key` – `key` is empty.
+- `missing_group_id` – `group_id` is empty.
+- `group_not_found` – group does not exist.
+- `invalid_key` – key not found or expired.
+
+#### `im_list_authorized`
+
+List all authorized IM chats for a group.
+
+Args:
+```ts
+{ group_id: string }
+```
+
+Result:
+```ts
+{ authorized: Array<Record<string, unknown>> }
+```
+
+Errors:
+- `missing_group_id` – `group_id` is empty.
+- `group_not_found` – group does not exist.
+
+#### `im_revoke_chat`
+
+Revoke authorization for an IM chat.
+
+Args:
+```ts
+{ group_id: string; chat_id: string; thread_id?: number }
+```
+
+Result:
+```ts
+{ revoked: boolean }
+```
+
+Notes:
+- `thread_id` defaults to `0` if omitted or invalid.
+
+Errors:
+- `missing_chat_id` – `chat_id` is empty.
+- `missing_group_id` – `group_id` is empty.
+- `group_not_found` – group does not exist.
+
 ## 9. Appendix: Example Lines
 
 ### 9.1 Ping
