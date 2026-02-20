@@ -898,6 +898,13 @@ export async function revokeIMChat(groupId: string, chatId: string, threadId: nu
   });
 }
 
+export async function bindIMChat(groupId: string, key: string) {
+  return apiJson<{ chat_id: string; thread_id: number; platform: string }>(
+    `/api/im/bind?group_id=${encodeURIComponent(groupId)}&key=${encodeURIComponent(key)}`,
+    { method: "POST" },
+  );
+}
+
 // ============ Observability ============
 
 export interface Observability {

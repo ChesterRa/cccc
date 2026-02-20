@@ -103,6 +103,9 @@ export function IMBridgeTab({
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [showBindInput, setShowBindInput] = useState(false);
+  const [bindKey, setBindKey] = useState("");
+  const [binding, setBinding] = useState(false);
 
   const loadAuthorizedChats = useCallback(async () => {
     if (!groupId) return;
@@ -384,18 +387,90 @@ export function IMBridgeTab({
             <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
               {t("imBridge.authorizedChats", "Authorized Chats")}
             </h3>
-            <button
-              onClick={loadAuthorizedChats}
-              disabled={authLoading}
-              className={`text-xs px-2 py-1 rounded transition-colors ${
-                isDark
-                  ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-              } disabled:opacity-50`}
-            >
-              {authLoading ? "..." : "↻"}
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setShowBindInput(v => !v); setBindKey(""); }}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  isDark
+                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                + {t("imBridge.bind", "Bind")}
+              </button>
+              <button
+                onClick={loadAuthorizedChats}
+                disabled={authLoading}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  isDark
+                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                } disabled:opacity-50`}
+              >
+                {authLoading ? "..." : "↻"}
+              </button>
+            </div>
           </div>
+
+          {showBindInput && (
+            <div className="flex items-center gap-2">
+              <span className={`text-xs shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                {t("imBridge.bindKey", "Key")}:
+              </span>
+              <input
+                type="text"
+                value={bindKey}
+                onChange={(e) => setBindKey(e.target.value)}
+                placeholder={t("imBridge.bindPlaceholder", "Paste bind key")}
+                className={`${inputClass(isDark)} flex-1 text-xs`}
+                disabled={binding}
+              />
+              <button
+                onClick={async () => {
+                  if (!groupId || !bindKey.trim()) return;
+                  setBinding(true);
+                  setAuthError("");
+                  try {
+                    const resp = await api.bindIMChat(groupId, bindKey.trim());
+                    if (resp.ok) {
+                      setShowBindInput(false);
+                      setBindKey("");
+                      loadAuthorizedChats();
+                    } else {
+                      const code = resp.error?.code;
+                      setAuthError(
+                        code === "invalid_key"
+                          ? t("imBridge.bindError", "Key does not exist or has expired")
+                          : (resp.error?.message || "Bind failed"),
+                      );
+                    }
+                  } catch {
+                    setAuthError(t("imBridge.bindError", "Key does not exist or has expired"));
+                  } finally {
+                    setBinding(false);
+                  }
+                }}
+                disabled={binding || !bindKey.trim()}
+                className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium shrink-0 ${
+                  isDark
+                    ? "bg-blue-900/40 hover:bg-blue-800/50 text-blue-400"
+                    : "bg-blue-50 hover:bg-blue-100 text-blue-600"
+                } disabled:opacity-50`}
+              >
+                {binding ? "..." : t("imBridge.bind", "Bind")}
+              </button>
+              <button
+                onClick={() => { setShowBindInput(false); setBindKey(""); setAuthError(""); }}
+                className={`text-xs px-1 py-1 rounded transition-colors ${
+                  isDark
+                    ? "text-slate-400 hover:text-slate-200"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {authError && (
             <p className="text-xs text-red-500">{authError}</p>
