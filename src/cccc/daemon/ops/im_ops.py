@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.group import load_group
+from ...kernel.group import Group, load_group
 from ...ports.im.auth import KeyManager
 from ...ports.im.subscribers import SubscriberManager
 
@@ -14,18 +14,18 @@ def _error(code: str, message: str) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message))
 
 
-def _load_km(args: Dict[str, Any]) -> Tuple[Optional[DaemonResponse], Optional[KeyManager]]:
-    """Validate group_id, load group, and return a KeyManager.
+def _load_km(args: Dict[str, Any]) -> Tuple[Optional[DaemonResponse], Optional[KeyManager], Optional[Group]]:
+    """Validate group_id, load group, and return a KeyManager + Group.
 
-    Returns (error_response, None) on failure, or (None, km) on success.
+    Returns (error_response, None, None) on failure, or (None, km, group) on success.
     """
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
-        return _error("missing_group_id", "group_id is required"), None
+        return _error("missing_group_id", "group_id is required"), None, None
     group = load_group(group_id)
     if group is None:
-        return _error("group_not_found", f"group not found: {group_id}"), None
-    return None, KeyManager(group.path / "state")
+        return _error("group_not_found", f"group not found: {group_id}"), None, None
+    return None, KeyManager(group.path / "state"), group
 
 
 def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
@@ -34,7 +34,7 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
     if not key:
         return _error("missing_key", "key is required")
 
-    err, km = _load_km(args)
+    err, km, group = _load_km(args)
     if err is not None:
         return err
 
@@ -49,11 +49,8 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
     km.authorize(chat_id, thread_id, platform, key)
 
     # Auto-subscribe the chat so the user doesn't need a separate /subscribe step.
-    group_id = str(args.get("group_id") or "").strip()
-    group = load_group(group_id)
-    if group is not None:
-        sm = SubscriberManager(group.path / "state")
-        sm.subscribe(chat_id, chat_title="", thread_id=thread_id, platform=platform)
+    sm = SubscriberManager(group.path / "state")
+    sm.subscribe(chat_id, chat_title="", thread_id=thread_id, platform=platform)
 
     return DaemonResponse(ok=True, result={
         "chat_id": chat_id,
@@ -64,7 +61,7 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
 
 def handle_im_list_authorized(args: Dict[str, Any]) -> DaemonResponse:
     """List all authorized chats for a group."""
-    err, km = _load_km(args)
+    err, km, _group = _load_km(args)
     if err is not None:
         return err
     return DaemonResponse(ok=True, result={"authorized": km.list_authorized()})
@@ -81,7 +78,7 @@ def handle_im_revoke_chat(args: Dict[str, Any]) -> DaemonResponse:
     if not chat_id:
         return _error("missing_chat_id", "chat_id is required")
 
-    err, km = _load_km(args)
+    err, km, _group = _load_km(args)
     if err is not None:
         return err
 

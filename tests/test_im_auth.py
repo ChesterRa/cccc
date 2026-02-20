@@ -223,16 +223,18 @@ class TestImOpsLoadKm(unittest.TestCase):
     """Test the _load_km factory function in im_ops."""
 
     def test_missing_group_id_returns_error(self) -> None:
-        err, km = _load_km({})
+        err, km, group = _load_km({})
         self.assertIsNotNone(err)
         self.assertFalse(err.ok)
         self.assertIsNone(km)
+        self.assertIsNone(group)
 
     def test_nonexistent_group_returns_error(self) -> None:
-        err, km = _load_km({"group_id": "g_nonexistent_xyz"})
+        err, km, group = _load_km({"group_id": "g_nonexistent_xyz"})
         self.assertIsNotNone(err)
         self.assertFalse(err.ok)
         self.assertIsNone(km)
+        self.assertIsNone(group)
 
 
 if __name__ == "__main__":

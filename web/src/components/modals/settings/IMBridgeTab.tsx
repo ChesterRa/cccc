@@ -421,7 +421,7 @@ export function IMBridgeTab({
                       </div>
                       <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                         {chat.platform}
-                        {chat.authorized_at && ` • ${new Date(chat.authorized_at).toLocaleDateString()}`}
+                        {chat.authorized_at && ` • ${new Date(chat.authorized_at * 1000).toLocaleDateString()}`}
                       </div>
                     </div>
                     <button

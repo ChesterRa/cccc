@@ -881,7 +881,7 @@ export interface IMAuthorizedChat {
   chat_id: string;
   thread_id: number;
   platform: string;
-  authorized_at: string;
+  authorized_at: number;
   key_used?: string;
 }
 
