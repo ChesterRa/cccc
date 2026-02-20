@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.group import load_group
 from ...ports.im.auth import KeyManager
+from ...ports.im.subscribers import SubscriberManager
 
 
 def _error(code: str, message: str) -> DaemonResponse:
@@ -46,6 +47,13 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
     platform = str(pending.get("platform") or "")
 
     km.authorize(chat_id, thread_id, platform, key)
+
+    # Auto-subscribe the chat so the user doesn't need a separate /subscribe step.
+    group_id = str(args.get("group_id") or "").strip()
+    group = load_group(group_id)
+    if group is not None:
+        sm = SubscriberManager(group.path / "state")
+        sm.subscribe(chat_id, chat_title="", thread_id=thread_id, platform=platform)
 
     return DaemonResponse(ok=True, result={
         "chat_id": chat_id,

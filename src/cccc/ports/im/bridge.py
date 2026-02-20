@@ -459,6 +459,10 @@ class IMBridge:
 
     def _process_outbound(self) -> None:
         """Process outbound events from ledger."""
+        # Reload subscriber state from disk so that subscriptions created by the
+        # daemon (e.g. auto-subscribe on bind) are picked up without restarting.
+        self.subscribers._load()
+
         events = self.watcher.poll()
 
         for event in events:
