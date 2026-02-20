@@ -69,7 +69,7 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
     >
       <div
         ref={modalRef}
-        className={`w-full h-full sm:h-auto sm:max-w-2xl sm:mt-16 border shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl ${isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
+        className={`w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16 border shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl ${isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
           }`}
       >
         <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>

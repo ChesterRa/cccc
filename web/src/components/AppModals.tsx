@@ -1,5 +1,5 @@
 // AppModals renders all modal components in one place.
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
@@ -537,6 +537,16 @@ export function AppModals({
     return "";
   })();
 
+  const handleCloseAddActor = useCallback(
+    () => closeModal("addActor"),
+    [closeModal]
+  );
+
+  const handleCancelEditActor = useCallback(
+    () => setEditingActor(null),
+    [setEditingActor]
+  );
+
   const relaySourceGroupId = useMemo(() => {
     const fromStore = relaySource?.groupId ? String(relaySource.groupId) : "";
     if (fromStore.trim()) return fromStore.trim();
@@ -749,7 +759,7 @@ export function AppModals({
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
         onSaveAndRestart={handleSaveEditActorAndRestart}
-        onCancel={() => setEditingActor(null)}
+        onCancel={handleCancelEditActor}
       />
 
       <CreateGroupModal
@@ -806,7 +816,7 @@ export function AppModals({
         canAddActor={canAddActor}
         addActorDisabledReason={addActorDisabledReason}
         onAddActor={handleAddActor}
-        onClose={() => closeModal("addActor")}
+        onClose={handleCloseAddActor}
         onCancelAndReset={() => {
           closeModal("addActor");
           resetAddActorForm();
