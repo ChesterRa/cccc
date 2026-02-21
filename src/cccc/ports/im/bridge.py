@@ -52,6 +52,9 @@ def _is_env_var_name(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
 
 
+_PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
+
+
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
     """
     Acquire singleton lock to prevent multiple bridge instances.
@@ -466,11 +469,41 @@ class IMBridge:
         self.key_manager._load()
 
         events = self.watcher.poll()
+        actor_labels = self._actor_display_map()
 
         for event in events:
-            self._forward_event(event)
+            self._forward_event(event, actor_labels=actor_labels)
 
-    def _forward_event(self, event: Dict[str, Any]) -> None:
+    def _actor_display_map(self) -> Dict[str, str]:
+        """Build actor_id -> display label map (title first, id fallback)."""
+        group = load_group(self.group.group_id) or self.group
+        labels: Dict[str, str] = {}
+        for actor in list_actors(group):
+            if not isinstance(actor, dict):
+                continue
+            actor_id = str(actor.get("id") or "").strip()
+            if not actor_id:
+                continue
+            title = str(actor.get("title") or "").strip()
+            labels[actor_id] = title if title else actor_id
+        return labels
+
+    def _display_actor_token(self, token: str, actor_labels: Dict[str, str]) -> str:
+        """Render actor/selector token for outbound IM display."""
+        raw = str(token or "").strip()
+        if not raw:
+            return raw
+        if raw in _PRESERVED_RECIPIENT_TOKENS:
+            return raw
+        if raw in actor_labels:
+            return actor_labels[raw]
+        if raw.startswith("@"):
+            stripped = raw[1:].strip()
+            if stripped in actor_labels:
+                return actor_labels[stripped]
+        return raw
+
+    def _forward_event(self, event: Dict[str, Any], *, actor_labels: Optional[Dict[str, str]] = None) -> None:
         """Forward a ledger event to subscribed chats."""
         kind = event.get("kind", "")
         by = event.get("by", "")
@@ -503,6 +536,7 @@ class IMBridge:
         # Determine if this event is user-facing (to:user or broadcast).
         # Agent-to-agent messages should NOT cancel typing indicators.
         is_user_facing = not to or "user" in to
+        display_labels = actor_labels or self._actor_display_map()
 
         for sub in subscribed:
             # Safety filter: only authorized chats are allowed to receive bridge
@@ -517,7 +551,13 @@ class IMBridge:
                 continue
 
             # Format message (may be empty for file-only events)
-            formatted = self.adapter.format_outbound(by, to, text, is_system) if text else ""
+            display_by = self._display_actor_token(by, display_labels)
+            display_to = [
+                self._display_actor_token(str(t), display_labels)
+                for t in (to if isinstance(to, list) else [])
+                if str(t or "").strip()
+            ]
+            formatted = self.adapter.format_outbound(display_by, display_to, text, is_system) if text else ""
 
             # Try file delivery first (if any attachments)
             sent_any_file = False

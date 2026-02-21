@@ -263,9 +263,11 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
 
         def __init__(self) -> None:
             self.sent_messages: list[tuple[str, str, int]] = []
+            self.formatted_calls: list[tuple[str, list[str], str, bool]] = []
 
         def format_outbound(self, by: str, to: object, text: str, is_system: bool) -> str:
-            _ = (by, to, is_system)
+            to_list = [str(item) for item in to] if isinstance(to, list) else []
+            self.formatted_calls.append((str(by), to_list, str(text or ""), bool(is_system)))
             return str(text or "")
 
         def send_file(self, chat_id: str, file_path: Path, filename: str, caption: str = "", thread_id: int = 0) -> bool:
@@ -319,6 +321,46 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         bridge._process_outbound()
 
         self.assertEqual(adapter.sent_messages, [])
+
+    def test_outbound_header_uses_actor_title_first(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        sm.subscribe("chat_auth", chat_title="auth", thread_id=0, platform="telegram")
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={
+                "title": "demo",
+                "im": {},
+                "actors": [
+                    {"id": "foreman", "title": "Captain"},
+                    {"id": "peer_a", "title": "Reviewer"},
+                ],
+            },
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
+            {
+                "kind": "chat.message",
+                "by": "foreman",
+                "data": {"text": "review this", "to": ["@all", "peer_a"], "attachments": []},
+            }
+        ]
+        bridge._process_outbound()
+
+        self.assertEqual(len(adapter.formatted_calls), 1)
+        by, to, _text, _is_system = adapter.formatted_calls[0]
+        self.assertEqual(by, "Captain")
+        self.assertEqual(to, ["@all", "Reviewer"])
 
 
 try:
