@@ -5,6 +5,8 @@ import { IMStatus, IMPlatform } from "../../../types";
 import * as api from "../../../services/api";
 import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
 
+const IM_PENDING_AUTO_REFRESH_MS = 12000;
+
 interface IMBridgeTabProps {
   isDark: boolean;
   groupId?: string; // Reserved for future use.
@@ -102,7 +104,12 @@ export function IMBridgeTab({
   const [authChats, setAuthChats] = useState<api.IMAuthorizedChat[]>([]);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authInfo, setAuthInfo] = useState("");
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<api.IMPendingRequest[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingError, setPendingError] = useState("");
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [showBindInput, setShowBindInput] = useState(false);
   const [bindKey, setBindKey] = useState("");
   const [binding, setBinding] = useState(false);
@@ -125,11 +132,53 @@ export function IMBridgeTab({
     }
   }, [groupId]);
 
+  const loadPendingRequests = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!groupId) return;
+    const silent = !!opts?.silent;
+    if (!silent) {
+      setPendingLoading(true);
+      setPendingError("");
+    }
+    try {
+      const resp = await api.fetchIMPending(groupId);
+      if (resp.ok) {
+        setPendingRequests(resp.result?.pending ?? []);
+      } else {
+        if (!silent) {
+          setPendingError(resp.error?.message || "Failed to load pending requests");
+        }
+      }
+    } catch {
+      if (!silent) {
+        setPendingError("Failed to load pending requests");
+      }
+    } finally {
+      if (!silent) {
+        setPendingLoading(false);
+      }
+    }
+  }, [groupId]);
+
+  const loadIMAuthState = useCallback(async () => {
+    await Promise.all([loadAuthorizedChats(), loadPendingRequests()]);
+  }, [loadAuthorizedChats, loadPendingRequests]);
+
   useEffect(() => {
     if (imStatus?.configured) {
-      loadAuthorizedChats();
+      loadIMAuthState();
     }
-  }, [imStatus?.configured, loadAuthorizedChats]);
+  }, [imStatus?.configured, loadIMAuthState]);
+
+  useEffect(() => {
+    if (!imStatus?.configured) return;
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void loadPendingRequests({ silent: true });
+    }, IM_PENDING_AUTO_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [imStatus?.configured, loadPendingRequests]);
 
   const handleRevoke = async (chatId: string, threadId: number) => {
     if (!groupId) return;
@@ -137,12 +186,66 @@ export function IMBridgeTab({
     setRevoking(key);
     try {
       await api.revokeIMChat(groupId, chatId, threadId);
-      await loadAuthorizedChats();
+      await loadIMAuthState();
     } catch {
       // ignore — list refresh will show current state
     } finally {
       setRevoking(null);
     }
+  };
+
+  const handleApprovePending = async (request: api.IMPendingRequest) => {
+    if (!groupId) return;
+    setPendingActionKey(`approve:${request.key}`);
+    setPendingError("");
+    setAuthError("");
+    setAuthInfo("");
+    try {
+      const resp = await api.bindIMChat(groupId, request.key);
+      if (resp.ok) {
+        setAuthInfo(t("imBridge.pendingApproveSuccess", "Request approved and chat bound."));
+      } else {
+        const code = resp.error?.code;
+        setPendingError(
+          code === "invalid_key"
+            ? t("imBridge.bindError", "Key does not exist or has expired")
+            : (resp.error?.message || t("imBridge.pendingApproveError", "Failed to approve request.")),
+        );
+      }
+      await loadIMAuthState();
+    } catch {
+      setPendingError(t("imBridge.pendingApproveError", "Failed to approve request."));
+      await loadPendingRequests();
+    } finally {
+      setPendingActionKey(null);
+    }
+  };
+
+  const handleRejectPending = async (request: api.IMPendingRequest) => {
+    if (!groupId) return;
+    setPendingActionKey(`reject:${request.key}`);
+    setPendingError("");
+    setAuthError("");
+    setAuthInfo("");
+    try {
+      const resp = await api.rejectIMPending(groupId, request.key);
+      if (resp.ok) {
+        setAuthInfo(t("imBridge.pendingRejectSuccess", "Pending request rejected."));
+      } else {
+        setPendingError(resp.error?.message || t("imBridge.pendingRejectError", "Failed to reject request."));
+      }
+      await loadPendingRequests();
+    } catch {
+      setPendingError(t("imBridge.pendingRejectError", "Failed to reject request."));
+    } finally {
+      setPendingActionKey(null);
+    }
+  };
+
+  const maskKey = (value: string) => {
+    const key = String(value || "");
+    if (key.length <= 8) return key;
+    return `${key.slice(0, 4)}...${key.slice(-3)}`;
   };
 
   return (
@@ -380,6 +483,91 @@ export function IMBridgeTab({
         )}
       </div>
 
+      {/* Pending Requests */}
+      {imStatus?.configured && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+              {t("imBridge.pendingRequests", "Pending Requests")}
+            </h3>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={loadIMAuthState}
+                disabled={pendingLoading || authLoading}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  isDark
+                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                } disabled:opacity-50`}
+              >
+                {pendingLoading || authLoading ? "..." : "↻"}
+              </button>
+            </div>
+          </div>
+
+          {pendingError && (
+            <p className="text-xs text-red-500">{pendingError}</p>
+          )}
+
+          {!pendingLoading && pendingRequests.length === 0 && !pendingError && (
+            <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              {t("imBridge.noPendingRequests", "No pending requests.")}
+            </p>
+          )}
+
+          {pendingRequests.length > 0 && (
+            <div className={`${cardClass(isDark)} space-y-0 divide-y ${isDark ? "divide-slate-700" : "divide-gray-200"}`}>
+              {pendingRequests.map((request) => {
+                const approveKey = `approve:${request.key}`;
+                const rejectKey = `reject:${request.key}`;
+                const actionBusy = pendingActionKey === approveKey || pendingActionKey === rejectKey;
+                return (
+                  <div key={request.key} className="flex items-center justify-between py-2 first:pt-0 last:pb-0 gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                        {request.chat_id}
+                        {request.thread_id ? ` (thread: ${request.thread_id})` : ""}
+                      </div>
+                      <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                        {request.platform}
+                        {` • `}
+                        {t("imBridge.pendingKey", "key")}: {maskKey(request.key)}
+                        {` • `}
+                        {t("imBridge.expiresIn", { seconds: Math.max(0, Math.floor(request.expires_in_seconds || 0)), defaultValue: "expires in {{seconds}}s" })}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleApprovePending(request)}
+                        disabled={actionBusy}
+                        className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium ${
+                          isDark
+                            ? "bg-emerald-900/40 hover:bg-emerald-800/50 text-emerald-300"
+                            : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
+                        } disabled:opacity-50`}
+                      >
+                        {pendingActionKey === approveKey ? "..." : t("imBridge.approve", "Approve")}
+                      </button>
+                      <button
+                        onClick={() => handleRejectPending(request)}
+                        disabled={actionBusy}
+                        className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium ${
+                          isDark
+                            ? "bg-red-900/40 hover:bg-red-800/50 text-red-400"
+                            : "bg-red-50 hover:bg-red-100 text-red-600"
+                        } disabled:opacity-50`}
+                      >
+                        {pendingActionKey === rejectKey ? "..." : t("imBridge.rejectPending", "Reject")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Authorized Chats */}
       {imStatus?.configured && (
         <div className="space-y-2">
@@ -389,7 +577,30 @@ export function IMBridgeTab({
             </h3>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { setShowBindInput(v => !v); setBindKey(""); }}
+                onClick={async () => {
+                  setAuthError("");
+                  setPendingError("");
+                  try {
+                    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                      await navigator.clipboard.writeText("/subscribe");
+                      setAuthInfo(t("imBridge.requestCopied", "Copied /subscribe. Send it in your IM chat to request a key, then approve it from Pending Requests (or bind by key)."));
+                    } else {
+                      setAuthInfo(t("imBridge.requestHint", "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you."));
+                    }
+                  } catch {
+                    setAuthInfo(t("imBridge.requestHint", "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you."));
+                  }
+                }}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  isDark
+                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                {t("imBridge.requestKey", "Request Key")}
+              </button>
+              <button
+                onClick={() => { setShowBindInput(v => !v); setBindKey(""); setAuthError(""); setAuthInfo(""); }}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
                   isDark
                     ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
@@ -399,7 +610,7 @@ export function IMBridgeTab({
                 + {t("imBridge.bind", "Bind")}
               </button>
               <button
-                onClick={loadAuthorizedChats}
+                onClick={loadIMAuthState}
                 disabled={authLoading}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
                   isDark
@@ -430,12 +641,14 @@ export function IMBridgeTab({
                   if (!groupId || !bindKey.trim()) return;
                   setBinding(true);
                   setAuthError("");
+                  setAuthInfo("");
                   try {
                     const resp = await api.bindIMChat(groupId, bindKey.trim());
                     if (resp.ok) {
                       setShowBindInput(false);
                       setBindKey("");
-                      loadAuthorizedChats();
+                      setAuthInfo(t("imBridge.bindSuccess", "Chat bound successfully."));
+                      await loadIMAuthState();
                     } else {
                       const code = resp.error?.code;
                       setAuthError(
@@ -460,7 +673,7 @@ export function IMBridgeTab({
                 {binding ? "..." : t("imBridge.bind", "Bind")}
               </button>
               <button
-                onClick={() => { setShowBindInput(false); setBindKey(""); setAuthError(""); }}
+                onClick={() => { setShowBindInput(false); setBindKey(""); setAuthError(""); setAuthInfo(""); }}
                 className={`text-xs px-1 py-1 rounded transition-colors ${
                   isDark
                     ? "text-slate-400 hover:text-slate-200"
@@ -474,6 +687,9 @@ export function IMBridgeTab({
 
           {authError && (
             <p className="text-xs text-red-500">{authError}</p>
+          )}
+          {!authError && authInfo && (
+            <p className={`text-xs ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>{authInfo}</p>
           )}
 
           {!authLoading && authChats.length === 0 && !authError && (

@@ -106,10 +106,11 @@ New chats must be authorized before they can use the bot:
 2. Start a chat with the bot
 3. Send `/subscribe` — the bot replies with a one-time binding key:
    ```
-   /bind abc123xyz
+   abc123xyz
    ```
 4. **Authorize the chat** (choose one):
-   - **Web chat (recommended):** Copy the `/bind <key>` line and paste it in the CCCC Web chat — the foreman will complete the binding automatically
+   - **Web (recommended):** Open **CCCC Web → Settings → IM Bridge**, find it in **Pending Requests**, and click **Approve** (or paste the key in **Bind**)
+   - **Foreman-assisted:** If foreman is online, send the key to foreman and ask foreman to bind it
    - **CLI:** Run `cccc im bind --key <key>` on the server
 5. Once authorized, the chat can immediately send and receive messages — no further commands needed
 
@@ -174,7 +175,6 @@ Attach files to your message. They're downloaded and stored in CCCC's blob stora
 | Command | Description |
 |---------|-------------|
 | `/subscribe` | Start authorization flow — generates a one-time binding key |
-| `/bind <key>` | Authorize this chat using a binding key (paste in CCCC Web chat) |
 | `/unsubscribe` | Stop receiving messages |
 | `/send <message>` | Send to foreman (default) |
 | `/send @<actor> <message>` | Send to a specific agent |
@@ -213,7 +213,7 @@ Your token is invalid. Get a new one from BotFather:
 
 ### Messages not delivered
 
-1. Ensure the chat is authorized (run `/subscribe` → bind the key via Web or CLI)
+1. Ensure the chat is authorized (run `/subscribe` → bind the key via Web, foreman-assisted bind, or CLI)
 2. Check that the CCCC daemon is running
 3. Verify the bridge status in Web UI or via `cccc im status`
 
@@ -229,6 +229,6 @@ Telegram has rate limits. If you're sending many messages:
 - Consider enabling 2FA on your Telegram account
 - Review who has access to chats where the bot is subscribed
 - The bot can see all messages in groups where it's added
-- **New chats require key-based authorization** before they can interact with the bot — send `/subscribe` to generate a one-time key, then confirm it from the server side (Web chat or CLI); once bound, the chat is fully authorized
+- **New chats require key-based authorization** before they can interact with the bot — send `/subscribe` to generate a one-time key, then confirm it from the server side (Web Settings > IM Bridge, foreman-assisted bind, or CLI); once bound, the chat is fully authorized
 - Binding keys expire after **10 minutes**; generate a new one with `/subscribe` if it lapses
-- The bind operation must be performed via CCCC Web chat or `cccc im bind --key` on the server — Telegram users cannot self-authorize
+- The bind operation must be performed via CCCC Web Settings (IM Bridge), foreman-assisted bind, or `cccc im bind --key` on the server — Telegram users cannot self-authorize

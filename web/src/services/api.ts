@@ -886,9 +886,25 @@ export interface IMAuthorizedChat {
   key_used?: string;
 }
 
+export interface IMPendingRequest {
+  key: string;
+  chat_id: string;
+  thread_id: number;
+  platform: string;
+  created_at: number;
+  expires_at: number;
+  expires_in_seconds: number;
+}
+
 export async function fetchIMAuthorized(groupId: string) {
   return apiJson<{ authorized: IMAuthorizedChat[] }>(
     `/api/im/authorized?group_id=${encodeURIComponent(groupId)}`
+  );
+}
+
+export async function fetchIMPending(groupId: string) {
+  return apiJson<{ pending: IMPendingRequest[] }>(
+    `/api/im/pending?group_id=${encodeURIComponent(groupId)}`
   );
 }
 
@@ -898,10 +914,17 @@ export async function revokeIMChat(groupId: string, chatId: string, threadId: nu
   });
 }
 
+export async function rejectIMPending(groupId: string, key: string) {
+  return apiJson<{ rejected: boolean }>("/api/im/pending/reject", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, key }),
+  });
+}
+
 export async function bindIMChat(groupId: string, key: string) {
   return apiJson<{ chat_id: string; thread_id: number; platform: string }>(
-    `/api/im/bind?group_id=${encodeURIComponent(groupId)}&key=${encodeURIComponent(key)}`,
-    { method: "POST" },
+    "/api/im/bind",
+    { method: "POST", body: JSON.stringify({ group_id: groupId, key }) },
   );
 }
 

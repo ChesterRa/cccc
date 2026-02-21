@@ -171,9 +171,13 @@ def handle_send(
         src_event_id = ""
     to_raw = args.get("to")
     to_tokens: list[str] = []
-    to_explicitly_set = isinstance(to_raw, list) and len(to_raw) > 0
     if isinstance(to_raw, list):
         to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+    elif isinstance(to_raw, str):
+        token = to_raw.strip()
+        if token:
+            to_tokens = [token]
+    to_explicitly_set = len(to_tokens) > 0
 
     if priority not in ("normal", "attention"):
         return _error("invalid_priority", "priority must be 'normal' or 'attention'")

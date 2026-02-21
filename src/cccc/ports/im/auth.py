@@ -138,11 +138,48 @@ class KeyManager:
     def list_authorized(self) -> List[Dict[str, Any]]:
         return list(self._authorized.values())
 
+    def list_pending(self) -> List[Dict[str, Any]]:
+        """List pending bind requests (expired keys are purged first)."""
+        removed = self._purge_expired()
+        if removed:
+            self._save_pending()
+        now = time.time()
+        items: List[Dict[str, Any]] = []
+        for key, entry in self._pending.items():
+            created_at = float(entry.get("created_at", 0) or 0)
+            expires_at = created_at + KEY_TTL_SECONDS
+            items.append({
+                "key": str(key),
+                "chat_id": str(entry.get("chat_id") or ""),
+                "thread_id": int(entry.get("thread_id") or 0),
+                "platform": str(entry.get("platform") or ""),
+                "created_at": created_at,
+                "expires_at": expires_at,
+                "expires_in_seconds": max(0, int(expires_at - now)),
+            })
+        items.sort(key=lambda item: float(item.get("created_at") or 0), reverse=True)
+        return items
+
+    def reject_pending(self, key: str) -> bool:
+        """Reject a pending bind key. Returns True when removed."""
+        token = str(key or "").strip()
+        if not token:
+            return False
+        removed = self._purge_expired()
+        existed = token in self._pending
+        if existed:
+            self._pending.pop(token, None)
+            self._save_pending()
+            return True
+        if removed:
+            self._save_pending()
+        return False
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _purge_expired(self) -> None:
+    def _purge_expired(self) -> bool:
         """Remove expired pending keys (best-effort, no save)."""
         now = time.time()
         expired = [
@@ -151,3 +188,4 @@ class KeyManager:
         ]
         for k in expired:
             del self._pending[k]
+        return bool(expired)

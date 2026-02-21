@@ -641,6 +641,9 @@ class IMBridge:
 
     def _handle_subscribe(self, chat_id: str, chat_title: str, thread_id: int = 0) -> None:
         """Handle /subscribe command."""
+        # Reload auth state on-demand as subscribe semantics depend on current
+        # authorization truth (bind/revoke can happen in daemon/web concurrently).
+        self.key_manager._load()
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
 
         # If the chat is not yet authorized, generate a binding key.
@@ -649,8 +652,11 @@ class IMBridge:
             self.adapter.send_message(
                 chat_id,
                 f"🔑 Authorization required.\n\n"
-                f"Copy and paste in CCCC Web chat:\n"
-                f"`/bind {key}`\n\n"
+                f"Open CCCC Web → Settings → IM Bridge, then approve this request in Pending Requests "
+                f"(or paste this key in Bind):\n"
+                f"`{key}`\n\n"
+                f"If foreman is online, send this message to foreman:\n"
+                f"`Please help bind my IM key: {key}`\n\n"
                 f"Or run in terminal:\n"
                 f"`cccc im bind --key {key}`\n\n"
                 f"Key expires in 10 minutes.",
@@ -659,6 +665,7 @@ class IMBridge:
             self._log(f"[subscribe] Pending auth key generated for chat={chat_id} thread={thread_id}")
             return
 
+        was_subscribed = self.subscribers.is_subscribed(chat_id, thread_id=thread_id)
         sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id, platform=platform)
         verbose_str = "on" if sub.verbose else "off"
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
@@ -668,9 +675,14 @@ class IMBridge:
             tip = "Channel tip: @mention the bot to route plain text. Use /send for explicit recipients."
         else:
             tip = "Tip: plain text routes to foreman by default; use /send for explicit recipients."
+        target_label = self.group.doc.get("title", self.group.group_id)
+        if was_subscribed:
+            headline = f"✅ Already authorized for this chat ({target_label})"
+        else:
+            headline = f"✅ Subscribed to {target_label}"
         self.adapter.send_message(
             chat_id,
-            f"✅ Subscribed to {self.group.doc.get('title', self.group.group_id)}\n"
+            f"{headline}\n"
             f"Verbose mode: {verbose_str}\n"
             f"{tip}\n"
             f"Use /help for commands.",

@@ -67,6 +67,26 @@ def handle_im_list_authorized(args: Dict[str, Any]) -> DaemonResponse:
     return DaemonResponse(ok=True, result={"authorized": km.list_authorized()})
 
 
+def handle_im_list_pending(args: Dict[str, Any]) -> DaemonResponse:
+    """List pending bind requests for a group."""
+    err, km, _group = _load_km(args)
+    if err is not None:
+        return err
+    return DaemonResponse(ok=True, result={"pending": km.list_pending()})
+
+
+def handle_im_reject_pending(args: Dict[str, Any]) -> DaemonResponse:
+    """Reject a pending bind request key."""
+    key = str(args.get("key") or "").strip()
+    if not key:
+        return _error("missing_key", "key is required")
+    err, km, _group = _load_km(args)
+    if err is not None:
+        return err
+    rejected = km.reject_pending(key)
+    return DaemonResponse(ok=True, result={"rejected": bool(rejected)})
+
+
 def handle_im_revoke_chat(args: Dict[str, Any]) -> DaemonResponse:
     """Revoke authorization for a chat."""
     chat_id = str(args.get("chat_id") or "").strip()
@@ -98,6 +118,10 @@ def try_handle_im_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
         return handle_im_bind_chat(args)
     if op == "im_list_authorized":
         return handle_im_list_authorized(args)
+    if op == "im_list_pending":
+        return handle_im_list_pending(args)
+    if op == "im_reject_pending":
+        return handle_im_reject_pending(args)
     if op == "im_revoke_chat":
         return handle_im_revoke_chat(args)
     return None

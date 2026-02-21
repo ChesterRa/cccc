@@ -38,6 +38,19 @@ class TestKeyManagerBasic(unittest.TestCase):
     def test_get_pending_key_unknown_returns_none(self) -> None:
         self.assertIsNone(self.km.get_pending_key("nonexistent"))
 
+    def test_list_pending_contains_generated_key(self) -> None:
+        key = self.km.generate_key("123", 0, "telegram")
+        pending = self.km.list_pending()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["key"], key)
+        self.assertEqual(pending[0]["chat_id"], "123")
+
+    def test_reject_pending_removes_key(self) -> None:
+        key = self.km.generate_key("123", 0, "telegram")
+        self.assertTrue(self.km.reject_pending(key))
+        self.assertIsNone(self.km.get_pending_key(key))
+        self.assertEqual(self.km.list_pending(), [])
+
     def test_is_authorized_initially_false(self) -> None:
         self.assertFalse(self.km.is_authorized("123", 0))
 
@@ -140,6 +153,12 @@ class TestKeyManagerExpiry(unittest.TestCase):
         self.km._pending[key]["created_at"] = time.time() - KEY_TTL_SECONDS - 1
         self.km._save_pending()
         self.assertIsNone(self.km.get_pending_key(key))
+
+    def test_list_pending_purges_expired_keys(self) -> None:
+        key = self.km.generate_key("123", 0, "telegram")
+        self.km._pending[key]["created_at"] = time.time() - KEY_TTL_SECONDS - 1
+        self.km._save_pending()
+        self.assertEqual(self.km.list_pending(), [])
 
 
 class TestKeyManagerAtomicWrite(unittest.TestCase):
@@ -254,6 +273,53 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertFalse(km2.is_authorized("chat1", 0))
         self.assertFalse(sm2.is_subscribed("chat1", 0))
 
+    def test_list_pending_returns_generated_key(self) -> None:
+        from cccc.daemon.ops import im_ops
+
+        km = KeyManager(self.state_dir)
+        key = km.generate_key("chat2", 0, "telegram")
+        fake_group = SimpleNamespace(path=self.group_path)
+        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+            resp = im_ops.handle_im_list_pending({"group_id": "g_demo"})
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        result = resp.result if isinstance(resp.result, dict) else {}
+        pending = result.get("pending", [])
+        self.assertIsInstance(pending, list)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0].get("key"), key)
+
+    def test_reject_pending_is_idempotent(self) -> None:
+        from cccc.daemon.ops import im_ops
+
+        km = KeyManager(self.state_dir)
+        key = km.generate_key("chat3", 0, "telegram")
+        fake_group = SimpleNamespace(path=self.group_path)
+        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+            first = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": key})
+            second = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": key})
+
+        self.assertTrue(first.ok, getattr(first, "error", None))
+        self.assertTrue(second.ok, getattr(second, "error", None))
+        first_result = first.result if isinstance(first.result, dict) else {}
+        second_result = second.result if isinstance(second.result, dict) else {}
+        self.assertTrue(bool(first_result.get("rejected")))
+        self.assertFalse(bool(second_result.get("rejected")))
+
+    def test_reject_pending_requires_key(self) -> None:
+        from cccc.daemon.ops import im_ops
+
+        km = KeyManager(self.state_dir)
+        fake_group = SimpleNamespace(path=self.group_path)
+        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+            resp = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": ""})
+
+        self.assertFalse(resp.ok)
+        err = resp.error
+        self.assertIsNotNone(err)
+        assert err is not None
+        self.assertEqual(err.code, "missing_key")
+
 
 class TestImBridgeOutboundAuthGuard(unittest.TestCase):
     """Bridge should not forward outbound events to unauthorized chats."""
@@ -361,6 +427,32 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         by, to, _text, _is_system = adapter.formatted_calls[0]
         self.assertEqual(by, "Captain")
         self.assertEqual(to, ["@all", "Reviewer"])
+
+    def test_subscribe_reloads_auth_state_and_avoids_stale_authorized_decision(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+
+        km = KeyManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        # External revoke after bridge initialization (bridge in-memory auth is stale).
+        km_external = KeyManager(self.state_dir)
+        km_external.revoke("chat_auth", 0)
+
+        bridge._handle_subscribe("chat_auth", "auth", thread_id=0)
+
+        self.assertEqual(len(adapter.sent_messages), 1)
+        _chat_id, text, _thread_id = adapter.sent_messages[0]
+        self.assertIn("Authorization required", text)
 
 
 try:
