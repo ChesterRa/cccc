@@ -2,6 +2,7 @@
 
 Current stable line:
 
+- [v0.4.2 Release Notes](./v0.4.2_release_notes)
 - [v0.4.1 Release Notes](./v0.4.1_release_notes)
 - [v0.4.0 Release Notes](./v0.4.0_release_notes)
 

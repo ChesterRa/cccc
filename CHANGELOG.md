@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.2] — 2026-02-22
+
+### Added
+- **IM key-based chat authorization**: dynamic bind-key authentication for IM bridges, replacing static trust with per-chat cryptographic binding. Includes `/bind` command, auto-subscribe on successful bind, pending approval management, and revoke semantics.
+- **`cccc_im_bind` MCP tool**: programmatic chat authorization via the MCP surface.
+- **Authorized chats Web UI**: view/manage bound IM chats and pending bind approvals from Settings → IM Bridge tab.
+- **Bind key UI**: generate and display bind keys for chat authorization directly from Web settings.
+- **Actor profiles system**: profile linking across daemon, Web, and MCP — including profile runtime, persistent store, and a dedicated Actor Profiles settings tab.
+- **Remote access control plane**: remote daemon access with hardened IM revoke semantics for secure multi-node operation.
+- **Telegram typing indicators**: typing action support with configurable throttling for more natural conversational UX.
+- **IM authentication IPC documentation**: new standards doc covering IM auth IPC methods.
+
+### Changed
+- **IM display names**: prefer actor titles over raw actor IDs in IM-rendered messages for better readability.
+- **Modal UX refinements**: extracted modal close handlers and adjusted inbox modal height for cleaner interaction.
+
+### Fixed
+- Fixed MCP message send incorrectly collapsing `None` recipients to empty list, breaking broadcast semantics.
+- Fixed `authorized_at` timestamp handling in IM Web UI.
+- Fixed IM KeyManager state not reloading from disk on each inbound poll, causing stale authorization data.
+- Fixed docs incorrectly requiring post-bind `/subscribe` step (now handled automatically).
+
 ## [0.4.1] — 2026-02-20
 
 ### Added
