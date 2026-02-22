@@ -1182,8 +1182,8 @@ MCP_TOOLS = [
         "name": "cccc_im_bind",
         "description": (
             "Bind a Telegram (or other IM) chat using a one-time key.\n\n"
-            "Typical flow: user runs /subscribe in Telegram, gets a key, pastes `/bind <key>` in CCCC Web chat, "
-            "and the foreman calls this tool to complete the binding.\n\n"
+            "Typical flow: user runs /subscribe in IM chat, gets a key, opens CCCC Web > Settings > IM Bridge > Bind, "
+            "and the foreman can also call this tool to complete the binding.\n\n"
             "The key expires after 10 minutes."
         ),
         "inputSchema": {

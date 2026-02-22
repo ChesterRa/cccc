@@ -309,6 +309,16 @@ class IMActionRequest(BaseModel):
     group_id: str
 
 
+class IMBindRequest(BaseModel):
+    group_id: str
+    key: str
+
+
+class IMPendingRejectRequest(BaseModel):
+    group_id: str
+    key: str
+
+
 def _is_env_var_name(value: str) -> bool:
     # Shell-friendly env var name (portable).
     return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
@@ -2879,12 +2889,18 @@ def create_app() -> FastAPI:
 
         return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
 
-    # ----- IM auth (bind / list / revoke) -----
+    # ----- IM auth (bind / pending / list / revoke) -----
 
     @app.post("/api/im/bind")
-    async def im_bind(group_id: str, key: str) -> Dict[str, Any]:
-        """Bind a pending authorization key to authorize a Telegram chat."""
-        resp = await _daemon({"op": "im_bind_chat", "args": {"group_id": group_id, "key": key}})
+    async def im_bind(req: Optional[IMBindRequest] = None, group_id: str = "", key: str = "") -> Dict[str, Any]:
+        """Bind a pending authorization key to authorize an IM chat."""
+        gid = str((req.group_id if isinstance(req, IMBindRequest) else group_id) or "").strip()
+        k = str((req.key if isinstance(req, IMBindRequest) else key) or "").strip()
+        if not gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
+        if not k:
+            raise HTTPException(status_code=400, detail={"code": "missing_key", "message": "key is required"})
+        resp = await _daemon({"op": "im_bind_chat", "args": {"group_id": gid, "key": k}})
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             code = str(err.get("code") or "bind_failed")
@@ -2899,6 +2915,36 @@ def create_app() -> FastAPI:
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)
+        return resp
+
+    @app.get("/api/im/pending")
+    async def im_list_pending(group_id: str) -> Dict[str, Any]:
+        """List pending bind requests for a group."""
+        resp = await _daemon({"op": "im_list_pending", "args": {"group_id": group_id}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            raise HTTPException(status_code=400, detail=err)
+        return resp
+
+    @app.post("/api/im/pending/reject")
+    async def im_reject_pending(
+        req: Optional[IMPendingRejectRequest] = None,
+        group_id: str = "",
+        key: str = "",
+    ) -> Dict[str, Any]:
+        """Reject a pending bind request key."""
+        gid = str((req.group_id if isinstance(req, IMPendingRejectRequest) else group_id) or "").strip()
+        k = str((req.key if isinstance(req, IMPendingRejectRequest) else key) or "").strip()
+        if not gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
+        if not k:
+            raise HTTPException(status_code=400, detail={"code": "missing_key", "message": "key is required"})
+        resp = await _daemon({"op": "im_reject_pending", "args": {"group_id": gid, "key": k}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            code = str(err.get("code") or "reject_failed")
+            msg = str(err.get("message") or "reject failed")
+            raise HTTPException(status_code=400, detail={"code": code, "message": msg})
         return resp
 
     @app.post("/api/im/revoke")

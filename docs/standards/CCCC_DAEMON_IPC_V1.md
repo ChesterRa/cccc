@@ -1433,6 +1433,53 @@ Errors:
 - `missing_group_id` – `group_id` is empty.
 - `group_not_found` – group does not exist.
 
+#### `im_list_pending`
+
+List pending one-time bind requests for a group (expired keys are omitted).
+
+Args:
+```ts
+{ group_id: string }
+```
+
+Result:
+```ts
+{
+  pending: Array<{
+    key: string
+    chat_id: string
+    thread_id: number
+    platform: string
+    created_at: number
+    expires_at: number
+    expires_in_seconds: number
+  }>
+}
+```
+
+Errors:
+- `missing_group_id` – `group_id` is empty.
+- `group_not_found` – group does not exist.
+
+#### `im_reject_pending`
+
+Reject a pending one-time bind key.
+
+Args:
+```ts
+{ group_id: string; key: string }
+```
+
+Result:
+```ts
+{ rejected: boolean } // idempotent: false when key is already absent/expired
+```
+
+Errors:
+- `missing_key` – `key` is empty.
+- `missing_group_id` – `group_id` is empty.
+- `group_not_found` – group does not exist.
+
 #### `im_revoke_chat`
 
 Revoke authorization for an IM chat.

@@ -52,6 +52,9 @@ def _is_env_var_name(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
 
 
+_PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
+
+
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
     """
     Acquire singleton lock to prevent multiple bridge instances.
@@ -466,11 +469,41 @@ class IMBridge:
         self.key_manager._load()
 
         events = self.watcher.poll()
+        actor_labels = self._actor_display_map()
 
         for event in events:
-            self._forward_event(event)
+            self._forward_event(event, actor_labels=actor_labels)
 
-    def _forward_event(self, event: Dict[str, Any]) -> None:
+    def _actor_display_map(self) -> Dict[str, str]:
+        """Build actor_id -> display label map (title first, id fallback)."""
+        group = load_group(self.group.group_id) or self.group
+        labels: Dict[str, str] = {}
+        for actor in list_actors(group):
+            if not isinstance(actor, dict):
+                continue
+            actor_id = str(actor.get("id") or "").strip()
+            if not actor_id:
+                continue
+            title = str(actor.get("title") or "").strip()
+            labels[actor_id] = title if title else actor_id
+        return labels
+
+    def _display_actor_token(self, token: str, actor_labels: Dict[str, str]) -> str:
+        """Render actor/selector token for outbound IM display."""
+        raw = str(token or "").strip()
+        if not raw:
+            return raw
+        if raw in _PRESERVED_RECIPIENT_TOKENS:
+            return raw
+        if raw in actor_labels:
+            return actor_labels[raw]
+        if raw.startswith("@"):
+            stripped = raw[1:].strip()
+            if stripped in actor_labels:
+                return actor_labels[stripped]
+        return raw
+
+    def _forward_event(self, event: Dict[str, Any], *, actor_labels: Optional[Dict[str, str]] = None) -> None:
         """Forward a ledger event to subscribed chats."""
         kind = event.get("kind", "")
         by = event.get("by", "")
@@ -503,6 +536,7 @@ class IMBridge:
         # Determine if this event is user-facing (to:user or broadcast).
         # Agent-to-agent messages should NOT cancel typing indicators.
         is_user_facing = not to or "user" in to
+        display_labels = actor_labels or self._actor_display_map()
 
         for sub in subscribed:
             # Safety filter: only authorized chats are allowed to receive bridge
@@ -517,7 +551,13 @@ class IMBridge:
                 continue
 
             # Format message (may be empty for file-only events)
-            formatted = self.adapter.format_outbound(by, to, text, is_system) if text else ""
+            display_by = self._display_actor_token(by, display_labels)
+            display_to = [
+                self._display_actor_token(str(t), display_labels)
+                for t in (to if isinstance(to, list) else [])
+                if str(t or "").strip()
+            ]
+            formatted = self.adapter.format_outbound(display_by, display_to, text, is_system) if text else ""
 
             # Try file delivery first (if any attachments)
             sent_any_file = False
@@ -601,6 +641,9 @@ class IMBridge:
 
     def _handle_subscribe(self, chat_id: str, chat_title: str, thread_id: int = 0) -> None:
         """Handle /subscribe command."""
+        # Reload auth state on-demand as subscribe semantics depend on current
+        # authorization truth (bind/revoke can happen in daemon/web concurrently).
+        self.key_manager._load()
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
 
         # If the chat is not yet authorized, generate a binding key.
@@ -609,8 +652,11 @@ class IMBridge:
             self.adapter.send_message(
                 chat_id,
                 f"🔑 Authorization required.\n\n"
-                f"Copy and paste in CCCC Web chat:\n"
-                f"`/bind {key}`\n\n"
+                f"Open CCCC Web → Settings → IM Bridge, then approve this request in Pending Requests "
+                f"(or paste this key in Bind):\n"
+                f"`{key}`\n\n"
+                f"If foreman is online, send this message to foreman:\n"
+                f"`Please help bind my IM key: {key}`\n\n"
                 f"Or run in terminal:\n"
                 f"`cccc im bind --key {key}`\n\n"
                 f"Key expires in 10 minutes.",
@@ -619,6 +665,7 @@ class IMBridge:
             self._log(f"[subscribe] Pending auth key generated for chat={chat_id} thread={thread_id}")
             return
 
+        was_subscribed = self.subscribers.is_subscribed(chat_id, thread_id=thread_id)
         sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id, platform=platform)
         verbose_str = "on" if sub.verbose else "off"
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
@@ -628,9 +675,14 @@ class IMBridge:
             tip = "Channel tip: @mention the bot to route plain text. Use /send for explicit recipients."
         else:
             tip = "Tip: plain text routes to foreman by default; use /send for explicit recipients."
+        target_label = self.group.doc.get("title", self.group.group_id)
+        if was_subscribed:
+            headline = f"✅ Already authorized for this chat ({target_label})"
+        else:
+            headline = f"✅ Subscribed to {target_label}"
         self.adapter.send_message(
             chat_id,
-            f"✅ Subscribed to {self.group.doc.get('title', self.group.group_id)}\n"
+            f"{headline}\n"
             f"Verbose mode: {verbose_str}\n"
             f"{tip}\n"
             f"Use /help for commands.",

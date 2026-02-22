@@ -217,6 +217,13 @@ def format_status(
     actors: List[dict],
 ) -> str:
     """Format status response."""
+    def _actor_label(actor_doc: dict) -> str:
+        actor_id = str(actor_doc.get("id") or "").strip() or "?"
+        title = str(actor_doc.get("title") or "").strip()
+        if title:
+            return title
+        return actor_id
+
     lines = [f"📊 {group_title}"]
     lines.append(f"State: {group_state} | Running: {'✓' if running else '✗'}")
     lines.append("")
@@ -226,13 +233,13 @@ def format_status(
     else:
         lines.append("Actors:")
         for actor in actors:
-            actor_id = actor.get("id", "?")
+            actor_label = _actor_label(actor)
             role = actor.get("role", "peer")
             is_running = actor.get("running", False)
             runtime = actor.get("runtime", "codex")
             status_icon = "🟢" if is_running else "⚪"
             role_icon = "👑" if role == "foreman" else "👤"
-            lines.append(f"  {status_icon} {role_icon} {actor_id} ({runtime})")
+            lines.append(f"  {status_icon} {role_icon} {actor_label} ({runtime})")
 
     return "\n".join(lines)
 

@@ -168,6 +168,22 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_to_string_direct_payload_is_routed_correctly(self) -> None:
+        """T067 scenario: daemon send op tolerates string `to` payload."""
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("send", {
+                "group_id": group_id,
+                "by": "user",
+                "to": "peer1",
+                "text": "hello peer1",
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            event = (resp.result or {}).get("event", {})
+            self.assertEqual(event.get("data", {}).get("to", []), ["peer1"])
+        finally:
+            cleanup()
+
     def test_send_empty_to_uses_default(self) -> None:
         """T067 scenario 3: empty `to` falls back to group default."""
         group_id, cleanup = self._setup_group_with_actors()
@@ -181,6 +197,22 @@ class TestChatOps(unittest.TestCase):
             # Empty to with no mentions -> falls back to group default or broadcast
             # Either way should succeed for user sender
             self.assertTrue(resp.ok, getattr(resp, "error", None))
+        finally:
+            cleanup()
+
+    def test_send_to_malformed_list_entries_falls_back_to_default(self) -> None:
+        """T067 edge: malformed list entries should not become broadcast."""
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("send", {
+                "group_id": group_id,
+                "by": "user",
+                "to": [None, ""],
+                "text": "malformed to payload",
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            event = (resp.result or {}).get("event", {})
+            self.assertEqual(event.get("data", {}).get("to", []), ["@foreman"])
         finally:
             cleanup()
 
