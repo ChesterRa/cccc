@@ -48,6 +48,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const selectedGroupIdRef = useRef<string>("");
   const reconnectDelayRef = useRef<number>(1000);
   const reconnectTimerRef = useRef<number | null>(null);
+  const hasConnectedOnceRef = useRef<boolean>(false);
 
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
@@ -73,9 +74,20 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     setSSEStatus("connecting");
     const es = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`));
 
+    const isReconnect = hasConnectedOnceRef.current;
+
     es.onopen = () => {
       reconnectDelayRef.current = 1000;
       setSSEStatus("connected");
+      hasConnectedOnceRef.current = true;
+
+      // On reconnect, reload events to fill the gap from the disconnect window.
+      // The backend SSE stream seeks to EOF on new connections, so any events
+      // written during the disconnect period are missed. loadGroup re-fetches
+      // the latest events via HTTP to compensate.
+      if (isReconnect) {
+        void useGroupStore.getState().loadGroup(groupId);
+      }
     };
 
     es.onerror = () => {
@@ -195,6 +207,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
     clearActorWarmupTimers();
     reconnectDelayRef.current = 1000;
+    hasConnectedOnceRef.current = false;
     setSSEStatus("disconnected");
   }
 
