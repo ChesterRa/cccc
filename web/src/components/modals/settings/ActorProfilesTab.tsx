@@ -73,11 +73,14 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
 
 export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
   const { t } = useTranslation("settings");
+  const groups = useGroupStore((s) => s.groups);
+  const refreshGroups = useGroupStore((s) => s.refreshGroups);
   const refreshActors = useGroupStore((s) => s.refreshActors);
   const [profiles, setProfiles] = useState<ActorProfile[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
+  const [usageBusyProfileId, setUsageBusyProfileId] = useState("");
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
@@ -128,11 +131,33 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
       } else {
         setErr(resp.error?.message || t("actorProfiles.loadFailed"));
       }
-    } catch {
+    } catch (e) {
+      console.error("Failed to load actor profiles:", e);
       setErr(t("actorProfiles.loadFailed"));
     } finally {
       setBusy(false);
     }
+  };
+
+  const refreshAllGroupsActors = async () => {
+    await refreshGroups();
+    const latestGroups = useGroupStore.getState().groups;
+    const ids = Array.from(
+      new Set(
+        (Array.isArray(latestGroups) ? latestGroups : groups)
+          .map((item) => String(item?.group_id || "").trim())
+          .filter((id) => id.length > 0)
+      )
+    );
+    await Promise.all(
+      ids.map(async (gid) => {
+        try {
+          await refreshActors(gid);
+        } catch (e) {
+          console.error(`Failed to refresh actors for group=${gid}:`, e);
+        }
+      })
+    );
   };
 
   const loadProfileSecrets = async (profileId: string) => {
@@ -244,20 +269,57 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
             return;
           }
           await loadProfiles();
-          // force-detach mutates actor.profile_id in one or more groups; refresh current group actors
-          // so Edit Actor modal does not open from stale linked state.
-          await refreshActors();
+          await refreshAllGroupsActors();
           return;
         }
         setErr(resp.error?.message || t("actorProfiles.deleteFailed"));
         return;
       }
       await loadProfiles();
-      await refreshActors();
-    } catch {
+    } catch (e) {
+      console.error(`Failed to delete actor profile id=${String(profile.id || "")}:`, e);
       setErr(t("actorProfiles.deleteFailed"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleShowUsage = async (profile: ActorProfile) => {
+    const profileId = String(profile.id || "").trim();
+    if (!profileId) return;
+    setUsageBusyProfileId(profileId);
+    setErr("");
+    try {
+      const resp = await api.getActorProfile(profileId);
+      if (!resp.ok) {
+        setErr(resp.error?.message || t("actorProfiles.usageLoadFailed"));
+        return;
+      }
+      const usage = Array.isArray(resp.result?.usage) ? resp.result.usage : [];
+      if (!usage.length) {
+        window.alert(t("actorProfiles.usageEmpty"));
+        return;
+      }
+      const title = t("actorProfiles.usageDialogTitle", { name: profile.name || profile.id || profileId });
+      const lines = usage
+        .map((item) => {
+          const gid = String(item.group_id || "").trim();
+          const aid = String(item.actor_id || "").trim();
+          if (!gid || !aid) return "";
+          const gtitle = String(item.group_title || "").trim();
+          const atitle = String(item.actor_title || "").trim();
+          const groupLabel = gtitle ? `${gtitle} (${gid})` : gid;
+          const actorLabel = atitle ? `${atitle} (${aid})` : aid;
+          return `${t("actorProfiles.deleteInUseEntryGroup", { group: groupLabel })}\n${t("actorProfiles.deleteInUseEntryActor", { actor: actorLabel })}`;
+        })
+        .filter((line) => line.length > 0)
+        .join("\n\n");
+      window.alert(lines ? `${title}\n\n${lines}` : `${title}\n\n${t("actorProfiles.usageEmpty")}`);
+    } catch (e) {
+      console.error(`Failed to load usage for actor profile id=${profileId}:`, e);
+      setErr(t("actorProfiles.usageLoadFailed"));
+    } finally {
+      setUsageBusyProfileId("");
     }
   };
 
@@ -402,6 +464,13 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                   className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"}`}
                 >
                   {t("actorProfiles.duplicate")}
+                </button>
+                <button
+                  onClick={() => void handleShowUsage(profile)}
+                  disabled={usageBusyProfileId === String(profile.id || "")}
+                  className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"} disabled:opacity-60`}
+                >
+                  {usageBusyProfileId === String(profile.id || "") ? t("common:loading") : t("actorProfiles.viewUsage")}
                 </button>
                 <button
                   onClick={() => void handleDelete(profile)}

@@ -7,6 +7,10 @@ from cccc.daemon.ops.socket_special_ops import try_handle_socket_special_op
 class _FakeConn:
     def __init__(self) -> None:
         self.closed = False
+        self.timeout = None
+
+    def settimeout(self, value) -> None:
+        self.timeout = value
 
     def close(self) -> None:
         self.closed = True
@@ -38,6 +42,7 @@ class TestSocketSpecialOps(unittest.TestCase):
     def test_term_attach_success_transfers_socket(self) -> None:
         req = DaemonRequest.model_validate({"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1"}})
         conn = _FakeConn()
+        conn.timeout = 2.0
         sent: list[dict] = []
         attached: list[tuple[str, str]] = []
 
@@ -56,6 +61,7 @@ class TestSocketSpecialOps(unittest.TestCase):
         )
         self.assertTrue(handled)
         self.assertFalse(conn.closed)
+        self.assertIsNone(conn.timeout)
         self.assertEqual(attached, [("g1", "a1")])
         self.assertTrue(sent and bool(sent[0].get("ok")))
 
@@ -90,6 +96,7 @@ class TestSocketSpecialOps(unittest.TestCase):
     def test_events_stream_success_starts_stream(self) -> None:
         req = DaemonRequest.model_validate({"op": "events_stream", "args": {"group_id": "g1"}})
         conn = _FakeConn()
+        conn.timeout = 2.0
         sent: list[dict] = []
         started: list[tuple[str, str]] = []
 
@@ -111,6 +118,7 @@ class TestSocketSpecialOps(unittest.TestCase):
         )
         self.assertTrue(handled)
         self.assertFalse(conn.closed)
+        self.assertIsNone(conn.timeout)
         self.assertTrue(sent and bool(sent[0].get("ok")))
         self.assertEqual(started, [("g1", "user")])
 

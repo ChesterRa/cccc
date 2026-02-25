@@ -6,7 +6,32 @@ from typing import Any, Dict, List
 from ..util.conv import coerce_bool
 from .actors import get_effective_role, list_actors
 from .group import Group
+from .group_space import get_group_space_prompt_state
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
+
+
+def _group_space_policy_lines(group_id: str) -> List[str]:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return []
+    try:
+        state = get_group_space_prompt_state(gid, provider="notebooklm")
+        if not isinstance(state, dict):
+            return []
+        provider = str(state.get("provider") or "notebooklm")
+        mode = str(state.get("mode") or "disabled")
+        return [
+            "Group Space:",
+            f"- Bound memory provider: {provider} ({mode})",
+            "- Use cccc_space_query for long-horizon/shared knowledge lookup.",
+            "- Use cccc_space_ingest only for stable findings/resources worth reusing.",
+            "- For resource_ingest payloads: use source_type + {url|content|file_id} depending on source kind.",
+            "- Use cccc_space_artifact for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).",
+            "- If you see files matching '*.conflict.remote.*' under space/, report and ask user for resolution; do not auto-merge/delete.",
+            "- If provider is degraded/disabled, continue with Context + ledger and report fallback explicitly.",
+        ]
+    except Exception:
+        return []
 
 
 def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
@@ -128,6 +153,9 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
     ]
+    group_space_lines = _group_space_policy_lines(group_id)
+    if group_space_lines:
+        core_lines.extend(["", *group_space_lines])
 
     # Group override: CCCC_PREAMBLE.md under CCCC_HOME.
     pf = read_group_prompt_file(group, PREAMBLE_FILENAME)

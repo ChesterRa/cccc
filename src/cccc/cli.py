@@ -36,11 +36,58 @@ from .kernel.registry import load_registry
 from .kernel.scope import detect_scope
 from .kernel.system_prompt import render_system_prompt
 from .paths import ensure_home
+from .ports.im.config_schema import canonicalize_im_config
 from .util.conv import coerce_bool
+
+_SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 
 
 def _print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _parse_json_object_arg(raw: Any, *, field: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        obj = json.loads(text)
+    except Exception as e:
+        raise ValueError(f"{field} must be valid JSON object: {e}") from e
+    if not isinstance(obj, dict):
+        raise ValueError(f"{field} must be a JSON object")
+    return dict(obj)
+
+
+def _normalize_space_query_options_cli(options: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(options or {})
+    unsupported = sorted(k for k in normalized.keys() if str(k or "").strip() not in _SPACE_QUERY_OPTION_KEYS)
+    if unsupported:
+        if any(str(k or "").strip() in {"language", "lang"} for k in unsupported):
+            raise ValueError(
+                "query options do not support language/lang; NotebookLM query API has no language parameter. "
+                "Put language requirements in query text."
+            )
+        supported = ", ".join(sorted(_SPACE_QUERY_OPTION_KEYS))
+        raise ValueError(
+            f"unsupported query options: {', '.join(str(k or '').strip() for k in unsupported)} (supported: {supported})"
+        )
+
+    if "source_ids" in normalized:
+        raw_source_ids = normalized.get("source_ids")
+        if raw_source_ids is None:
+            normalized["source_ids"] = []
+        elif not isinstance(raw_source_ids, list):
+            raise ValueError("options.source_ids must be an array of non-empty strings")
+        else:
+            source_ids: list[str] = []
+            for idx, item in enumerate(raw_source_ids):
+                sid = str(item or "").strip()
+                if not sid:
+                    raise ValueError(f"options.source_ids[{idx}] must be a non-empty string")
+                source_ids.append(sid)
+            normalized["source_ids"] = source_ids
+    return normalized
 
 
 def _default_runner_kind() -> str:
@@ -83,7 +130,7 @@ def _ensure_daemon_running() -> bool:
                         return False
                 return True
             except Exception:
-                return True
+                return False
 
         needs_restart = False
         if daemon_version and daemon_version != __version__:
@@ -93,9 +140,11 @@ def _ensure_daemon_running() -> bool:
 
         if needs_restart:
             try:
-                call_daemon({"op": "shutdown"}, timeout_s=2.0)
-            except Exception:
-                pass
+                shutdown_resp = call_daemon({"op": "shutdown"}, timeout_s=2.0)
+                if not bool(shutdown_resp.get("ok")):
+                    print("warn: daemon restart requested but shutdown RPC failed; trying fallback termination", file=sys.stderr)
+            except Exception as e:
+                print(f"warn: daemon restart requested but shutdown RPC errored: {e}", file=sys.stderr)
 
             deadline = time.time() + 2.0
             while time.time() < deadline:
@@ -108,15 +157,24 @@ def _ensure_daemon_running() -> bool:
                 try:
                     import signal
 
+                    killed = False
                     try:
                         os.killpg(os.getpgid(daemon_pid), signal.SIGTERM)
-                    except Exception:
+                        killed = True
+                    except Exception as e_pg:
                         try:
                             os.kill(daemon_pid, signal.SIGTERM)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                            killed = True
+                        except Exception as e_kill:
+                            print(
+                                f"warn: failed to terminate stale daemon pid={daemon_pid}: killpg={e_pg}; kill={e_kill}",
+                                file=sys.stderr,
+                            )
+                    if not killed:
+                        return True
+                except Exception as e:
+                    print(f"warn: failed to terminate stale daemon pid={daemon_pid}: {e}", file=sys.stderr)
+                    return True
 
                 deadline = time.time() + 2.0
                 while time.time() < deadline:
@@ -137,8 +195,8 @@ def _ensure_daemon_running() -> bool:
                 sock_path.unlink(missing_ok=True)
                 addr_path.unlink(missing_ok=True)
                 pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"warn: failed to cleanup stale daemon state files: {e}", file=sys.stderr)
         else:
             return True
 
@@ -1744,6 +1802,445 @@ def cmd_runtime_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_space_status(args: argparse.Namespace) -> int:
+    """Show Group Space status (provider, binding, queue summary)."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_space_status", "args": {"group_id": group_id, "provider": provider}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def _load_space_auth_json_arg(args: argparse.Namespace) -> tuple[bool, str]:
+    raw = str(getattr(args, "auth_json", "") or "").strip()
+    file_path = str(getattr(args, "auth_json_file", "") or "").strip()
+    if raw and file_path:
+        _print_json(
+            {
+                "ok": False,
+                "error": {
+                    "code": "invalid_args",
+                    "message": "use only one of --auth-json or --auth-json-file",
+                },
+            }
+        )
+        return False, ""
+    if file_path:
+        try:
+            raw = Path(file_path).read_text(encoding="utf-8")
+        except Exception as e:
+            _print_json(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "invalid_auth_json_file",
+                        "message": f"failed to read --auth-json-file: {e}",
+                    },
+                }
+            )
+            return False, ""
+    if not str(raw or "").strip():
+        _print_json({"ok": False, "error": {"code": "missing_auth_json", "message": "missing auth_json"}})
+        return False, ""
+    try:
+        obj = _parse_json_object_arg(raw, field="auth_json")
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_auth_json", "message": str(e)}})
+        return False, ""
+    return True, json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def cmd_space_credential_status(args: argparse.Namespace) -> int:
+    """Show Group Space provider credential status (masked metadata only)."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_credential_status",
+            "args": {"provider": provider, "by": by},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_credential_set(args: argparse.Namespace) -> int:
+    """Set Group Space provider credential (write-only)."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    ok, auth_json = _load_space_auth_json_arg(args)
+    if not ok:
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_credential_update",
+            "args": {
+                "provider": provider,
+                "by": by,
+                "auth_json": auth_json,
+                "clear": False,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_credential_clear(args: argparse.Namespace) -> int:
+    """Clear stored Group Space provider credential."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_credential_update",
+            "args": {
+                "provider": provider,
+                "by": by,
+                "auth_json": "",
+                "clear": True,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_health(args: argparse.Namespace) -> int:
+    """Run Group Space provider health check."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_health_check",
+            "args": {"provider": provider, "by": by},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_auth_status(args: argparse.Namespace) -> int:
+    """Show Group Space provider auth flow status."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_auth",
+            "args": {"provider": provider, "by": by, "action": "status"},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_auth_start(args: argparse.Namespace) -> int:
+    """Start Group Space provider auth flow."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    try:
+        timeout_seconds = int(getattr(args, "timeout_seconds", 900) or 900)
+    except Exception:
+        timeout_seconds = 900
+    timeout_seconds = max(60, min(timeout_seconds, 1800))
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_auth",
+            "args": {
+                "provider": provider,
+                "by": by,
+                "action": "start",
+                "timeout_seconds": timeout_seconds,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_auth_cancel(args: argparse.Namespace) -> int:
+    """Cancel Group Space provider auth flow."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_auth",
+            "args": {"provider": provider, "by": by, "action": "cancel"},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_bind(args: argparse.Namespace) -> int:
+    """Bind group to a Group Space provider remote space."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    remote_space_id = str(getattr(args, "remote_space_id", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_bind",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "bind",
+                "remote_space_id": remote_space_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_sync(args: argparse.Namespace) -> int:
+    """Run Group Space file synchronization (repo/space -> provider)."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    force = bool(getattr(args, "force", False))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_sync",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "run",
+                "force": force,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_unbind(args: argparse.Namespace) -> int:
+    """Unbind group from a Group Space provider remote space."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_bind",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "unbind",
+                "remote_space_id": "",
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_ingest(args: argparse.Namespace) -> int:
+    """Submit and execute a Group Space ingest job."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    kind = str(getattr(args, "kind", "") or "context_sync").strip() or "context_sync"
+    idempotency_key = str(getattr(args, "idempotency_key", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    try:
+        payload = _parse_json_object_arg(getattr(args, "payload", "{}"), field="payload")
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_payload", "message": str(e)}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_ingest",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "kind": kind,
+                "payload": payload,
+                "idempotency_key": idempotency_key,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_query(args: argparse.Namespace) -> int:
+    """Query Group Space provider-backed memory."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    query = str(getattr(args, "query", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not query:
+        _print_json({"ok": False, "error": {"code": "missing_query", "message": "missing query"}})
+        return 2
+    try:
+        options = _parse_json_object_arg(getattr(args, "options", "{}"), field="options")
+        options = _normalize_space_query_options_cli(options)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_options", "message": str(e)}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_query",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "query": query,
+                "options": options,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_jobs_list(args: argparse.Namespace) -> int:
+    """List Group Space jobs."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    state = str(getattr(args, "state", "") or "").strip()
+    try:
+        limit = int(getattr(args, "limit", 50) or 50)
+    except Exception:
+        limit = 50
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    req_args: dict[str, Any] = {
+        "group_id": group_id,
+        "provider": provider,
+        "action": "list",
+        "limit": max(1, min(limit, 500)),
+    }
+    if state:
+        req_args["state"] = state
+    resp = call_daemon({"op": "group_space_jobs", "args": req_args})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_jobs_retry(args: argparse.Namespace) -> int:
+    """Retry a failed/canceled Group Space job."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    job_id = str(getattr(args, "job_id", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not job_id:
+        _print_json({"ok": False, "error": {"code": "missing_job_id", "message": "missing job_id"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_jobs",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "retry",
+                "job_id": job_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_jobs_cancel(args: argparse.Namespace) -> int:
+    """Cancel a pending/running Group Space job."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    job_id = str(getattr(args, "job_id", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not job_id:
+        _print_json({"ok": False, "error": {"code": "missing_job_id", "message": "missing job_id"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_jobs",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "cancel",
+                "job_id": job_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     from .ports.web.main import main as web_main
 
@@ -2170,57 +2667,43 @@ def cmd_im_set(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
         return 2
 
-    # Update group.yaml with IM config
+    # Update group.yaml with canonical IM config.
+    prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
     im_config: dict[str, Any] = {"platform": platform}
-    # Default file transfer settings (can be customized in group.yaml).
-    default_max_mb = 20 if platform in ("telegram", "slack") else 10
-    im_config["files"] = {"enabled": True, "max_mb": default_max_mb}
-    
-    if platform == "slack":
-        # Slack uses dual tokens
-        if bot_token_env:
-            im_config["bot_token_env"] = bot_token_env
-        if app_token_env:
+    if isinstance(prev_im, dict) and "enabled" in prev_im:
+        im_config["enabled"] = coerce_bool(prev_im.get("enabled"), default=False)
+    if isinstance(prev_im, dict) and isinstance(prev_im.get("files"), dict):
+        im_config["files"] = prev_im.get("files")
+    else:
+        default_max_mb = 20 if platform in ("telegram", "slack") else 10
+        im_config["files"] = {"enabled": True, "max_mb": default_max_mb}
+    if isinstance(prev_im, dict) and "skip_pending_on_start" in prev_im:
+        im_config["skip_pending_on_start"] = coerce_bool(prev_im.get("skip_pending_on_start"), default=True)
+
+    if platform in ("telegram", "discord", "slack"):
+        token_hint = bot_token_env or token_env or token
+        if token_hint:
+            im_config["bot_token_env"] = token_hint
+        if platform == "slack" and app_token_env:
             im_config["app_token_env"] = app_token_env
     elif platform == "feishu":
-        # Feishu: app_id/app_secret (stored as env var names; the bridge reads FEISHU_APP_ID/FEISHU_APP_SECRET).
         if feishu_domain:
-            v = feishu_domain.strip().lower()
-            if v in (
-                "lark",
-                "global",
-                "intl",
-                "international",
-                "open.larkoffice.com",
-                "https://open.larkoffice.com",
-                # Historical alias used in some SDKs/docs.
-                "open.larksuite.com",
-                "https://open.larksuite.com",
-            ):
-                im_config["feishu_domain"] = "https://open.larkoffice.com"
-            else:
-                im_config["feishu_domain"] = "https://open.feishu.cn"
+            im_config["feishu_domain"] = feishu_domain
         if app_key_env:
-            im_config["feishu_app_id_env"] = app_key_env
+            im_config["feishu_app_id"] = app_key_env
         if app_secret_env:
-            im_config["feishu_app_secret_env"] = app_secret_env
+            im_config["feishu_app_secret"] = app_secret_env
     elif platform == "dingtalk":
-        # DingTalk: app_key/app_secret (+ optional robot_code).
         if app_key_env:
-            im_config["dingtalk_app_key_env"] = app_key_env
+            im_config["dingtalk_app_key"] = app_key_env
         if app_secret_env:
-            im_config["dingtalk_app_secret_env"] = app_secret_env
+            im_config["dingtalk_app_secret"] = app_secret_env
         if dingtalk_robot_code_env:
-            im_config["dingtalk_robot_code_env"] = dingtalk_robot_code_env
-        if dingtalk_robot_code:
+            im_config["dingtalk_robot_code"] = dingtalk_robot_code_env
+        elif dingtalk_robot_code:
             im_config["dingtalk_robot_code"] = dingtalk_robot_code
-    else:
-        # Telegram/Discord use single token
-        if bot_token_env:
-            im_config["token_env"] = bot_token_env
 
-    if token and platform not in ("feishu", "dingtalk"):
-        im_config["token"] = token
+    im_config = canonicalize_im_config(im_config)
 
     # Update group doc and save
     group.doc["im"] = im_config
@@ -2262,7 +2745,8 @@ def cmd_im_config(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
         return 2
 
-    im_config = group.doc.get("im")
+    raw_im = group.doc.get("im")
+    im_config = canonicalize_im_config(raw_im) if isinstance(raw_im, dict) else raw_im
     _print_json({"ok": True, "result": {"group_id": group_id, "im": im_config}})
     return 0
 
@@ -2335,32 +2819,36 @@ def cmd_im_start(args: argparse.Namespace) -> int:
         return 2
 
     # Check IM config
-    im_config = group.doc.get("im", {})
+    im_config = canonicalize_im_config(group.doc.get("im", {}))
     if not im_config:
         _print_json({"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration. Run: cccc im set <platform>"}})
         return 2
 
     # Persist desired run-state for restart/autostart.
-    if isinstance(im_config, dict):
-        im_config["enabled"] = True
-        group.doc["im"] = im_config
-        try:
-            group.save()
-        except Exception:
-            pass
+    im_config["enabled"] = True
+    group.doc["im"] = im_config
+    try:
+        group.save()
+    except Exception:
+        pass
 
     platform = im_config.get("platform", "telegram")
 
     # Prepare environment
     env = os.environ.copy()
-    token_env = im_config.get("token_env")
-    token = im_config.get("token")
-    if token and token_env:
-        env[token_env] = token
-    elif token:
+    bot_token_env = str(im_config.get("bot_token_env") or "").strip()
+    bot_token = str(im_config.get("bot_token") or "").strip()
+    if bot_token and bot_token_env:
+        env[bot_token_env] = bot_token
+    elif bot_token:
         # Set default env var based on platform
         default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
-        env[default_env.get(platform, "BOT_TOKEN")] = token
+        env[default_env.get(platform, "BOT_TOKEN")] = bot_token
+    if str(platform) == "slack":
+        app_token_env = str(im_config.get("app_token_env") or "").strip()
+        app_token = str(im_config.get("app_token") or "").strip()
+        if app_token and app_token_env:
+            env[app_token_env] = app_token
 
     # Feishu/DingTalk: set credentials from config
     # Supports both direct values and env var names (for Web UI compatibility)
@@ -2465,8 +2953,9 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
     try:
         group = load_group(group_id)
         if group is not None:
-            im_cfg = group.doc.get("im")
-            if isinstance(im_cfg, dict):
+            raw_im_cfg = group.doc.get("im")
+            if isinstance(raw_im_cfg, dict):
+                im_cfg = canonicalize_im_config(raw_im_cfg)
                 im_cfg["enabled"] = False
                 group.doc["im"] = im_cfg
                 group.save()
@@ -2527,7 +3016,8 @@ def cmd_im_status(args: argparse.Namespace) -> int:
     group = load_group(group_id)
     group_exists = group is not None
 
-    im_config = group.doc.get("im", {}) if group_exists else {}
+    raw_im = group.doc.get("im", {}) if group_exists else {}
+    im_config = canonicalize_im_config(raw_im) if isinstance(raw_im, dict) else {}
     platform = im_config.get("platform") if im_config else None
 
     # Check if running
@@ -2563,7 +3053,7 @@ def cmd_im_status(args: argparse.Namespace) -> int:
 
 
 def cmd_im_bind(args: argparse.Namespace) -> int:
-    """Bind a pending authorization key to authorize a Telegram chat."""
+    """Bind a pending authorization key to authorize an IM chat."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -2987,6 +3477,123 @@ def build_parser() -> argparse.ArgumentParser:
     p_runtime_list = runtime_sub.add_parser("list", help="List available agent runtimes")
     p_runtime_list.add_argument("--all", action="store_true", help="Show all known runtimes (not just primary ones)")
     p_runtime_list.set_defaults(func=cmd_runtime_list)
+
+    p_space = sub.add_parser("space", help="Manage Group Space provider-backed shared memory")
+    space_sub = p_space.add_subparsers(dest="action", required=True)
+
+    p_space_status = space_sub.add_parser("status", help="Show Group Space status")
+    p_space_status.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_status.set_defaults(func=cmd_space_status)
+
+    p_space_credential = space_sub.add_parser("credential", help="Manage Group Space provider credentials")
+    space_credential_sub = p_space_credential.add_subparsers(dest="credential_action", required=True)
+
+    p_space_credential_status = space_credential_sub.add_parser("status", help="Show provider credential status (masked)")
+    p_space_credential_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_credential_status.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_credential_status.set_defaults(func=cmd_space_credential_status)
+
+    p_space_credential_set = space_credential_sub.add_parser("set", help="Set provider credential (write-only)")
+    p_space_credential_set.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_credential_set.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_credential_set.add_argument("--auth-json", default="", help="Provider auth JSON payload")
+    p_space_credential_set.add_argument("--auth-json-file", default="", help="Path to provider auth JSON file")
+    p_space_credential_set.set_defaults(func=cmd_space_credential_set)
+
+    p_space_credential_clear = space_credential_sub.add_parser("clear", help="Clear stored provider credential")
+    p_space_credential_clear.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_credential_clear.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_credential_clear.set_defaults(func=cmd_space_credential_clear)
+
+    p_space_health = space_sub.add_parser("health", help="Run Group Space provider health check")
+    p_space_health.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_health.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_health.set_defaults(func=cmd_space_health)
+
+    p_space_auth = space_sub.add_parser("auth", help="Manage Group Space provider auth flow")
+    space_auth_sub = p_space_auth.add_subparsers(dest="auth_action", required=True)
+
+    p_space_auth_status = space_auth_sub.add_parser("status", help="Show provider auth flow status")
+    p_space_auth_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_status.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_status.set_defaults(func=cmd_space_auth_status)
+
+    p_space_auth_start = space_auth_sub.add_parser("start", help="Start provider auth flow")
+    p_space_auth_start.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_start.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_start.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=900,
+        help="Auth flow timeout seconds (60-1800, default: 900)",
+    )
+    p_space_auth_start.set_defaults(func=cmd_space_auth_start)
+
+    p_space_auth_cancel = space_auth_sub.add_parser("cancel", help="Cancel provider auth flow")
+    p_space_auth_cancel.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_cancel.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_cancel.set_defaults(func=cmd_space_auth_cancel)
+
+    p_space_bind = space_sub.add_parser("bind", help="Bind group to a provider remote space")
+    p_space_bind.add_argument("remote_space_id", nargs="?", default="", help="Provider remote space/notebook ID (optional; auto-create when omitted)")
+    p_space_bind.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_bind.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_bind.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_bind.set_defaults(func=cmd_space_bind)
+
+    p_space_unbind = space_sub.add_parser("unbind", help="Unbind group from provider remote space")
+    p_space_unbind.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_unbind.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_unbind.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_unbind.set_defaults(func=cmd_space_unbind)
+
+    p_space_sync = space_sub.add_parser("sync", help="Synchronize repo space/ resources to provider")
+    p_space_sync.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_sync.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_sync.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_sync.add_argument("--force", action="store_true", help="Force full reconcile even if no local changes detected")
+    p_space_sync.set_defaults(func=cmd_space_sync)
+
+    p_space_ingest = space_sub.add_parser("ingest", help="Submit an ingest job to Group Space")
+    p_space_ingest.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_ingest.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_ingest.add_argument("--kind", choices=["context_sync", "resource_ingest"], default="context_sync", help="Job kind")
+    p_space_ingest.add_argument("--payload", default="{}", help="JSON object payload (default: {})")
+    p_space_ingest.add_argument("--idempotency-key", default="", help="Optional idempotency key for dedupe")
+    p_space_ingest.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_ingest.set_defaults(func=cmd_space_ingest)
+
+    p_space_query = space_sub.add_parser("query", help="Query Group Space provider-backed memory")
+    p_space_query.add_argument("query", help="Query text")
+    p_space_query.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_query.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_query.add_argument("--options", default="{}", help="JSON object options (supported: source_ids)")
+    p_space_query.set_defaults(func=cmd_space_query)
+
+    p_space_jobs = space_sub.add_parser("jobs", help="List/retry/cancel Group Space jobs")
+    space_jobs_sub = p_space_jobs.add_subparsers(dest="jobs_action", required=True)
+
+    p_space_jobs_list = space_jobs_sub.add_parser("list", help="List jobs")
+    p_space_jobs_list.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_jobs_list.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_jobs_list.add_argument("--state", choices=["pending", "running", "succeeded", "failed", "canceled"], default="", help="Optional state filter")
+    p_space_jobs_list.add_argument("--limit", type=int, default=50, help="Max jobs to return (default: 50)")
+    p_space_jobs_list.set_defaults(func=cmd_space_jobs_list)
+
+    p_space_jobs_retry = space_jobs_sub.add_parser("retry", help="Retry a failed/canceled job")
+    p_space_jobs_retry.add_argument("job_id", help="Job ID")
+    p_space_jobs_retry.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_jobs_retry.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_jobs_retry.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_jobs_retry.set_defaults(func=cmd_space_jobs_retry)
+
+    p_space_jobs_cancel = space_jobs_sub.add_parser("cancel", help="Cancel a pending/running job")
+    p_space_jobs_cancel.add_argument("job_id", help="Job ID")
+    p_space_jobs_cancel.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_jobs_cancel.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_jobs_cancel.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_jobs_cancel.set_defaults(func=cmd_space_jobs_cancel)
 
     p_ver = sub.add_parser("version", help="Show version")
     p_ver.set_defaults(func=cmd_version)

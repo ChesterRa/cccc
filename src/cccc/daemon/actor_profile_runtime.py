@@ -95,20 +95,7 @@ def apply_profile_link_to_actor(
     revision = int(profile.get("revision") or 0)
     item = _set_actor_link_metadata(group, actor_id, profile_id=profile_id, revision=revision)
 
-    profile_private = load_actor_profile_secrets(profile_id)
-    legacy_public_env_raw = profile.get("env")
-    legacy_public_env: Dict[str, str] = {}
-    if isinstance(legacy_public_env_raw, dict):
-        for key, value in legacy_public_env_raw.items():
-            if not isinstance(key, str):
-                continue
-            k = key.strip()
-            if not k or value is None:
-                continue
-            legacy_public_env[k] = str(value)
-    merged_private: Dict[str, str] = {}
-    merged_private.update(legacy_public_env)
-    merged_private.update(profile_private)
+    merged_private = load_actor_profile_secrets(profile_id)
     update_actor_private_env(
         group.group_id,
         actor_id,

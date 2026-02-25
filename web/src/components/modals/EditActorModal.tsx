@@ -201,30 +201,11 @@ export function EditActorModal({
         return;
       }
 
-      const privateKeys = Array.isArray(resp.result?.keys) ? resp.result.keys : [];
-      const maskedFromPrivate =
+      const mergedKeys = Array.isArray(resp.result?.keys) ? resp.result.keys : [];
+      const mergedMasks =
         resp.result?.masked_values && typeof resp.result.masked_values === "object"
           ? resp.result.masked_values
           : {};
-
-      const legacyProfile = actorProfiles.find((profile) => String(profile.id || "") === profileId);
-      const legacyEnv = legacyProfile?.env && typeof legacyProfile.env === "object" ? legacyProfile.env : {};
-      const legacyKeys = Object.keys(legacyEnv).filter((key) => String(key || "").trim().length > 0);
-
-      const mergedKeys: string[] = [];
-      const seen = new Set<string>();
-      for (const key of [...privateKeys, ...legacyKeys]) {
-        const normalized = String(key || "").trim();
-        if (!normalized || seen.has(normalized)) continue;
-        seen.add(normalized);
-        mergedKeys.push(normalized);
-      }
-
-      const mergedMasks: Record<string, string> = {};
-      for (const key of mergedKeys) {
-        const fromPrivate = String(maskedFromPrivate[key] || "").trim();
-        mergedMasks[key] = fromPrivate || "******";
-      }
 
       setSecretsError("");
       setSecretKeys(mergedKeys);

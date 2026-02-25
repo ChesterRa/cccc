@@ -7,6 +7,13 @@ from typing import Any, Callable, Dict, Optional, Set
 from ...contracts.v1 import DaemonResponse
 
 
+def _set_blocking_io(conn: Any) -> None:
+    try:
+        conn.settimeout(None)
+    except Exception:
+        pass
+
+
 def try_handle_socket_special_op(
     req: Any,
     conn: Any,
@@ -38,6 +45,7 @@ def try_handle_socket_special_op(
         try:
             send_json(conn, dump_response(resp))
             if resp.ok:
+                _set_blocking_io(conn)
                 attach_actor_socket(group_id, actor_id, conn)
                 return True
         except Exception:
@@ -90,6 +98,7 @@ def try_handle_socket_special_op(
         try:
             send_json(conn, dump_response(resp))
             if resp.ok:
+                _set_blocking_io(conn)
                 started = start_events_stream(conn, group_id, by, kinds, since_event_id, since_ts)
                 if started:
                     return True

@@ -62,8 +62,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                     paths.sock_path.unlink(missing_ok=True)
                     paths.addr_path.unlink(missing_ok=True)
                     paths.pid_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"ccccd: failed to clean stale daemon state: {e}")
+                    return 1
         pid = _spawn_daemon(paths)
         print(f"ccccd: started pid={pid}")
         return 0
@@ -79,8 +80,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 os.kill(pid, signal.SIGTERM)
                 print("ccccd: SIGTERM sent")
                 return 0
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"ccccd: failed to signal pid={pid}: {e}")
+                return 1
         print("ccccd: not running")
         return 0
 

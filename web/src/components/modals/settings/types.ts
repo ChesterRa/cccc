@@ -5,6 +5,7 @@ export type GroupTabId =
   | "automation"
   | "delivery"
   | "guidance"
+  | "space"
   | "messaging"
   | "im"
   | "transcript"

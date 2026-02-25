@@ -21,6 +21,18 @@ cccc.* namespace (collaboration control plane):
 - cccc_actor_start: Start actor
 - cccc_actor_stop: Stop actor
 - cccc_runtime_list: List available agent runtimes
+- cccc_space_status: Read Group Space provider/binding/queue status
+- cccc_space_capabilities: Read Group Space local file policy + ingest schema matrix
+- cccc_space_bind: Bind or unbind Group Space provider mapping
+- cccc_space_ingest: Enqueue and execute Group Space ingest job
+- cccc_space_query: Query provider-backed Group Space knowledge
+- cccc_space_sources: List/refresh/rename/delete provider sources for the bound notebook
+- cccc_space_artifact: List/generate/download provider artifacts (can auto-save to repo space/artifacts)
+- cccc_space_jobs: List/retry/cancel Group Space jobs
+- cccc_space_sync: Read or run repo/space synchronization reconcile
+- cccc_space_provider_auth: Control provider auth flow (status/start/cancel)
+- cccc_space_provider_credential_status: Read provider credential status (masked)
+- cccc_space_provider_credential_update: Update/clear provider credential
 - cccc_automation_state: Read automation reminders/status visible to caller
 - cccc_automation_manage: Manage automation reminders (MCP actor writes are notify-only)
 - cccc_project_info: Get PROJECT.md content (project goals/constraints)
@@ -58,6 +70,7 @@ from __future__ import annotations
 
 import mimetypes
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -86,6 +99,10 @@ _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 _HELP_ROLE_HEADER_RE = re.compile(r"^##\s*@role:\s*(\w+)\s*$", re.IGNORECASE)
 _HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(.+?)\s*$", re.IGNORECASE)
 _HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
+_CJK_HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+_CJK_KANA_RE = re.compile(r"[\u3040-\u30ff]")
+_CJK_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+_SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 
 
 def _select_help_markdown(markdown: str, *, role: Optional[str], actor_id: Optional[str]) -> str:
@@ -169,6 +186,112 @@ def _select_help_markdown(markdown: str, *, role: Optional[str], actor_id: Optio
     if keep_trailing_newline:
         out_text += "\n"
     return out_text
+
+
+def _infer_language_from_text(text: str) -> str:
+    raw = str(text or "")
+    if not raw.strip():
+        return ""
+    if _CJK_KANA_RE.search(raw):
+        return "ja"
+    if _CJK_HANGUL_RE.search(raw):
+        return "ko"
+    if _CJK_HAN_RE.search(raw):
+        return "zh-CN"
+    return ""
+
+
+def _infer_artifact_language_from_source(source_hint: str) -> str:
+    source = str(source_hint or "").strip()
+    if not source:
+        return ""
+    try:
+        p = Path(source).expanduser().resolve()
+    except Exception:
+        p = None
+    if p is not None and p.exists() and p.is_file():
+        try:
+            blob = p.read_bytes()[:8192]
+            text = blob.decode("utf-8", errors="ignore")
+            hint = _infer_language_from_text(text)
+            if hint:
+                return hint
+        except Exception:
+            return ""
+    return _infer_language_from_text(source)
+
+
+def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_top_level = {"group_id", "provider", "query", "options", "by"}
+    top_keys = {str(k or "").strip() for k in arguments.keys()}
+    top_keys.discard("")
+    unknown_top = sorted(k for k in top_keys if k not in allowed_top_level)
+    if unknown_top:
+        if any(k in {"language", "lang"} for k in unknown_top):
+            raise MCPError(
+                code="invalid_request",
+                message=(
+                    "cccc_space_query does not support top-level language/lang. "
+                    "NotebookLM query API has no language parameter; put language requirements in query text."
+                ),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message=(
+                "cccc_space_query unsupported top-level args: "
+                f"{', '.join(unknown_top)}. Supported args: group_id, provider, query, options."
+            ),
+        )
+
+    options_raw = arguments.get("options")
+    if options_raw is None:
+        options: Dict[str, Any] = {}
+    elif isinstance(options_raw, dict):
+        options = dict(options_raw)
+    else:
+        raise MCPError(code="invalid_request", message="cccc_space_query options must be an object")
+
+    unsupported_options = sorted(k for k in options.keys() if str(k or "").strip() not in _SPACE_QUERY_OPTION_KEYS)
+    if unsupported_options:
+        if any(str(k or "").strip() in {"language", "lang"} for k in unsupported_options):
+            raise MCPError(
+                code="invalid_request",
+                message=(
+                    "cccc_space_query options do not support language/lang. "
+                    "NotebookLM query API has no language parameter; put language requirements in query text."
+                ),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message=(
+                "cccc_space_query unsupported options: "
+                f"{', '.join(str(k or '').strip() for k in unsupported_options)}. "
+                "Supported options: source_ids."
+            ),
+        )
+
+    if "source_ids" in options:
+        raw_source_ids = options.get("source_ids")
+        if raw_source_ids is None:
+            options["source_ids"] = []
+        elif not isinstance(raw_source_ids, list):
+            raise MCPError(
+                code="invalid_request",
+                message="cccc_space_query options.source_ids must be an array of non-empty strings",
+            )
+        else:
+            source_ids: List[str] = []
+            for idx, item in enumerate(raw_source_ids):
+                sid = str(item or "").strip()
+                if not sid:
+                    raise MCPError(
+                        code="invalid_request",
+                        message=f"cccc_space_query options.source_ids[{idx}] must be a non-empty string",
+                    )
+                source_ids.append(sid)
+            options["source_ids"] = source_ids
+
+    return options
 
 
 # =============================================================================
@@ -868,6 +991,273 @@ def im_bind(*, group_id: str, key: str) -> Dict[str, Any]:
     })
 
 
+def space_status(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+    """Get Group Space status (provider + binding + queue summary)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_status",
+            "args": {"group_id": group_id, "provider": str(provider or "notebooklm")},
+        }
+    )
+
+
+def space_capabilities(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+    """Get Group Space capabilities (local file policy + ingest schema/examples)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_capabilities",
+            "args": {"group_id": group_id, "provider": str(provider or "notebooklm")},
+        }
+    )
+
+
+def space_bind(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "bind",
+    remote_space_id: str = "",
+) -> Dict[str, Any]:
+    """Bind or unbind Group Space provider for a group."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_bind",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "bind"),
+                "remote_space_id": str(remote_space_id or ""),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_ingest(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    kind: str = "context_sync",
+    payload: Optional[Dict[str, Any]] = None,
+    idempotency_key: str = "",
+) -> Dict[str, Any]:
+    """Submit a Group Space ingest job."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_ingest",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "kind": str(kind or "context_sync"),
+                "payload": dict(payload or {}),
+                "idempotency_key": str(idempotency_key or ""),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_query(
+    *,
+    group_id: str,
+    provider: str = "notebooklm",
+    query: str,
+    options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Query Group Space knowledge provider."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_query",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "query": str(query or ""),
+                "options": dict(options or {}),
+            },
+        }
+    )
+
+
+def space_sources(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "list",
+    source_id: str = "",
+    new_title: str = "",
+) -> Dict[str, Any]:
+    """List/refresh/rename/delete Group Space provider sources."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_sources",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "list"),
+                "source_id": str(source_id or ""),
+                "new_title": str(new_title or ""),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_artifact(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "list",
+    kind: str = "",
+    options: Optional[Dict[str, Any]] = None,
+    wait: bool = False,
+    save_to_space: bool = True,
+    output_path: str = "",
+    output_format: str = "",
+    artifact_id: str = "",
+    timeout_seconds: float = 600.0,
+    initial_interval: float = 2.0,
+    max_interval: float = 10.0,
+) -> Dict[str, Any]:
+    """List/generate/download Group Space provider artifacts."""
+    action_v = str(action or "list")
+    kind_v = str(kind or "")
+    wait_v = bool(wait)
+    if action_v == "generate" and wait_v and str(kind_v).strip().lower() in {"audio", "video"}:
+        # Audio/video generation often runs far beyond typical MCP request timeouts.
+        # Force async mode to avoid client-side timeouts while preserving eventual notify/download flow.
+        wait_v = False
+    timeout_v = float(timeout_seconds)
+    req = {
+        "op": "group_space_artifact",
+        "args": {
+            "group_id": group_id,
+            "provider": str(provider or "notebooklm"),
+            "action": action_v,
+            "kind": kind_v,
+            "options": dict(options or {}),
+            "wait": wait_v,
+            "save_to_space": bool(save_to_space),
+            "output_path": str(output_path or ""),
+            "output_format": str(output_format or ""),
+            "artifact_id": str(artifact_id or ""),
+            "timeout_seconds": timeout_v,
+            "initial_interval": float(initial_interval),
+            "max_interval": float(max_interval),
+            "by": str(by or "user"),
+        },
+    }
+    daemon_timeout = 60.0
+    if action_v == "generate":
+        if wait_v:
+            daemon_timeout = max(180.0, timeout_v + 60.0)
+        else:
+            daemon_timeout = 120.0
+    return _call_daemon_or_raise(req, timeout_s=daemon_timeout)
+
+
+def space_jobs(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "list",
+    job_id: str = "",
+    state: str = "",
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """List/retry/cancel Group Space jobs."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_jobs",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "list"),
+                "job_id": str(job_id or ""),
+                "state": str(state or ""),
+                "limit": int(limit or 50),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_sync(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "run",
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Run Group Space file sync reconcile or read current sync state."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_sync",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "run"),
+                "force": bool(force),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_provider_auth(
+    *,
+    provider: str = "notebooklm",
+    by: str,
+    action: str = "status",
+    timeout_seconds: int = 900,
+) -> Dict[str, Any]:
+    """Control Group Space provider auth flow (status/start/cancel)."""
+    req: Dict[str, Any] = {
+        "provider": str(provider or "notebooklm"),
+        "by": str(by or "user"),
+        "action": str(action or "status"),
+    }
+    if str(action or "status") == "start":
+        req["timeout_seconds"] = max(60, min(int(timeout_seconds or 900), 1800))
+    return _call_daemon_or_raise({"op": "group_space_provider_auth", "args": req})
+
+
+def space_provider_credential_status(*, provider: str = "notebooklm", by: str) -> Dict[str, Any]:
+    """Read Group Space provider credential status (masked metadata)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_provider_credential_status",
+            "args": {"provider": str(provider or "notebooklm"), "by": str(by or "user")},
+        }
+    )
+
+
+def space_provider_credential_update(
+    *,
+    provider: str = "notebooklm",
+    by: str,
+    auth_json: str = "",
+    clear: bool = False,
+) -> Dict[str, Any]:
+    """Update/clear Group Space provider credential."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_provider_credential_update",
+            "args": {
+                "provider": str(provider or "notebooklm"),
+                "by": str(by or "user"),
+                "auth_json": str(auth_json or ""),
+                "clear": bool(clear),
+            },
+        }
+    )
+
+
 def project_info(*, group_id: str) -> Dict[str, Any]:
     """Get PROJECT.md content for the group's active scope"""
     from pathlib import Path
@@ -1447,6 +1837,228 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_runtime_list":
         return runtime_list()
+
+    if name == "cccc_space_status":
+        gid = _resolve_group_id(arguments)
+        return space_status(
+            group_id=gid,
+            provider=str(arguments.get("provider") or "notebooklm"),
+        )
+
+    if name == "cccc_space_capabilities":
+        gid = _resolve_group_id(arguments)
+        return space_capabilities(
+            group_id=gid,
+            provider=str(arguments.get("provider") or "notebooklm"),
+        )
+
+    if name == "cccc_space_bind":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_bind(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "bind"),
+            remote_space_id=str(arguments.get("remote_space_id") or ""),
+        )
+
+    if name == "cccc_space_ingest":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        payload_raw = arguments.get("payload")
+        payload = dict(payload_raw) if isinstance(payload_raw, dict) else {}
+        if not payload:
+            for key in (
+                "source_type",
+                "type",
+                "url",
+                "content",
+                "text",
+                "file_id",
+                "mime_type",
+                "title",
+                "file_path",
+                "path",
+            ):
+                if key not in arguments:
+                    continue
+                value = arguments.get(key)
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    payload[key] = text
+            source_type = str(payload.get("source_type") or payload.get("type") or "").strip().lower()
+            if source_type in {"file", "local_file", "path"} and (not str(payload.get("file_path") or "").strip()):
+                file_path = str(payload.get("path") or payload.get("url") or "").strip()
+                if file_path:
+                    payload["file_path"] = file_path
+        kind = str(arguments.get("kind") or "").strip()
+        if not kind:
+            resource_hints = {
+                "source_type",
+                "type",
+                "url",
+                "content",
+                "text",
+                "file_id",
+                "mime_type",
+                "title",
+                "file_path",
+                "path",
+            }
+            kind = "resource_ingest" if any(k in payload for k in resource_hints) else "context_sync"
+        return space_ingest(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            kind=kind,
+            payload=payload,
+            idempotency_key=str(arguments.get("idempotency_key") or ""),
+        )
+
+    if name == "cccc_space_query":
+        gid = _resolve_group_id(arguments)
+        options = _normalize_space_query_options_mcp(arguments)
+        return space_query(
+            group_id=gid,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            query=str(arguments.get("query") or ""),
+            options=options,
+        )
+
+    if name == "cccc_space_sources":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_sources(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "list"),
+            source_id=str(arguments.get("source_id") or ""),
+            new_title=str(arguments.get("new_title") or ""),
+        )
+
+    if name == "cccc_space_artifact":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        options_raw = arguments.get("options")
+        options = dict(options_raw) if isinstance(options_raw, dict) else {}
+        source_hint = str(arguments.get("source") or "").strip()
+        if source_hint and ("source" not in options):
+            options["source"] = source_hint
+        language_hint = str(arguments.get("language") or arguments.get("lang") or "").strip()
+        if not language_hint:
+            language_hint = str(options.get("language") or options.get("lang") or "").strip()
+        if not language_hint:
+            language_hint = str(os.environ.get("CCCC_SPACE_ARTIFACT_LANGUAGE") or "").strip()
+        if not language_hint and source_hint:
+            language_hint = _infer_artifact_language_from_source(source_hint)
+        if language_hint and ("language" not in options):
+            options["language"] = language_hint
+        action_raw = str(arguments.get("action") or "").strip()
+        if action_raw:
+            action = action_raw
+        else:
+            has_generate_intent = bool(source_hint) or ("wait" in arguments) or ("save_to_space" in arguments) or bool(options)
+            has_download_intent = bool(str(arguments.get("artifact_id") or "").strip() or str(arguments.get("output_path") or "").strip())
+            if has_generate_intent:
+                action = "generate"
+            elif has_download_intent:
+                action = "download"
+            else:
+                action = "list"
+        timeout_raw = arguments.get("timeout_seconds")
+        initial_raw = arguments.get("initial_interval")
+        max_raw = arguments.get("max_interval")
+        timeout_seconds = 600.0
+        initial_interval = 2.0
+        max_interval = 10.0
+        try:
+            if timeout_raw is not None:
+                timeout_seconds = float(timeout_raw)
+            if initial_raw is not None:
+                initial_interval = float(initial_raw)
+            if max_raw is not None:
+                max_interval = float(max_raw)
+        except Exception:
+            raise MCPError(
+                code="invalid_request",
+                message="timeout_seconds/initial_interval/max_interval must be numbers",
+            )
+        return space_artifact(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=action,
+            kind=str(arguments.get("kind") or ""),
+            options=options,
+            wait=coerce_bool(arguments.get("wait"), default=False),
+            save_to_space=coerce_bool(arguments.get("save_to_space"), default=True),
+            output_path=str(arguments.get("output_path") or ""),
+            output_format=str(arguments.get("output_format") or ""),
+            artifact_id=str(arguments.get("artifact_id") or ""),
+            timeout_seconds=timeout_seconds,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+        )
+
+    if name == "cccc_space_jobs":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_jobs(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "list"),
+            job_id=str(arguments.get("job_id") or ""),
+            state=str(arguments.get("state") or ""),
+            limit=min(max(int(arguments.get("limit") or 50), 1), 500),
+        )
+
+    if name == "cccc_space_sync":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_sync(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "run"),
+            force=bool(arguments.get("force") is True),
+        )
+
+    if name == "cccc_space_provider_auth":
+        by = _resolve_caller_from_by(arguments)
+        timeout_raw = arguments.get("timeout_seconds")
+        timeout_seconds = 900
+        if timeout_raw is not None:
+            try:
+                timeout_seconds = int(timeout_raw)
+            except Exception:
+                raise MCPError(code="invalid_request", message="timeout_seconds must be an integer")
+        return space_provider_auth(
+            provider=str(arguments.get("provider") or "notebooklm"),
+            by=by,
+            action=str(arguments.get("action") or "status"),
+            timeout_seconds=timeout_seconds,
+        )
+
+    if name == "cccc_space_provider_credential_status":
+        by = _resolve_caller_from_by(arguments)
+        return space_provider_credential_status(
+            provider=str(arguments.get("provider") or "notebooklm"),
+            by=by,
+        )
+
+    if name == "cccc_space_provider_credential_update":
+        by = _resolve_caller_from_by(arguments)
+        return space_provider_credential_update(
+            provider=str(arguments.get("provider") or "notebooklm"),
+            by=by,
+            auth_json=str(arguments.get("auth_json") or ""),
+            clear=coerce_bool(arguments.get("clear"), default=False),
+        )
 
     if name == "cccc_group_set_state":
         gid = _resolve_group_id(arguments)

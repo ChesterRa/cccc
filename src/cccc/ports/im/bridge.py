@@ -39,6 +39,7 @@ from .commands import (
     format_status,
     parse_message,
 )
+from .config_schema import canonicalize_im_config
 from .auth import KeyManager
 from .subscribers import SubscriberManager
 from ...util.file_lock import LockUnavailableError, acquire_lockfile
@@ -1052,7 +1053,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         sys.exit(1)
 
     # Get IM config from group
-    im_config = group.doc.get("im", {})
+    im_config = canonicalize_im_config(group.doc.get("im", {}))
     if not im_config:
         print(f"[error] No IM configuration for group {group_id}")
         print("Run: cccc im set telegram --group " + group_id)

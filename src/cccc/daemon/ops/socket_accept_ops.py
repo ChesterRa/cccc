@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+import socket
 from typing import Any, Callable, Dict, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+
+REQUEST_READ_TIMEOUT_S = 0.5
 
 
 def handle_incoming_connection(
@@ -25,13 +28,29 @@ def handle_incoming_connection(
     Returns:
         should_exit flag requested by request handling.
     """
-    raw = recv_json_line(conn)
+    try:
+        # Guard the single-threaded accept loop from stalling forever on
+        # half-open clients that never send a request line.
+        conn.settimeout(REQUEST_READ_TIMEOUT_S)
+    except Exception:
+        pass
+
+    try:
+        raw = recv_json_line(conn)
+    except (socket.timeout, TimeoutError, ConnectionResetError, BrokenPipeError, OSError):
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
     try:
         req = parse_request(raw)
     except Exception as e:
         resp = make_invalid_request_error(str(e))
         try:
             send_json(conn, dump_response(resp))
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
         finally:
             try:
                 conn.close()

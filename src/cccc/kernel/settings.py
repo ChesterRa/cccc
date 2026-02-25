@@ -167,6 +167,11 @@ DEFAULT_REMOTE_ACCESS: Dict[str, Any] = {
     "mode": "tailnet_only",     # reserved for future extension
     "enforce_web_token": True,  # security-first default
     "enabled": False,           # desired state for provider control
+    # Optional Web binding/token overrides (empty means env/default fallback).
+    "web_host": "",             # e.g. 192.168.1.20
+    "web_port": 8848,            # 1..65535
+    "web_public_url": "",       # e.g. https://cccc.example.com/ui/
+    "web_token": "",            # optional token override (plaintext in local settings)
     "updated_at": "",           # RFC3339 UTC timestamp (best-effort)
 }
 
@@ -254,6 +259,10 @@ def _merge_remote_access(raw: Any) -> Dict[str, Any]:
 
     base["enforce_web_token"] = _as_bool(raw.get("enforce_web_token"), bool(base["enforce_web_token"]))
     base["enabled"] = _as_bool(raw.get("enabled"), bool(base["enabled"]))
+    base["web_host"] = str(raw.get("web_host") or "").strip()
+    base["web_port"] = _as_int(raw.get("web_port"), int(base["web_port"]), min_value=1, max_value=65535)
+    base["web_public_url"] = str(raw.get("web_public_url") or "").strip()
+    base["web_token"] = str(raw.get("web_token") or "").strip()
     base["updated_at"] = _as_str(raw.get("updated_at"), str(base["updated_at"]))
 
     if base["provider"] == "off":
@@ -352,6 +361,22 @@ def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
 
     if "enabled" in patch:
         merged["enabled"] = _as_bool(patch.get("enabled"), bool(merged["enabled"]))
+        changed = True
+
+    if "web_host" in patch:
+        merged["web_host"] = str(patch.get("web_host") or "").strip()
+        changed = True
+
+    if "web_port" in patch:
+        merged["web_port"] = _as_int(patch.get("web_port"), int(merged.get("web_port") or 8848), min_value=1, max_value=65535)
+        changed = True
+
+    if "web_public_url" in patch:
+        merged["web_public_url"] = str(patch.get("web_public_url") or "").strip()
+        changed = True
+
+    if "web_token" in patch:
+        merged["web_token"] = str(patch.get("web_token") or "").strip()
         changed = True
 
     if "updated_at" in patch:

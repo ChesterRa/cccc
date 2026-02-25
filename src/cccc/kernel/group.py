@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ Alignment checkpoint:
 
 Use your own words. Avoid rigid templates; keep it human and direct.
 """
+
+LOGGER = logging.getLogger(__name__)
 
 def _default_automation_ruleset() -> Dict[str, Any]:
     # Stored in group.yaml; must not share mutable objects across groups.
@@ -183,8 +186,8 @@ def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, 
             prior = yaml.safe_load(scope_yaml.read_text(encoding="utf-8")) or {}
             if isinstance(prior, dict) and isinstance(prior.get("created_at"), str) and prior.get("created_at"):
                 created_at = prior["created_at"]
-        except Exception:
-            pass
+        except Exception as e:
+            LOGGER.warning("failed to parse scope metadata; resetting created_at: scope=%s path=%s err=%s", scope.scope_key, scope_yaml, e)
     scope_doc: Dict[str, Any] = {
         "v": 1,
         "scope_key": scope.scope_key,
@@ -351,8 +354,10 @@ def detach_scope_from_group(reg: Registry, group: Group, *, scope_key: str) -> G
 
     try:
         shutil.rmtree(group.path / "scopes" / wanted)
-    except Exception:
+    except FileNotFoundError:
         pass
+    except Exception as e:
+        LOGGER.warning("failed to remove detached scope directory: group=%s scope=%s err=%s", group.group_id, wanted, e)
 
     if reg.defaults.get(wanted) == group.group_id:
         reg.defaults.pop(wanted, None)

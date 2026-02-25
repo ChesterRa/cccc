@@ -42,10 +42,12 @@ def _mode_supported(mode: str) -> bool:
     return mode in _supported_modes()
 
 
-def _safe_web_port() -> int:
-    raw = str(os.environ.get("CCCC_WEB_PORT") or "").strip() or "8848"
+def _safe_web_port(raw: Any = None) -> int:
+    if raw is None:
+        raw = os.environ.get("CCCC_WEB_PORT")
+    raw_s = str(raw or "").strip() or "8848"
     try:
-        n = int(raw)
+        n = int(raw_s)
     except Exception:
         n = 8848
     if n <= 0 or n > 65535:
@@ -58,12 +60,54 @@ def _is_loopback_host(host: str) -> bool:
     return v in ("127.0.0.1", "localhost", "::1")
 
 
-def _manual_endpoint() -> Optional[str]:
-    public_url = str(os.environ.get("CCCC_WEB_PUBLIC_URL") or "").strip()
+def _effective_web_binding(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    cfg_host = str(cfg.get("web_host") or "").strip()
+    env_host = str(os.environ.get("CCCC_WEB_HOST") or "").strip()
+    host_source = "settings" if cfg_host else ("env" if env_host else "default")
+    host = cfg_host or env_host or "127.0.0.1"
+
+    cfg_port_raw = cfg.get("web_port")
+    env_port_raw = os.environ.get("CCCC_WEB_PORT")
+    cfg_port_s = str(cfg_port_raw or "").strip()
+    env_port_s = str(env_port_raw or "").strip()
+    if cfg_port_s:
+        port = _safe_web_port(cfg_port_raw)
+        port_source = "settings"
+    elif env_port_s:
+        port = _safe_web_port(env_port_raw)
+        port_source = "env"
+    else:
+        port = _safe_web_port(8848)
+        port_source = "default"
+
+    cfg_public_url = str(cfg.get("web_public_url") or "").strip()
+    env_public_url = str(os.environ.get("CCCC_WEB_PUBLIC_URL") or "").strip()
+    public_url_source = "settings" if cfg_public_url else ("env" if env_public_url else "none")
+    public_url = cfg_public_url or env_public_url
+
+    cfg_token = str(cfg.get("web_token") or "").strip()
+    env_token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
+    web_token_source = "settings" if cfg_token else ("env" if env_token else "none")
+    web_token = cfg_token or env_token
+
+    return {
+        "web_host": host,
+        "web_host_source": host_source,
+        "web_port": int(port),
+        "web_port_source": port_source,
+        "web_public_url": (public_url or None),
+        "web_public_url_source": public_url_source,
+        "web_token": web_token,
+        "web_token_source": web_token_source,
+    }
+
+
+def _manual_endpoint(binding: Dict[str, Any]) -> Optional[str]:
+    public_url = str(binding.get("web_public_url") or "").strip()
     if public_url:
         return public_url
-    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
-    port = _safe_web_port()
+    host = str(binding.get("web_host") or "").strip() or "127.0.0.1"
+    port = _safe_web_port(binding.get("web_port"))
     if _is_loopback_host(host):
         return None
     return f"http://{host}:{port}/ui/"
@@ -109,7 +153,7 @@ def _tailscale_backend_state(doc: Dict[str, Any]) -> str:
     return str(doc.get("BackendState") or "").strip().lower()
 
 
-def _tailscale_endpoint(doc: Dict[str, Any]) -> Optional[str]:
+def _tailscale_endpoint(doc: Dict[str, Any], *, web_port: int) -> Optional[str]:
     self_doc = doc.get("Self") if isinstance(doc.get("Self"), dict) else {}
     ips = self_doc.get("TailscaleIPs") if isinstance(self_doc, dict) else []
     tail_ip = ""
@@ -125,20 +169,25 @@ def _tailscale_endpoint(doc: Dict[str, Any]) -> Optional[str]:
             tail_ip = s
     if not tail_ip:
         return None
-    return f"http://{tail_ip}:{_safe_web_port()}/ui/"
+    return f"http://{tail_ip}:{_safe_web_port(web_port)}/ui/"
 
 
-def _web_binding_diagnostics(*, provider: str, enforce_web_token: bool, mode: str) -> Dict[str, Any]:
-    public_url = str(os.environ.get("CCCC_WEB_PUBLIC_URL") or "").strip()
-    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
-    port = _safe_web_port()
+def _web_binding_diagnostics(*, provider: str, enforce_web_token: bool, mode: str, binding: Dict[str, Any]) -> Dict[str, Any]:
+    public_url = str(binding.get("web_public_url") or "").strip()
+    host = str(binding.get("web_host") or "").strip() or "127.0.0.1"
+    port = _safe_web_port(binding.get("web_port"))
     web_bind_loopback = _is_loopback_host(host)
     web_bind_reachable = bool(public_url) or (not web_bind_loopback)
+    token = str(binding.get("web_token") or "").strip()
     return {
-        "web_token_present": bool(str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()) if enforce_web_token else True,
+        "web_token_present": bool(token) if enforce_web_token else True,
+        "web_token_source": str(binding.get("web_token_source") or "none"),
         "web_host": host,
+        "web_host_source": str(binding.get("web_host_source") or "default"),
         "web_port": int(port),
+        "web_port_source": str(binding.get("web_port_source") or "default"),
         "web_public_url": (public_url or None),
+        "web_public_url_source": str(binding.get("web_public_url_source") or "none"),
         "web_bind_loopback": bool(web_bind_loopback),
         "web_bind_reachable": bool(web_bind_reachable),
         "mode_supported": bool(_mode_supported(mode)),
@@ -159,9 +208,9 @@ def _remote_next_steps(
     if not bool(diagnostics.get("mode_supported")):
         out.append("Set remote access mode to tailnet_only.")
     if not bool(diagnostics.get("web_token_present")):
-        out.append("Set CCCC_WEB_TOKEN before enabling remote access.")
+        out.append("Set Web token in Settings > Remote Access (or set CCCC_WEB_TOKEN).")
     if not bool(diagnostics.get("web_bind_reachable")):
-        out.append("Set CCCC_WEB_HOST to a non-loopback address (or set CCCC_WEB_PUBLIC_URL).")
+        out.append("Set Web host/public URL in Settings > Remote Access (or set CCCC_WEB_HOST/CCCC_WEB_PUBLIC_URL).")
     if provider == "tailscale":
         if status == "not_installed":
             out.append("Install Tailscale and make sure 'tailscale' is in PATH.")
@@ -207,14 +256,15 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     status = "stopped"
     endpoint: Optional[str] = None
-    diagnostics = _web_binding_diagnostics(provider=provider, enforce_web_token=enforce_web_token, mode=mode)
+    binding = _effective_web_binding(cfg)
+    diagnostics = _web_binding_diagnostics(provider=provider, enforce_web_token=enforce_web_token, mode=mode, binding=binding)
     tailscale_backend_state: Optional[str] = None
     tailscale_installed: Optional[bool] = None
 
     if provider == "manual":
         status = "running" if enabled else "stopped"
         if status == "running":
-            endpoint = _manual_endpoint()
+            endpoint = _manual_endpoint(binding)
     elif provider == "tailscale":
         tailscale_installed = _tailscale_installed()
         if not tailscale_installed:
@@ -228,7 +278,7 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 tailscale_backend_state = backend
                 if backend in ("running",):
                     status = "running"
-                    endpoint = _tailscale_endpoint(ts_status)
+                    endpoint = _tailscale_endpoint(ts_status, web_port=int(binding.get("web_port") or 8848))
                 elif backend in ("needslogin", "needsmachineauth", "loginrequired", "loggedout"):
                     status = "not_authenticated"
                 elif backend in ("starting", "stopped", ""):
@@ -259,6 +309,13 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "endpoint": endpoint,
             "updated_at": (updated_at or None),
             "diagnostics": diagnostics,
+            "config": {
+                "web_host": str(binding.get("web_host") or "127.0.0.1"),
+                "web_port": int(binding.get("web_port") or 8848),
+                "web_public_url": binding.get("web_public_url"),
+                "web_token_configured": bool(str(binding.get("web_token") or "").strip()),
+                "web_token_source": str(binding.get("web_token_source") or "none"),
+            },
             "next_steps": _remote_next_steps(provider=provider, status=status, diagnostics=diagnostics),
         }
     }
@@ -310,6 +367,20 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
         patch["enforce_web_token"] = coerce_bool(args.get("enforce_web_token"), default=True)
     if "enabled" in args:
         patch["enabled"] = coerce_bool(args.get("enabled"), default=False)
+    if "web_host" in args:
+        patch["web_host"] = str(args.get("web_host") or "").strip()
+    if "web_port" in args:
+        try:
+            patch["web_port"] = int(args.get("web_port"))
+        except Exception:
+            patch["web_port"] = args.get("web_port")
+    if "web_public_url" in args:
+        patch["web_public_url"] = str(args.get("web_public_url") or "").strip()
+    clear_web_token = coerce_bool(args.get("clear_web_token"), default=False)
+    if clear_web_token:
+        patch["web_token"] = ""
+    elif "web_token" in args:
+        patch["web_token"] = str(args.get("web_token") or "").strip()
     if not patch:
         cfg = get_remote_access_settings()
         return DaemonResponse(ok=True, result=_remote_access_state_payload(cfg))
@@ -363,9 +434,10 @@ def handle_remote_access_start(args: Dict[str, Any]) -> DaemonResponse:
         return invalid
     if provider == "off":
         return _error("remote_access_invalid_config", "remote access provider is off")
-    if enforce_web_token and not str(os.environ.get("CCCC_WEB_TOKEN") or "").strip():
-        return _error("remote_access_invalid_config", "CCCC_WEB_TOKEN is required when enforce_web_token=true")
-    diagnostics = _web_binding_diagnostics(provider=provider, enforce_web_token=enforce_web_token, mode=mode)
+    binding = _effective_web_binding(cfg)
+    diagnostics = _web_binding_diagnostics(provider=provider, enforce_web_token=enforce_web_token, mode=mode, binding=binding)
+    if enforce_web_token and not bool(diagnostics.get("web_token_present")):
+        return _error("remote_access_invalid_config", "web token is required when enforce_web_token=true")
     if not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
         return _remote_unreachable_error(provider=provider, diagnostics=diagnostics)
 

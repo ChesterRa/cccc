@@ -26,6 +26,7 @@ from .ops.group_state_ops import try_handle_group_state_op
 from .ops.group_lifecycle_ops import try_handle_group_lifecycle_op
 from .ops.automation_ops import try_handle_group_automation_op
 from .ops.group_settings_ops import try_handle_group_settings_op
+from .ops.group_space_ops import try_handle_group_space_op
 from .ops.group_ops import try_handle_group_core_op
 from .ops.group_bootstrap_ops import try_handle_group_bootstrap_op
 from .ops.registry_ops import try_handle_registry_op
@@ -158,6 +159,10 @@ def dispatch_request(
     group_settings_resp = try_handle_group_settings_op(op, args)
     if group_settings_resp is not None:
         return group_settings_resp, False
+
+    group_space_resp = try_handle_group_space_op(op, args)
+    if group_space_resp is not None:
+        return group_space_resp, False
 
     automation_resp = try_handle_group_automation_op(op, args)
     if automation_resp is not None:

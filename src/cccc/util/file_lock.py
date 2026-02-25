@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import IO
+
+_LOG = logging.getLogger("cccc.util.file_lock")
 
 
 class LockUnavailableError(RuntimeError):
@@ -17,9 +20,9 @@ def _ensure_lock_region(f: IO[bytes]) -> None:
             f.write(b"\0")
             f.flush()
         f.seek(0)
-    except Exception:
+    except Exception as e:
         # Best-effort: even if this fails, locking may still work depending on platform.
-        pass
+        _LOG.debug("lockfile region init failed: %s", e)
 
 
 def _lock_posix(fd: int, *, blocking: bool) -> None:
@@ -99,9 +102,9 @@ def release_lockfile(f: IO[bytes]) -> None:
             _unlock_windows(f.fileno())
         else:
             _unlock_posix(f.fileno())
-    except Exception:
-        pass
+    except Exception as e:
+        _LOG.debug("lockfile unlock failed: %s", e)
     try:
         f.close()
-    except Exception:
-        pass
+    except Exception as e:
+        _LOG.debug("lockfile close failed: %s", e)

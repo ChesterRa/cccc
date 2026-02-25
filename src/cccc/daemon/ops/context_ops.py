@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from ...contracts.v1 import DaemonResponse, DaemonError
+from ..group_space_projection import sync_group_space_projection
+from ..group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
 from ...kernel.group import load_group
 from ...kernel.context import (
     ContextStorage,
@@ -27,6 +29,15 @@ from ...kernel.context import (
 )
 from ...kernel.ledger import append_event
 from ...util.conv import coerce_bool
+
+_CURATED_SPACE_SYNC_PREFIXES = (
+    "vision.",
+    "sketch.",
+    "milestone.",
+    "task.",
+    "note.",
+    "reference.",
+)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -97,6 +108,95 @@ def _task_to_dict(task: Task) -> Dict[str, Any]:
         ],
         "current_step": current_step.id if current_step else None,
         "progress": task.progress,
+    }
+
+
+def _should_trigger_group_space_context_sync(changes: List[Dict[str, Any]]) -> bool:
+    for item in changes:
+        if not isinstance(item, dict):
+            continue
+        op_name = str(item.get("op") or "").strip()
+        if not op_name:
+            continue
+        if any(op_name.startswith(prefix) for prefix in _CURATED_SPACE_SYNC_PREFIXES):
+            return True
+    return False
+
+
+def _queue_group_space_context_sync(
+    *,
+    group_id: str,
+    version: str,
+    context: Context,
+    tasks_by_id: Dict[str, Task],
+    changes: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    binding = get_space_binding(group_id, provider="notebooklm")
+    if not isinstance(binding, dict):
+        return {"queued": False, "reason": "not_bound"}
+    if str(binding.get("status") or "") != "bound":
+        return {"queued": False, "reason": "binding_inactive"}
+    remote_space_id = str(binding.get("remote_space_id") or "").strip()
+    if not remote_space_id:
+        return {"queued": False, "reason": "missing_remote_space_id"}
+
+    provider_state = get_space_provider_state("notebooklm")
+    if not bool(provider_state.get("enabled")) or str(provider_state.get("mode") or "") == "disabled":
+        return {"queued": False, "reason": "provider_disabled"}
+
+    milestones = [
+        {
+            "id": m.id,
+            "name": m.name,
+            "status": m.status.value if isinstance(m.status, MilestoneStatus) else str(m.status),
+            "description": m.description,
+        }
+        for m in context.milestones
+    ]
+    tasks = [_task_to_dict(t) for t in sorted(tasks_by_id.values(), key=lambda x: str(x.id or ""))]
+    notes = [{"id": n.id, "content": n.content} for n in context.notes]
+    references = [{"id": r.id, "url": r.url, "note": r.note} for r in context.references]
+    compact_changes = [
+        {
+            "index": int(item.get("index") or 0),
+            "op": str(item.get("op") or ""),
+            "detail": str(item.get("detail") or ""),
+        }
+        for item in changes
+        if isinstance(item, dict)
+    ]
+
+    payload = {
+        "group_id": group_id,
+        "context_version": str(version or "").strip(),
+        "synced_at": _utc_now_iso(),
+        "summary": {
+            "vision": context.vision,
+            "sketch": context.sketch,
+            "milestones": milestones,
+            "tasks": tasks,
+            "notes": notes,
+            "references": references,
+        },
+        "changes": compact_changes,
+    }
+
+    idem = f"context_sync:{group_id}:{version}"
+    job, deduped = enqueue_space_job(
+        group_id=group_id,
+        provider="notebooklm",
+        remote_space_id=remote_space_id,
+        kind="context_sync",
+        payload=payload,
+        idempotency_key=idem,
+    )
+    return {
+        "queued": True,
+        "deduped": bool(deduped),
+        "job_id": str(job.get("job_id") or ""),
+        "provider": "notebooklm",
+        "kind": "context_sync",
+        "idempotency_key": idem,
     }
 
 
@@ -536,12 +636,32 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 # Best-effort only: context changes already persisted to files.
                 pass
 
+        space_sync: Optional[Dict[str, Any]] = None
+        if not dry_run and changes and _should_trigger_group_space_context_sync(changes):
+            try:
+                space_sync = _queue_group_space_context_sync(
+                    group_id=group_id,
+                    version=version,
+                    context=context,
+                    tasks_by_id=tasks_by_id,
+                    changes=changes,
+                )
+            except Exception as e:
+                space_sync = {"queued": False, "reason": "enqueue_failed", "error": str(e)}
+
         result = {
             "success": True,
             "dry_run": dry_run,
             "changes": changes,
             "version": version,
         }
+        if isinstance(space_sync, dict):
+            result["space_sync"] = space_sync
+            if bool(space_sync.get("queued")):
+                try:
+                    _ = sync_group_space_projection(group_id, provider="notebooklm")
+                except Exception:
+                    pass
         return DaemonResponse(ok=True, result=result)
 
     except ValueError as e:

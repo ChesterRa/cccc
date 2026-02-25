@@ -43,7 +43,6 @@ class TestActorProfilesOps(unittest.TestCase):
                     "runner": "headless",
                     "command": [],
                     "submit": "enter",
-                    "env": {"X_PROFILE": "1"},
                 },
             },
         )
@@ -103,7 +102,7 @@ class TestActorProfilesOps(unittest.TestCase):
             keys, _ = self._call("actor_profile_secret_keys", {"by": "user", "profile_id": pid})
             self.assertTrue(keys.ok, getattr(keys, "error", None))
             result = keys.result if isinstance(keys.result, dict) else {}
-            self.assertEqual(set(result.get("keys") or []), {"OPENAI_API_KEY", "X_PROFILE"})
+            self.assertEqual(set(result.get("keys") or []), {"OPENAI_API_KEY"})
             masked = result.get("masked_values")
             self.assertIsInstance(masked, dict)
             assert isinstance(masked, dict)
@@ -197,7 +196,7 @@ class TestActorProfilesOps(unittest.TestCase):
             )
             self.assertTrue(keys_after_convert.ok, getattr(keys_after_convert, "error", None))
             keys_result = keys_after_convert.result if isinstance(keys_after_convert.result, dict) else {}
-            self.assertEqual(set(keys_result.get("keys") or []), {"OPENAI_API_KEY", "X_PROFILE"})
+            self.assertEqual(set(keys_result.get("keys") or []), {"OPENAI_API_KEY"})
 
             update_private, _ = self._call(
                 "actor_env_private_update",
@@ -278,7 +277,7 @@ class TestActorProfilesOps(unittest.TestCase):
             )
             self.assertTrue(keys_after_force.ok, getattr(keys_after_force, "error", None))
             keys_result = keys_after_force.result if isinstance(keys_after_force.result, dict) else {}
-            self.assertEqual(set(keys_result.get("keys") or []), {"OPENAI_API_KEY", "X_PROFILE"})
+            self.assertEqual(set(keys_result.get("keys") or []), {"OPENAI_API_KEY"})
         finally:
             cleanup()
 
@@ -417,12 +416,12 @@ class TestActorProfilesOps(unittest.TestCase):
             )
             self.assertTrue(copy_resp.ok, getattr(copy_resp, "error", None))
             copied_keys = (copy_resp.result or {}).get("keys") if isinstance(copy_resp.result, dict) else []
-            self.assertEqual(set(copied_keys or []), {"OPENAI_API_KEY", "MODEL", "X_PROFILE"})
+            self.assertEqual(set(copied_keys or []), {"OPENAI_API_KEY", "MODEL"})
 
             target_keys_resp, _ = self._call("actor_profile_secret_keys", {"profile_id": target_pid, "by": "user"})
             self.assertTrue(target_keys_resp.ok, getattr(target_keys_resp, "error", None))
             target_keys_result = target_keys_resp.result if isinstance(target_keys_resp.result, dict) else {}
-            self.assertEqual(set(target_keys_result.get("keys") or []), {"OPENAI_API_KEY", "MODEL", "X_PROFILE"})
+            self.assertEqual(set(target_keys_result.get("keys") or []), {"OPENAI_API_KEY", "MODEL"})
         finally:
             cleanup()
 
@@ -563,7 +562,7 @@ class TestActorProfilesOps(unittest.TestCase):
             )
             self.assertTrue(keys_after_convert.ok, getattr(keys_after_convert, "error", None))
             keys_result = keys_after_convert.result if isinstance(keys_after_convert.result, dict) else {}
-            self.assertEqual(set(keys_result.get("keys") or []), {"OPENAI_API_KEY", "X_PROFILE"})
+            self.assertEqual(set(keys_result.get("keys") or []), {"OPENAI_API_KEY"})
         finally:
             cleanup()
 

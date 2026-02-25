@@ -235,3 +235,28 @@ If `context_sync.args.dry_run == true`, the daemon MUST NOT persist changes and 
 `context_sync` returns `changes: Array<{ index, op, detail }>` where `detail` is intended for logs/UI.
 SDKs SHOULD NOT parse `detail` as a stable machine contract.
 
+When Group Space is enabled and a curated Context change is detected, the daemon MAY also return:
+
+```ts
+space_sync?: {
+  queued: boolean
+  reason?: "not_bound" | "binding_inactive" | "missing_remote_space_id" | "provider_disabled" | "enqueue_failed"
+  deduped?: boolean
+  job_id?: string
+  provider?: "notebooklm"
+  kind?: "context_sync"
+  idempotency_key?: string
+  error?: string
+}
+```
+
+Curated trigger allowlist (current v1 behavior):
+
+- `vision.*`
+- `sketch.*`
+- `milestone.*`
+- `task.*`
+- `note.*`
+- `reference.*`
+
+`presence.*` updates do not trigger Group Space export.

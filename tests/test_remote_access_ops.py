@@ -54,6 +54,12 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertEqual(bool(remote.get("enforce_web_token")), True)
             self.assertEqual(bool(remote.get("enabled")), False)
             self.assertEqual(str(remote.get("status") or ""), "stopped")
+            cfg = remote.get("config") if isinstance(remote.get("config"), dict) else {}
+            self.assertIsInstance(cfg, dict)
+            assert isinstance(cfg, dict)
+            self.assertEqual(str(cfg.get("web_host") or ""), "127.0.0.1")
+            self.assertEqual(int(cfg.get("web_port") or 0), 8848)
+            self.assertEqual(bool(cfg.get("web_token_configured")), False)
         finally:
             cleanup()
 
@@ -82,11 +88,17 @@ class TestRemoteAccessOps(unittest.TestCase):
 
     def test_remote_access_manual_start_stop_roundtrip(self) -> None:
         _, cleanup = self._with_home()
-        cleanup_token = self._with_env("CCCC_WEB_TOKEN", "test-token")
-        cleanup_host = self._with_env("CCCC_WEB_HOST", "192.168.68.52")
-        cleanup_port = self._with_env("CCCC_WEB_PORT", "8848")
         try:
-            cfg, _ = self._call("remote_access_configure", {"by": "user", "provider": "manual"})
+            cfg, _ = self._call(
+                "remote_access_configure",
+                {
+                    "by": "user",
+                    "provider": "manual",
+                    "web_host": "192.168.68.52",
+                    "web_port": 8848,
+                    "web_token": "test-token",
+                },
+            )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
 
             start, _ = self._call("remote_access_start", {"by": "user"})
@@ -106,9 +118,6 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertEqual(str(remote_stopped.get("status") or ""), "stopped")
             self.assertEqual(bool(remote_stopped.get("enabled")), False)
         finally:
-            cleanup_port()
-            cleanup_host()
-            cleanup_token()
             cleanup()
 
     def test_remote_access_configure_blocks_insecure_by_default(self) -> None:
@@ -160,12 +169,17 @@ class TestRemoteAccessOps(unittest.TestCase):
 
     def test_remote_access_start_manual_rejects_loopback_binding_without_override(self) -> None:
         _, cleanup = self._with_home()
-        cleanup_token = self._with_env("CCCC_WEB_TOKEN", "token")
-        cleanup_host = self._with_env("CCCC_WEB_HOST", "127.0.0.1")
-        cleanup_public_url = self._with_env("CCCC_WEB_PUBLIC_URL", None)
         cleanup_loopback_override = self._with_env("CCCC_REMOTE_ALLOW_LOOPBACK", None)
         try:
-            cfg, _ = self._call("remote_access_configure", {"by": "user", "provider": "manual"})
+            cfg, _ = self._call(
+                "remote_access_configure",
+                {
+                    "by": "user",
+                    "provider": "manual",
+                    "web_host": "127.0.0.1",
+                    "web_token": "token",
+                },
+            )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
 
             start, _ = self._call("remote_access_start", {"by": "user"})
@@ -173,20 +187,20 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertEqual(str(getattr(start, "error", None).code), "remote_access_unreachable")
         finally:
             cleanup_loopback_override()
-            cleanup_public_url()
-            cleanup_host()
-            cleanup_token()
             cleanup()
 
     def test_remote_access_state_surfaces_diagnostics_and_steps(self) -> None:
         _, cleanup = self._with_home()
-        cleanup_host = self._with_env("CCCC_WEB_HOST", "127.0.0.1")
-        cleanup_public_url = self._with_env("CCCC_WEB_PUBLIC_URL", None)
-        cleanup_token = self._with_env("CCCC_WEB_TOKEN", None)
         try:
             cfg, _ = self._call(
                 "remote_access_configure",
-                {"by": "user", "provider": "manual", "enabled": True},
+                {
+                    "by": "user",
+                    "provider": "manual",
+                    "enabled": True,
+                    "web_host": "127.0.0.1",
+                    "clear_web_token": True,
+                },
             )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
             remote = (cfg.result or {}).get("remote_access") if isinstance(cfg.result, dict) else {}
@@ -202,36 +216,34 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertIsInstance(next_steps, list)
             self.assertGreaterEqual(len(next_steps), 1)
         finally:
-            cleanup_token()
-            cleanup_public_url()
-            cleanup_host()
             cleanup()
 
     def test_remote_access_start_tailscale_reports_not_installed(self) -> None:
         _, cleanup = self._with_home()
-        cleanup_token = self._with_env("CCCC_WEB_TOKEN", "token")
-        cleanup_host = self._with_env("CCCC_WEB_HOST", "192.168.68.52")
-        cleanup_public_url = self._with_env("CCCC_WEB_PUBLIC_URL", None)
         try:
-            cfg, _ = self._call("remote_access_configure", {"by": "user", "provider": "tailscale"})
+            cfg, _ = self._call(
+                "remote_access_configure",
+                {
+                    "by": "user",
+                    "provider": "tailscale",
+                    "web_host": "192.168.68.52",
+                    "web_token": "token",
+                },
+            )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
             with patch("cccc.daemon.ops.remote_access_ops._tailscale_installed", return_value=False):
                 start, _ = self._call("remote_access_start", {"by": "user"})
             self.assertFalse(start.ok)
             self.assertEqual(str(getattr(start, "error", None).code), "remote_access_not_installed")
         finally:
-            cleanup_public_url()
-            cleanup_host()
-            cleanup_token()
             cleanup()
 
     def test_remote_access_state_tailscale_not_installed_status(self) -> None:
         _, cleanup = self._with_home()
-        cleanup_host = self._with_env("CCCC_WEB_HOST", "192.168.68.52")
         try:
             cfg, _ = self._call(
                 "remote_access_configure",
-                {"by": "user", "provider": "tailscale", "enabled": True},
+                {"by": "user", "provider": "tailscale", "enabled": True, "web_host": "192.168.68.52"},
             )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
             with patch("cccc.daemon.ops.remote_access_ops._tailscale_installed", return_value=False):
@@ -242,7 +254,39 @@ class TestRemoteAccessOps(unittest.TestCase):
             assert isinstance(remote, dict)
             self.assertEqual(str(remote.get("status") or ""), "not_installed")
         finally:
-            cleanup_host()
+            cleanup()
+
+    def test_remote_access_configure_and_clear_web_token(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            cfg1, _ = self._call(
+                "remote_access_configure",
+                {
+                    "by": "user",
+                    "provider": "manual",
+                    "web_host": "10.0.0.8",
+                    "web_port": 8899,
+                    "web_public_url": "https://cccc.example.com/ui/",
+                    "web_token": "abc123",
+                },
+            )
+            self.assertTrue(cfg1.ok, getattr(cfg1, "error", None))
+            remote1 = (cfg1.result or {}).get("remote_access") if isinstance(cfg1.result, dict) else {}
+            cfg_doc = remote1.get("config") if isinstance(remote1, dict) and isinstance(remote1.get("config"), dict) else {}
+            self.assertEqual(str(cfg_doc.get("web_host") or ""), "10.0.0.8")
+            self.assertEqual(int(cfg_doc.get("web_port") or 0), 8899)
+            self.assertEqual(str(cfg_doc.get("web_public_url") or ""), "https://cccc.example.com/ui/")
+            self.assertEqual(bool(cfg_doc.get("web_token_configured")), True)
+
+            cfg2, _ = self._call(
+                "remote_access_configure",
+                {"by": "user", "clear_web_token": True},
+            )
+            self.assertTrue(cfg2.ok, getattr(cfg2, "error", None))
+            remote2 = (cfg2.result or {}).get("remote_access") if isinstance(cfg2.result, dict) else {}
+            cfg_doc2 = remote2.get("config") if isinstance(remote2, dict) and isinstance(remote2.get("config"), dict) else {}
+            self.assertEqual(bool(cfg_doc2.get("web_token_configured")), False)
+        finally:
             cleanup()
 
 

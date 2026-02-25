@@ -122,9 +122,17 @@ def _resolve_caller_actor_id(arguments: Dict[str, Any]) -> str:
     return _validate_self_actor_id(aid)
 
 
-def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
+def _call_daemon_or_raise(req: Dict[str, Any], *, timeout_s: float = 60.0) -> Dict[str, Any]:
     """Call daemon, raise MCPError on failure."""
-    resp = call_daemon(req)
+    try:
+        resp = call_daemon(req, timeout_s=float(timeout_s))
+    except TypeError as e:
+        # Test doubles may patch call_daemon with a single-arg callable.
+        msg = str(e)
+        if "unexpected keyword argument 'timeout_s'" in msg:
+            resp = call_daemon(req)
+        else:
+            raise
     if not resp.get("ok"):
         err = resp.get("error") or {}
         if isinstance(err, dict):

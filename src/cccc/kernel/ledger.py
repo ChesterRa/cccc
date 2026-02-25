@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ MAX_CHAT_TEXT_BYTES = 32_000
 AppendHook = Callable[[Dict[str, Any]], None]
 
 _APPEND_HOOK: Optional[AppendHook] = None
+LOGGER = logging.getLogger(__name__)
 
 
 def set_append_hook(hook: Optional[AppendHook]) -> None:
@@ -119,10 +121,12 @@ def read_last_lines(path: Path, n: int) -> list[str]:
                 size -= step
         lines = data.splitlines()[-n:]
         return [ln.decode("utf-8", errors="replace") for ln in lines]
-    except Exception:
+    except Exception as e:
+        LOGGER.warning("failed to read ledger tail with binary scan: path=%s err=%s", path, e)
         try:
             return path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
-        except Exception:
+        except Exception as e2:
+            LOGGER.error("failed to read ledger tail fallback: path=%s err=%s", path, e2)
             return []
 
 

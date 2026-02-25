@@ -15,6 +15,12 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
   const [state, setState] = useState<RemoteAccessState | null>(null);
   const [provider, setProvider] = useState<"off" | "manual" | "tailscale">("off");
   const [mode, setMode] = useState("tailnet_only");
+  const [enforceWebToken, setEnforceWebToken] = useState(true);
+  const [webHost, setWebHost] = useState("127.0.0.1");
+  const [webPort, setWebPort] = useState("8848");
+  const [webPublicUrl, setWebPublicUrl] = useState("");
+  const [webToken, setWebToken] = useState("");
+  const [clearWebToken, setClearWebToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [startBusy, setStartBusy] = useState(false);
@@ -49,6 +55,12 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
       setState(ra);
       setProvider((ra.provider === "manual" || ra.provider === "tailscale" || ra.provider === "off" ? ra.provider : "off"));
       setMode(String(ra.mode || "tailnet_only"));
+      setEnforceWebToken(Boolean(ra.enforce_web_token ?? true));
+      setWebHost(String(ra.config?.web_host || ra.diagnostics?.web_host || "127.0.0.1"));
+      setWebPort(String(ra.config?.web_port || ra.diagnostics?.web_port || 8848));
+      setWebPublicUrl(String(ra.config?.web_public_url || ra.diagnostics?.web_public_url || ""));
+      setWebToken("");
+      setClearWebToken(false);
     } catch {
       setUnsupported(false);
       setErr(t("remoteAccess.loadFailed"));
@@ -76,17 +88,35 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
     setSaveBusy(true);
     setErr("");
     try {
+      const nPort = Number.parseInt(String(webPort || "").trim(), 10);
+      if (!Number.isFinite(nPort) || nPort <= 0 || nPort > 65535) {
+        setErr(t("remoteAccess.invalidPort"));
+        return;
+      }
       const resp = await api.updateRemoteAccessConfig({
         provider,
         mode,
-        enforceWebToken: true,
+        enforceWebToken,
+        webHost: String(webHost || "").trim(),
+        webPort: nPort,
+        webPublicUrl: String(webPublicUrl || "").trim(),
+        webToken: clearWebToken ? undefined : (String(webToken || "").trim() || undefined),
+        clearWebToken,
       });
       if (!resp.ok) {
         setErr(resp.error?.message || t("remoteAccess.saveFailed"));
         return;
       }
       const ra = resp.result?.remote_access;
-      if (ra) setState(ra);
+      if (ra) {
+        setState(ra);
+        setEnforceWebToken(Boolean(ra.enforce_web_token ?? true));
+        setWebHost(String(ra.config?.web_host || ra.diagnostics?.web_host || "127.0.0.1"));
+        setWebPort(String(ra.config?.web_port || ra.diagnostics?.web_port || 8848));
+        setWebPublicUrl(String(ra.config?.web_public_url || ra.diagnostics?.web_public_url || ""));
+      }
+      setWebToken("");
+      setClearWebToken(false);
       setHintWithTimeout(t("common:saved"));
     } catch {
       setErr(t("remoteAccess.saveFailed"));
@@ -244,9 +274,101 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
           </div>
         </div>
 
-        <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("remoteAccess.tokenEnforcedHint")}</div>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
+            <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("remoteAccess.webHostLabel")}</label>
+            <input
+              value={webHost}
+              onChange={(e) => setWebHost(e.target.value)}
+              disabled={unsupported}
+              placeholder="127.0.0.1"
+              className={`w-full px-3 py-2 text-sm rounded-lg min-h-[44px] ${
+                isDark ? "bg-slate-900 border border-slate-700 text-slate-100" : "bg-white border border-gray-300 text-gray-900"
+              } disabled:opacity-50`}
+            />
+          </div>
+          <div>
+            <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("remoteAccess.webPortLabel")}</label>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={webPort}
+              onChange={(e) => setWebPort(e.target.value)}
+              disabled={unsupported}
+              className={`w-full px-3 py-2 text-sm rounded-lg min-h-[44px] ${
+                isDark ? "bg-slate-900 border border-slate-700 text-slate-100" : "bg-white border border-gray-300 text-gray-900"
+              } disabled:opacity-50`}
+            />
+          </div>
+        </div>
 
-        {!diagnostics?.web_token_present ? (
+        <div className="mt-3">
+          <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("remoteAccess.publicUrlLabel")}</label>
+          <input
+            value={webPublicUrl}
+            onChange={(e) => setWebPublicUrl(e.target.value)}
+            disabled={unsupported}
+            placeholder="https://example.com/ui/"
+            className={`w-full px-3 py-2 text-sm rounded-lg min-h-[44px] ${
+              isDark ? "bg-slate-900 border border-slate-700 text-slate-100" : "bg-white border border-gray-300 text-gray-900"
+            } disabled:opacity-50`}
+          />
+          <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("remoteAccess.publicUrlHelp")}</div>
+        </div>
+
+        <div className="mt-3">
+          <label className="inline-flex items-center gap-2 text-xs select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enforceWebToken}
+              onChange={(e) => setEnforceWebToken(Boolean(e.target.checked))}
+              disabled={unsupported}
+              className="w-4 h-4 accent-indigo-500 disabled:opacity-50"
+            />
+            <span className={isDark ? "text-slate-300" : "text-gray-700"}>{t("remoteAccess.tokenEnforceLabel")}</span>
+          </label>
+          <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("remoteAccess.tokenEnforceHelp")}</div>
+        </div>
+
+        <div className="mt-3">
+          <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("remoteAccess.webTokenLabel")}</label>
+          <input
+            type="password"
+            value={webToken}
+            onChange={(e) => setWebToken(e.target.value)}
+            disabled={unsupported || clearWebToken}
+            placeholder={t("remoteAccess.webTokenPlaceholder")}
+            className={`w-full px-3 py-2 text-sm rounded-lg min-h-[44px] ${
+              isDark ? "bg-slate-900 border border-slate-700 text-slate-100" : "bg-white border border-gray-300 text-gray-900"
+            } disabled:opacity-50`}
+          />
+          <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            {t("remoteAccess.webTokenHelp", {
+              source: String(state?.config?.web_token_source || diagnostics?.web_token_source || "none"),
+            })}
+          </div>
+          <label className="mt-2 inline-flex items-center gap-2 text-xs select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={clearWebToken}
+              onChange={(e) => setClearWebToken(Boolean(e.target.checked))}
+              disabled={unsupported}
+              className="w-4 h-4 accent-rose-500 disabled:opacity-50"
+            />
+            <span className={isDark ? "text-slate-300" : "text-gray-700"}>{t("remoteAccess.clearWebTokenLabel")}</span>
+          </label>
+        </div>
+
+        {!enforceWebToken ? (
+          <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
+            isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
+          }`}>
+            {t("remoteAccess.tokenEnforceUnsafe")}
+          </div>
+        ) : null}
+
+        {enforceWebToken && !diagnostics?.web_token_present ? (
           <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
             isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"
           }`}>

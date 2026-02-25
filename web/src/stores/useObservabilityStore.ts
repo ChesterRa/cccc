@@ -52,8 +52,12 @@ export const useObservabilityStore = create<ObservabilityState>((set) => ({
         set(_fromObs(resp.result.observability));
         return;
       }
-    } catch {
-      // ignore
+      console.error(
+        "Failed to load observability settings:",
+        resp.error?.message || resp.error?.code || "unknown error"
+      );
+    } catch (e) {
+      console.error("Failed to load observability settings:", e);
     }
     set({ loaded: true });
   },

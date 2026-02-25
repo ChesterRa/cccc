@@ -5,6 +5,7 @@ export { MessagingTab } from "./MessagingTab";
 export { IMBridgeTab } from "./IMBridgeTab";
 export { TranscriptTab } from "./TranscriptTab";
 export { GuidanceTab } from "./GuidanceTab";
+export { GroupSpaceTab } from "./GroupSpaceTab";
 export { BlueprintTab } from "./BlueprintTab";
 export { RemoteAccessTab } from "./RemoteAccessTab";
 export { DeveloperTab } from "./DeveloperTab";

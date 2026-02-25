@@ -491,6 +491,525 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_space_status",
+        "description": (
+            "Read Group Space status for the current group "
+            "(provider mode, binding, queue summary, sync state, failed_items)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_capabilities",
+        "description": (
+            "Return Group Space capability matrix: local file whitelist policy for repo/space sync and "
+            "resource_ingest source-type schema/examples."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_bind",
+        "description": "Bind/unbind Group Space provider mapping for this group. Write operation (user/foreman).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["bind", "unbind"],
+                    "description": "Bind or unbind provider mapping",
+                    "default": "bind",
+                },
+                "remote_space_id": {
+                    "type": "string",
+                    "description": "Remote notebook/space ID required for action=bind",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_ingest",
+        "description": (
+            "Enqueue and execute a Group Space ingest job with idempotency protection.\n"
+            "For kind=resource_ingest, payload supports source_type + fields:\n"
+            "- file: {source_type, file_path} (or path/url as file_path alias)\n"
+            "- web_page/youtube: {source_type, url, title?}\n"
+            "- pasted_text: {source_type, content, title?}\n"
+            "- google_docs/google_slides/google_spreadsheet: {source_type, file_id, title?, mime_type?}\n"
+            "Convenience: if payload is omitted, top-level source_type/url/content/file_id/file_path/... fields are auto-packed into payload."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["context_sync", "resource_ingest"],
+                    "description": "Ingest job kind",
+                    "default": "context_sync",
+                },
+                "payload": {
+                    "type": "object",
+                    "description": (
+                        "Provider-specific payload. For resource_ingest, include source_type and required fields "
+                        "(url/content/file_id depending on type)."
+                    ),
+                    "default": {},
+                },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["file", "web_page", "youtube", "pasted_text", "google_docs", "google_slides", "google_spreadsheet"],
+                    "description": "Top-level convenience field when payload is omitted",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Top-level convenience field for source_type=file",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Alias of file_path for source_type=file",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Top-level convenience field for web_page/youtube (or file path alias when source_type=file)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Top-level convenience field for pasted_text",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Alias of content for pasted_text",
+                },
+                "file_id": {
+                    "type": "string",
+                    "description": "Top-level convenience field for google_docs/slides/spreadsheet",
+                },
+                "mime_type": {
+                    "type": "string",
+                    "description": "Optional MIME hint for google drive source types",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional display title for resource_ingest source",
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "description": "Optional idempotency key for dedupe",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_query",
+        "description": "Query Group Space knowledge provider. On provider degradation, returns degraded=true instead of crashing.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Query text",
+                },
+                "options": {
+                    "type": "object",
+                    "description": (
+                        "Optional query options. Supported keys: source_ids (array of remote source_id). "
+                        "Unsupported keys like language/lang are rejected; put language requirements in query text."
+                    ),
+                    "properties": {
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional remote source_id filter list",
+                        }
+                    },
+                    "default": {},
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "cccc_space_sources",
+        "description": "List/refresh/rename/delete NotebookLM sources in the currently bound notebook.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "refresh", "rename", "delete"],
+                    "description": "Source lifecycle action",
+                    "default": "list",
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "Required for action=refresh|rename|delete",
+                },
+                "new_title": {
+                    "type": "string",
+                    "description": "Required for action=rename",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_artifact",
+        "description": (
+            "List/generate/download NotebookLM artifacts for the current group.\n"
+            "If action is omitted and source/options/wait/save_to_space are provided, CCCC auto-infers action=generate.\n"
+            "For long generations, prefer action=generate with wait=false (default), then poll action=list and download when ready."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "generate", "download"],
+                    "description": "Artifact action",
+                    "default": "list",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "audio",
+                        "video",
+                        "report",
+                        "study_guide",
+                        "quiz",
+                        "flashcards",
+                        "infographic",
+                        "slide_deck",
+                        "data_table",
+                        "mind_map",
+                    ],
+                    "description": "Artifact kind. Required for action=generate|download, optional filter for action=list.",
+                },
+                "options": {
+                    "type": "object",
+                    "description": "Provider-specific artifact generation options (action=generate)",
+                    "default": {},
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Optional source hint (used for action auto-inference and provider hints)",
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Preferred output language (e.g., zh-CN, ja, en). Can also be passed via options.language.",
+                },
+                "lang": {
+                    "type": "string",
+                    "description": "Alias of language",
+                },
+                "wait": {
+                    "type": "boolean",
+                    "description": "For action=generate: wait for completion before returning",
+                    "default": False,
+                },
+                "save_to_space": {
+                    "type": "boolean",
+                    "description": "Auto-download completed artifact to repo/space/artifacts",
+                    "default": True,
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": "Optional local output path override for download/save",
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "markdown", "html"],
+                    "description": "Output format for quiz/flashcards downloads",
+                    "default": "markdown",
+                },
+                "artifact_id": {
+                    "type": "string",
+                    "description": "Specific artifact ID to download (optional)",
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "For action=generate with wait=true: max wait seconds",
+                    "default": 600,
+                    "minimum": 10,
+                    "maximum": 3600,
+                },
+                "initial_interval": {
+                    "type": "number",
+                    "description": "For wait polling: initial interval seconds",
+                    "default": 2,
+                    "minimum": 0.5,
+                    "maximum": 60,
+                },
+                "max_interval": {
+                    "type": "number",
+                    "description": "For wait polling: max interval seconds",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 120,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_jobs",
+        "description": "List/retry/cancel Group Space jobs. Use action=list for read-only polling.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "retry", "cancel"],
+                    "description": "Job control action",
+                    "default": "list",
+                },
+                "job_id": {
+                    "type": "string",
+                    "description": "Required for action=retry|cancel",
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["pending", "running", "succeeded", "failed", "canceled"],
+                    "description": "Optional filter for action=list",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max jobs for action=list (default 50)",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 500,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_sync",
+        "description": "Run Group Space file reconciliation for repo/space resources (or read current sync state).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "run"],
+                    "description": "Read sync status or run a sync reconcile",
+                    "default": "run",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "For action=run, force full reconcile even without local change",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_provider_auth",
+        "description": "Control Group Space provider auth flow (status/start/cancel).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Caller identity (optional if CCCC_ACTOR_ID is set)",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "start", "cancel"],
+                    "description": "Auth flow action",
+                    "default": "status",
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "For action=start: timeout seconds (60-1800, default 900)",
+                    "default": 900,
+                    "minimum": 60,
+                    "maximum": 1800,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_provider_credential_status",
+        "description": "Read Group Space provider credential status (masked metadata only).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Caller identity (optional if CCCC_ACTOR_ID is set)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_provider_credential_update",
+        "description": "Update or clear Group Space provider credential.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Caller identity (optional if CCCC_ACTOR_ID is set)",
+                },
+                "auth_json": {
+                    "type": "string",
+                    "description": "Provider credential JSON payload (required when clear=false)",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "Clear stored credential instead of updating",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "cccc_group_set_state",
         "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete; internal automation is muted while scheduled rules still run), paused (user pause; all automation blocked), stopped (stop all actor runtimes). Foreman should set to 'idle' when task is complete.",
         "inputSchema": {

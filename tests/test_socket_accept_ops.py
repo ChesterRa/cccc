@@ -8,6 +8,10 @@ from cccc.daemon.ops.socket_accept_ops import handle_incoming_connection
 class _FakeConn:
     def __init__(self) -> None:
         self.closed = False
+        self.timeout = None
+
+    def settimeout(self, value) -> None:
+        self.timeout = value
 
     def close(self) -> None:
         self.closed = True
@@ -35,6 +39,47 @@ class TestSocketAcceptOps(unittest.TestCase):
         self.assertTrue(conn.closed)
         self.assertTrue(sent)
         self.assertFalse(bool(sent[0].get("ok")))
+        self.assertEqual(conn.timeout, 0.5)
+
+    def test_invalid_request_send_broken_pipe_is_ignored(self) -> None:
+        conn = _FakeConn()
+        should_exit = handle_incoming_connection(
+            conn,
+            recv_json_line=lambda _conn: {"broken": True},
+            parse_request=lambda _raw: (_ for _ in ()).throw(ValueError("bad")),
+            make_invalid_request_error=lambda err: DaemonResponse(
+                ok=False,
+                error=DaemonError(code="invalid_request", message="invalid request", details={"error": err}),
+            ),
+            send_json=lambda _conn, _payload: (_ for _ in ()).throw(BrokenPipeError("gone")),
+            dump_response=lambda resp: resp.model_dump(),
+            try_handle_special=lambda _req, _conn: False,
+            handle_request=lambda _req: (DaemonResponse(ok=True, result={}), False),
+            logger=logging.getLogger("test"),
+        )
+        self.assertFalse(should_exit)
+        self.assertTrue(conn.closed)
+
+    def test_read_timeout_closes_connection(self) -> None:
+        conn = _FakeConn()
+        sent: list[dict] = []
+        should_exit = handle_incoming_connection(
+            conn,
+            recv_json_line=lambda _conn: (_ for _ in ()).throw(TimeoutError("slow client")),
+            parse_request=lambda raw: raw,
+            make_invalid_request_error=lambda err: DaemonResponse(
+                ok=False,
+                error=DaemonError(code="invalid_request", message="invalid request", details={"error": err}),
+            ),
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            try_handle_special=lambda _req, _conn: False,
+            handle_request=lambda _req: (DaemonResponse(ok=True, result={}), False),
+            logger=logging.getLogger("test"),
+        )
+        self.assertFalse(should_exit)
+        self.assertTrue(conn.closed)
+        self.assertEqual(sent, [])
 
     def test_special_handler_keeps_connection_open(self) -> None:
         conn = _FakeConn()

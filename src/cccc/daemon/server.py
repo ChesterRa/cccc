@@ -93,11 +93,16 @@ from .ops.runner_ops import stop_actor as runner_stop_actor
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
     start_automation_thread,
+    start_space_jobs_thread,
+    start_space_sync_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
     cleanup_after_stop,
 )
+from .group_space_runtime import process_due_space_jobs
+from .group_space_sync import process_due_space_syncs
+from .group_space_store import get_space_provider_state
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -137,6 +142,18 @@ def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
         if level == "INFO":
             level = "DEBUG"
     setup_root_json_logging(component="daemon", level=level, force=True)
+
+
+def _apply_space_provider_runtime_flags_from_state() -> None:
+    """Restore provider runtime toggles from daemon-owned persisted state."""
+    try:
+        if str(os.environ.get("CCCC_NOTEBOOKLM_REAL") or "").strip():
+            return
+        state = get_space_provider_state("notebooklm")
+        if bool(state.get("real_enabled")):
+            os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
+    except Exception:
+        pass
 
 
 def _pty_backlog_bytes() -> int:
@@ -733,6 +750,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         _apply_observability_settings(p.home, get_observability_settings())
     except Exception:
         pass
+    _apply_space_provider_runtime_flags_from_state()
 
     _cleanup_stale_daemon_endpoints(p)
     if _is_daemon_alive(p):
@@ -812,6 +830,28 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         ),
         tick_delivery=tick_delivery,
         compact_ledgers=_maybe_compact_ledgers,
+    )
+
+    def _tick_space_jobs() -> None:
+        result = process_due_space_jobs(limit=20)
+        if int(result.get("processed") or 0) > 0:
+            logger.debug("group_space_due_jobs_processed=%s", int(result.get("processed") or 0))
+
+    start_space_jobs_thread(
+        stop_event=stop_event,
+        tick_space_jobs=_tick_space_jobs,
+        interval_seconds=1.0,
+    )
+
+    def _tick_space_sync() -> None:
+        result = process_due_space_syncs(provider="notebooklm", limit=20)
+        if int(result.get("processed") or 0) > 0:
+            logger.debug("group_space_sync_processed=%s", int(result.get("processed") or 0))
+
+    start_space_sync_thread(
+        stop_event=stop_event,
+        tick_space_sync=_tick_space_sync,
+        interval_seconds=30.0,
     )
 
     transport = _desired_daemon_transport()

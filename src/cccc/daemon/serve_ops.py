@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict
+
+_LOG = logging.getLogger("cccc.daemon.serve_ops")
+_LOOP_ERROR_LAST_TS: Dict[str, float] = {}
+_LOOP_ERROR_WINDOW_SECONDS = 30.0
+_LOOP_ERROR_LOCK = threading.Lock()
+
+
+def _log_loop_error(key: str, exc: Exception) -> None:
+    now = time.time()
+    with _LOOP_ERROR_LOCK:
+        last = float(_LOOP_ERROR_LAST_TS.get(key) or 0.0)
+        if now - last < _LOOP_ERROR_WINDOW_SECONDS:
+            return
+        _LOOP_ERROR_LAST_TS[key] = now
+    _LOG.warning("%s: %s", key, exc)
 
 
 def start_automation_thread(
@@ -22,8 +38,8 @@ def start_automation_thread(
         while not stop_event.is_set():
             try:
                 automation_tick(home=home)
-            except Exception:
-                pass
+            except Exception as e:
+                _log_loop_error("automation_tick failed", e)
             try:
                 base = home / "groups"
                 if base.exists():
@@ -36,20 +52,60 @@ def start_automation_thread(
                             continue
                         try:
                             tick_delivery(group)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as e:
+                            _log_loop_error(f"tick_delivery failed group={gid}", e)
+            except Exception as e:
+                _log_loop_error("automation scan failed", e)
             now = time.time()
             if now >= next_compact:
                 next_compact = now + 60.0
                 try:
                     compact_ledgers(home)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log_loop_error("compact_ledgers failed", e)
             stop_event.wait(1.0)
 
     t = threading.Thread(target=_automation_loop, name="cccc-automation", daemon=True)
+    t.start()
+    return t
+
+
+def start_space_jobs_thread(
+    *,
+    stop_event: threading.Event,
+    tick_space_jobs: Callable[[], Any],
+    interval_seconds: float = 1.0,
+) -> threading.Thread:
+    def _space_jobs_loop() -> None:
+        interval = max(0.2, float(interval_seconds or 1.0))
+        while not stop_event.is_set():
+            try:
+                tick_space_jobs()
+            except Exception as e:
+                _log_loop_error("tick_space_jobs failed", e)
+            stop_event.wait(interval)
+
+    t = threading.Thread(target=_space_jobs_loop, name="cccc-space-jobs", daemon=True)
+    t.start()
+    return t
+
+
+def start_space_sync_thread(
+    *,
+    stop_event: threading.Event,
+    tick_space_sync: Callable[[], Any],
+    interval_seconds: float = 30.0,
+) -> threading.Thread:
+    def _space_sync_loop() -> None:
+        interval = max(5.0, float(interval_seconds or 30.0))
+        while not stop_event.is_set():
+            try:
+                tick_space_sync()
+            except Exception as e:
+                _log_loop_error("tick_space_sync failed", e)
+            stop_event.wait(interval)
+
+    t = threading.Thread(target=_space_sync_loop, name="cccc-space-sync", daemon=True)
     t.start()
     return t
 

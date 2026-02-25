@@ -237,6 +237,195 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             self.assertEqual(kwargs.get("target_actor_id"), "peer2")
             self.assertFalse(bool(kwargs.get("strip_ansi")))
 
+    def test_space_artifact_defaults_to_async_wait_false(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_caller_from_by", return_value="peer1"
+        ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
+            mcp_server.handle_tool_call(
+                "cccc_space_artifact",
+                {
+                    "action": "generate",
+                    "kind": "slide_deck",
+                },
+            )
+            kwargs = mock_space_artifact.call_args.kwargs
+            self.assertEqual(kwargs.get("group_id"), "g_test")
+            self.assertEqual(kwargs.get("by"), "peer1")
+            self.assertFalse(bool(kwargs.get("wait")))
+
+    def test_space_artifact_infers_generate_when_action_missing(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_caller_from_by", return_value="peer1"
+        ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
+            mcp_server.handle_tool_call(
+                "cccc_space_artifact",
+                {
+                    "kind": "study_guide",
+                    "save_to_space": "true",
+                    "source": "/tmp/notes.md",
+                },
+            )
+            kwargs = mock_space_artifact.call_args.kwargs
+            self.assertEqual(kwargs.get("action"), "generate")
+            options = kwargs.get("options") if isinstance(kwargs.get("options"), dict) else {}
+            self.assertEqual(str(options.get("source") or ""), "/tmp/notes.md")
+
+    def test_space_artifact_top_level_language_is_mapped_into_options(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_caller_from_by", return_value="peer1"
+        ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
+            mcp_server.handle_tool_call(
+                "cccc_space_artifact",
+                {
+                    "kind": "report",
+                    "language": "zh-CN",
+                    "source": "/tmp/notes.md",
+                },
+            )
+            kwargs = mock_space_artifact.call_args.kwargs
+            options = kwargs.get("options") if isinstance(kwargs.get("options"), dict) else {}
+            self.assertEqual(str(options.get("language") or ""), "zh-CN")
+
+    def test_space_artifact_language_infers_from_cjk_source_file(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "zh_notes.md")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write("这是中文内容\n用于测试语言推断。\n")
+            with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+                mcp_server, "_resolve_caller_from_by", return_value="peer1"
+            ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
+                mcp_server.handle_tool_call(
+                    "cccc_space_artifact",
+                    {
+                        "kind": "report",
+                        "source": src,
+                    },
+                )
+                kwargs = mock_space_artifact.call_args.kwargs
+                options = kwargs.get("options") if isinstance(kwargs.get("options"), dict) else {}
+                self.assertEqual(str(options.get("language") or ""), "zh-CN")
+
+    def test_space_ingest_top_level_fields_auto_pack_payload(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_caller_from_by", return_value="peer1"
+        ), patch.object(mcp_server, "space_ingest", return_value={"ok": True}) as mock_space_ingest:
+            mcp_server.handle_tool_call(
+                "cccc_space_ingest",
+                {
+                    "source_type": "file",
+                    "url": "/tmp/spec.md",
+                    "title": "Spec",
+                },
+            )
+            kwargs = mock_space_ingest.call_args.kwargs
+            self.assertEqual(str(kwargs.get("kind") or ""), "resource_ingest")
+            payload = kwargs.get("payload") if isinstance(kwargs.get("payload"), dict) else {}
+            self.assertEqual(str(payload.get("source_type") or ""), "file")
+            self.assertEqual(str(payload.get("file_path") or ""), "/tmp/spec.md")
+            self.assertEqual(str(payload.get("title") or ""), "Spec")
+
+    def test_space_query_source_ids_option_is_normalized(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "space_query", return_value={"ok": True}
+        ) as mock_space_query:
+            mcp_server.handle_tool_call(
+                "cccc_space_query",
+                {
+                    "query": "summarize",
+                    "options": {"source_ids": [" src_1 ", "src_2"]},
+                },
+            )
+            kwargs = mock_space_query.call_args.kwargs
+            options = kwargs.get("options") if isinstance(kwargs.get("options"), dict) else {}
+            self.assertEqual(options.get("source_ids"), ["src_1", "src_2"])
+
+    def test_space_query_rejects_top_level_language(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.handle_tool_call(
+                    "cccc_space_query",
+                    {
+                        "query": "summarize",
+                        "language": "zh-CN",
+                    },
+                )
+        self.assertEqual(cm.exception.code, "invalid_request")
+        self.assertIn("language/lang", str(cm.exception.message))
+
+    def test_space_query_rejects_unsupported_options(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.handle_tool_call(
+                    "cccc_space_query",
+                    {
+                        "query": "summarize",
+                        "options": {"top_k": 5},
+                    },
+                )
+        self.assertEqual(cm.exception.code, "invalid_request")
+        self.assertIn("unsupported options", str(cm.exception.message))
+
+    def test_space_artifact_wait_true_uses_extended_daemon_timeout(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_daemon(req, *, timeout_s=60.0):
+            captured["req"] = req
+            captured["timeout_s"] = float(timeout_s)
+            return {"ok": True, "status": "completed"}
+
+        with patch.object(mcp_server, "_call_daemon_or_raise", side_effect=_fake_daemon):
+            mcp_server.space_artifact(
+                group_id="g_test",
+                by="peer1",
+                action="generate",
+                kind="slide_deck",
+                wait=True,
+                timeout_seconds=120.0,
+            )
+        self.assertGreaterEqual(float(captured.get("timeout_s") or 0.0), 150.0)
+
+    def test_space_artifact_audio_forces_async_even_if_wait_true(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_daemon(req, *, timeout_s=60.0):
+            captured["req"] = req
+            captured["timeout_s"] = float(timeout_s)
+            return {"ok": True, "status": "accepted"}
+
+        with patch.object(mcp_server, "_call_daemon_or_raise", side_effect=_fake_daemon):
+            mcp_server.space_artifact(
+                group_id="g_test",
+                by="peer1",
+                action="generate",
+                kind="audio",
+                wait=True,
+                timeout_seconds=120.0,
+            )
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertFalse(bool(args.get("wait")))
+        self.assertGreaterEqual(float(captured.get("timeout_s") or 0.0), 120.0)
+
 
 if __name__ == "__main__":
     unittest.main()

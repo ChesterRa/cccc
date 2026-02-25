@@ -123,43 +123,23 @@ def handle_actor_profile_upsert(args: Dict[str, Any]) -> DaemonResponse:
             return _error("invalid_request", "expected_revision must be an integer")
     try:
         payload = dict(profile)
-        legacy_env_raw = payload.get("env")
-        legacy_env: Dict[str, str] = {}
-        if legacy_env_raw is not None:
-            if not isinstance(legacy_env_raw, dict):
+        env_raw = payload.get("env")
+        if env_raw is not None:
+            if not isinstance(env_raw, dict):
                 return _error("invalid_request", "profile.env must be an object")
-            for key, value in legacy_env_raw.items():
-                k = validate_private_env_key(key)
-                v = coerce_private_env_value(value)
-                legacy_env[k] = v
-
-        # Unified model: actor profile variables are secret env.
-        # Keep env field empty for storage/backward schema compatibility.
-        payload["env"] = {}
-
-        profile_id_hint = str(payload.get("id") or "").strip()
-        if profile_id_hint and legacy_env:
-            pid = validate_actor_profile_id(profile_id_hint)
-            current = load_actor_profile_secrets(pid)
-            preview = dict(current)
-            preview.update(legacy_env)
-            if len(preview) > PRIVATE_ENV_MAX_KEYS:
-                return _error("too_many_keys", "too many profile secret keys configured")
-        elif legacy_env and len(legacy_env) > PRIVATE_ENV_MAX_KEYS:
-            return _error("too_many_keys", "too many profile secret keys configured")
-
-        updated = upsert_actor_profile(payload, expected_revision=expected_revision)
-        if legacy_env:
-            pid = str(updated.get("id") or "").strip()
-            if pid:
-                merged = update_actor_profile_secrets(
-                    pid,
-                    set_vars=legacy_env,
-                    unset_keys=[],
-                    clear=False,
+            has_non_empty_env = any(
+                isinstance(key, str) and str(key).strip() and (value is not None and str(value).strip())
+                for key, value in env_raw.items()
+            )
+            if has_non_empty_env:
+                return _error(
+                    "invalid_request",
+                    "profile.env is deprecated; use actor_profile_secret_update to manage profile secrets",
                 )
-                if len(merged) > PRIVATE_ENV_MAX_KEYS:
-                    return _error("too_many_keys", "too many profile secret keys configured")
+
+        # Unified model: runtime fields in profile + all variables in profile secrets.
+        payload["env"] = {}
+        updated = upsert_actor_profile(payload, expected_revision=expected_revision)
         return DaemonResponse(ok=True, result={"profile": updated})
     except ProfileRevisionMismatchError as e:
         return _error("profile_revision_mismatch", str(e))

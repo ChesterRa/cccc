@@ -77,8 +77,8 @@ function loadGroupOrder(): string[] {
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed)) return parsed;
     }
-  } catch {
-    // Ignore parse errors
+  } catch (e) {
+    console.warn("Failed to read group order from localStorage:", e);
   }
   return [];
 }
@@ -86,8 +86,8 @@ function loadGroupOrder(): string[] {
 function saveGroupOrder(order: string[]): void {
   try {
     localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(order));
-  } catch {
-    // Ignore storage errors
+  } catch (e) {
+    console.warn("Failed to persist group order to localStorage:", e);
   }
 }
 
@@ -454,8 +454,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           }
         }
       }
-    } catch {
-      // Ignore transient failures
+    } catch (e) {
+      console.error("Failed to refresh groups:", e);
     } finally {
       refreshGroupsInFlight = false;
       if (refreshGroupsQueued) {
@@ -478,8 +478,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (resp.ok && get().selectedGroupId === gid) {
         set({ actors: resp.result.actors || [] });
       }
-    } catch {
-      // Ignore transient failures
+    } catch (e) {
+      console.error(`Failed to refresh actors for group=${gid}:`, e);
     } finally {
       refreshActorsInFlight.delete(gid);
       if (refreshActorsQueued.has(gid)) {

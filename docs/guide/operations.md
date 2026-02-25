@@ -150,3 +150,56 @@ If an issue repeats:
 2. Capture reproducible sequence.
 3. Classify severity (`P0/P1/P2`).
 4. Register fix or risk in release findings.
+
+## 10) Group Space (NotebookLM) Runbook
+
+### Enable real adapter path (opt-in)
+
+```bash
+export CCCC_NOTEBOOKLM_REAL=1
+cccc daemon restart
+```
+
+### Validate control plane
+
+```bash
+cccc space credential status
+cccc space health
+```
+
+### Validate curated context export path
+
+After a `context_sync` update (milestone/task/note/reference/vision/sketch), check queue:
+
+```bash
+cccc space jobs list --state pending
+```
+
+Expected: a `kind=context_sync` job appears for bound groups.
+
+### Validate repo `space/` reconciliation
+
+```bash
+cccc space sync --force
+```
+
+Expected: result reports `converged=true` and `unsynced_count=0` when provider is healthy.
+
+### Safe rollback (core workflows keep running)
+
+```bash
+unset CCCC_NOTEBOOKLM_REAL
+cccc daemon restart
+```
+
+Expected after rollback:
+
+- Group Space operations may return degraded/disabled provider results.
+- Core CCCC chat/task/actor workflows continue normally.
+
+Optional throughput tuning:
+
+```bash
+export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
+export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
+```

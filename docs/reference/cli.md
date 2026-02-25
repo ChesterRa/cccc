@@ -181,6 +181,49 @@ cccc im logs                       # View IM bridge logs
 cccc im logs -f                    # Follow IM bridge logs
 ```
 
+## Group Space Commands
+
+### `cccc space`
+
+Manage Group Space provider-backed shared memory.
+
+```bash
+cccc space status
+cccc space credential status
+cccc space credential set --auth-json '{"cookies":[{"name":"SID","value":"...","domain":".google.com"}]}'
+cccc space credential set --auth-json-file ./notebooklm.storage_state.json
+cccc space credential clear
+cccc space health
+
+cccc space bind [remote_space_id]    # omit to auto-create NotebookLM notebook
+cccc space unbind
+cccc space sync --force
+
+cccc space ingest --kind context_sync --payload '{"vision":"v0.5 plan"}'
+cccc space ingest --kind resource_ingest --payload '{"path":"docs/spec.md"}' --idempotency-key ingest-docs-1
+
+cccc space query "What is the latest shared plan?"
+cccc space query "Summarize risks from these sources" --options '{"source_ids":["src_1","src_2"]}'
+
+cccc space jobs list
+cccc space jobs list --state failed --limit 20
+cccc space jobs retry <job_id>
+cccc space jobs cancel <job_id>
+```
+
+Notes:
+- `--group` is optional; defaults to the active group.
+- Current provider is `notebooklm`.
+- `--payload` and `--options` must be JSON objects.
+- `cccc space query --options` only supports `source_ids` (array of source IDs).
+- `language` / `lang` are not valid query options (put language requirement in query text).
+- Provider credentials are write-only; CLI/Web only return masked metadata.
+- `cccc space health` validates credential format and adapter compatibility.
+- When a group is bound, curated `context_sync` exports are also auto-enqueued from `context_sync` updates.
+- `cccc space sync` performs two-way reconcile for Group Space:
+  - local `repo/space/` files -> provider sources,
+  - provider source/artifact projection -> local `repo/space/` (`.sync/remote-sources` and `artifacts/`).
+
 ## Setup Commands
 
 ### `cccc setup`

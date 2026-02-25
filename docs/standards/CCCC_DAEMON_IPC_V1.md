@@ -1095,7 +1095,22 @@ Notes:
 
 Result:
 ```ts
-{ success: true; dry_run: boolean; changes: Array<Record<string, unknown>>; version: string }
+{
+  success: true
+  dry_run: boolean
+  changes: Array<Record<string, unknown>>
+  version: string
+  space_sync?: {
+    queued: boolean
+    reason?: "not_bound" | "binding_inactive" | "missing_remote_space_id" | "provider_disabled" | "enqueue_failed"
+    deduped?: boolean
+    job_id?: string
+    provider?: "notebooklm"
+    kind?: "context_sync"
+    idempotency_key?: string
+    error?: string
+  }
+}
 ```
 
 #### `task_list`
@@ -1527,7 +1542,30 @@ Result:
     status: "stopped" | "running" | "not_installed" | "not_authenticated" | "misconfigured" | "error"
     endpoint?: string | null
     updated_at?: string | null
-    diagnostics?: Record<string, unknown>
+    diagnostics?: {
+      web_token_present?: boolean
+      web_token_source?: "settings" | "env" | "none" | string
+      web_host?: string
+      web_host_source?: "settings" | "env" | "default" | string
+      web_port?: number
+      web_port_source?: "settings" | "env" | "default" | string
+      web_public_url?: string | null
+      web_public_url_source?: "settings" | "env" | "none" | string
+      web_bind_loopback?: boolean
+      web_bind_reachable?: boolean
+      mode_supported?: boolean
+      tailscale_installed?: boolean | null
+      tailscale_backend_state?: string | null
+      [k: string]: unknown
+    }
+    config?: {
+      web_host?: string
+      web_port?: number
+      web_public_url?: string | null
+      web_token_configured?: boolean
+      web_token_source?: "settings" | "env" | "none" | string
+      [k: string]: unknown
+    }
     next_steps?: string[]
   }
 }
@@ -1544,6 +1582,11 @@ Args:
   provider?: "off" | "manual" | "tailscale"
   mode?: string
   enforce_web_token?: boolean
+  web_host?: string
+  web_port?: number
+  web_public_url?: string
+  web_token?: string
+  clear_web_token?: boolean
 }
 ```
 
@@ -1579,6 +1622,564 @@ Result:
 ```ts
 { remote_access: Record<string, unknown> }
 ```
+
+### 8.17 Group Space (Provider-Backed Shared Memory, M1-lite)
+
+These operations provide a thin control-plane for optional external memory providers.
+Provider failures MUST NOT block core collaboration flows (chat/context/actors).
+
+#### `group_space_status`
+
+Read provider mode, group binding, queue summary, and repo `space/` sync state.
+
+Args:
+```ts
+{ group_id: string; provider?: "notebooklm" }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: {
+    provider: "notebooklm"
+    enabled: boolean
+    mode: "disabled" | "active" | "degraded"
+    real_adapter_enabled?: boolean
+    stub_adapter_enabled?: boolean
+    auth_configured?: boolean
+    write_ready?: boolean
+    readiness_reason?: string
+    last_health_at?: string | null
+    last_error?: string | null
+  }
+  binding: {
+    group_id: string
+    provider: "notebooklm"
+    remote_space_id: string
+    bound_by: string
+    bound_at: string
+    status: "bound" | "unbound" | "error"
+  }
+  queue_summary: { pending: number; running: number; failed: number }
+  sync?: {
+    available?: boolean
+    reason?: string
+    space_root?: string
+    remote_space_id?: string
+    last_run_at?: string
+    converged?: boolean
+    unsynced_count?: number
+    last_error?: string
+  }
+}
+```
+
+#### `group_space_spaces`
+
+List available remote notebooks/spaces for provider selection UI.
+
+Args:
+```ts
+{ group_id: string; provider?: "notebooklm" }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_state: Record<string, unknown>
+  binding: Record<string, unknown>
+  spaces: Array<{
+    remote_space_id: string
+    title?: string
+    created_at?: string
+    is_owner?: boolean
+  }>
+}
+```
+
+#### `group_space_capabilities`
+
+Return Group Space capability matrix for current group/provider.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  local_scope_attached: boolean
+  space_root: string
+  local_file_policy: {
+    allowed_extensions: string[]
+    max_file_size_bytes: number
+    unsupported_error_code: string
+    oversize_error_code: string
+  }
+  ingest: {
+    kinds: Array<"context_sync" | "resource_ingest">
+    resource_ingest: {
+      source_types: string[]
+      required_fields: Record<string, string[]>
+      optional_fields: Record<string, string[]>
+      aliases: Record<string, string>
+      examples: Record<string, Record<string, unknown>>
+    }
+  }
+  query: {
+    options: {
+      source_ids: string
+    }
+    unsupported_options: Record<string, string>
+    examples: Record<string, Record<string, unknown>>
+  }
+  artifacts: {
+    actions: string[]
+    kinds: string[]
+    options: Record<string, string>
+    aliases: Record<string, string>
+    examples: Record<string, Record<string, unknown>>
+  }
+  notes: string[]
+}
+```
+
+#### `group_space_bind`
+
+Bind/unbind a group to provider remote space.
+When `action=bind` and `remote_space_id` is empty, daemon may auto-create
+a provider notebook and bind it.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "bind" | "unbind"
+  remote_space_id?: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: Record<string, unknown>
+  binding: Record<string, unknown>
+  queue_summary: { pending: number; running: number; failed: number }
+  sync?: Record<string, unknown>
+  sync_result?: Record<string, unknown>
+}
+```
+
+#### `group_space_ingest`
+
+Create (or dedupe) an ingest job and execute it with bounded retry policy.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  kind?: "context_sync" | "resource_ingest"
+  payload?: Record<string, unknown>
+  idempotency_key?: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  job_id: string
+  accepted: true
+  deduped: boolean
+  job: Record<string, unknown>
+  queue_summary: { pending: number; running: number; failed: number }
+  provider_mode: "disabled" | "active" | "degraded"
+}
+```
+
+#### `group_space_query`
+
+Query provider-backed memory for a group. If provider is degraded, result MAY return
+`ok=true` with `degraded=true` and an empty answer.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  query: string
+  options?: {
+    source_ids?: string[] // optional remote source_id filter
+  }
+}
+```
+
+Validation notes:
+- `options` only supports `source_ids`.
+- `options.language` / `options.lang` are invalid for `group_space_query` because NotebookLM query API does not provide a language parameter.
+
+Result:
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  degraded: boolean
+  answer: string
+  references: unknown[]
+  error?: { code: string; message: string } | null
+}
+```
+
+#### `group_space_sources`
+
+List/refresh/rename/delete provider sources in the currently bound notebook.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "list" | "refresh" | "rename" | "delete"
+  source_id?: string // required for refresh/rename/delete
+  new_title?: string // required for rename
+  by?: string
+}
+```
+
+Result (`action=list`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "list"
+  sources: Record<string, unknown>[]
+  list_result: Record<string, unknown>
+}
+```
+
+Result (`action=refresh` | `rename` | `delete`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "refresh" | "rename" | "delete"
+  source_id: string
+  refresh_result?: Record<string, unknown>
+  rename_result?: Record<string, unknown>
+  delete_result?: Record<string, unknown>
+}
+```
+
+#### `group_space_artifact`
+
+List/generate/download provider artifacts (NotebookLM studio outputs).
+For `action=generate`, daemon can optionally wait for completion and auto-save
+the artifact into local `repo/space/artifacts/...`.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "list" | "generate" | "download"
+  kind?: "audio" | "video" | "report" | "study_guide" | "quiz" | "flashcards" | "infographic" | "slide_deck" | "data_table" | "mind_map"
+  options?: Record<string, unknown> // for action=generate
+  wait?: boolean // action=generate only
+  save_to_space?: boolean // generate/download auto-save behavior
+  output_path?: string // optional local path override
+  output_format?: "json" | "markdown" | "html" // quiz/flashcards
+  artifact_id?: string // optional explicit download target
+  timeout_seconds?: number // generate+wait only
+  initial_interval?: number // generate+wait only
+  max_interval?: number // generate+wait only
+  by?: string
+}
+```
+
+Result (`action=list`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "list"
+  kind?: string
+  artifacts: Record<string, unknown>[]
+  list_result: Record<string, unknown>
+}
+```
+
+Result (`action=generate`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "generate"
+  kind: string
+  task_id?: string
+  status?: string
+  wait: boolean
+  saved_to_space: boolean
+  output_path?: string
+  generate_result: Record<string, unknown>
+  wait_result?: Record<string, unknown>
+  download_result?: Record<string, unknown>
+}
+```
+
+Result (`action=download`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "download"
+  kind: string
+  saved_to_space: boolean
+  output_path: string
+  download_result: Record<string, unknown>
+}
+```
+
+#### `group_space_jobs`
+
+List/retry/cancel Group Space jobs.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "list" | "retry" | "cancel"
+  job_id?: string
+  state?: "pending" | "running" | "succeeded" | "failed" | "canceled"
+  limit?: number
+  by?: string
+}
+```
+
+#### `group_space_sync`
+
+Run/read `repo/space/` reconciliation status for the bound provider notebook.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "status" | "run"
+  force?: boolean
+  by?: string
+}
+```
+
+Result (`action=status`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  sync: Record<string, unknown>
+}
+```
+
+Result (`action=run`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  sync: Record<string, unknown>
+  sync_result: Record<string, unknown>
+}
+```
+
+Result (`action=list`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  jobs: Record<string, unknown>[]
+  queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
+Result (`action=retry|cancel`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  job: Record<string, unknown>
+  queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
+#### `group_space_provider_credential_status`
+
+Read provider credential status (masked metadata only, no secret values).
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  by?: string // user-only
+}
+```
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+}
+```
+
+#### `group_space_provider_credential_update`
+
+Update or clear provider credentials in the daemon secret store.
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  by?: string // user-only
+  auth_json?: string
+  clear?: boolean
+}
+```
+
+Notes:
+- `clear=true` removes stored credentials for this provider.
+- `auth_json` is write-only and never returned in response payloads.
+- Environment credential (`CCCC_NOTEBOOKLM_AUTH_JSON`) has higher precedence than stored credentials.
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+}
+```
+
+#### `group_space_provider_health_check`
+
+Run provider health check and update provider state (`active`/`degraded`/`disabled`) accordingly.
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  by?: string // user-only
+}
+```
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  healthy: boolean
+  health?: Record<string, unknown>
+  error?: { code: string; message: string }
+  provider_state: Record<string, unknown>
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+}
+```
+
+#### `group_space_provider_auth`
+
+Control provider auth flow (`status`/`start`/`cancel`) for backend-managed
+NotebookLM sign-in.
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  action?: "status" | "start" | "cancel"
+  timeout_seconds?: number
+  by?: string // user-only
+}
+```
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  provider_state: Record<string, unknown>
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+  auth: {
+    provider: "notebooklm"
+    state: "idle" | "running" | "succeeded" | "failed" | "canceled"
+    phase?: string
+    session_id?: string
+    started_at?: string
+    updated_at?: string
+    finished_at?: string
+    message?: string
+    error?: { code: string; message: string } | Record<string, unknown>
+  }
+}
+```
+
+Notes:
+- `start` may open a browser on the daemon host for Google sign-in.
+- Provider write readiness remains gated by `auth_configured` and runtime mode.
 
 ## 9. Appendix: Example Lines
 

@@ -240,16 +240,180 @@ export type RemoteAccessState = {
   updated_at?: string | null;
   diagnostics?: {
     web_token_present?: boolean;
+    web_token_source?: "settings" | "env" | "none" | string;
     web_host?: string;
+    web_host_source?: "settings" | "env" | "default" | string;
     web_port?: number;
+    web_port_source?: "settings" | "env" | "default" | string;
     web_public_url?: string | null;
+    web_public_url_source?: "settings" | "env" | "none" | string;
     web_bind_loopback?: boolean;
     web_bind_reachable?: boolean;
     mode_supported?: boolean;
     tailscale_installed?: boolean | null;
     tailscale_backend_state?: string | null;
   } | null;
+  config?: {
+    web_host?: string;
+    web_port?: number;
+    web_public_url?: string | null;
+    web_token_configured?: boolean;
+    web_token_source?: "settings" | "env" | "none" | string;
+  } | null;
   next_steps?: string[] | null;
+};
+
+export type GroupSpaceProviderState = {
+  provider: "notebooklm" | string;
+  enabled: boolean;
+  real_enabled?: boolean;
+  mode: "disabled" | "active" | "degraded" | string;
+  last_health_at?: string | null;
+  last_error?: string | null;
+  real_adapter_enabled?: boolean;
+  stub_adapter_enabled?: boolean;
+  auth_configured?: boolean;
+  write_ready?: boolean;
+  readiness_reason?: string;
+};
+
+export type GroupSpaceProviderCredentialStatus = {
+  provider: "notebooklm" | string;
+  key: string;
+  configured: boolean;
+  source: "none" | "store" | "env" | string;
+  env_configured: boolean;
+  store_configured: boolean;
+  updated_at?: string | null;
+  masked_value?: string | null;
+};
+
+export type GroupSpaceProviderAuthState =
+  | "idle"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled"
+  | string;
+
+export type GroupSpaceProviderAuthStatus = {
+  provider: "notebooklm" | string;
+  state: GroupSpaceProviderAuthState;
+  phase?: string;
+  session_id?: string;
+  started_at?: string;
+  updated_at?: string;
+  finished_at?: string;
+  message?: string;
+  error?: { code?: string; message?: string } | null;
+};
+
+export type GroupSpaceBinding = {
+  group_id: string;
+  provider: "notebooklm" | string;
+  remote_space_id?: string;
+  bound_by?: string;
+  bound_at?: string;
+  status: "bound" | "unbound" | "error" | string;
+};
+
+export type GroupSpaceRemoteSpace = {
+  remote_space_id: string;
+  title?: string;
+  created_at?: string;
+  is_owner?: boolean;
+};
+
+export type GroupSpaceSource = {
+  source_id: string;
+  title?: string;
+  url?: string;
+  status?: number | string;
+  kind?: string;
+};
+
+export type GroupSpaceArtifact = {
+  artifact_id: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  created_at?: string;
+  url?: string;
+};
+
+export type GroupSpaceQueueSummary = {
+  pending: number;
+  running: number;
+  failed: number;
+};
+
+export type GroupSpaceJobError = {
+  code?: string;
+  message?: string;
+};
+
+export type GroupSpaceJob = {
+  job_id: string;
+  group_id: string;
+  provider: "notebooklm" | string;
+  remote_space_id: string;
+  kind: "context_sync" | "resource_ingest" | string;
+  payload: Record<string, unknown>;
+  payload_digest?: string;
+  idempotency_key?: string;
+  state: "pending" | "running" | "succeeded" | "failed" | "canceled" | string;
+  attempt: number;
+  max_attempts: number;
+  next_run_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  last_error?: GroupSpaceJobError;
+};
+
+export type GroupSpaceStatus = {
+  group_id: string;
+  provider: GroupSpaceProviderState;
+  binding: GroupSpaceBinding;
+  queue_summary: GroupSpaceQueueSummary;
+  sync?: GroupSpaceSyncState;
+  sync_result?: GroupSpaceSyncResult;
+};
+
+export type GroupSpaceSyncState = {
+  available?: boolean;
+  reason?: string;
+  space_root?: string;
+  group_id?: string;
+  provider?: string;
+  remote_space_id?: string;
+  last_run_at?: string;
+  converged?: boolean;
+  unsynced_count?: number;
+  uploaded?: number;
+  updated?: number;
+  deleted?: number;
+  reused?: number;
+  last_error?: string;
+  last_fingerprint?: Record<string, unknown>;
+  errors?: Array<Record<string, unknown>>;
+};
+
+export type GroupSpaceSyncResult = {
+  ok?: boolean;
+  group_id?: string;
+  provider?: string;
+  remote_space_id?: string;
+  space_root?: string;
+  skipped?: boolean;
+  reason?: string;
+  converged?: boolean;
+  unsynced_count?: number;
+  local_files?: number;
+  uploaded?: number;
+  updated?: number;
+  deleted?: number;
+  reused?: number;
+  errors?: Array<Record<string, unknown>>;
 };
 
 export type AutomationRuleTriggerInterval = {
@@ -329,7 +493,10 @@ export type IMConfig = {
   // Legacy single token field (backward compat)
   token_env?: string;
   token?: string;
-  // Dual token fields for Slack (bot_token for outbound, app_token for inbound)
+  // Canonical token fields
+  bot_token?: string;
+  app_token?: string;
+  // Token env fields (Slack/Telegram/Discord)
   bot_token_env?: string;
   app_token_env?: string;
   // Feishu fields

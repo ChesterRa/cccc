@@ -74,7 +74,6 @@ def handle_actor_add(
 
         linked_profile: Optional[Dict[str, Any]] = None
         linked_profile_id = ""
-        linked_profile_legacy_env: Dict[str, str] = {}
         if profile_id:
             linked_profile_id = profile_id
             linked_profile = get_actor_profile(linked_profile_id)
@@ -84,17 +83,7 @@ def handle_actor_add(
             requested_runner = str(linked_profile.get("runner") or "pty").strip() or "pty"
             submit = str(linked_profile.get("submit") or submit or "enter").strip() or "enter"
             linked_profile_secrets = load_actor_profile_secrets(linked_profile_id)
-            profile_env_raw = linked_profile.get("env")
-            if isinstance(profile_env_raw, dict):
-                linked_profile_legacy_env = {
-                    str(key): str(value)
-                    for key, value in profile_env_raw.items()
-                    if isinstance(key, str) and value is not None and str(key).strip()
-                }
-            merged_profile_vars: Dict[str, str] = {}
-            merged_profile_vars.update(linked_profile_legacy_env)
-            merged_profile_vars.update(linked_profile_secrets)
-            if len(merged_profile_vars) > private_env_max_keys:
+            if len(linked_profile_secrets) > private_env_max_keys:
                 raise ValueError("too many profile private env keys configured")
 
         runner = requested_runner or ("pty" if pty_supported() else "headless")

@@ -53,7 +53,8 @@ const SIDEBAR_COLLAPSED_KEY = "cccc-sidebar-collapsed";
 function loadSidebarCollapsed(): boolean {
   try {
     return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
-  } catch {
+  } catch (e) {
+    console.warn("Failed to read sidebar state from localStorage:", e);
     return false;
   }
 }
@@ -61,8 +62,8 @@ function loadSidebarCollapsed(): boolean {
 function saveSidebarCollapsed(collapsed: boolean): void {
   try {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
-  } catch {
-    // Ignore storage errors
+  } catch (e) {
+    console.warn("Failed to persist sidebar state to localStorage:", e);
   }
 }
 

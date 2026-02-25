@@ -29,6 +29,21 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             self.assertIsInstance(props, dict, msg=f"MCP_TOOLS[{idx}] inputSchema.properties must be dict")
             self.assertIsInstance(required, list, msg=f"MCP_TOOLS[{idx}] inputSchema.required must be list")
 
+    def test_space_query_toolspec_options_are_explicit(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_space_query"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        options = props.get("options") if isinstance(props, dict) else {}
+        self.assertIsInstance(options, dict)
+        opt_props = options.get("properties") if isinstance(options, dict) else {}
+        self.assertIsInstance(opt_props, dict)
+        self.assertIn("source_ids", opt_props)
+        self.assertNotIn("language", opt_props)
+        self.assertNotIn("lang", opt_props)
+
 
 if __name__ == "__main__":
     unittest.main()
