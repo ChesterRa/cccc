@@ -8,10 +8,13 @@ class TestEventKindModelParity(unittest.TestCase):
         from cccc.contracts.v1.event import _KIND_TO_MODEL
 
         repo_root = Path(__file__).resolve().parents[1]
+        cli_file = repo_root / "src" / "cccc" / "cli.py"
+        cli_main_file = repo_root / "src" / "cccc" / "cli" / "main.py"
+        cli_source = cli_file if cli_file.exists() else cli_main_file
         files = [
             *Path(repo_root / "src" / "cccc" / "daemon").glob("**/*.py"),
             *Path(repo_root / "src" / "cccc" / "kernel").glob("**/*.py"),
-            repo_root / "src" / "cccc" / "cli.py",
+            cli_source,
         ]
 
         pattern = re.compile(r'append_event\([^\)]*?kind\s*=\s*"([a-z0-9_.-]+)"', re.S)

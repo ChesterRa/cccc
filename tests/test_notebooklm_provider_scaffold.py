@@ -82,7 +82,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
         self.assertEqual(str((cookies[0] if cookies else {}).get("value") or ""), "abc123")
 
     def test_real_mode_takes_precedence_over_stub_mode(self) -> None:
-        from cccc.daemon.group_space_provider import SpaceProviderError, provider_query
+        from cccc.daemon.space.group_space_provider import SpaceProviderError, provider_query
 
         with patch.dict(os.environ, {}, clear=False):
             with tempfile.TemporaryDirectory() as td:
@@ -90,7 +90,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
                 os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
                 os.environ["CCCC_NOTEBOOKLM_STUB"] = "1"
                 os.environ.pop("CCCC_NOTEBOOKLM_AUTH_JSON", None)
-                with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
+                with patch("cccc.daemon.space.group_space_provider.notebooklm_real_enabled", return_value=True):
                     with self.assertRaises(SpaceProviderError) as ctx:
                         provider_query(
                             "notebooklm",
@@ -102,12 +102,12 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
                 self.assertTrue(ctx.exception.degrade_provider)
 
     def test_invalid_auth_json_is_mapped_to_space_provider_error(self) -> None:
-        from cccc.daemon.group_space_provider import SpaceProviderError, provider_ingest
+        from cccc.daemon.space.group_space_provider import SpaceProviderError, provider_ingest
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
             os.environ["CCCC_NOTEBOOKLM_AUTH_JSON"] = "{bad-json"
-            with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
+            with patch("cccc.daemon.space.group_space_provider.notebooklm_real_enabled", return_value=True):
                 with self.assertRaises(SpaceProviderError) as ctx:
                     provider_ingest(
                         "notebooklm",
@@ -120,7 +120,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             self.assertFalse(ctx.exception.transient)
 
     def test_compat_mismatch_is_mapped_to_space_provider_error(self) -> None:
-        from cccc.daemon.group_space_provider import SpaceProviderError, provider_query
+        from cccc.daemon.space.group_space_provider import SpaceProviderError, provider_query
         from cccc.providers.notebooklm.compat import NotebookLMCompatStatus
 
         with patch.dict(os.environ, {}, clear=False):
@@ -128,7 +128,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             os.environ["CCCC_NOTEBOOKLM_AUTH_JSON"] = (
                 '{"cookies":[{"name":"__Secure-1PSID","value":"x","domain":".google.com"}]}'
             )
-            with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
+            with patch("cccc.daemon.space.group_space_provider.notebooklm_real_enabled", return_value=True):
                 with patch(
                     "cccc.providers.notebooklm.health.probe_notebooklm_vendor",
                     return_value=NotebookLMCompatStatus(compatible=False, reason="forced mismatch"),
@@ -144,7 +144,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             self.assertTrue(ctx.exception.degrade_provider)
 
     def test_real_adapter_maps_unexpected_runtime_error(self) -> None:
-        from cccc.daemon.group_space_provider import SpaceProviderError, provider_query
+        from cccc.daemon.space.group_space_provider import SpaceProviderError, provider_query
         from cccc.providers.notebooklm.compat import NotebookLMCompatStatus
 
         def _boom(coro):
@@ -156,7 +156,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             os.environ["CCCC_NOTEBOOKLM_AUTH_JSON"] = (
                 '{"cookies":[{"name":"__Secure-1PSID","value":"x","domain":".google.com"}]}'
             )
-            with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
+            with patch("cccc.daemon.space.group_space_provider.notebooklm_real_enabled", return_value=True):
                 with patch(
                     "cccc.providers.notebooklm.health.probe_notebooklm_vendor",
                     return_value=NotebookLMCompatStatus(compatible=True, reason="ok"),
@@ -177,7 +177,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             self.assertFalse(ctx.exception.degrade_provider)
 
     def test_real_adapter_query_success_path_via_runner_mock(self) -> None:
-        from cccc.daemon.group_space_provider import provider_query
+        from cccc.daemon.space.group_space_provider import provider_query
         from cccc.providers.notebooklm.compat import NotebookLMCompatStatus
 
         def _ok(coro):
@@ -189,7 +189,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             os.environ["CCCC_NOTEBOOKLM_AUTH_JSON"] = (
                 '{"cookies":[{"name":"__Secure-1PSID","value":"x","domain":".google.com"}]}'
             )
-            with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
+            with patch("cccc.daemon.space.group_space_provider.notebooklm_real_enabled", return_value=True):
                 with patch(
                     "cccc.providers.notebooklm.health.probe_notebooklm_vendor",
                     return_value=NotebookLMCompatStatus(compatible=True, reason="ok"),
@@ -209,7 +209,7 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
         self.assertEqual(len(refs), 1)
 
     def test_notebooklm_error_flags_are_preserved_by_provider_mapping(self) -> None:
-        from cccc.daemon.group_space_provider import SpaceProviderError, provider_ingest
+        from cccc.daemon.space.group_space_provider import SpaceProviderError, provider_ingest
         from cccc.providers.notebooklm.errors import NotebookLMProviderError
 
         class _DummyAdapter:
@@ -222,8 +222,8 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
                     degrade_provider=False,
                 )
 
-        with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
-            with patch("cccc.daemon.group_space_provider.get_notebooklm_adapter", return_value=_DummyAdapter()):
+        with patch("cccc.daemon.space.group_space_provider.notebooklm_real_enabled", return_value=True):
+            with patch("cccc.daemon.space.group_space_provider.get_notebooklm_adapter", return_value=_DummyAdapter()):
                 with self.assertRaises(SpaceProviderError) as ctx:
                     provider_ingest(
                         "notebooklm",

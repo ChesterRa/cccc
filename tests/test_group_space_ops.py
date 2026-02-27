@@ -179,7 +179,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         try:
             gid = self._create_group("space-list-notebooks")
             with patch(
-                "cccc.daemon.ops.group_space_ops.provider_list_spaces",
+                "cccc.daemon.space.group_space_ops.provider_list_spaces",
                 return_value={
                     "provider": "notebooklm",
                     "spaces": [
@@ -470,9 +470,9 @@ class TestGroupSpaceOps(unittest.TestCase):
                 captured["output_path"] = output_path
                 return {"output_path": output_path, "downloaded": True}
 
-            with patch("cccc.daemon.ops.group_space_ops.provider_generate_artifact", side_effect=_gen), \
-                 patch("cccc.daemon.ops.group_space_ops.provider_list_artifacts", side_effect=_list), \
-                 patch("cccc.daemon.ops.group_space_ops.provider_download_artifact", side_effect=_download):
+            with patch("cccc.daemon.space.group_space_ops.provider_generate_artifact", side_effect=_gen), \
+                 patch("cccc.daemon.space.group_space_ops.provider_list_artifacts", side_effect=_list), \
+                 patch("cccc.daemon.space.group_space_ops.provider_download_artifact", side_effect=_download):
                 generated, _ = self._call(
                     "group_space_artifact",
                     {
@@ -650,7 +650,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 release.wait(2.0)
                 return {"answer": "ok", "references": [], "degraded": False, "error": None}
 
-            with patch("cccc.daemon.ops.group_space_ops.run_space_query", side_effect=_slow_query):
+            with patch("cccc.daemon.space.group_space_ops.run_space_query", side_effect=_slow_query):
                 def _run_first() -> None:
                     resp, _ = self._call(
                         "group_space_query",
@@ -735,8 +735,8 @@ class TestGroupSpaceOps(unittest.TestCase):
                 time.sleep(1.0)
                 return {"task_id": task_id, "status": "completed"}
 
-            with patch("cccc.daemon.ops.group_space_ops.provider_generate_artifact", side_effect=_fake_generate), patch(
-                "cccc.daemon.ops.group_space_ops.provider_wait_artifact",
+            with patch("cccc.daemon.space.group_space_ops.provider_generate_artifact", side_effect=_fake_generate), patch(
+                "cccc.daemon.space.group_space_ops.provider_wait_artifact",
                 side_effect=_fake_wait,
             ):
                 first, _ = self._call(
@@ -815,10 +815,10 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertTrue(bind.ok, getattr(bind, "error", None))
 
             with patch(
-                "cccc.daemon.ops.group_space_ops.provider_generate_artifact",
+                "cccc.daemon.space.group_space_ops.provider_generate_artifact",
                 return_value={"task_id": "task_notify_1", "status": "pending"},
             ), patch(
-                "cccc.daemon.ops.group_space_ops.provider_wait_artifact",
+                "cccc.daemon.space.group_space_ops.provider_wait_artifact",
                 return_value={"task_id": "task_notify_1", "status": "completed"},
             ):
                 generated, _ = self._call(
@@ -891,10 +891,10 @@ class TestGroupSpaceOps(unittest.TestCase):
                 return {"task_id": "task_slow_1", "status": "pending"}
 
             with patch(
-                "cccc.daemon.ops.group_space_ops.provider_generate_artifact",
+                "cccc.daemon.space.group_space_ops.provider_generate_artifact",
                 side_effect=_slow_generate,
             ), patch(
-                "cccc.daemon.ops.group_space_ops.provider_wait_artifact",
+                "cccc.daemon.space.group_space_ops.provider_wait_artifact",
                 return_value={"task_id": "task_slow_1", "status": "completed"},
             ):
                 started = time.monotonic()
@@ -1039,10 +1039,10 @@ class TestGroupSpaceOps(unittest.TestCase):
             retried_job = (retried.result or {}).get("job") if isinstance(retried.result, dict) else {}
             self.assertEqual(str(retried_job.get("state") or ""), "failed")
 
-            from cccc.daemon.group_space_store import get_space_job
+            from cccc.daemon.space.group_space_store import get_space_job
 
             with patch(
-                "cccc.daemon.ops.group_space_ops.execute_space_job",
+                "cccc.daemon.space.group_space_ops.execute_space_job",
                 side_effect=lambda job_id: get_space_job(job_id),
             ):
                 pending_ingest, _ = self._call(
@@ -1170,7 +1170,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         _, cleanup = self._with_home()
         try:
             with patch(
-                "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                "cccc.daemon.space.group_space_ops.notebooklm_health_check",
                 return_value={"provider": "notebooklm", "enabled": True, "compatible": True, "reason": "ok"},
             ):
                 ok_resp, _ = self._call(
@@ -1182,7 +1182,7 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(bool(ok_result.get("healthy")), True)
 
             with patch(
-                "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                "cccc.daemon.space.group_space_ops.notebooklm_health_check",
                 side_effect=NotebookLMProviderError(
                     code="space_provider_auth_invalid",
                     message="auth invalid",
@@ -1203,14 +1203,14 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup()
 
     def test_provider_health_check_compat_mismatch_marks_degraded_when_enabled(self) -> None:
-        from cccc.daemon.group_space_store import set_space_provider_state
+        from cccc.daemon.space.group_space_store import set_space_provider_state
         from cccc.providers.notebooklm.errors import NotebookLMProviderError
 
         _, cleanup = self._with_home()
         try:
             set_space_provider_state("notebooklm", enabled=True, mode="active", last_error="", touch_health=True)
             with patch(
-                "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                "cccc.daemon.space.group_space_ops.notebooklm_health_check",
                 side_effect=NotebookLMProviderError(
                     code="space_provider_compat_mismatch",
                     message="vendor package unavailable",
@@ -1236,7 +1236,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         _, cleanup = self._with_home()
         try:
             with patch(
-                "cccc.daemon.ops.group_space_ops.start_notebooklm_auth_flow",
+                "cccc.daemon.space.group_space_ops.start_notebooklm_auth_flow",
                 return_value={
                     "provider": "notebooklm",
                     "state": "running",
@@ -1244,14 +1244,14 @@ class TestGroupSpaceOps(unittest.TestCase):
                     "session_id": "nbl_auth_1",
                 },
             ) as start_mock, patch(
-                "cccc.daemon.ops.group_space_ops.get_notebooklm_auth_flow_status",
+                "cccc.daemon.space.group_space_ops.get_notebooklm_auth_flow_status",
                 return_value={
                     "provider": "notebooklm",
                     "state": "running",
                     "phase": "waiting_user_login",
                 },
             ) as status_mock, patch(
-                "cccc.daemon.ops.group_space_ops.cancel_notebooklm_auth_flow",
+                "cccc.daemon.space.group_space_ops.cancel_notebooklm_auth_flow",
                 return_value={
                     "provider": "notebooklm",
                     "state": "running",
@@ -1388,10 +1388,10 @@ class TestGroupSpaceOps(unittest.TestCase):
         try:
             gid = self._create_group("Space Auto Bind")
             with patch(
-                "cccc.daemon.ops.group_space_ops.provider_create_space",
+                "cccc.daemon.space.group_space_ops.provider_create_space",
                 return_value={"provider": "notebooklm", "remote_space_id": "nb_auto_1", "created": True},
             ) as create_mock, patch(
-                "cccc.daemon.ops.group_space_ops.sync_group_space_files",
+                "cccc.daemon.space.group_space_ops.sync_group_space_files",
                 return_value={"ok": True, "converged": True, "unsynced_count": 0},
             ):
                 bind, _ = self._call(
@@ -1415,7 +1415,7 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup()
 
     def test_notebooklm_auth_verification_works_inside_running_event_loop(self) -> None:
-        from cccc.daemon import notebooklm_auth_flow as auth_flow
+        from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
         fake_vendor_module = types.ModuleType("notebooklm_auth_fake")
 
@@ -1457,7 +1457,7 @@ class TestGroupSpaceOps(unittest.TestCase):
     def test_notebooklm_auth_browser_profile_is_persistent_under_home(self) -> None:
         _, cleanup = self._with_home()
         try:
-            from cccc.daemon import notebooklm_auth_flow as auth_flow
+            from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
             profile_a = auth_flow._managed_browser_profile_dir()
             profile_b = auth_flow._managed_browser_profile_dir()
@@ -1469,7 +1469,7 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup()
 
     def test_notebooklm_auth_flow_reuses_saved_credential_without_browser(self) -> None:
-        from cccc.daemon import notebooklm_auth_flow as auth_flow
+        from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
         saved_storage = {
             "cookies": [{"name": "SID", "value": "saved", "domain": ".google.com", "path": "/"}],

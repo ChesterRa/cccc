@@ -84,7 +84,7 @@ im:
 
 ### Start the Bridge
 
-**Via Web UI**: Click **Save Config** — the bridge starts automatically and shows **Running** status.
+**Via Web UI**: Click **Save Config** to save configuration, then click **Start Bridge** to start and show **Running** status.
 
 **Via CLI**:
 

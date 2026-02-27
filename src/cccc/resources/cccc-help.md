@@ -128,6 +128,21 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
 - Session: `cccc_bootstrap`
 - Group: `cccc_group_info`, `cccc_actor_list`, `cccc_group_set_state`
 
+### Capability hygiene (keep MCP surface lean)
+
+- Discover first: `cccc_capability_search`
+- Enable only what is needed now: `cccc_capability_enable` (prefer `scope=session`)
+- Fast path for execution: `cccc_capability_use` (auto-enable + optional tool call)
+- Skills use the same control plane:
+  - One-off skill activation: `cccc_capability_use(capability_id=skill:..., scope=session)`
+  - Pin/unpin stable skill baseline: `cccc_capability_enable(scope=actor, enabled=true|false)`
+- Verify current exposure: `cccc_capability_state`
+- Temporary stop only (keep cache warm): `cccc_capability_enable(enabled=false)`
+- Stop + best-effort cache cleanup in one call: `cccc_capability_enable(enabled=false, cleanup=true)`
+- After task completion, clean up unused external capability cache/bindings:
+  `cccc_capability_uninstall` (user/foreman)
+- If enable/uninstall returns `refresh_required=true`, relist tools or reconnect runtime.
+
 ### Automation tools (when needed)
 
 - Read current automation: `cccc_automation_state`

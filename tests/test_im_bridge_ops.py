@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cccc.daemon.im_bridge_ops import cleanup_invalid_im_bridges, stop_all_im_bridges, stop_im_bridges_for_group
+from cccc.daemon.im.im_bridge_ops import cleanup_invalid_im_bridges, stop_all_im_bridges, stop_im_bridges_for_group
 
 
 class TestImBridgeOps(unittest.TestCase):

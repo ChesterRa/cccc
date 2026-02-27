@@ -53,7 +53,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 "cccc.ports.web" = ["dist/**"]
-"cccc.resources" = ["*.md"]
+"cccc.resources" = ["*.md", "*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

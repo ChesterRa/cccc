@@ -3,7 +3,7 @@ import unittest
 
 class TestDeliveryThrottle(unittest.TestCase):
     def test_reset_actor_keeps_pending_messages(self) -> None:
-        from cccc.daemon.delivery import DeliveryThrottle
+        from cccc.daemon.messaging.delivery import DeliveryThrottle
 
         t = DeliveryThrottle()
         t.queue_message(
@@ -26,7 +26,7 @@ class TestDeliveryThrottle(unittest.TestCase):
         self.assertEqual(pending[0].text, "hello")
 
     def test_clear_actor_drops_pending_messages(self) -> None:
-        from cccc.daemon.delivery import DeliveryThrottle
+        from cccc.daemon.messaging.delivery import DeliveryThrottle
 
         t = DeliveryThrottle()
         t.queue_message(
@@ -44,7 +44,7 @@ class TestDeliveryThrottle(unittest.TestCase):
         self.assertFalse(t.has_pending("g1", "a1"))
 
     def test_get_delivery_config_falls_back_on_invalid_min_interval(self) -> None:
-        from cccc.daemon.delivery import _get_delivery_config
+        from cccc.daemon.messaging.delivery import _get_delivery_config
 
         class _G:
             doc = {"delivery": {"min_interval_seconds": "invalid", "auto_mark_on_delivery": "true"}}
@@ -54,7 +54,7 @@ class TestDeliveryThrottle(unittest.TestCase):
         self.assertTrue(bool(cfg.get("auto_mark_on_delivery")))
 
     def test_get_delivery_config_clamps_negative_min_interval(self) -> None:
-        from cccc.daemon.delivery import _get_delivery_config
+        from cccc.daemon.messaging.delivery import _get_delivery_config
 
         class _G:
             doc = {"delivery": {"min_interval_seconds": -5}}

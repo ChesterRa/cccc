@@ -1,0 +1,266 @@
+schema_version: 1
+policy_id: cccc-capability-allowlist-2026-02-26
+snapshot_date: "2026-02-26"
+description: >
+  Baseline capability allowlist for CCCC MCP/skills dynamic disclosure.
+  Goal: maximize practical capability boundary with controlled risk and
+  predictable runtime behavior.
+
+level_semantics:
+  indexed: "Synced in local catalog only; not shown in normal search results."
+  mounted: "Visible/discoverable; can be enabled on demand."
+  enabled: "Enabled by default for runtime (without pin)."
+  pinned: "Actor baseline capability/skill, persistently enabled for that role."
+
+defaults:
+  source_level:
+    cccc_builtin: enabled
+    anthropic_skills: mounted
+    mcp_registry_official: indexed
+    agentskills_validator: indexed
+
+  # Matches current CCCC implementation boundary.
+  install_mode_allowlist:
+    - remote_only
+    - package:npm
+
+  install_mode_manual_review:
+    - package:pypi
+    - package:oci
+    - package:nuget
+    - package:mcpb
+    - package:unknown
+
+  risk_tags_require_approval:
+    - computer_use
+    - desktop_control
+    - terminal_exec
+    - trading
+    - payment_write
+
+sources:
+  - source_id: cccc_builtin
+    enabled: true
+    rationale: "Core CCCC packs; always available."
+  - source_id: anthropic_skills
+    enabled: true
+    rationale: "Official Anthropic skill source."
+  - source_id: mcp_registry_official
+    enabled: true
+    rationale: "Primary MCP discovery source (local snapshot + on-demand fallback)."
+  - source_id: agentskills_validator
+    enabled: true
+    rationale: "Schema/validator baseline, not treated as market source."
+
+mcp_overrides:
+  # --------------------------------------------------------------------------
+  # Tier A: default mounted (high utility, reasonable trust, practical today)
+  # --------------------------------------------------------------------------
+  - capability_id: mcp:io.github.github/github-mcp-server
+    level: mounted
+    trust: high
+    install_mode_preference: remote_only
+    notes: "Official GitHub MCP; broad repo/issue/PR workflows."
+
+  - capability_id: mcp:io.github.ChromeDevTools/chrome-devtools-mcp
+    level: enabled
+    trust: high
+    install_mode_preference: package:npm
+    notes: "High-ROI browser debugging/inspection for engineering tasks."
+
+  - capability_id: mcp:io.github.brave/brave-search-mcp-server
+    level: mounted
+    trust: high
+    install_mode_preference: package:npm
+    required_secrets:
+      - BRAVE_API_KEY
+    notes: "High-quality web retrieval."
+
+  - capability_id: mcp:com.atlassian/atlassian-mcp-server
+    level: mounted
+    trust: high
+    install_mode_preference: remote_only
+    notes: "Official Atlassian MCP (Jira/Confluence ecosystem)."
+
+  - capability_id: mcp:com.gitlab/mcp
+    level: mounted
+    trust: high
+    install_mode_preference: remote_only
+    notes: "Official GitLab MCP."
+
+  - capability_id: mcp:com.supabase/mcp
+    level: mounted
+    trust: high
+    install_mode_preference: package:npm
+    required_secrets:
+      - SUPABASE_ACCESS_TOKEN
+    notes: "Common backend/data workflows for dev teams."
+
+  - capability_id: mcp:io.github.getsentry/sentry-mcp
+    level: mounted
+    trust: high
+    install_mode_preference: package:npm
+    required_secrets:
+      - SENTRY_ACCESS_TOKEN
+    notes: "Production debugging and issue triage."
+
+  - capability_id: mcp:com.cloudflare.mcp/mcp
+    level: mounted
+    trust: high
+    install_mode_preference: remote_only
+    notes: "Infra/network/platform operations; remote auth expected."
+
+  - capability_id: mcp:app.linear/linear
+    level: mounted
+    trust: medium
+    install_mode_preference: remote_only
+    notes: "Project/issue management."
+
+  - capability_id: mcp:com.notion/mcp
+    level: mounted
+    trust: medium
+    install_mode_preference: remote_only
+    notes: "Knowledge/doc workflows."
+
+  - capability_id: mcp:io.github.browserbase/mcp-server-browserbase
+    level: mounted
+    trust: medium
+    install_mode_preference: package:npm
+    required_secrets:
+      - BROWSERBASE_API_KEY
+      - BROWSERBASE_PROJECT_ID
+      - GEMINI_API_KEY
+    notes: "Powerful browser automation; key-heavy setup."
+
+  - capability_id: mcp:com.make/mcp-server
+    level: mounted
+    trust: medium
+    install_mode_preference: remote_only
+    notes: "Workflow automation orchestrator."
+
+  - capability_id: mcp:ai.com.mcp/registry
+    level: mounted
+    trust: medium
+    install_mode_preference: remote_only
+    notes: "MCP ecosystem self-discovery."
+
+  - capability_id: mcp:ai.com.mcp/skills-search
+    level: mounted
+    trust: medium
+    install_mode_preference: remote_only
+    notes: "AgentSkills discovery bridge."
+
+  # --------------------------------------------------------------------------
+  # Tier B: indexed only (high risk, high privilege, or unsupported installer)
+  # --------------------------------------------------------------------------
+  - capability_id: mcp:io.github.domdomegg/computer-use-mcp
+    level: indexed
+    trust: medium
+    install_mode_preference: package:npm
+    risk_tags:
+      - computer_use
+      - desktop_control
+    notes: "Powerful desktop control; requires explicit promotion/approval."
+
+  - capability_id: mcp:io.github.CursorTouch/Windows-MCP
+    level: indexed
+    trust: medium
+    install_mode_preference: package:pypi
+    risk_tags:
+      - computer_use
+      - desktop_control
+    notes: "Windows computer-use MCP; currently outside default installer support."
+
+  - capability_id: mcp:io.github.hummingbot/mcp
+    level: indexed
+    trust: medium
+    install_mode_preference: package:oci
+    risk_tags:
+      - trading
+    notes: "Trading execution domain; keep indexed by default."
+
+  - capability_id: mcp:agency.lona/trading
+    level: indexed
+    trust: medium
+    install_mode_preference: remote_only
+    risk_tags:
+      - trading
+    notes: "Trading analytics/execution domain; explicit promotion only."
+
+  - capability_id: mcp:com.stripe/mcp
+    level: indexed
+    trust: high
+    install_mode_preference: remote_only
+    risk_tags:
+      - payment_write
+    notes: "Financial/payment mutation potential; keep out of default mounted set."
+
+  - capability_id: mcp:io.github.amol21p/interactive-terminal
+    level: indexed
+    trust: medium
+    install_mode_preference: package:npm
+    risk_tags:
+      - terminal_exec
+    notes: "Interactive terminal surface is high privilege."
+
+skills:
+  source_overrides:
+    - source_id: anthropic_skills
+      level: mounted
+      rationale: "Official high-quality skill corpus."
+
+  # Keep all official Anthropic skills discoverable by default.
+  official_anthropic:
+    - capability_id: skill:anthropic:algorithmic-art
+      level: mounted
+    - capability_id: skill:anthropic:brand-guidelines
+      level: mounted
+    - capability_id: skill:anthropic:canvas-design
+      level: mounted
+    - capability_id: skill:anthropic:doc-coauthoring
+      level: mounted
+    - capability_id: skill:anthropic:docx
+      level: mounted
+    - capability_id: skill:anthropic:frontend-design
+      level: mounted
+    - capability_id: skill:anthropic:internal-comms
+      level: mounted
+    - capability_id: skill:anthropic:mcp-builder
+      level: pinned
+      pinned_roles: [foreman]
+    - capability_id: skill:anthropic:pdf
+      level: mounted
+    - capability_id: skill:anthropic:pptx
+      level: mounted
+    - capability_id: skill:anthropic:skill-creator
+      level: pinned
+      pinned_roles: [foreman]
+    - capability_id: skill:anthropic:slack-gif-creator
+      level: mounted
+    - capability_id: skill:anthropic:theme-factory
+      level: mounted
+    - capability_id: skill:anthropic:web-artifacts-builder
+      level: mounted
+    - capability_id: skill:anthropic:webapp-testing
+      level: enabled
+    - capability_id: skill:anthropic:xlsx
+      level: mounted
+
+role_defaults:
+  foreman:
+    pinned:
+      - skill:anthropic:mcp-builder
+      - skill:anthropic:skill-creator
+  peer:
+    pinned: []
+  auditor:
+    pinned: []
+
+operations:
+  suggested_promotions:
+    - "Promote indexed -> mounted only after smoke test + auth check + tool schema sanity."
+    - "Promote mounted -> enabled only when call success rate is stable and context budget allows."
+    - "Use pinned sparingly; keep actor prompt baseline minimal."
+  suggested_demotions:
+    - "Demote to indexed on repeated auth/install failures, long tail latency, or unsafe behavior."
+

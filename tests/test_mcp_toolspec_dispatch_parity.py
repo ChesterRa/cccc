@@ -22,9 +22,17 @@ class TestMcpToolspecDispatchParity(unittest.TestCase):
         }
 
         repo_root = Path(__file__).resolve().parents[1]
-        server_path = repo_root / "src" / "cccc" / "ports" / "mcp" / "server.py"
-        text = server_path.read_text(encoding="utf-8")
-        impl_names = set(re.findall(r'if name == "([a-z0-9_]+)"', text))
+        mcp_dir = repo_root / "src" / "cccc" / "ports" / "mcp"
+        impl_names = set()
+
+        scan_files = [mcp_dir / "server.py"]
+        handlers_dir = mcp_dir / "handlers"
+        if handlers_dir.exists():
+            scan_files.extend(sorted(handlers_dir.glob("*.py")))
+
+        for file_path in scan_files:
+            text = file_path.read_text(encoding="utf-8")
+            impl_names.update(re.findall(r'if name == "([a-z0-9_]+)"', text))
 
         self.assertEqual(
             sorted(spec_names - impl_names),

@@ -18,6 +18,7 @@ Use this section based on your role and goal.
 
 - [Operations Runbook](/guide/operations) for triage, recovery, and upgrade flow
 - [Web UI Guide](/guide/web-ui) for control-plane behavior
+- [Capability Allowlist Baseline](/guide/capability-allowlist) for MCP/skill curation levels
 - [IM Bridge](/guide/im-bridge/) for mobile/remote operations
 
 ## If You Need Troubleshooting

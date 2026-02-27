@@ -44,6 +44,51 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertNotIn("language", opt_props)
         self.assertNotIn("lang", opt_props)
 
+    def test_memory_guide_topic_enum_is_strict(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory_guide"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        topic = props.get("topic") if isinstance(props, dict) else {}
+        self.assertIsInstance(topic, dict)
+        self.assertEqual(topic.get("enum"), ["store", "search", "consolidation", "lifecycle"])
+        required = schema.get("required") if isinstance(schema, dict) else []
+        self.assertEqual(required, ["topic"])
+
+
+    def test_memory_kind_enum_matches_kernel(self) -> None:
+        """W4 regression: MCP kind enums must match kernel MEMORY_KINDS."""
+        from cccc.kernel.memory import MEMORY_KINDS, MEMORY_SOURCE_TYPES
+
+        kernel_kinds = set(MEMORY_KINDS)
+        kernel_source_types = set(MEMORY_SOURCE_TYPES)
+        for spec in MCP_TOOLS:
+            name = str(spec.get("name") or "")
+            if name not in ("cccc_memory_store", "cccc_memory_search"):
+                continue
+            schema = spec.get("inputSchema") or {}
+            props = schema.get("properties") or {}
+            kind_prop = props.get("kind") or {}
+            mcp_enum = kind_prop.get("enum")
+            self.assertIsNotNone(mcp_enum, msg=f"{name} kind missing enum")
+            self.assertEqual(
+                set(mcp_enum),
+                kernel_kinds,
+                msg=f"{name} kind enum mismatch with MEMORY_KINDS",
+            )
+
+            if name == "cccc_memory_store":
+                source_type_prop = props.get("source_type") or {}
+                source_enum = source_type_prop.get("enum")
+                self.assertIsNotNone(source_enum, msg=f"{name} source_type missing enum")
+                self.assertEqual(
+                    set(source_enum),
+                    kernel_source_types,
+                    msg=f"{name} source_type enum mismatch with MEMORY_SOURCE_TYPES",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

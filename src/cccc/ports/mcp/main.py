@@ -17,7 +17,60 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from ... import __version__
-from .server import MCP_TOOLS, MCPError, handle_tool_call
+from .server import MCPError, handle_tool_call, list_tools_for_caller
+
+_SESSION_SUPPORTS_TOOLS_LIST_CHANGED = False
+_PENDING_NOTIFICATIONS: List[Dict[str, Any]] = []
+
+
+def _set_session_client_capabilities(params: Dict[str, Any]) -> None:
+    global _SESSION_SUPPORTS_TOOLS_LIST_CHANGED, _PENDING_NOTIFICATIONS
+    supports = False
+    caps = params.get("capabilities")
+    if isinstance(caps, dict):
+        tools_caps = caps.get("tools")
+        if isinstance(tools_caps, dict):
+            supports = bool(tools_caps.get("listChanged"))
+    _SESSION_SUPPORTS_TOOLS_LIST_CHANGED = supports
+    _PENDING_NOTIFICATIONS = []
+
+
+def _enqueue_tools_list_changed_notification() -> None:
+    _PENDING_NOTIFICATIONS.append(
+        {
+            "jsonrpc": "2.0",
+            "method": "notifications/tools/list_changed",
+            "params": {},
+        }
+    )
+
+
+def _drain_pending_notifications() -> List[Dict[str, Any]]:
+    global _PENDING_NOTIFICATIONS
+    out = list(_PENDING_NOTIFICATIONS)
+    _PENDING_NOTIFICATIONS = []
+    return out
+
+
+def _reset_session_state_for_tests() -> None:
+    global _SESSION_SUPPORTS_TOOLS_LIST_CHANGED, _PENDING_NOTIFICATIONS
+    _SESSION_SUPPORTS_TOOLS_LIST_CHANGED = False
+    _PENDING_NOTIFICATIONS = []
+
+
+def _decode_cursor(cursor: Any) -> int:
+    raw = str(cursor or "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except Exception:
+        value = 0
+    return max(0, value)
+
+
+def _encode_cursor(offset: int) -> str:
+    return str(max(0, int(offset)))
 
 
 def _read_message() -> Optional[Dict[str, Any]]:
@@ -58,10 +111,13 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
 
     # MCP protocol methods
     if method == "initialize":
+        _set_session_client_capabilities(params if isinstance(params, dict) else {})
         return _make_response(req_id, {
             "protocolVersion": "2024-11-05",
             "capabilities": {
-                "tools": {},
+                "tools": {
+                    "listChanged": True,
+                },
                 # Some MCP clients probe these even if unused; return empty lists below.
                 "resources": {},
                 "prompts": {},
@@ -77,7 +133,18 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
         return {}
 
     if method == "tools/list":
-        return _make_response(req_id, {"tools": MCP_TOOLS})
+        tools = list_tools_for_caller()
+        cursor = _decode_cursor(params.get("cursor"))
+        try:
+            limit = int(params.get("limit") or 100)
+        except Exception:
+            limit = 100
+        limit = max(1, min(limit, 200))
+        page = tools[cursor : cursor + limit]
+        next_cursor = ""
+        if cursor + limit < len(tools):
+            next_cursor = _encode_cursor(cursor + limit)
+        return _make_response(req_id, {"tools": page, "nextCursor": next_cursor})
 
     # Optional MCP surfaces (return empty to avoid noisy "Method not found" in some runtimes)
     if method == "resources/list":
@@ -101,6 +168,19 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
 
         try:
             result = handle_tool_call(tool_name, arguments)
+            refresh_required = False
+            if isinstance(result, dict):
+                if bool(result.get("refresh_required")):
+                    refresh_required = True
+                enable_result = result.get("enable_result")
+                if isinstance(enable_result, dict) and bool(enable_result.get("refresh_required")):
+                    refresh_required = True
+            if (
+                tool_name in {"cccc_capability_enable", "cccc_capability_uninstall", "cccc_capability_use"}
+                and refresh_required
+                and _SESSION_SUPPORTS_TOOLS_LIST_CHANGED
+            ):
+                _enqueue_tools_list_changed_notification()
             return _make_response(req_id, {
                 "content": [
                     {
@@ -155,6 +235,8 @@ def main() -> int:
         resp = handle_request(msg)
         if resp:  # Notifications return {}
             _write_message(resp)
+        for note in _drain_pending_notifications():
+            _write_message(note)
 
     return 0
 

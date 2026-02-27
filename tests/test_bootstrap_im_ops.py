@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cccc.daemon.bootstrap_im_ops import autostart_enabled_im_bridges
+from cccc.daemon.im.bootstrap_im_ops import autostart_enabled_im_bridges
 
 
 class TestBootstrapImOps(unittest.TestCase):
@@ -41,7 +41,7 @@ class TestBootstrapImOps(unittest.TestCase):
         try:
             create, _ = self._call("group_create", {"title": "no-im", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
-            with patch("cccc.daemon.bootstrap_im_ops.subprocess.Popen") as mock_popen:
+            with patch("cccc.daemon.im.bootstrap_im_ops.subprocess.Popen") as mock_popen:
                 autostart_enabled_im_bridges(home)
                 mock_popen.assert_not_called()
         finally:

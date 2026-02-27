@@ -11,6 +11,8 @@ class TestMcpBootstrapLedgerTail(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.kernel.registry import load_registry
         from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_core, cccc_group_actor
+        from cccc.ports.mcp.handlers import context as cccc_context
 
         old_home = os.environ.get("CCCC_HOME")
         try:
@@ -75,14 +77,14 @@ class TestMcpBootstrapLedgerTail(unittest.TestCase):
 
                 common_patches = [
                     patch.object(
-                        mcp_server,
+                        cccc_group_actor,
                         "group_info",
                         return_value={"group": {"group_id": group.group_id}},
                     ),
-                    patch.object(mcp_server, "actor_list", return_value={"actors": []}),
-                    patch.object(mcp_server, "project_info", return_value={"ok": True}),
-                    patch.object(mcp_server, "context_get", return_value={"ok": True}),
-                    patch.object(mcp_server, "inbox_list", return_value={"messages": []}),
+                    patch.object(cccc_group_actor, "actor_list", return_value={"actors": []}),
+                    patch.object(cccc_core, "project_info", return_value={"ok": True}),
+                    patch.object(cccc_context, "context_get", return_value={"ok": True}),
+                    patch.object(cccc_core, "inbox_list", return_value={"messages": []}),
                 ]
 
                 for p in common_patches:

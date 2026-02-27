@@ -271,6 +271,10 @@ class IMBridge:
 
         self._running = False
         self._last_outbound_check = 0.0
+        # Inbound history filtering baseline. Messages older than this moment
+        # (with a small grace window) are treated as pre-start backlog.
+        self._connected_at = 0.0
+        self._history_grace_seconds = 2.0
         # Best-effort inbound dedupe to prevent double-processing when platforms
         # retry delivery or emit multiple events for the same message (e.g., edits).
         self._seen_inbound: Dict[str, float] = {}
@@ -330,6 +334,7 @@ class IMBridge:
         if not self.adapter.connect():
             self._log("[start] Failed to connect adapter")
             return False
+        self._connected_at = time.time()
 
         # Skip pending messages if configured (move cursor to end of ledger)
         if self.skip_pending_on_start:
@@ -394,6 +399,11 @@ class IMBridge:
             message_id = str(msg.get("message_id") or "").strip()
 
             if not text:
+                continue
+            if self._is_historical_inbound(msg):
+                self._log(
+                    f"[inbound] Dropped historical message chat={chat_id} thread={thread_id} message_id={message_id}"
+                )
                 continue
             if not self._should_process_inbound(chat_id=chat_id, thread_id=thread_id, message_id=message_id):
                 continue
@@ -460,6 +470,43 @@ class IMBridge:
 
                 # Non-routed messages are ignored.
                 continue
+
+    def _parse_message_timestamp(self, raw: Any) -> Optional[float]:
+        """
+        Parse message timestamp into epoch seconds.
+
+        Accepts either seconds or milliseconds as int/float/string.
+        """
+        if raw is None:
+            return None
+        try:
+            ts = float(raw)
+        except Exception:
+            return None
+        if ts <= 0:
+            return None
+        # Heuristic: values in milliseconds are much larger than epoch seconds.
+        if ts > 1e11:
+            ts = ts / 1000.0
+        return ts
+
+    def _is_historical_inbound(self, msg: Dict[str, Any]) -> bool:
+        """
+        Return True if an inbound message is older than bridge start time.
+
+        Messages without parseable timestamps are treated as fresh to avoid
+        false drops on adapters that do not provide event time.
+        """
+        connected_at = float(self._connected_at or 0.0)
+        if connected_at <= 0:
+            return False
+
+        ts = self._parse_message_timestamp(msg.get("timestamp"))
+        if ts is None:
+            return False
+
+        cutoff = connected_at - float(self._history_grace_seconds or 0.0)
+        return ts < cutoff
 
     def _process_outbound(self) -> None:
         """Process outbound events from ledger."""
@@ -562,6 +609,7 @@ class IMBridge:
 
             # Try file delivery first (if any attachments)
             sent_any_file = False
+            delivered_user_facing = False
             file_cfg = (self.group.doc.get("im") or {}) if isinstance(self.group.doc.get("im"), dict) else {}
             files_cfg = file_cfg.get("files") if isinstance(file_cfg.get("files"), dict) else {}
             files_enabled = coerce_bool(files_cfg.get("enabled"), default=True)
@@ -602,13 +650,18 @@ class IMBridge:
                     if ok:
                         sent_any_file = True
                         if is_user_facing:
-                            self._remove_typing_indicator(sub.chat_id)
+                            delivered_user_facing = True
 
             # If we didn't send any files, or if there's text with no files, send message.
             if formatted and not sent_any_file:
-                self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id)
-                if is_user_facing:
-                    self._remove_typing_indicator(sub.chat_id)
+                sent_msg = bool(self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id))
+                if sent_msg and is_user_facing:
+                    delivered_user_facing = True
+
+            # Remove typing indicator only after outbound delivery for this event
+            # is actually completed for this chat.
+            if delivered_user_facing:
+                self._remove_typing_indicator(sub.chat_id)
 
     def _should_forward(self, event: Dict[str, Any], verbose: bool) -> bool:
         """Determine if event should be forwarded based on verbose setting."""

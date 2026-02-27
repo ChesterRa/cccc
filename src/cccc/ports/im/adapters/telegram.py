@@ -271,6 +271,7 @@ class TelegramAdapter(IMAdapter):
                         "from_user_id": str(from_user.get("id", "")),
                         "message_id": composite_msg_id,
                         "update_id": update_id,
+                        "timestamp": msg.get("date", 0),
                     })
                 except Exception as e:
                     self._log(f"[poll] Error parsing update: {e}")

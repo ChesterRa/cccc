@@ -33,8 +33,8 @@ from ...paths import ensure_home
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
-from ..actor_profile_store import get_actor_profile
-from ..delivery import THROTTLE, clear_preamble_sent
+from ..actors.actor_profile_store import get_actor_profile
+from ..messaging.delivery import THROTTLE, clear_preamble_sent
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:

@@ -302,6 +302,49 @@ class TestActorProfilesOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_foreman_can_add_actor_from_profile_template(self) -> None:
+        """Foreman strict-clone guard does not block explicit profile-based spawn."""
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group("ap-foreman-profile")
+            profile = self._create_profile("Foreman Spawn Template")
+            pid = str(profile.get("id") or "")
+
+            add_foreman, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "lead",
+                    "runtime": "gemini",
+                    "runner": "headless",
+                    "title": "Foreman",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            add_peer, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "gemini",  # should be overridden by profile
+                    "runner": "headless",
+                    "title": "Peer One",
+                    "profile_id": pid,
+                    "by": "lead",
+                },
+            )
+            self.assertTrue(add_peer.ok, getattr(add_peer, "error", None))
+            actor = (add_peer.result or {}).get("actor") if isinstance(add_peer.result, dict) else None
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(str(actor.get("profile_id") or ""), pid)
+            self.assertEqual(str(actor.get("runtime") or ""), "codex")
+            self.assertEqual(str(actor.get("runner") or ""), "headless")
+        finally:
+            cleanup()
+
     def test_group_start_returns_profile_not_found_when_link_is_missing(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -325,7 +368,7 @@ class TestActorProfilesOps(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            from cccc.daemon.actor_profile_store import delete_actor_profile, delete_actor_profile_secrets
+            from cccc.daemon.actors.actor_profile_store import delete_actor_profile, delete_actor_profile_secrets
 
             delete_actor_profile(pid)
             delete_actor_profile_secrets(pid)

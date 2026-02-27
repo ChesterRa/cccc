@@ -30,19 +30,19 @@ from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
-from .bootstrap_im_ops import autostart_enabled_im_bridges
-from .bootstrap_actor_ops import autostart_running_groups
+from .im.bootstrap_im_ops import autostart_enabled_im_bridges
+from .group.bootstrap_actor_ops import autostart_running_groups
 from .mcp_install import (
     is_mcp_installed as runtime_is_mcp_installed,
     ensure_mcp_installed as runtime_ensure_mcp_installed,
 )
 from .client_ops import send_daemon_request
-from .im_bridge_ops import (
+from .im.im_bridge_ops import (
     stop_im_bridges_for_group as im_stop_group,
     stop_all_im_bridges as im_stop_all,
     cleanup_invalid_im_bridges as im_cleanup_invalid,
 )
-from .private_env_ops import (
+from .actors.private_env_ops import (
     PRIVATE_ENV_MAX_KEYS as _PRIVATE_ENV_MAX_KEYS,
     validate_private_env_key as _validate_private_env_key,
     coerce_private_env_value as _coerce_private_env_value,
@@ -52,11 +52,11 @@ from .private_env_ops import (
     delete_group_private_env as _delete_group_private_env,
     merge_actor_env_with_private as _merge_actor_env_with_private,
 )
-from .actor_profile_store import (
+from .actors.actor_profile_store import (
     get_actor_profile as _get_actor_profile,
     load_actor_profile_secrets as _load_actor_profile_secrets,
 )
-from .actor_profile_runtime import resolve_linked_actor_before_start as _resolve_linked_actor_before_start
+from .actors.actor_profile_runtime import resolve_linked_actor_before_start as _resolve_linked_actor_before_start
 from .runner_state_ops import (
     pty_state_path as _pty_state_path,
     write_pty_state as _write_pty_state,
@@ -74,7 +74,7 @@ from .socket_protocol_ops import (
     start_events_stream as _start_events_stream,
     error as _error,
 )
-from .delivery import (
+from .messaging.delivery import (
     inject_system_prompt as deliver_system_prompt,
     pty_submit_text,
     render_delivery_text,
@@ -85,24 +85,26 @@ from .delivery import (
     clear_preamble_sent,
     THROTTLE,
 )
-from .ops.chat_support_ops import auto_wake_recipients, normalize_attachments
+from .messaging.chat_support_ops import auto_wake_recipients, normalize_attachments
 from .ops.socket_special_ops import try_handle_socket_special_op
 from .ops.socket_accept_ops import handle_incoming_connection
-from .ops.actor_runtime_ops import start_actor_process as runtime_start_actor_process
-from .ops.runner_ops import stop_actor as runner_stop_actor
+from .actors.actor_runtime_ops import start_actor_process as runtime_start_actor_process
+from .actors.runner_ops import stop_actor as runner_stop_actor
+from .ops.capability_ops import sync_capability_catalog_once
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
     start_automation_thread,
     start_space_jobs_thread,
     start_space_sync_thread,
+    start_capability_sync_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
     cleanup_after_stop,
 )
-from .group_space_runtime import process_due_space_jobs
-from .group_space_sync import process_due_space_syncs
-from .group_space_store import get_space_provider_state
+from .space.group_space_runtime import process_due_space_jobs
+from .space.group_space_sync import process_due_space_syncs
+from .space.group_space_store import get_space_provider_state
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -806,7 +808,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     # Best-effort: enable in-process event streaming for SDKs (daemon-owned only).
     try:
         from ..kernel.ledger import set_append_hook
-        from .streaming import EVENT_BROADCASTER
+        from .messaging.streaming import EVENT_BROADCASTER
 
         set_append_hook(EVENT_BROADCASTER.on_append)
     except Exception:
@@ -852,6 +854,31 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         stop_event=stop_event,
         tick_space_sync=_tick_space_sync,
         interval_seconds=30.0,
+    )
+
+    def _tick_capability_sync() -> None:
+        result = sync_capability_catalog_once(force=False)
+        if not bool(result.get("ok")):
+            logger.debug("capability_sync_failed=%s", str(result.get("error") or "unknown"))
+            return
+        if bool(result.get("changed")):
+            logger.debug(
+                "capability_sync_changed upserted_total=%s pruned=%s",
+                int(result.get("upserted_total") or 0),
+                int(result.get("pruned") or 0),
+            )
+
+    capability_sync_interval = 900.0
+    try:
+        raw = str(os.environ.get("CCCC_CAPABILITY_SYNC_INTERVAL_SECONDS") or "").strip()
+        if raw:
+            capability_sync_interval = float(raw)
+    except Exception:
+        capability_sync_interval = 900.0
+    start_capability_sync_thread(
+        stop_event=stop_event,
+        tick_capability_sync=_tick_capability_sync,
+        interval_seconds=capability_sync_interval,
     )
 
     transport = _desired_daemon_transport()

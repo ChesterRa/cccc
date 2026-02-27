@@ -26,7 +26,7 @@ class TestChatOps(unittest.TestCase):
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
     def test_try_handle_unknown_chat_op_returns_none(self) -> None:
-        from cccc.daemon.ops.chat_ops import try_handle_chat_op
+        from cccc.daemon.messaging.chat_ops import try_handle_chat_op
 
         self.assertIsNone(
             try_handle_chat_op(
@@ -294,6 +294,78 @@ class TestChatOps(unittest.TestCase):
             self.assertEqual(to_list, ["peer1"])
             # NOT ["@foreman"]!
             self.assertNotIn("@foreman", to_list)
+        finally:
+            cleanup()
+
+    def test_foreman_send_default_to_foreman_returns_guided_error(self) -> None:
+        """N015: foreman empty `to` should error with actionable guidance."""
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "n015-default", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_foreman, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "fm1",
+                    "title": "Foreman",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            resp, _ = self._call("send", {"group_id": group_id, "by": "fm1", "text": "status"})
+            self.assertFalse(resp.ok)
+            err = resp.error
+            self.assertIsNotNone(err)
+            self.assertEqual(err.code, "no_enabled_recipients")
+            message = str(err.message or "")
+            self.assertIn("No enabled recipients after excluding sender", message)
+            self.assertIn("to=['user']", message)
+            self.assertIn("to=['@all']", message)
+        finally:
+            cleanup()
+
+    def test_foreman_send_explicit_foreman_returns_guided_error(self) -> None:
+        """N015: foreman explicit `@foreman` should error with actionable guidance."""
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "n015-explicit", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_foreman, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "fm1",
+                    "title": "Foreman",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            resp, _ = self._call(
+                "send",
+                {"group_id": group_id, "by": "fm1", "to": ["@foreman"], "text": "status"},
+            )
+            self.assertFalse(resp.ok)
+            err = resp.error
+            self.assertIsNotNone(err)
+            self.assertEqual(err.code, "no_enabled_recipients")
+            message = str(err.message or "")
+            self.assertIn("No enabled recipients after excluding sender", message)
+            self.assertIn("to=['peer-reviewer']", message)
         finally:
             cleanup()
 

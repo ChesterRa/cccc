@@ -198,6 +198,10 @@ class SlackAdapter(IMAdapter):
                 text = re.sub(rf"^\s*(?:<@{re.escape(self._bot_user_id)}>\s*)+", "", text)
 
             # Queue the message
+            try:
+                event_ts = float(event.get("ts") or 0.0)
+            except Exception:
+                event_ts = 0.0
             with self._queue_lock:
                 self._message_queue.append({
                     "chat_id": channel,
@@ -208,6 +212,7 @@ class SlackAdapter(IMAdapter):
                     "attachments": attachments,
                     "from_user": user,
                     "message_id": event.get("ts", ""),
+                    "timestamp": event_ts,
                 })
 
             self._log(f"[inbound] channel={channel} user={user} text={text[:50]}...")

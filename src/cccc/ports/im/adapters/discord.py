@@ -169,6 +169,10 @@ class DiscordAdapter(IMAdapter):
             chat_id = str(message.channel.id)
             chat_title = getattr(message.channel, "name", None) or chat_id
             from_user = message.author.name or str(message.author.id)
+            try:
+                msg_ts = float(message.created_at.timestamp())  # type: ignore[union-attr]
+            except Exception:
+                msg_ts = 0.0
 
             # Queue the message
             with self._queue_lock:
@@ -181,6 +185,7 @@ class DiscordAdapter(IMAdapter):
                     "attachments": attachments,
                     "from_user": from_user,
                     "message_id": str(message.id),
+                    "timestamp": msg_ts,
                 })
 
             self._log(f"[inbound] channel={chat_id} user={from_user} text={text[:50]}...")

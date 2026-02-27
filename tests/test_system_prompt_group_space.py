@@ -65,7 +65,7 @@ class TestSystemPromptGroupSpace(unittest.TestCase):
             cleanup()
 
     def test_prompt_includes_group_space_block_when_bound(self) -> None:
-        from cccc.daemon.group_space_store import set_space_provider_state, upsert_space_binding
+        from cccc.daemon.space.group_space_store import set_space_provider_state, upsert_space_binding
         from cccc.kernel.actors import find_actor
         from cccc.kernel.group import load_group
         from cccc.kernel.system_prompt import render_system_prompt

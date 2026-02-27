@@ -110,6 +110,26 @@ def start_space_sync_thread(
     return t
 
 
+def start_capability_sync_thread(
+    *,
+    stop_event: threading.Event,
+    tick_capability_sync: Callable[[], Any],
+    interval_seconds: float = 900.0,
+) -> threading.Thread:
+    def _capability_sync_loop() -> None:
+        interval = max(30.0, float(interval_seconds or 900.0))
+        while not stop_event.is_set():
+            try:
+                tick_capability_sync()
+            except Exception as e:
+                _log_loop_error("tick_capability_sync failed", e)
+            stop_event.wait(interval)
+
+    t = threading.Thread(target=_capability_sync_loop, name="cccc-capability-sync", daemon=True)
+    t.start()
+    return t
+
+
 def bind_server_socket(
     *,
     transport: str,

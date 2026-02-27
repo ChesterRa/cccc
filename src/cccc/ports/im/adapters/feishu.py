@@ -364,6 +364,7 @@ class FeishuAdapter(IMAdapter):
                                 "message_type": getattr(msg, 'message_type', '') or '',
                                 "content": getattr(msg, 'content', '{}') or '{}',
                                 "root_id": getattr(msg, 'root_id', '') or '',
+                                "create_time": getattr(msg, 'create_time', '') or '',
                                 "mentions": mentions_list,
                             }
                             self._log(f"[ws] Chat: {event_data['message']['chat_id']} type={event_data['message']['message_type']}")
@@ -557,6 +558,7 @@ class FeishuAdapter(IMAdapter):
                 "attachments": attachments,
                 "from_user": open_id,
                 "message_id": message.get("message_id", ""),
+                "timestamp": self._parse_message_time(message.get("create_time")),
             }
 
             with self._queue_lock:
@@ -586,6 +588,18 @@ class FeishuAdapter(IMAdapter):
         except Exception:
             pass
         return " ".join(texts)
+
+    def _parse_message_time(self, raw: Any) -> float:
+        """Parse Feishu create_time into epoch seconds (supports ms)."""
+        try:
+            ts = float(raw or 0.0)
+        except Exception:
+            return 0.0
+        if ts <= 0:
+            return 0.0
+        if ts > 1e11:
+            ts = ts / 1000.0
+        return ts
 
     def _get_chat_title_cached(self, chat_id: str) -> str:
         """Get chat title with caching."""

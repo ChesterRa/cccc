@@ -7,31 +7,33 @@ from dataclasses import dataclass
 from typing import Any, Callable, Type
 
 from ..contracts.v1 import DaemonRequest, DaemonResponse
-from .ops.context_ops import try_handle_context_op
-from .ops.actor_ops import try_handle_actor_aux_op
-from .ops.actor_profile_ops import try_handle_actor_profile_op
-from .ops.actor_add_ops import try_handle_actor_add_op
-from .ops.actor_lifecycle_ops import try_handle_actor_lifecycle_op
-from .ops.actor_membership_ops import try_handle_actor_membership_op
-from .ops.actor_update_ops import try_handle_actor_update_op
-from .ops.inbox_ack_ops import try_handle_inbox_ack_op
-from .ops.inbox_read_ops import try_handle_inbox_read_op
+from .context.context_ops import try_handle_context_op
+from .actors.actor_ops import try_handle_actor_aux_op
+from .actors.actor_profile_ops import try_handle_actor_profile_op
+from .actors.actor_add_ops import try_handle_actor_add_op
+from .actors.actor_lifecycle_ops import try_handle_actor_lifecycle_op
+from .actors.actor_membership_ops import try_handle_actor_membership_op
+from .actors.actor_update_ops import try_handle_actor_update_op
+from .messaging.inbox_ack_ops import try_handle_inbox_ack_op
+from .messaging.inbox_read_ops import try_handle_inbox_read_op
 from .ops.maintenance_ops import try_handle_maintenance_op
 from .ops.diagnostics_ops import try_handle_diagnostics_op
 from .ops.daemon_core_ops import try_handle_daemon_core_op
 from .ops.remote_access_ops import try_handle_remote_access_op
-from .ops.chat_ops import try_handle_chat_op
-from .ops.system_notify_ops import try_handle_system_notify_op
-from .ops.group_state_ops import try_handle_group_state_op
-from .ops.group_lifecycle_ops import try_handle_group_lifecycle_op
-from .ops.automation_ops import try_handle_group_automation_op
-from .ops.group_settings_ops import try_handle_group_settings_op
-from .ops.group_space_ops import try_handle_group_space_op
-from .ops.group_ops import try_handle_group_core_op
-from .ops.group_bootstrap_ops import try_handle_group_bootstrap_op
+from .messaging.chat_ops import try_handle_chat_op
+from .messaging.system_notify_ops import try_handle_system_notify_op
+from .group.group_state_ops import try_handle_group_state_op
+from .group.group_lifecycle_ops import try_handle_group_lifecycle_op
+from .automation.automation_ops import try_handle_group_automation_op
+from .group.group_settings_ops import try_handle_group_settings_op
+from .space.group_space_ops import try_handle_group_space_op
+from .group.group_ops import try_handle_group_core_op
+from .group.group_bootstrap_ops import try_handle_group_bootstrap_op
 from .ops.registry_ops import try_handle_registry_op
-from .ops.im_ops import try_handle_im_op
-from .ops.runner_ops import try_handle_headless_op
+from .ops.capability_ops import try_handle_capability_op
+from .im.im_ops import try_handle_im_op
+from .actors.runner_ops import try_handle_headless_op
+from .memory.memory_ops import try_handle_memory_op
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,10 @@ def dispatch_request(
     registry_resp = try_handle_registry_op(op, args)
     if registry_resp is not None:
         return registry_resp, False
+
+    capability_resp = try_handle_capability_op(op, args)
+    if capability_resp is not None:
+        return capability_resp, False
 
     group_lifecycle_resp = try_handle_group_lifecycle_op(
         op,
@@ -348,6 +354,10 @@ def dispatch_request(
     context_resp = try_handle_context_op(op, args)
     if context_resp is not None:
         return context_resp, False
+
+    memory_resp = try_handle_memory_op(op, args)
+    if memory_resp is not None:
+        return memory_resp, False
 
     im_resp = try_handle_im_op(op, args)
     if im_resp is not None:

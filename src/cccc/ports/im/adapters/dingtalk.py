@@ -295,9 +295,6 @@ class DingTalkAdapter(IMAdapter):
         with self._queue_lock:
             self._message_queue.clear()
 
-        # Record connect time for discarding historical messages
-        self._connect_time = time.time()
-
         # Disable all proxies BEFORE importing dingtalk-stream SDK
         self._disable_proxies()
 
@@ -613,6 +610,7 @@ class DingTalkAdapter(IMAdapter):
                 "attachments": attachments,
                 "from_user": sender_nick or sender_id,
                 "message_id": msg_id,
+                "timestamp": self._parse_event_time(event.get("createAt")),
                 # Keep sessionWebhook for potential reply use
                 "_session_webhook": session_webhook,
             }
@@ -624,6 +622,18 @@ class DingTalkAdapter(IMAdapter):
         except Exception as e:
             self._log(f"[enqueue] Error: {e}")
             return False
+
+    def _parse_event_time(self, raw: Any) -> float:
+        """Parse DingTalk createAt into epoch seconds (supports ms)."""
+        try:
+            ts = float(raw or 0.0)
+        except Exception:
+            return 0.0
+        if ts <= 0:
+            return 0.0
+        if ts > 1e11:
+            ts = ts / 1000.0
+        return ts
 
     def _extract_rich_text(self, rich_text: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
         """Extract text and attachments from rich text content.

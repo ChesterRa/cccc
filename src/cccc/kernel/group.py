@@ -17,14 +17,32 @@ from ..util.time import utc_now_iso
 from .registry import Registry
 from .scope import ScopeIdentity
 
-_DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passed. Stand-up reminder (foreman only).
+_DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passed. Stand-up + memory consolidation reminder (foreman only).
 
-Alignment checkpoint:
+⚠️ CRITICAL REMINDER: ALL responses MUST use cccc_message_send or cccc_message_reply. NEVER output text directly to terminal — terminal output is invisible to users. This applies to you AND all peers you coordinate.
+
+## Part 0: Memory recall (apply past experience)
+Before alignment, recall relevant memories:
+1. Extract 2-3 keywords from current Sketch (work type, key technologies, active milestone).
+2. Run `cccc_memory_search(query=<keywords>, actor_id="")` for each keyword set.
+3. If relevant memories found, briefly list them and apply insights to Part 1 alignment and Part 2 decisions.
+This step makes past experience actionable — skip it and we waste what we learned.
+
+## Part 1: Alignment checkpoint
 - Direction: Re-check goals/constraints/DoD (PROJECT.md if present; otherwise user + Context). Are we drifting?
 - Rigor: Which key points are evidence vs hypotheses? What needs investigation/verification next?
 - Coordination: Ask @peers for risks/alternatives/objections. Synthesize and update Context. If a major decision is unclear, ask the user.
+- MCP compliance: If any peer has been outputting to terminal instead of using MCP, remind them immediately.
 
-Use your own words. Avoid rigid templates; keep it human and direct.
+## Part 2: Memory consolidation (experience evolution)
+After the alignment check, perform these steps:
+1. Run `cccc_memory_ingest(mode=signal)` to capture recent chat into memory.
+2. Review recent memories via `cccc_memory_search` — look for patterns, repeated lessons, or decisions worth consolidating.
+3. If you find fragmented memories about the same topic, consolidate them into a single high-level insight using `cccc_memory_store(confidence=high, kind=instruction)`.
+4. Run `cccc_memory_decay` to identify stale candidates. Delete obvious low-value entries with `cccc_memory_delete`.
+5. Briefly report what you consolidated or cleaned (1-2 lines max).
+
+Keep it human and direct. Do not skip any part — memory recall + evolution is how we get smarter over time.
 """
 
 LOGGER = logging.getLogger(__name__)
@@ -45,7 +63,7 @@ def _default_automation_ruleset() -> Dict[str, Any]:
                     "kind": "notify",
                     "priority": "normal",
                     "requires_ack": False,
-                    "title": "Stand-up",
+                    "title": "Stand-up + Memory Consolidation",
                     "snippet_ref": "standup",
                     "message": "",
                 },

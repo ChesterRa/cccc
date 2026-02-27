@@ -56,7 +56,7 @@ def dump_response(resp: Any) -> Dict[str, Any]:
 
 def supported_stream_kinds() -> set[str]:
     try:
-        from .streaming import STREAMABLE_KINDS_V1
+        from .messaging.streaming import STREAMABLE_KINDS_V1
 
         return set(STREAMABLE_KINDS_V1)
     except Exception:
@@ -73,7 +73,7 @@ def start_events_stream(
     since_ts: str,
 ) -> bool:
     try:
-        from .streaming import stream_events_to_socket
+        from .messaging.streaming import stream_events_to_socket
 
         threading.Thread(
             target=stream_events_to_socket,

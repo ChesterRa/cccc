@@ -491,6 +491,252 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_capability_search",
+        "description": (
+            "Search capability registry for progressive disclosure.\n"
+            "Returns built-in packs and synced external catalog entries with qualification/trust/freshness metadata.\n"
+            "When local hits are empty, daemon may augment from remote MCP Registry and backfill local snapshot."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query across id/name/description/tags",
+                    "default": "",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["", "mcp_toolpack", "skill"],
+                    "description": "Optional kind filter",
+                    "default": "",
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "Optional source filter (e.g., mcp_registry_official, anthropic_skills)",
+                    "default": "",
+                },
+                "trust_tier": {
+                    "type": "string",
+                    "description": "Optional trust tier filter (e.g., builtin, official, community)",
+                    "default": "",
+                },
+                "qualification_status": {
+                    "type": "string",
+                    "description": "Optional qualification status filter (qualified/manual_review/blocked)",
+                    "default": "",
+                },
+                "include_external": {
+                    "type": "boolean",
+                    "description": "Include external source snapshot records in results (default true)",
+                    "default": True,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return",
+                    "default": 30,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_capability_enable",
+        "description": (
+            "Enable/disable a capability by scope.\n"
+            "Scopes: group, actor, session (TTL).\n"
+            "For skills (kind=skill), this is also the pin/unpin control (actor scope recommended).\n"
+            "Use cccc_capability_state after mutation, then re-list tools if refresh_required=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Target actor ID for scope=actor/session (defaults to by)",
+                },
+                "capability_id": {
+                    "type": "string",
+                    "description": "Capability ID from cccc_capability_search",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["group", "actor", "session"],
+                    "description": "Enable scope",
+                    "default": "session",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "true=enable, false=disable",
+                    "default": True,
+                },
+                "cleanup": {
+                    "type": "boolean",
+                    "description": (
+                        "When enabled=false, also attempt cache cleanup.\n"
+                        "If the capability is still bound elsewhere, cleanup is skipped safely."
+                    ),
+                    "default": False,
+                },
+                "approve": {
+                    "type": "boolean",
+                    "description": (
+                        "Approval signal for manual-review capabilities. "
+                        "Required to enable external records with qualification_status=manual_review."
+                    ),
+                    "default": False,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short audit reason for this capability mutation",
+                    "default": "",
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "TTL for session scope (seconds)",
+                    "default": 3600,
+                    "minimum": 60,
+                    "maximum": 86400,
+                },
+            },
+            "required": ["capability_id"],
+        },
+    },
+    {
+        "name": "cccc_capability_state",
+        "description": (
+            "Read effective capability exposure and visible MCP tool names for current caller scope.\n"
+            "Also returns active/pinned skills and external binding states.\n"
+            "Use this when a capability appears hidden or after enable/disable changes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_capability_uninstall",
+        "description": (
+            "Remove an external capability installation from CCCC runtime cache and revoke its bindings.\n"
+            "This is an admin operation (user/foreman). Use when a capability is no longer needed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "capability_id": {
+                    "type": "string",
+                    "description": "Capability ID to uninstall",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short audit reason for uninstall",
+                    "default": "",
+                },
+            },
+            "required": ["capability_id"],
+        },
+    },
+    {
+        "name": "cccc_capability_use",
+        "description": (
+            "One-step capability use: auto-enable capability (session scope by default) and optionally call a tool.\n"
+            "For skills (kind=skill), this returns skill capsule payload and applies declared dependencies.\n"
+            "For built-in pack tools, capability_id can be omitted when tool_name uniquely maps to a pack."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Target actor ID (defaults to by)",
+                },
+                "capability_id": {
+                    "type": "string",
+                    "description": "Optional capability ID; may be inferred from built-in pack tool_name",
+                    "default": "",
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "Tool to call after enable (optional)",
+                    "default": "",
+                },
+                "tool_arguments": {
+                    "type": "object",
+                    "description": "Arguments for tool call",
+                    "default": {},
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["group", "actor", "session"],
+                    "description": "Enable scope",
+                    "default": "session",
+                },
+                "approve": {
+                    "type": "boolean",
+                    "description": "Approval signal for manual-review capabilities",
+                    "default": False,
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "TTL for session scope (seconds)",
+                    "default": 3600,
+                    "minimum": 60,
+                    "maximum": 86400,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short audit reason",
+                    "default": "",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "cccc_space_status",
         "description": (
             "Read Group Space status for the current group "
@@ -1718,6 +1964,352 @@ MCP_TOOLS = [
                 },
             },
             "required": ["key"],
+        },
+    },
+    # memory.* namespace - agent-driven memory system
+    {
+        "name": "cccc_memory_guide",
+        "description": "Get topic-specific best-practice guidance for complex memory operations (read-only).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": ["store", "search", "consolidation", "lifecycle"],
+                    "description": "Guide topic",
+                },
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "cccc_memory_store",
+        "description": (
+            "Store or update a memory.\n\n"
+            "Create mode (no id): stores new memory with content and optional metadata.\n"
+            "Update mode (with id): updates existing memory fields.\n"
+            "Set solidify=true to immediately solidify the memory after store/update.\n"
+            "Use strategy param to apply predefined status/confidence presets: "
+            "aggressive (solid/medium), conservative (draft/high), milestone-only (solid/high)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Memory ID for update mode (omit for create)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Memory content (required for create, optional for update)",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["observation", "decision", "preference", "fact", "instruction", "context", "relation"],
+                    "description": "Memory kind",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["draft", "solid"],
+                    "description": "Memory status (default draft; overridden by strategy)",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Confidence level (default medium; overridden by strategy)",
+                },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["manual", "chat_ingest", "milestone_report", "agent_extract", "reflection"],
+                    "description": "Source type (e.g. chat_ingest, manual, reflection)",
+                },
+                "source_ref": {
+                    "type": "string",
+                    "description": "Source reference (e.g. event_id)",
+                },
+                "scope_key": {
+                    "type": "string",
+                    "description": "Scope key for namespacing",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Actor who created this memory",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Associated task ID",
+                },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "Associated milestone ID",
+                },
+                "event_ts": {
+                    "type": "string",
+                    "description": "Event timestamp (ISO 8601)",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for categorization",
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["aggressive", "conservative", "milestone-only"],
+                    "description": "Predefined status/confidence preset (overrides explicit status/confidence)",
+                },
+                "solidify": {
+                    "type": "boolean",
+                    "description": "Immediately solidify after store/update (default false)",
+                    "default": False,
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "L0 summary of the memory (manual, for token-efficient recall)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_memory_search",
+        "description": (
+            "Search memories via full-text search and/or structured filters.\n\n"
+            "FTS5 query with CJK supplement. Supports filters: status, kind, actor_id, task_id, "
+            "milestone_id, confidence, tags, since/until. Results are ordered solid-first, then by recency.\n"
+            "Default search has no side effects. Set track_hit=true to increment hit_count "
+            "and enable auto-solidify for drafts at hit_count >= 3."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Full-text search query (optional; omit for filter-only mode)",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["draft", "solid"],
+                    "description": "Filter by status",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["observation", "decision", "preference", "fact", "instruction", "context", "relation"],
+                    "description": "Filter by kind",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Filter by actor ID",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Filter by task ID",
+                },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "Filter by milestone ID",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Filter by confidence level",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by tags (AND logic)",
+                },
+                "since": {
+                    "type": "string",
+                    "description": "Filter memories created after this ISO 8601 timestamp",
+                },
+                "until": {
+                    "type": "string",
+                    "description": "Filter memories created before this ISO 8601 timestamp",
+                },
+                "track_hit": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When true, increments hit_count for returned memories and enables auto-solidify at threshold",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 20, max 100)",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["L0", "L2"],
+                    "description": "Return depth: L0=summary only (default, saves tokens), L2=full content+summary",
+                    "default": "L0",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_memory_ingest",
+        "description": (
+            "Ingest recent chat messages into memory.\n\n"
+            "Modes:\n"
+            "- signal (default): returns structured summary grouped by actor with suggested_kind, "
+            "key_phrases, time_range. Use this to decide what to store.\n"
+            "- raw: bulk imports chat messages as source_type=chat_ingest memories.\n\n"
+            "Uses watermark to skip already-processed events. Set reset_watermark=true to re-process."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["signal", "raw"],
+                    "description": "Ingest mode: signal (structured summary) or raw (bulk import)",
+                    "default": "signal",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of recent ledger lines to read (default 50, max 200)",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Filter by actor ID (raw mode only)",
+                },
+                "reset_watermark": {
+                    "type": "boolean",
+                    "description": "Reset watermark to re-process previously ingested events",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_memory_stats",
+        "description": "Get memory statistics for the group (total count, by status, by kind, source type, tag count).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+            },
+            "required": [],
+        },
+    },
+    # memory_export — read-only Markdown + manifest export
+    {
+        "name": "cccc_memory_export",
+        "description": "Export solid memories as read-only Markdown (memory.md) + manifest.json with SHA-256 hash.\nWrites files to the group's state directory. Returns manifest and file paths.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "include_draft": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include draft memories in export (default: solid only)",
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Optional output directory override (default: group state dir)",
+                },
+            },
+            "required": [],
+        },
+    },
+    # memory_delete — delete one or many memories by ID
+    {
+        "name": "cccc_memory_delete",
+        "description": "Delete memory by ID(s) (scoped to group). Supports single id or batch ids for manual cleanup/compression.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Single memory ID to delete",
+                },
+                "ids": {
+                    "type": "array",
+                    "description": "Batch memory IDs to delete",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": [],
+            "anyOf": [{"required": ["id"]}, {"required": ["ids"]}],
+        },
+    },
+    # memory_decay — find stale candidates (safe, non-destructive)
+    {
+        "name": "cccc_memory_decay",
+        "description": "Find stale memory candidates for cleanup/decay using last_recalled_at + hit_count + created_at. Returns candidates only, does not delete.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "draft_days": {
+                    "type": "integer",
+                    "description": "Draft memories older than this threshold become stale candidates",
+                    "default": 30,
+                    "minimum": 1,
+                    "maximum": 3650,
+                },
+                "zero_hit_days": {
+                    "type": "integer",
+                    "description": "Draft memories with hit_count=0 older than this threshold become high-priority candidates",
+                    "default": 14,
+                    "minimum": 1,
+                    "maximum": 3650,
+                },
+                "solid_review_days": {
+                    "type": "integer",
+                    "description": "Solid memories older than this threshold are returned as review candidates (not auto-delete)",
+                    "default": 120,
+                    "minimum": 1,
+                    "maximum": 3650,
+                },
+                "solid_max_hit": {
+                    "type": "integer",
+                    "description": "Maximum hit_count for solid review candidates",
+                    "default": 1,
+                    "minimum": 0,
+                    "maximum": 1000000,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of candidates to return",
+                    "default": 100,
+                    "minimum": 1,
+                    "maximum": 1000,
+                },
+            },
+            "required": [],
         },
     },
     # debug.* namespace - developer mode diagnostics (user + foreman only; dev mode required)

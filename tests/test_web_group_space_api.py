@@ -185,7 +185,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertTrue(credential_update.json().get("ok"))
 
                 with patch(
-                    "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                    "cccc.daemon.space.group_space_ops.notebooklm_health_check",
                     return_value={"provider": "notebooklm", "enabled": True, "compatible": True, "reason": "ok"},
                 ):
                     health = client.post("/api/v1/space/providers/notebooklm/health?by=user")
@@ -195,7 +195,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertEqual(bool((health_body.get("result") or {}).get("healthy")), True)
 
                 with patch(
-                    "cccc.daemon.ops.group_space_ops.start_notebooklm_auth_flow",
+                    "cccc.daemon.space.group_space_ops.start_notebooklm_auth_flow",
                     return_value={
                         "provider": "notebooklm",
                         "state": "running",
@@ -203,10 +203,10 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                         "session_id": "nbl_auth_web",
                     },
                 ), patch(
-                    "cccc.daemon.ops.group_space_ops.get_notebooklm_auth_flow_status",
+                    "cccc.daemon.space.group_space_ops.get_notebooklm_auth_flow_status",
                     return_value={"provider": "notebooklm", "state": "running", "phase": "waiting_user_login"},
                 ), patch(
-                    "cccc.daemon.ops.group_space_ops.cancel_notebooklm_auth_flow",
+                    "cccc.daemon.space.group_space_ops.cancel_notebooklm_auth_flow",
                     return_value={"provider": "notebooklm", "state": "running", "phase": "canceling"},
                 ):
                     auth_start = client.post(

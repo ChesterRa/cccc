@@ -166,10 +166,10 @@ class TestGroupSpaceProjection(unittest.TestCase):
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
 
-            from cccc.daemon.group_space_runtime import process_due_space_jobs
+            from cccc.daemon.space.group_space_runtime import process_due_space_jobs
             from cccc.kernel.group import load_group
 
-            with patch("cccc.daemon.group_space_runtime.provider_ingest", return_value={"ok": True}):
+            with patch("cccc.daemon.space.group_space_runtime.provider_ingest", return_value={"ok": True}):
                 tick = process_due_space_jobs(limit=20)
             self.assertGreaterEqual(int(tick.get("processed") or 0), 1)
 

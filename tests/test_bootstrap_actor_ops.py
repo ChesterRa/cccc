@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cccc.daemon.bootstrap_actor_ops import autostart_running_groups
+from cccc.daemon.group.bootstrap_actor_ops import autostart_running_groups
 
 
 class TestBootstrapActorOps(unittest.TestCase):

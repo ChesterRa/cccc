@@ -375,6 +375,277 @@ Result:
 }
 ```
 
+#### `capability_search`
+
+Search capability registry records (built-in packs + synced external snapshot records).
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id?: string
+  by?: string
+  query?: string
+  kind?: "mcp_toolpack" | "skill" | ""
+  source_id?: string
+  trust_tier?: string
+  qualification_status?: "qualified" | "manual_review" | "blocked" | ""
+  include_external?: boolean
+  limit?: number
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  actor_id?: string
+  default_profile: "core"
+  items: Array<{
+    capability_id: string
+    kind: "mcp_toolpack" | "skill"
+    name: string
+    description_short: string
+    source_id: string
+    source_tier: string
+    source_uri?: string
+    trust_tier: string
+    license?: string
+    qualification_status: "qualified" | "manual_review" | "blocked"
+    sync_state?: string
+    enabled: boolean
+    enable_supported: boolean
+    install_mode?: string
+    policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+    enable_hint?: "enable_now" | "requires_approval" | "blocked" | "unsupported"
+    blocked_reason?: string
+    tags?: string[]
+    tool_count?: number
+  }>
+  count: number
+  sources: Record<string, unknown>
+  applied_filters: {
+    kind: string
+    source_id: string
+    trust_tier: string
+    qualification_status: string
+  }
+  search_diagnostics?: {
+    remote_augmented: boolean
+    remote_added: number
+    remote_error?: string
+    policy_hidden_count?: number
+  }
+}
+```
+
+#### `capability_enable`
+
+Enable or disable a capability by scope.
+
+Notes:
+
+1. Built-in capability packs (`pack:*`) are directly enable-able and can change MCP exposure.
+2. External catalog entries require explicit approval when `qualification_status=manual_review`
+   (`approve=true`).
+3. Skills (`kind=skill`) use the same `capability_enable` op for pin/unpin and can auto-apply
+   declared dependencies.
+4. External MCP execution path is constrained to supported installers (`remote_only` and npm package via `npx`);
+   unsupported install metadata returns `state=failed`.
+
+Args:
+```ts
+{
+  group_id: string
+  capability_id: string
+  scope?: "group" | "actor" | "session"   // default: session
+  enabled?: boolean                         // default: true
+  cleanup?: boolean                         // default: false; disable path can also clean runtime cache
+  approve?: boolean                         // default: false (manual-review approval signal)
+  reason?: string                           // optional short audit reason
+  ttl_seconds?: number                      // session scope only
+  by?: string
+  actor_id?: string
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  capability_id: string
+  scope: "group" | "actor" | "session"
+  enabled: boolean
+  state: "ready" | "pending_approval" | "failed"
+  refresh_required: boolean
+  refresh_mode?: "relist_or_reconnect"
+  wait?: "relist_or_reconnect"
+  reason?: string
+  policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+  removed_binding_count?: number
+  removed_installation?: boolean
+  cleanup_skipped_reason?: string
+  skill?: {
+    capability_id: string
+    name: string
+    description_short?: string
+    capsule?: string
+    requires_capabilities?: string[]
+    applied_dependencies?: string[]
+    skipped_dependencies?: Array<{ capability_id: string; reason: string }>
+    source_id?: string
+    source_uri?: string
+  }
+}
+```
+
+Quota notes:
+
+1. `CCCC_CAPABILITY_MAX_ENABLED_PER_ACTOR` (default `12`) limits actor/session enabled capability count.
+2. `CCCC_CAPABILITY_MAX_ENABLED_PER_GROUP` (default `24`) limits group-scope enabled capability count.
+3. `CCCC_CAPABILITY_MAX_INSTALLATIONS_TOTAL` (default `128`) limits total cached external installations.
+4. Quota failures return `ok=true` with `state="failed"` and deterministic `reason` code.
+
+#### `capability_state`
+
+Read effective capability exposure and visible MCP tool names for caller scope.
+
+Args:
+```ts
+{ group_id: string; actor_id?: string; by?: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  actor_id: string
+  default_profile: "core"
+  core_tool_count: number
+  visible_tool_count: number
+  visible_tools: string[]
+  dynamic_tools?: Array<{
+    name: string
+    description?: string
+    inputSchema: Record<string, unknown>
+    capability_id: string
+    real_tool_name: string
+  }>
+  dynamic_tool_limit: number
+  dynamic_tool_dropped: number
+  enabled_capabilities: string[]
+  active_skills?: Array<{
+    capability_id: string
+    name: string
+    description_short?: string
+    source_id?: string
+    source_uri?: string
+    policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+  }>
+  pinned_skills?: Array<{
+    capability_id: string
+    name: string
+    description_short?: string
+    source_id?: string
+    policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+  }>
+  hidden_capabilities: Array<{
+    capability_id: string
+    reason: string
+    policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+    state?: string
+  }>
+  external_binding_states?: Record<string, { mode: "mcp" | "skill"; state: string; last_error?: string }>
+  precedence_chain: ["session", "actor", "group"]
+  session_bindings: Array<{
+    capability_id: string
+    expires_at: string
+    ttl_seconds: number
+  }>
+  source_states: Record<string, unknown>
+  is_foreman: boolean
+}
+```
+
+Operational notes:
+
+1. Capability catalog sync is daemon-owned and runs in background.
+2. Search is local-snapshot by default (`CCCC_CAPABILITY_SEARCH_AUTO_SYNC=0`); opt-in inline
+   refresh can be enabled with `CCCC_CAPABILITY_SEARCH_AUTO_SYNC=1`.
+3. Source gates:
+   - `CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_AGENTSKILLS_VALIDATOR_ENABLED` (default `1`)
+4. Background sync cadence is controlled by `CCCC_CAPABILITY_SYNC_INTERVAL_SECONDS`
+   (default `900`).
+5. Dynamic tool exposure is capped by `CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE`
+   (default `32`).
+6. Catalog snapshot size is capped by `CCCC_CAPABILITY_CATALOG_MAX_RECORDS`
+   (default `20000`); sync pass prunes excess records deterministically by tier/qualification/freshness.
+7. Search may perform remote MCP Registry augmentation when local hits are empty:
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK` (default `1`)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK_LIMIT` (default `40`, max `100`)
+8. Allowlist policy can be overridden via `CCCC_CAPABILITY_ALLOWLIST_PATH`
+   (or `CCCC_HOME/config/capability-allowlist.yaml` when present).
+
+#### `capability_uninstall`
+
+Remove capability installation cache and revoke all bindings for a group.
+
+Args:
+```ts
+{
+  group_id: string
+  capability_id: string
+  reason?: string
+  by?: string
+  actor_id?: string
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  capability_id: string
+  state: "ready"
+  removed_bindings: number
+  removed_installation: boolean
+  removed_runtime_bindings?: number
+  refresh_required: boolean
+  refresh_mode?: "relist_or_reconnect"
+  wait?: "relist_or_reconnect"
+}
+```
+
+#### `capability_tool_call`
+
+Invoke an enabled dynamic external capability tool by synthetic tool name.
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id?: string
+  by?: string
+  tool_name: string
+  arguments?: Record<string, unknown>
+}
+```
+
+Result:
+```ts
+{
+  tool_name: string
+  capability_id: string
+  result: Record<string, unknown>
+}
+```
+
 #### `group_show`
 
 Args:
@@ -1109,6 +1380,166 @@ Result:
     kind?: "context_sync"
     idempotency_key?: string
     error?: string
+  }
+}
+```
+
+#### `memory_store`
+
+Args:
+```ts
+{
+  group_id: string
+  id?: string           // memory ID for update mode (omit for create)
+  content?: string      // required for create, optional for update
+  kind?: string
+  status?: string
+  confidence?: string
+  source_type?: string
+  source_ref?: string
+  scope_key?: string
+  actor_id?: string
+  task_id?: string
+  milestone_id?: string
+  event_ts?: string
+  tags?: string[]
+  strategy?: string     // "aggressive" | "conservative" | "milestone-only"
+  solidify?: boolean    // immediately solidify after store/update
+}
+```
+
+Result (create): `{ id, content_hash, created_at, status, deduplicated }`
+Result (update): `{ memory: Record<string, unknown>, updated: true }`
+
+#### `memory_search`
+
+Args:
+```ts
+{
+  group_id: string
+  query?: string        // FTS5 full-text query
+  status?: string
+  kind?: string
+  actor_id?: string
+  task_id?: string
+  milestone_id?: string
+  confidence?: string
+  tags?: string[]
+  since?: string        // ISO 8601
+  until?: string        // ISO 8601
+  track_hit?: boolean   // default false; when true increments hit_count and may auto-solidify
+  limit?: number        // 1-100, default 20
+}
+```
+
+Result: `{ memories: Array<Record<string, unknown>>, count: number }`
+
+#### `memory_stats`
+
+Args:
+```ts
+{ group_id: string }
+```
+
+Result: `{ total, by_status, by_kind, tag_count, relation_count }`
+
+#### `memory_ingest`
+
+Args:
+```ts
+{
+  group_id: string
+  mode?: "signal" | "raw"    // default "signal"
+  limit?: number             // ledger lines to read (1-200, default 50)
+  actor_id?: string          // filter by actor (raw mode only)
+  reset_watermark?: boolean  // re-process previously ingested events
+}
+```
+
+Result (signal mode): `{ signals: Array<{actor_id, messages_count, suggested_kind, key_phrases, time_range, topic}>, events_processed, watermark, mode }`
+Result (raw mode): `{ imported, skipped, watermark, mode }`
+
+#### `memory_solidify_batch`
+
+Args:
+```ts
+{
+  group_id: string
+  milestone_id?: string  // filter by milestone
+  kind?: string          // filter by kind
+}
+```
+
+Result: `{ solidified: number, ids: string[] }`
+
+#### `memory_export`
+
+Args:
+```ts
+{
+  group_id: string
+  include_draft?: boolean  // include draft memories (default: false)
+  output_dir?: string      // output directory override
+}
+```
+
+Result: `{ manifest: { group_id, sha256, memory_count, exported_at, format }, md_path: string, manifest_path: string }`
+
+#### `memory_delete`
+
+Args:
+```ts
+{
+  group_id: string
+  id?: string     // single memory ID
+  ids?: string[]  // batch memory IDs
+}
+```
+
+Result: `{ deleted: boolean, deleted_count: number, ids: string[] }`
+
+#### `memory_decay`
+
+Find stale memory candidates for cleanup/decay (safe: read-only, no auto-delete).
+
+Args:
+```ts
+{
+  group_id: string
+  draft_days?: number        // default 30
+  zero_hit_days?: number     // default 14
+  solid_review_days?: number // default 120
+  solid_max_hit?: number     // default 1
+  limit?: number             // default 100
+}
+```
+
+Result:
+```ts
+{
+  candidates: Array<{
+    id: string
+    content_preview: string
+    kind: string
+    status: "draft" | "solid"
+    hit_count: number
+    created_at: string
+    last_recalled_at: string
+    age_days: number
+    reasons: string[]
+    recommended_action: "delete_candidate" | "review_candidate"
+    priority: "low" | "medium" | "high"
+    score: number
+  }>
+  count: number
+  delete_candidate_count: number
+  review_candidate_count: number
+  config: {
+    draft_days: number
+    zero_hit_days: number
+    solid_review_days: number
+    solid_max_hit: number
+    limit: number
   }
 }
 ```

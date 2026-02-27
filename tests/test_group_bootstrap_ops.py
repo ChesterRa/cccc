@@ -41,7 +41,7 @@ class TestGroupBootstrapOps(unittest.TestCase):
             cleanup()
 
     def test_missing_template_callbacks_returns_internal_error(self) -> None:
-        from cccc.daemon.ops.group_bootstrap_ops import try_handle_group_bootstrap_op
+        from cccc.daemon.group.group_bootstrap_ops import try_handle_group_bootstrap_op
 
         resp = try_handle_group_bootstrap_op("group_template_export", {})
         self.assertIsNotNone(resp)
@@ -50,7 +50,7 @@ class TestGroupBootstrapOps(unittest.TestCase):
         self.assertEqual(str(getattr(resp, "error", None).code), "internal_error")
 
     def test_unknown_op_returns_none(self) -> None:
-        from cccc.daemon.ops.group_bootstrap_ops import try_handle_group_bootstrap_op
+        from cccc.daemon.group.group_bootstrap_ops import try_handle_group_bootstrap_op
 
         self.assertIsNone(try_handle_group_bootstrap_op("not_bootstrap", {}))
 
