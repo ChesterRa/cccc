@@ -18,7 +18,7 @@ def _check_daemon_running() -> bool:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="cccc web", description="cccc web port (FastAPI)")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8848, help="Bind port (default: 8848)")
     parser.add_argument(
         "--mode",

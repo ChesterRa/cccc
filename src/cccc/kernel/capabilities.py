@@ -27,6 +27,11 @@ CORE_TOOL_NAMES: Tuple[str, ...] = (
     "cccc_message_reply",
     "cccc_group_info",
     "cccc_actor_list",
+    "cccc_actor_add",
+    "cccc_actor_remove",
+    "cccc_actor_start",
+    "cccc_actor_stop",
+    "cccc_actor_restart",
     "cccc_project_info",
     "cccc_context_get",
     "cccc_context_sync",
@@ -42,6 +47,7 @@ CORE_TOOL_NAMES: Tuple[str, ...] = (
     "cccc_presence_get",
     "cccc_presence_update",
     "cccc_presence_clear",
+    "cccc_group_set_state",
 )
 
 
@@ -52,7 +58,6 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         "description": "Group-level lifecycle controls and group list operations.",
         "tool_names": (
             "cccc_group_list",
-            "cccc_group_set_state",
         ),
         "tags": ("group", "admin"),
     },
@@ -68,14 +73,9 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
     },
     "pack:actor-admin": {
         "title": "Actor Admin",
-        "description": "Actor profile/runtime lifecycle controls.",
+        "description": "Actor profile listing and runtime diagnostics.",
         "tool_names": (
             "cccc_actor_profile_list",
-            "cccc_actor_add",
-            "cccc_actor_remove",
-            "cccc_actor_start",
-            "cccc_actor_stop",
-            "cccc_actor_restart",
             "cccc_runtime_list",
         ),
         "tags": ("actor", "runtime", "admin"),

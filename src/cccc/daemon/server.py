@@ -426,14 +426,26 @@ def _daemon_tcp_bind_host() -> str:
 def _daemon_tcp_port() -> int:
     raw = str(os.environ.get("CCCC_DAEMON_PORT") or "").strip()
     if not raw:
-        return 0
+        return 9765
     try:
         port = int(raw)
     except Exception:
-        return 0
+        return 9765
     if port < 0 or port > 65535:
-        return 0
+        return 9765
     return port
+
+
+def _daemon_tcp_port_is_explicit() -> bool:
+    """Return True when the user explicitly set CCCC_DAEMON_PORT."""
+    raw = str(os.environ.get("CCCC_DAEMON_PORT") or "").strip()
+    if not raw:
+        return False
+    try:
+        port = int(raw)
+    except Exception:
+        return False
+    return 0 <= port <= 65535
 
 
 def get_daemon_endpoint(paths: Optional[DaemonPaths] = None) -> Dict[str, Any]:
@@ -889,6 +901,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         sock_path=p.sock_path,
         daemon_tcp_bind_host=_daemon_tcp_bind_host,
         daemon_tcp_port=_daemon_tcp_port,
+        daemon_tcp_port_is_explicit=_daemon_tcp_port_is_explicit,
     )
 
     with s:

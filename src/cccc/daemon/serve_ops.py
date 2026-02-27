@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import logging
 import socket
 import threading
@@ -136,6 +137,7 @@ def bind_server_socket(
     sock_path: Path,
     daemon_tcp_bind_host: Callable[[], str],
     daemon_tcp_port: Callable[[], int],
+    daemon_tcp_port_is_explicit: Callable[[], bool] = lambda: False,
 ) -> tuple[socket.socket, Dict[str, Any]]:
     tr = str(transport or "").strip().lower()
     if tr == "unix":
@@ -165,6 +167,18 @@ def bind_server_socket(
                 continue
             s = cand
             break
+        except OSError as e:
+            try:
+                cand.close()
+            except Exception:
+                pass
+            if e.errno == errno.EADDRINUSE and not daemon_tcp_port_is_explicit():
+                _LOG.warning("Port %d in use, falling back to dynamic port", port)
+                port = 0
+                endpoint["port"] = 0
+                reserved_ports = {8848}
+                continue
+            raise
         except Exception:
             try:
                 cand.close()

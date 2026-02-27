@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useIMEComposition } from "../../hooks/useIMEComposition";
 
 export interface GroupEditModalProps {
   isOpen: boolean;
@@ -34,6 +35,8 @@ export function GroupEditModal({
 }: GroupEditModalProps) {
   const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onCancel);
+  const imeTitle = useIMEComposition({ value: title, onChange: onChangeTitle });
+  const imeTopic = useIMEComposition({ value: topic, onChange: onChangeTopic });
   if (!isOpen) return null;
 
   const homeRoot = String(ccccHome || "").trim();
@@ -89,8 +92,10 @@ export function GroupEditModal({
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
               }`}
-              value={title}
-              onChange={(e) => onChangeTitle(e.target.value)}
+              value={imeTitle.value}
+              onChange={imeTitle.onChange}
+              onCompositionStart={imeTitle.onCompositionStart}
+              onCompositionEnd={imeTitle.onCompositionEnd}
               placeholder={t("groupEdit.groupNamePlaceholder")}
             />
           </div>
@@ -100,8 +105,10 @@ export function GroupEditModal({
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
                 isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
               }`}
-              value={topic}
-              onChange={(e) => onChangeTopic(e.target.value)}
+              value={imeTopic.value}
+              onChange={imeTopic.onChange}
+              onCompositionStart={imeTopic.onCompositionStart}
+              onCompositionEnd={imeTopic.onCompositionEnd}
               placeholder={t("groupEdit.descriptionPlaceholder")}
             />
           </div>

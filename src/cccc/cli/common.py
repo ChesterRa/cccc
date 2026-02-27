@@ -499,7 +499,7 @@ def _default_entry() -> int:
     monitor_thread.start()
 
     # Build web args from environment
-    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
+    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "0.0.0.0"
     port = int(os.environ.get("CCCC_WEB_PORT") or 8848)
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
     reload_mode = _env_flag("CCCC_WEB_RELOAD", default=False)
