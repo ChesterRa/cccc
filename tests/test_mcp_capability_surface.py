@@ -29,15 +29,19 @@ class TestMcpCapabilitySurface(unittest.TestCase):
     def test_core_surface_budget_is_small(self) -> None:
         total = len(MCP_TOOLS)
         core = len(CORE_TOOL_NAMES)
-        self.assertLessEqual(core, total // 2, msg=f"core surface too large: core={core}, total={total}")
+        # Keep core constrained while allowing a few high-frequency tools to stay first-class.
+        self.assertLessEqual(core, (total // 2) + 3, msg=f"core surface too large: core={core}, total={total}")
 
     def test_capability_meta_tools_are_core(self) -> None:
         core = set(CORE_TOOL_NAMES)
         self.assertIn("cccc_capability_search", core)
         self.assertIn("cccc_capability_enable", core)
+        self.assertIn("cccc_capability_block", core)
         self.assertIn("cccc_capability_state", core)
         self.assertIn("cccc_capability_uninstall", core)
         self.assertIn("cccc_capability_use", core)
+        self.assertIn("cccc_context_agent", core)
+        self.assertIn("cccc_memory", core)
 
 
 if __name__ == "__main__":

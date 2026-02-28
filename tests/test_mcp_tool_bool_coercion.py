@@ -195,6 +195,8 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         from cccc.ports.mcp import server as mcp_server
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(
             mcp_server, "context_sync", return_value={"ok": True}
         ) as mock_context_sync:
             mcp_server.handle_tool_call("cccc_context_sync", {"ops": [], "dry_run": "false"})
@@ -202,6 +204,20 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             kwargs = mock_context_sync.call_args.kwargs
             self.assertEqual(kwargs.get("group_id"), "g_test")
             self.assertFalse(bool(kwargs.get("dry_run")))
+            self.assertEqual(str(kwargs.get("by") or ""), "peer1")
+
+    def test_context_vision_update_forwards_caller_identity(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(mcp_server, "vision_update", return_value={"ok": True}) as mock_vision_update:
+            mcp_server.handle_tool_call("cccc_context_admin", {"action": "vision_update", "vision": "north-star"})
+            self.assertTrue(mock_vision_update.called)
+            kwargs = mock_vision_update.call_args.kwargs
+            self.assertEqual(kwargs.get("group_id"), "g_test")
+            self.assertEqual(str(kwargs.get("vision") or ""), "north-star")
+            self.assertEqual(str(kwargs.get("by") or ""), "peer1")
 
     def test_notify_send_requires_ack_string_false(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -210,8 +226,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_resolve_self_actor_id", return_value="peer1"
         ), patch.object(mcp_server, "notify_send", return_value={"ok": True}) as mock_notify_send:
             mcp_server.handle_tool_call(
-                "cccc_notify_send",
+                "cccc_notify",
                 {
+                    "action": "send",
                     "kind": "info",
                     "title": "t",
                     "message": "m",
@@ -231,8 +248,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_resolve_self_actor_id", return_value="peer1"
         ), patch.object(mcp_server, "terminal_tail", return_value={"ok": True}) as mock_terminal_tail:
             mcp_server.handle_tool_call(
-                "cccc_terminal_tail",
+                "cccc_terminal",
                 {
+                    "action": "tail",
                     "target_actor_id": "peer2",
                     "strip_ansi": "false",
                 },
@@ -251,9 +269,10 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_resolve_caller_from_by", return_value="peer1"
         ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
             mcp_server.handle_tool_call(
-                "cccc_space_artifact",
+                "cccc_space",
                 {
-                    "action": "generate",
+                    "action": "artifact",
+                    "sub_action": "generate",
                     "kind": "slide_deck",
                 },
             )
@@ -269,8 +288,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_resolve_caller_from_by", return_value="peer1"
         ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
             mcp_server.handle_tool_call(
-                "cccc_space_artifact",
+                "cccc_space",
                 {
+                    "action": "artifact",
                     "kind": "study_guide",
                     "save_to_space": "true",
                     "source": "/tmp/notes.md",
@@ -288,8 +308,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_resolve_caller_from_by", return_value="peer1"
         ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
             mcp_server.handle_tool_call(
-                "cccc_space_artifact",
+                "cccc_space",
                 {
+                    "action": "artifact",
                     "kind": "report",
                     "language": "zh-CN",
                     "source": "/tmp/notes.md",
@@ -310,8 +331,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 mcp_server, "_resolve_caller_from_by", return_value="peer1"
             ), patch.object(mcp_server, "space_artifact", return_value={"ok": True}) as mock_space_artifact:
                 mcp_server.handle_tool_call(
-                    "cccc_space_artifact",
+                    "cccc_space",
                     {
+                        "action": "artifact",
                         "kind": "report",
                         "source": src,
                     },
@@ -327,8 +349,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_resolve_caller_from_by", return_value="peer1"
         ), patch.object(mcp_server, "space_ingest", return_value={"ok": True}) as mock_space_ingest:
             mcp_server.handle_tool_call(
-                "cccc_space_ingest",
+                "cccc_space",
                 {
+                    "action": "ingest",
                     "source_type": "file",
                     "url": "/tmp/spec.md",
                     "title": "Spec",
@@ -348,8 +371,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "space_query", return_value={"ok": True}
         ) as mock_space_query:
             mcp_server.handle_tool_call(
-                "cccc_space_query",
+                "cccc_space",
                 {
+                    "action": "query",
                     "query": "summarize",
                     "options": {"source_ids": [" src_1 ", "src_2"]},
                 },
@@ -364,8 +388,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
             with self.assertRaises(mcp_server.MCPError) as cm:
                 mcp_server.handle_tool_call(
-                    "cccc_space_query",
+                    "cccc_space",
                     {
+                        "action": "query",
                         "query": "summarize",
                         "language": "zh-CN",
                     },
@@ -379,8 +404,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
             with self.assertRaises(mcp_server.MCPError) as cm:
                 mcp_server.handle_tool_call(
-                    "cccc_space_query",
+                    "cccc_space",
                     {
+                        "action": "query",
                         "query": "summarize",
                         "options": {"top_k": 5},
                     },
@@ -447,7 +473,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
             mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
         ):
-            mcp_server.handle_tool_call("cccc_memory_delete", {"id": "m1"})
+            mcp_server.handle_tool_call("cccc_memory_admin", {"action": "delete", "id": "m1"})
 
         req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
         self.assertEqual(req.get("op"), "memory_delete")
@@ -467,7 +493,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
             mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
         ):
-            mcp_server.handle_tool_call("cccc_memory_delete", {"ids": ["m1", "m2"]})
+            mcp_server.handle_tool_call("cccc_memory_admin", {"action": "delete", "ids": ["m1", "m2"]})
 
         req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
         self.assertEqual(req.get("op"), "memory_delete")
@@ -480,7 +506,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
             with self.assertRaises(mcp_server.MCPError) as cm:
-                mcp_server.handle_tool_call("cccc_memory_delete", {})
+                mcp_server.handle_tool_call("cccc_memory_admin", {"action": "delete"})
         self.assertEqual(cm.exception.code, "missing_id")
 
     def test_memory_decay_routes_to_daemon(self) -> None:
@@ -496,8 +522,9 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
         ):
             mcp_server.handle_tool_call(
-                "cccc_memory_decay",
+                "cccc_memory_admin",
                 {
+                    "action": "decay",
                     "draft_days": 21,
                     "zero_hit_days": 10,
                     "solid_review_days": 90,
@@ -520,7 +547,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         from cccc.ports.mcp import server as mcp_server
 
         for topic in ("store", "search", "consolidation", "lifecycle"):
-            out = mcp_server.handle_tool_call("cccc_memory_guide", {"topic": topic})
+            out = mcp_server.handle_tool_call("cccc_memory", {"action": "guide", "topic": topic})
             self.assertEqual(out.get("topic"), topic)
             self.assertEqual(out.get("source"), "builtin")
             self.assertEqual(out.get("version"), "1")
@@ -531,14 +558,14 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         from cccc.ports.mcp import server as mcp_server
 
         with self.assertRaises(mcp_server.MCPError) as cm:
-            mcp_server.handle_tool_call("cccc_memory_guide", {"topic": "invalid-topic"})
+            mcp_server.handle_tool_call("cccc_memory", {"action": "guide", "topic": "invalid-topic"})
         self.assertEqual(cm.exception.code, "validation_error")
 
     def test_memory_guide_missing_topic_raises_validation_error(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
         with self.assertRaises(mcp_server.MCPError) as cm:
-            mcp_server.handle_tool_call("cccc_memory_guide", {})
+            mcp_server.handle_tool_call("cccc_memory", {"action": "guide"})
         self.assertEqual(cm.exception.code, "validation_error")
 
 

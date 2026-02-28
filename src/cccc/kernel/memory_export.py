@@ -58,8 +58,8 @@ def export_markdown(
             lines.append(f"- **Confidence**: {mem.get('confidence', '')}")
             if mem.get("actor_id"):
                 lines.append(f"- **Actor**: {mem['actor_id']}")
-            if mem.get("milestone_id"):
-                lines.append(f"- **Milestone**: {mem['milestone_id']}")
+            if mem.get("task_id"):
+                lines.append(f"- **Task**: {mem['task_id']}")
             if mem.get("tags"):
                 lines.append(f"- **Tags**: {', '.join(mem['tags'])}")
             lines.append(f"- **Created**: {mem.get('created_at', '')}")

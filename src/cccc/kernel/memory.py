@@ -25,7 +25,7 @@ from ..util.time import parse_utc_iso, utc_now_iso
 
 MEMORY_KINDS = ("observation", "decision", "preference", "fact", "instruction", "context", "relation")
 MEMORY_STATUSES = ("draft", "solid")
-MEMORY_SOURCE_TYPES = ("manual", "chat_ingest", "milestone_report", "agent_extract", "reflection")
+MEMORY_SOURCE_TYPES = ("manual", "chat_ingest", "task_report", "agent_extract", "reflection")
 MEMORY_CONFIDENCE_LEVELS = ("low", "medium", "high")
 
 SCHEMA_VERSION = 3
@@ -42,7 +42,7 @@ MEMORY_STRATEGIES: Dict[str, Dict[str, Any]] = {
         "auto_solidify": False,      # relies on hit_count auto-solidify
         "default_confidence": "high",
     },
-    "milestone-only": {
+    "task-completion": {
         "auto_solidify": True,       # store() creates as 'solid' directly
         "default_confidence": "high",
     },
@@ -117,14 +117,12 @@ CREATE TABLE IF NOT EXISTS memories (
     scope_key TEXT NOT NULL DEFAULT '',
     actor_id TEXT NOT NULL DEFAULT '',
     task_id TEXT NOT NULL DEFAULT '',
-    milestone_id TEXT NOT NULL DEFAULT '',
     event_ts TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     content_hash TEXT NOT NULL DEFAULT '',
     hit_count INTEGER NOT NULL DEFAULT 0,
-    last_recalled_at TEXT NOT NULL DEFAULT '',
-    summary TEXT NOT NULL DEFAULT ''
+    last_recalled_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS memory_tags (
@@ -166,7 +164,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_group_id ON memories(group_id);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
 CREATE INDEX IF NOT EXISTS idx_memories_actor_id ON memories(actor_id);
 CREATE INDEX IF NOT EXISTS idx_memories_task_id ON memories(task_id);
-CREATE INDEX IF NOT EXISTS idx_memories_milestone_id ON memories(milestone_id);
 CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind);
 CREATE INDEX IF NOT EXISTS idx_memories_source_type ON memories(source_type);
 CREATE INDEX IF NOT EXISTS idx_memories_event_ts ON memories(event_ts);
@@ -218,6 +215,8 @@ class MemoryStore:
     def _drop_legacy_relation_artifacts(self) -> None:
         """Remove deprecated relation table/indexes if present."""
         assert self._conn is not None
+        # v3 cleanup: milestone terminology removed from schema.
+        self._conn.execute("DROP INDEX IF EXISTS idx_memories_milestone_id")
         self._conn.execute("DROP INDEX IF EXISTS idx_memory_relations_from")
         self._conn.execute("DROP INDEX IF EXISTS idx_memory_relations_to")
         self._conn.execute("DROP TABLE IF EXISTS memory_relations")
@@ -241,11 +240,6 @@ class MemoryStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memories_last_recalled_at "
                 "ON memories(last_recalled_at)"
-            )
-        if from_version < 3:
-            # v2 → v3: add summary column
-            self._conn.execute(
-                "ALTER TABLE memories ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
             )
         # Bump version
         self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -308,12 +302,10 @@ class MemoryStore:
         scope_key: str = "",
         actor_id: str = "",
         task_id: str = "",
-        milestone_id: str = "",
         event_ts: str = "",
         tags: Optional[List[str]] = None,
         memory_id: Optional[str] = None,
         strategy: str = "",
-        summary: str = "",
     ) -> Dict[str, Any]:
         """Store a new memory. Returns the created memory dict.
 
@@ -362,13 +354,13 @@ class MemoryStore:
         self._conn.execute(
             """INSERT INTO memories
                (id, content, kind, source_type, source_ref, status, confidence,
-                group_id, scope_key, actor_id, task_id, milestone_id,
-                event_ts, created_at, updated_at, content_hash, summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                group_id, scope_key, actor_id, task_id,
+                event_ts, created_at, updated_at, content_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 mid, content, kind, source_type, source_ref, status, confidence,
-                self.group_id, scope_key, actor_id, task_id, milestone_id,
-                event_ts, now, now, c_hash, summary,
+                self.group_id, scope_key, actor_id, task_id,
+                event_ts, now, now, c_hash,
             ),
         )
 
@@ -413,7 +405,7 @@ class MemoryStore:
     def solidify_batch(
         self,
         *,
-        milestone_id: str = "",
+        task_id: str = "",
         kind: str = "",
     ) -> Dict[str, Any]:
         """Batch solidify: draft → solid for matching memories.
@@ -424,9 +416,9 @@ class MemoryStore:
         clauses = ["group_id = ?", "status = 'draft'"]
         params: List[Any] = [self.group_id]
 
-        if milestone_id:
-            clauses.append("milestone_id = ?")
-            params.append(milestone_id)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
         if kind:
             _validate_enum(kind, MEMORY_KINDS, "kind")
             clauses.append("kind = ?")
@@ -454,7 +446,7 @@ class MemoryStore:
             import json
             self.set_meta("last_solidify_batch", json.dumps({
                 "count": len(ids),
-                "milestone_id": milestone_id,
+                "task_id": task_id,
                 "kind": kind,
                 "at": now,
             }))
@@ -498,10 +490,8 @@ class MemoryStore:
         source_ref: Optional[str] = None,
         actor_id: Optional[str] = None,
         task_id: Optional[str] = None,
-        milestone_id: Optional[str] = None,
         event_ts: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        summary: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Update a memory. Returns updated memory dict or None if not found."""
         assert self._conn is not None
@@ -549,15 +539,9 @@ class MemoryStore:
         if task_id is not None:
             sets.append("task_id = ?")
             vals.append(task_id)
-        if milestone_id is not None:
-            sets.append("milestone_id = ?")
-            vals.append(milestone_id)
         if event_ts is not None:
             sets.append("event_ts = ?")
             vals.append(event_ts)
-        if summary is not None:
-            sets.append("summary = ?")
-            vals.append(summary)
 
         if sets:
             now = utc_now_iso()
@@ -900,14 +884,12 @@ class MemoryStore:
         kind: str = "",
         actor_id: str = "",
         task_id: str = "",
-        milestone_id: str = "",
         confidence: str = "",
         tags: Optional[List[str]] = None,
         since: str = "",
         until: str = "",
         limit: int = 20,
         track_hit: bool = False,
-        depth: str = "L0",
     ) -> List[Dict[str, Any]]:
         """Structured memory recall with FTS5 search and filters.
 
@@ -920,17 +902,8 @@ class MemoryStore:
         When track_hit=True, increments hit_count and updates last_recalled_at
         on all returned memories, and auto-solidifies drafts reaching the threshold.
         Default is False (no side effects on query).
-
-        depth controls returned fields:
-        - "L0" (default): returns summary instead of content (saves tokens).
-          If summary is empty, falls back to content[:150]+"…".
-        - "L2": returns full content + summary.
         """
         assert self._conn is not None
-
-        # Validate depth
-        if depth not in ("L0", "L2"):
-            raise ValueError(f"Invalid depth: {depth!r}. Must be 'L0' or 'L2'.")
 
         # Enum validation for filters
         if kind:
@@ -942,7 +915,7 @@ class MemoryStore:
 
         filter_kwargs = dict(
             status=status, kind=kind, actor_id=actor_id,
-            task_id=task_id, milestone_id=milestone_id,
+            task_id=task_id,
             confidence=confidence, tags=tags,
             since=since, until=until, limit=limit,
         )
@@ -994,18 +967,6 @@ class MemoryStore:
                 if m.get("status") == "draft" and new_hit >= AUTO_SOLIDIFY_HIT_THRESHOLD:
                     m["status"] = "solid"
 
-        # Apply depth projection
-        for m in results:
-            m["depth"] = depth
-            if depth == "L0":
-                summary = m.get("summary", "")
-                if not summary:
-                    full = m.get("content", "")
-                    summary = (full[:150] + "\u2026") if len(full) > 150 else full
-                m["summary"] = summary
-                m.pop("content", None)
-            # depth == "L2": keep both content and summary as-is
-
         return results
 
     def _build_filter_clauses(
@@ -1015,7 +976,6 @@ class MemoryStore:
         kind: str,
         actor_id: str,
         task_id: str,
-        milestone_id: str,
         confidence: str,
         tags: Optional[List[str]],
         since: str,
@@ -1037,9 +997,6 @@ class MemoryStore:
         if task_id:
             clauses.append("m.task_id = ?")
             params.append(task_id)
-        if milestone_id:
-            clauses.append("m.milestone_id = ?")
-            params.append(milestone_id)
         if confidence:
             clauses.append("m.confidence = ?")
             params.append(confidence)
@@ -1062,14 +1019,14 @@ class MemoryStore:
 
     def _recall_no_query(
         self, *, status: str, kind: str, actor_id: str,
-        task_id: str, milestone_id: str, confidence: str,
+        task_id: str, confidence: str,
         tags: Optional[List[str]], since: str, until: str, limit: int,
     ) -> List[Dict[str, Any]]:
         """Recall without text search - just filters."""
         assert self._conn is not None
         clauses, params = self._build_filter_clauses(
             status=status, kind=kind, actor_id=actor_id,
-            task_id=task_id, milestone_id=milestone_id,
+            task_id=task_id,
             confidence=confidence, tags=tags, since=since, until=until,
         )
         where = " AND ".join(clauses)
@@ -1089,7 +1046,7 @@ class MemoryStore:
 
     def _recall_fts(
         self, query: str, *, status: str, kind: str, actor_id: str,
-        task_id: str, milestone_id: str, confidence: str,
+        task_id: str, confidence: str,
         tags: Optional[List[str]], since: str, until: str, limit: int,
     ) -> List[Dict[str, Any]]:
         """FTS5 full-text search with filters."""
@@ -1097,7 +1054,7 @@ class MemoryStore:
         sanitized = _sanitize_fts_query(query.strip())
         clauses, params = self._build_filter_clauses(
             status=status, kind=kind, actor_id=actor_id,
-            task_id=task_id, milestone_id=milestone_id,
+            task_id=task_id,
             confidence=confidence, tags=tags, since=since, until=until,
         )
         # FTS5 join
@@ -1130,14 +1087,14 @@ class MemoryStore:
 
     def _recall_like(
         self, query: str, *, status: str, kind: str, actor_id: str,
-        task_id: str, milestone_id: str, confidence: str,
+        task_id: str, confidence: str,
         tags: Optional[List[str]], since: str, until: str, limit: int,
     ) -> List[Dict[str, Any]]:
         """LIKE-based search for CJK content (FTS5 supplement)."""
         assert self._conn is not None
         clauses, params = self._build_filter_clauses(
             status=status, kind=kind, actor_id=actor_id,
-            task_id=task_id, milestone_id=milestone_id,
+            task_id=task_id,
             confidence=confidence, tags=tags, since=since, until=until,
         )
         # Escape LIKE wildcards in user query to prevent unintended pattern matching

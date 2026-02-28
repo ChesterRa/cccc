@@ -30,7 +30,7 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
         group = create_group(reg, title="context-dirty", topic="")
         return group, ContextStorage(group)
 
-    def test_load_context_skips_bad_items_and_coerces_status(self) -> None:
+    def test_load_context_coerces_dirty_data(self) -> None:
         _, cleanup = self._with_home()
         try:
             group, storage = self._new_storage()
@@ -41,13 +41,12 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
                     {
                         "vision": "v",
                         "meta": [],
-                        "milestones": [
-                            {"id": "M1", "name": "good", "status": "active"},
-                            "not-a-map",
-                            {"id": "M2", "name": "bad-status", "status": "unknown_status"},
-                        ],
-                        "notes": [{"id": "N1", "content": "ok"}, 123],
-                        "references": [{"id": "R1", "url": "u", "note": "n"}, "bad"],
+                        "overview": {
+                            "manual": {
+                                "roles": ["lead", "peer"],
+                                "current_focus": "testing",
+                            }
+                        },
                     },
                     sort_keys=False,
                 ),
@@ -56,11 +55,9 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
 
             ctx = storage.load_context()
             self.assertEqual(ctx.vision, "v")
-            self.assertEqual(len(ctx.milestones), 2)
-            self.assertEqual(ctx.milestones[0].status.value, "active")
-            self.assertEqual(ctx.milestones[1].status.value, "planned")
-            self.assertEqual(len(ctx.notes), 1)
-            self.assertEqual(len(ctx.references), 1)
+            self.assertEqual(ctx.overview.manual.roles, ["lead", "peer"])
+            self.assertEqual(ctx.overview.manual.current_focus, "testing")
+            # meta was invalid (list instead of dict), should be replaced with default
             self.assertIsInstance(ctx.meta, dict)
             self.assertTrue(bool(ctx.meta))
         finally:
@@ -106,7 +103,7 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             presence_path.write_text(
                 yaml.safe_dump(
                     {
-                        "agents": [{"id": "peer1", "status": "busy"}, "bad"],
+                        "agents": [{"id": "peer1", "focus": "busy"}, "bad"],
                         "heartbeat_timeout_seconds": "oops",
                     },
                     sort_keys=False,
@@ -117,7 +114,7 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             presence = storage.load_presence()
             self.assertEqual(len(presence.agents), 1)
             self.assertEqual(presence.agents[0].id, "peer1")
-            self.assertEqual(presence.heartbeat_timeout_seconds, 300)
+            self.assertEqual(presence.agents[0].focus, "busy")
         finally:
             cleanup()
 

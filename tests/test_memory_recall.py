@@ -25,13 +25,13 @@ class RecallTestBase(unittest.TestCase):
         self.store.store(
             "SQLite FTS5 全文搜索引擎性能优异",
             kind="fact", status="solid", actor_id="peer-arch",
-            task_id="T001", milestone_id="M1", confidence="high",
+            task_id="T001", confidence="high",
             tags=["database", "search"],
         )
         self.store.store(
             "Memory system uses SQLite for persistent storage",
             kind="observation", status="draft", actor_id="peer-impl",
-            task_id="T002", milestone_id="M1", confidence="medium",
+            task_id="T002", confidence="medium",
             tags=["database", "memory"],
         )
         self.store.store(
@@ -99,11 +99,6 @@ class TestRecallNoQuery(RecallTestBase):
         t001 = self.store.recall(task_id="T001")
         self.assertEqual(len(t001), 2)
 
-    def test_recall_filter_milestone_id(self):
-        self._seed_data()
-        m1 = self.store.recall(milestone_id="M1")
-        self.assertEqual(len(m1), 2)
-
     def test_recall_filter_confidence(self):
         self._seed_data()
         high = self.store.recall(confidence="high")
@@ -153,7 +148,7 @@ class TestRecallFTS(RecallTestBase):
 
     def test_fts_basic(self):
         self._seed_data()
-        results = self.store.recall("SQLite", depth="L2")
+        results = self.store.recall("SQLite")
         self.assertGreater(len(results), 0)
         for m in results:
             self.assertIn("SQLite", m["content"])
@@ -199,7 +194,7 @@ class TestRecallCJK(RecallTestBase):
     def test_cjk_like_supplement(self):
         """CJK query with len >= 2 uses LIKE supplement."""
         self._seed_data()
-        results = self.store.recall("中文界面", depth="L2")
+        results = self.store.recall("中文界面")
         self.assertGreater(len(results), 0)
         found_content = [m["content"] for m in results]
         self.assertTrue(any("中文界面" in c for c in found_content))
@@ -253,7 +248,7 @@ class TestRecallLikeWildcardEscape(RecallTestBase):
         self.store.store("cut")
         self.store.store("cot")
         # If _ were unescaped, "c_t" would match all three via LIKE
-        results = self.store.recall("c_t", depth="L2")
+        results = self.store.recall("c_t")
         # Only exact substring match, not wildcard
         for m in results:
             self.assertIn("c_t", m["content"])
@@ -262,7 +257,7 @@ class TestRecallLikeWildcardEscape(RecallTestBase):
         """CJK query containing % doesn't cause wildcard expansion."""
         self.store.store("内存占用100%满了")
         self.store.store("完全不相关的内容")
-        results = self.store.recall("100%满", depth="L2")
+        results = self.store.recall("100%满")
         # Should find the first one, not both
         found = [m for m in results if "100%" in m["content"]]
         self.assertGreater(len(found), 0)
@@ -380,7 +375,7 @@ class TestRecallFTSScoreSorting(RecallTestBase):
         time.sleep(0.01)
         self.store.store("second created", status="solid")
 
-        results = self.store.recall(depth="L2")
+        results = self.store.recall()
         solids = [m for m in results if m["status"] == "solid"]
         self.assertEqual(len(solids), 2)
         # Second created should come first (created_at DESC)
@@ -391,7 +386,7 @@ class TestRecallFTSScoreSorting(RecallTestBase):
         self.store.store("SQLite FTS5 full-text search", status="solid")
         self.store.store("unrelated content about cats", status="solid")
 
-        results = self.store.recall("SQLite FTS5", depth="L2")
+        results = self.store.recall("SQLite FTS5")
         matching = [m for m in results if "SQLite" in m["content"]]
         self.assertGreater(len(matching), 0)
         for m in matching:
@@ -407,8 +402,8 @@ class TestRecallScoping(RecallTestBase):
         other = MemoryStore(self.db_path, group_id="g_other")
         try:
             other.store("other group memory")
-            mine = self.store.recall("memory", depth="L2")
-            theirs = other.recall("memory", depth="L2")
+            mine = self.store.recall("memory")
+            theirs = other.recall("memory")
             self.assertEqual(len(mine), 1)
             self.assertIn("my group", mine[0]["content"])
             self.assertEqual(len(theirs), 1)

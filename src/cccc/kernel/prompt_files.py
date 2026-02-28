@@ -17,11 +17,27 @@ _MAX_FILE_BYTES = 512 * 1024  # Safety limit for prompt markdown files.
 
 DEFAULT_PREAMBLE_BODY = """Quick start (recommended):
 - Call `cccc_bootstrap` to load PROJECT.md (if present) + Context + inbox + the CCCC help playbook.
-- If PROJECT.md is missing, ask the user for goals/constraints/DoD and record a short DoD in Context.
+- If PROJECT.md is missing, ask the user for goals/constraints/DoD and write a short DoD into Context.
 - Read the returned help playbook (or call `cccc_help` anytime to refresh).
 
-Intent: collaborate rigorously (if peers exist) and keep pushing the task forward with evidence-based steps.
-Mechanics: use MCP for visible chat; keep commitments/decisions/progress in Context; keep the inbox clean.
+Execution loop:
+- Keep visible coordination in MCP chat (`cccc_message_send` / `cccc_message_reply`).
+- Keep Context current at key transitions (start/milestone/blocker/unblock/done):
+  - tasks/overview via context tools
+  - agent short-term state via `cccc_context_agent(action=update, agent_id=<self>, ...)`
+  - minimum payload each update: `focus` + `next_action` + `what_changed` (and `active_task_id` when applicable)
+
+Gap handling (default policy):
+- If information is insufficient, investigate first (Context/PROJECT.md/inbox/memory; then web if allowed) before escalating.
+- If capability is insufficient, use capability control plane before declaring blocked:
+  - fast path: `cccc_capability_use(...)`
+  - discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)` -> `cccc_capability_use(capability_id=...)`
+  - if `refresh_required=true`, relist/reconnect then retry.
+
+Memory handoff:
+- Context = short-term execution memory; memory.db = long-term reusable memory.
+- Promotion rule: milestone/done -> `cccc_memory_admin(action="ingest", mode="signal")` -> `cccc_memory(action="store", ...)`.
+
 Message modes: choose intentionally (normal / attention / task[reply_required]); avoid both overuse and underuse.
 """
 

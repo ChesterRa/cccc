@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ....util.conv import coerce_bool
-from ..common import _call_daemon_or_raise
+from ..common import MCPError, _call_daemon_or_raise
 
 
 def notify_send(
@@ -55,23 +55,30 @@ def _handle_notify_namespace(
     notify_ack_fn: Callable[..., Dict[str, Any]],
     coerce_bool_fn: Callable[..., bool] = coerce_bool,
 ) -> Optional[Dict[str, Any]]:
-    if name == "cccc_notify_send":
+    if name == "cccc_notify":
         gid = resolve_group_id(arguments)
         aid = resolve_self_actor_id(arguments)
-        return notify_send_fn(
-            group_id=gid,
-            actor_id=aid,
-            kind=str(arguments.get("kind") or "info"),
-            title=str(arguments.get("title") or ""),
-            message=str(arguments.get("message") or ""),
-            target_actor_id=arguments.get("target_actor_id"),
-            priority=str(arguments.get("priority") or "normal"),
-            requires_ack=coerce_bool_fn(arguments.get("requires_ack"), default=False),
+        action = str(arguments.get("action") or "send").strip().lower()
+        if action == "send":
+            return notify_send_fn(
+                group_id=gid,
+                actor_id=aid,
+                kind=str(arguments.get("kind") or "info"),
+                title=str(arguments.get("title") or ""),
+                message=str(arguments.get("message") or ""),
+                target_actor_id=arguments.get("target_actor_id"),
+                priority=str(arguments.get("priority") or "normal"),
+                requires_ack=coerce_bool_fn(arguments.get("requires_ack"), default=False),
+            )
+        if action == "ack":
+            return notify_ack_fn(
+                group_id=gid,
+                actor_id=aid,
+                notify_event_id=str(arguments.get("notify_event_id") or ""),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message="cccc_notify action must be 'send' or 'ack'",
         )
-
-    if name == "cccc_notify_ack":
-        gid = resolve_group_id(arguments)
-        aid = resolve_self_actor_id(arguments)
-        return notify_ack_fn(group_id=gid, actor_id=aid, notify_event_id=str(arguments.get("notify_event_id") or ""))
 
     return None

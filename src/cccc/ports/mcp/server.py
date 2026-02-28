@@ -1,72 +1,17 @@
 """
 CCCC MCP Server - IM-style Agent Collaboration Tools
 
-Core tools exposed to agents:
-
-cccc.* namespace (collaboration control plane):
-- cccc_help: CCCC help playbook (authoritative; returns effective CCCC_HELP.md if present)
-- cccc_bootstrap: One-call session bootstrap (group+help+project+context+inbox)
-- cccc_inbox_list: Get unread messages (supports kind_filter)
-- cccc_inbox_mark_read: Mark messages as read
-- cccc_inbox_mark_all_read: Mark all current unread messages as read
-- cccc_message_send: Send message
-- cccc_message_reply: Reply to message
-- cccc_file_send: Send a local file as an attachment
-- cccc_blob_path: Resolve attachment blob path
-- cccc_group_info: Get group info
-- cccc_actor_list: Get actor list
-- cccc_actor_profile_list: List reusable Actor Profiles
-- cccc_actor_add: Add new actor (foreman only)
-- cccc_actor_remove: Remove an actor (foreman/peer can only remove themselves)
-- cccc_actor_start: Start actor
-- cccc_actor_stop: Stop actor
-- cccc_runtime_list: List available agent runtimes
-- cccc_capability_search: Search capability registry (progressive disclosure)
-- cccc_capability_enable: Enable/disable capability packs by scope
-- cccc_capability_state: Read effective visible tool surface
-- cccc_capability_uninstall: Uninstall cached external capability + revoke bindings
-- cccc_capability_use: One-step enable+call convenience helper
-- cccc_space_status: Read Group Space provider/binding/queue status
-- cccc_space_capabilities: Read Group Space local file policy + ingest schema matrix
-- cccc_space_bind: Bind or unbind Group Space provider mapping
-- cccc_space_ingest: Enqueue and execute Group Space ingest job
-- cccc_space_query: Query provider-backed Group Space knowledge
-- cccc_space_sources: List/refresh/rename/delete provider sources for the bound notebook
-- cccc_space_artifact: List/generate/download provider artifacts (can auto-save to repo space/artifacts)
-- cccc_space_jobs: List/retry/cancel Group Space jobs
-- cccc_space_sync: Read or run repo/space synchronization reconcile
-- cccc_space_provider_auth: Control provider auth flow (status/start/cancel)
-- cccc_space_provider_credential_status: Read provider credential status (masked)
-- cccc_space_provider_credential_update: Update/clear provider credential
-- cccc_automation_state: Read automation reminders/status visible to caller
-- cccc_automation_manage: Manage automation reminders (MCP actor writes are notify-only)
-- cccc_project_info: Get PROJECT.md content (project goals/constraints)
-
-context.* namespace (state sync):
-- cccc_context_get: Get full context
-- cccc_context_sync: Batch sync operations
-- cccc_vision_update / cccc_sketch_update: Vision/sketch
-- cccc_milestone_*: Milestone management (create/update/complete/remove)
-- cccc_task_*: Task management (list/create/update/delete)
-- cccc_note_*: Note management (add/update/remove)
-- cccc_reference_*: Reference management (add/update/remove)
-- cccc_presence_*: Presence status (get/update/clear)
-
-headless.* namespace (headless runner control):
-- cccc_headless_status: Get headless session status
-- cccc_headless_set_status: Update status (idle/working/waiting/stopped)
-- cccc_headless_ack_message: Acknowledge processed message
-
-notify.* namespace (system notifications, separate from chat):
-- cccc_notify_send: Send system notification
-- cccc_notify_ack: Acknowledge system notification
-
-terminal.* namespace (diagnostics):
-- cccc_terminal_tail: Tail an actor terminal transcript (group policy)
-
-debug.* namespace (developer mode diagnostics):
-- cccc_debug_snapshot: Get a structured debug snapshot (dev mode)
-- cccc_debug_tail_logs: Tail local CCCC logs (dev mode)
+Static MCP surface (31 entries):
+- cccc_help / cccc_bootstrap / cccc_project_info
+- cccc_inbox_list / cccc_inbox_mark_read
+- cccc_message_send / cccc_message_reply
+- cccc_file / cccc_group / cccc_actor / cccc_runtime_list
+- cccc_capability_search / cccc_capability_enable / cccc_capability_block / cccc_capability_state / cccc_capability_uninstall / cccc_capability_use
+- cccc_space / cccc_automation
+- cccc_context_get / cccc_context_sync / cccc_context_admin / cccc_task / cccc_context_agent
+- cccc_memory / cccc_memory_admin
+- cccc_headless / cccc_notify / cccc_terminal / cccc_debug
+- cccc_im_bind
 
 All operations go through daemon IPC to ensure single-writer principle.
 """
@@ -102,6 +47,7 @@ from .toolspecs import MCP_TOOLS
 # ---------------------------------------------------------------------------
 from .handlers.cccc_core import (  # noqa: F401
     _CCCC_HELP_BUILTIN,
+    _build_context_hygiene_hint,
     _append_runtime_skill_digest,
     bootstrap,
     inbox_list,
@@ -131,6 +77,7 @@ from .handlers.cccc_group_actor import (  # noqa: F401
     runtime_list,
 )
 from .handlers.cccc_capability import (  # noqa: F401
+    capability_block,
     capability_enable,
     capability_search,
     capability_state,
@@ -166,22 +113,15 @@ from .handlers.cccc_space import (  # noqa: F401
 from .handlers.context import (  # noqa: F401
     _handle_context_namespace as _handle_context_namespace_impl,
     context_get,
+    context_agent_clear,
+    context_agent_update,
     context_sync,
-    milestone_complete,
-    milestone_create,
-    milestone_update,
-    note_add,
-    note_remove,
-    note_update,
-    presence_clear,
-    presence_get,
-    presence_update,
-    reference_add,
-    reference_remove,
-    reference_update,
-    sketch_update,
+    overview_manual_update,
     task_create,
     task_list,
+    task_move,
+    task_restore,
+    task_status,
     task_update,
     vision_update,
 )
@@ -219,6 +159,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _env_str("CCCC_GROUP_ID")
         aid = _env_str("CCCC_ACTOR_ID")
         role: Optional[str] = None
+        help_result: Dict[str, Any]
         if gid:
             g = load_group(gid)
             if g is not None:
@@ -229,7 +170,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                         role = None
                 pf = read_group_prompt_file(g, HELP_FILENAME)
                 if pf.found and isinstance(pf.content, str) and pf.content.strip():
-                    return {
+                    help_result = {
                         "markdown": _append_runtime_skill_digest(
                             _select_help_markdown(pf.content, role=role, actor_id=aid),
                             group_id=gid,
@@ -237,26 +178,47 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                         ),
                         "source": str(pf.path or ""),
                     }
-        return {
-            "markdown": _append_runtime_skill_digest(
-                _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
-                group_id=gid,
-                actor_id=aid,
-            ),
-            "source": "cccc.resources/cccc-help.md",
-        }
+                else:
+                    help_result = {
+                        "markdown": _append_runtime_skill_digest(
+                            _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
+                            group_id=gid,
+                            actor_id=aid,
+                        ),
+                        "source": "cccc.resources/cccc-help.md",
+                    }
+            else:
+                help_result = {
+                    "markdown": _append_runtime_skill_digest(
+                        _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
+                        group_id=gid,
+                        actor_id=aid,
+                    ),
+                    "source": "cccc.resources/cccc-help.md",
+                }
+        else:
+            help_result = {
+                "markdown": _append_runtime_skill_digest(
+                    _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
+                    group_id=gid,
+                    actor_id=aid,
+                ),
+                "source": "cccc.resources/cccc-help.md",
+            }
+        if gid and aid:
+            try:
+                context_payload = _call_daemon_or_raise(
+                    {"op": "context_get", "args": {"group_id": gid, "by": aid}},
+                )
+                help_result["context_hygiene"] = _build_context_hygiene_hint(
+                    context=context_payload if isinstance(context_payload, dict) else {},
+                    actor_id=aid,
+                )
+            except Exception:
+                pass
+        return help_result
 
-    # --- Inbox ---
-    if name == "cccc_inbox_list":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return inbox_list(
-            group_id=gid,
-            actor_id=aid,
-            limit=min(max(int(arguments.get("limit") or 50), 1), 1000),
-            kind_filter=str(arguments.get("kind_filter") or "all"),
-        )
-
+    # --- Session bootstrap / project ---
     if name == "cccc_bootstrap":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
@@ -269,23 +231,38 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             ledger_tail_max_chars=min(max(int(arguments.get("ledger_tail_max_chars") or 8000), 0), 100000),
         )
 
+    if name == "cccc_project_info":
+        gid = _resolve_group_id(arguments)
+        return project_info(group_id=gid)
+
+    # --- Inbox ---
+    if name == "cccc_inbox_list":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return inbox_list(
+            group_id=gid,
+            actor_id=aid,
+            limit=min(max(int(arguments.get("limit") or 50), 1), 1000),
+            kind_filter=str(arguments.get("kind_filter") or "all"),
+        )
+
     if name == "cccc_inbox_mark_read":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
-        return inbox_mark_read(
-            group_id=gid,
-            actor_id=aid,
-            event_id=str(arguments.get("event_id") or ""),
-        )
-
-    if name == "cccc_inbox_mark_all_read":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return inbox_mark_all_read(
-            group_id=gid,
-            actor_id=aid,
-            kind_filter=str(arguments.get("kind_filter") or "all"),
-        )
+        action = str(arguments.get("action") or "read").strip().lower()
+        if action == "read_all":
+            return inbox_mark_all_read(
+                group_id=gid,
+                actor_id=aid,
+                kind_filter=str(arguments.get("kind_filter") or "all"),
+            )
+        if action == "read":
+            return inbox_mark_read(
+                group_id=gid,
+                actor_id=aid,
+                event_id=str(arguments.get("event_id") or ""),
+            )
+        raise MCPError(code="invalid_request", message="cccc_inbox_mark_read action must be 'read' or 'read_all'")
 
     # --- Messaging ---
     if name == "cccc_message_send":
@@ -329,97 +306,95 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )
 
-    if name == "cccc_file_send":
+    if name == "cccc_file":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
-        to_raw = arguments.get("to")
-        if isinstance(to_raw, list):
-            to_val_file: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
-        elif isinstance(to_raw, str) and to_raw.strip():
-            to_val_file = [to_raw.strip()]
-        else:
-            to_val_file = None
-        return file_send(
-            group_id=gid,
-            actor_id=aid,
-            path=str(arguments.get("path") or ""),
-            text=str(arguments.get("text") or ""),
-            to=to_val_file,
-            priority=str(arguments.get("priority") or "normal"),
-            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
-        )
-
-    if name == "cccc_blob_path":
-        gid = _resolve_group_id(arguments)
-        return blob_path(
-            group_id=gid,
-            rel_path=str(arguments.get("rel_path") or ""),
-        )
+        action = str(arguments.get("action") or "send").strip().lower()
+        if action == "blob_path":
+            return blob_path(group_id=gid, rel_path=str(arguments.get("rel_path") or ""))
+        if action == "send":
+            to_raw = arguments.get("to")
+            if isinstance(to_raw, list):
+                to_val_file: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
+            elif isinstance(to_raw, str) and to_raw.strip():
+                to_val_file = [to_raw.strip()]
+            else:
+                to_val_file = None
+            return file_send(
+                group_id=gid,
+                actor_id=aid,
+                path=str(arguments.get("path") or ""),
+                text=str(arguments.get("text") or ""),
+                to=to_val_file,
+                priority=str(arguments.get("priority") or "normal"),
+                reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+            )
+        raise MCPError(code="invalid_request", message="cccc_file action must be 'send' or 'blob_path'")
 
     # --- Group / Actor ---
-    if name == "cccc_group_info":
-        gid = _resolve_group_id(arguments)
-        return group_info(group_id=gid)
+    if name == "cccc_group":
+        action = str(arguments.get("action") or "info").strip().lower()
+        if action == "list":
+            return group_list()
+        if action == "info":
+            gid = _resolve_group_id(arguments)
+            return group_info(group_id=gid)
+        if action == "set_state":
+            gid = _resolve_group_id(arguments)
+            by = _resolve_caller_actor_id(arguments)
+            return group_set_state(
+                group_id=gid,
+                by=by,
+                state=str(arguments.get("state") or ""),
+            )
+        raise MCPError(code="invalid_request", message="cccc_group action must be one of: info/list/set_state")
 
-    if name == "cccc_group_list":
-        return group_list()
-
-    if name == "cccc_actor_list":
-        gid = _resolve_group_id(arguments)
-        return actor_list(group_id=gid)
-
-    if name == "cccc_actor_profile_list":
-        by = _resolve_caller_from_by(arguments)
-        return actor_profile_list(by=by)
-
-    if name == "cccc_actor_add":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        cmd_raw = arguments.get("command")
-        env_raw = arguments.get("env")
-        return actor_add(
-            group_id=gid,
-            by=by,
-            actor_id=str(arguments.get("actor_id") or ""),
-            runtime=str(arguments.get("runtime") or "codex"),
-            runner=str(arguments.get("runner") or "pty"),
-            title=str(arguments.get("title") or ""),
-            command=list(cmd_raw) if isinstance(cmd_raw, list) else None,
-            env=dict(env_raw) if isinstance(env_raw, dict) else None,
-            profile_id=str(arguments.get("profile_id") or ""),
-        )
-
-    if name == "cccc_actor_remove":
+    if name == "cccc_actor":
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_from_by(arguments)
-        target = str(arguments.get("actor_id") or "").strip() or by
-        return actor_remove(group_id=gid, by=by, actor_id=target)
-
-    if name == "cccc_actor_start":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return actor_start(
-            group_id=gid,
-            by=by,
-            actor_id=str(arguments.get("actor_id") or ""),
-        )
-
-    if name == "cccc_actor_stop":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return actor_stop(
-            group_id=gid,
-            by=by,
-            actor_id=str(arguments.get("actor_id") or ""),
-        )
-
-    if name == "cccc_actor_restart":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return actor_restart(
-            group_id=gid,
-            by=by,
-            actor_id=str(arguments.get("actor_id") or ""),
+        action = str(arguments.get("action") or "list").strip().lower()
+        if action == "list":
+            return actor_list(group_id=gid)
+        if action == "profile_list":
+            return actor_profile_list(by=by)
+        if action == "add":
+            cmd_raw = arguments.get("command")
+            env_raw = arguments.get("env")
+            return actor_add(
+                group_id=gid,
+                by=by,
+                actor_id=str(arguments.get("actor_id") or ""),
+                runtime=str(arguments.get("runtime") or "codex"),
+                runner=str(arguments.get("runner") or "pty"),
+                title=str(arguments.get("title") or ""),
+                command=list(cmd_raw) if isinstance(cmd_raw, list) else None,
+                env=dict(env_raw) if isinstance(env_raw, dict) else None,
+                profile_id=str(arguments.get("profile_id") or ""),
+            )
+        if action == "remove":
+            target = str(arguments.get("actor_id") or "").strip() or by
+            return actor_remove(group_id=gid, by=by, actor_id=target)
+        if action == "start":
+            return actor_start(
+                group_id=gid,
+                by=by,
+                actor_id=str(arguments.get("actor_id") or ""),
+            )
+        if action == "stop":
+            return actor_stop(
+                group_id=gid,
+                by=by,
+                actor_id=str(arguments.get("actor_id") or ""),
+            )
+        if action == "restart":
+            return actor_restart(
+                group_id=gid,
+                by=by,
+                actor_id=str(arguments.get("actor_id") or ""),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message="cccc_actor action must be one of: list/profile_list/add/remove/start/stop/restart",
         )
 
     if name == "cccc_runtime_list":
@@ -453,9 +428,23 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             scope=str(arguments.get("scope") or "session"),
             enabled=coerce_bool(arguments.get("enabled"), default=True),
             cleanup=coerce_bool(arguments.get("cleanup"), default=False),
-            approve=coerce_bool(arguments.get("approve"), default=False),
             reason=str(arguments.get("reason") or ""),
             ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
+        )
+
+    if name == "cccc_capability_block":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        actor_id = str(arguments.get("actor_id") or by).strip()
+        return capability_block(
+            group_id=gid,
+            by=by,
+            actor_id=actor_id,
+            capability_id=str(arguments.get("capability_id") or ""),
+            scope=str(arguments.get("scope") or "group"),
+            blocked=coerce_bool(arguments.get("blocked"), default=True),
+            reason=str(arguments.get("reason") or ""),
+            ttl_seconds=max(int(arguments.get("ttl_seconds") or 0), 0),
         )
 
     if name == "cccc_capability_state":
@@ -487,177 +476,158 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             tool_name=str(arguments.get("tool_name") or ""),
             tool_arguments=tool_args,
             scope=str(arguments.get("scope") or "session"),
-            approve=coerce_bool(arguments.get("approve"), default=False),
             ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
             reason=str(arguments.get("reason") or ""),
         )
 
     # --- Space ---
-    if name == "cccc_space_status":
+    if name == "cccc_space":
         gid = _resolve_group_id(arguments)
-        return space_status(
-            group_id=gid,
-            provider=str(arguments.get("provider") or "notebooklm"),
+        provider = str(arguments.get("provider") or "notebooklm")
+        action = str(arguments.get("action") or "status").strip().lower()
+        if action == "status":
+            return space_status(group_id=gid, provider=provider)
+        if action == "capabilities":
+            return space_capabilities(group_id=gid, provider=provider)
+        if action == "bind":
+            by = _resolve_caller_from_by(arguments)
+            return space_bind(
+                group_id=gid,
+                by=by,
+                provider=provider,
+                action="bind",
+                remote_space_id=str(arguments.get("remote_space_id") or ""),
+            )
+        if action == "ingest":
+            by = _resolve_caller_from_by(arguments)
+            parsed = parse_space_ingest_args(arguments)
+            return space_ingest(
+                group_id=gid,
+                by=by,
+                provider=provider,
+                kind=parsed["kind"],
+                payload=parsed["payload"],
+                idempotency_key=str(arguments.get("idempotency_key") or ""),
+            )
+        if action == "query":
+            query_args = dict(arguments)
+            query_args.pop("action", None)
+            query_args.pop("sub_action", None)
+            options = _normalize_space_query_options_mcp(query_args)
+            return space_query(
+                group_id=gid,
+                provider=provider,
+                query=str(arguments.get("query") or ""),
+                options=options,
+            )
+        if action == "sources":
+            by = _resolve_caller_from_by(arguments)
+            return space_sources(
+                group_id=gid,
+                by=by,
+                provider=provider,
+                action=str(arguments.get("source_action") or arguments.get("sub_action") or "list"),
+                source_id=str(arguments.get("source_id") or ""),
+                new_title=str(arguments.get("new_title") or ""),
+            )
+        if action == "artifact":
+            by = _resolve_caller_from_by(arguments)
+            artifact_args = dict(arguments)
+            sub_action = str(arguments.get("sub_action") or "").strip()
+            if sub_action:
+                artifact_args["action"] = sub_action
+            else:
+                artifact_args.pop("action", None)
+            parsed = parse_space_artifact_args(artifact_args)
+            return space_artifact(
+                group_id=gid,
+                by=by,
+                provider=provider,
+                action=parsed["action"],
+                kind=str(arguments.get("kind") or ""),
+                options=parsed["options"],
+                wait=coerce_bool(arguments.get("wait"), default=False),
+                save_to_space=coerce_bool(arguments.get("save_to_space"), default=True),
+                output_path=str(arguments.get("output_path") or ""),
+                output_format=str(arguments.get("output_format") or ""),
+                artifact_id=str(arguments.get("artifact_id") or ""),
+                timeout_seconds=parsed["timeout_seconds"],
+                initial_interval=parsed["initial_interval"],
+                max_interval=parsed["max_interval"],
+            )
+        if action == "jobs":
+            by = _resolve_caller_from_by(arguments)
+            return space_jobs(
+                group_id=gid,
+                by=by,
+                provider=provider,
+                action=str(arguments.get("job_action") or arguments.get("sub_action") or "list"),
+                job_id=str(arguments.get("job_id") or ""),
+                state=str(arguments.get("state") or ""),
+                limit=min(max(int(arguments.get("limit") or 50), 1), 500),
+            )
+        if action == "sync":
+            by = _resolve_caller_from_by(arguments)
+            return space_sync(
+                group_id=gid,
+                by=by,
+                provider=provider,
+                action=str(arguments.get("sync_action") or arguments.get("sub_action") or "run"),
+                force=bool(arguments.get("force") is True),
+            )
+        if action == "provider_auth":
+            by = _resolve_caller_from_by(arguments)
+            timeout_raw = arguments.get("timeout_seconds")
+            timeout_seconds = 900
+            if timeout_raw is not None:
+                try:
+                    timeout_seconds = int(timeout_raw)
+                except Exception:
+                    raise MCPError(code="invalid_request", message="timeout_seconds must be an integer")
+            return space_provider_auth(
+                provider=provider,
+                by=by,
+                action=str(arguments.get("provider_action") or arguments.get("sub_action") or "status"),
+                timeout_seconds=timeout_seconds,
+            )
+        if action == "provider_credential_status":
+            by = _resolve_caller_from_by(arguments)
+            return space_provider_credential_status(provider=provider, by=by)
+        if action == "provider_credential_update":
+            by = _resolve_caller_from_by(arguments)
+            return space_provider_credential_update(
+                provider=provider,
+                by=by,
+                auth_json=str(arguments.get("auth_json") or ""),
+                clear=coerce_bool(arguments.get("clear"), default=False),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message=(
+                "cccc_space action must be one of: status/capabilities/bind/ingest/query/sources/"
+                "artifact/jobs/sync/provider_auth/provider_credential_status/provider_credential_update"
+            ),
         )
 
-    if name == "cccc_space_capabilities":
-        gid = _resolve_group_id(arguments)
-        return space_capabilities(
-            group_id=gid,
-            provider=str(arguments.get("provider") or "notebooklm"),
-        )
-
-    if name == "cccc_space_bind":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return space_bind(
-            group_id=gid,
-            by=by,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            action=str(arguments.get("action") or "bind"),
-            remote_space_id=str(arguments.get("remote_space_id") or ""),
-        )
-
-    if name == "cccc_space_ingest":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        parsed = parse_space_ingest_args(arguments)
-        return space_ingest(
-            group_id=gid,
-            by=by,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            kind=parsed["kind"],
-            payload=parsed["payload"],
-            idempotency_key=str(arguments.get("idempotency_key") or ""),
-        )
-
-    if name == "cccc_space_query":
-        gid = _resolve_group_id(arguments)
-        options = _normalize_space_query_options_mcp(arguments)
-        return space_query(
-            group_id=gid,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            query=str(arguments.get("query") or ""),
-            options=options,
-        )
-
-    if name == "cccc_space_sources":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return space_sources(
-            group_id=gid,
-            by=by,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            action=str(arguments.get("action") or "list"),
-            source_id=str(arguments.get("source_id") or ""),
-            new_title=str(arguments.get("new_title") or ""),
-        )
-
-    if name == "cccc_space_artifact":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        parsed = parse_space_artifact_args(arguments)
-        return space_artifact(
-            group_id=gid,
-            by=by,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            action=parsed["action"],
-            kind=str(arguments.get("kind") or ""),
-            options=parsed["options"],
-            wait=coerce_bool(arguments.get("wait"), default=False),
-            save_to_space=coerce_bool(arguments.get("save_to_space"), default=True),
-            output_path=str(arguments.get("output_path") or ""),
-            output_format=str(arguments.get("output_format") or ""),
-            artifact_id=str(arguments.get("artifact_id") or ""),
-            timeout_seconds=parsed["timeout_seconds"],
-            initial_interval=parsed["initial_interval"],
-            max_interval=parsed["max_interval"],
-        )
-
-    if name == "cccc_space_jobs":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return space_jobs(
-            group_id=gid,
-            by=by,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            action=str(arguments.get("action") or "list"),
-            job_id=str(arguments.get("job_id") or ""),
-            state=str(arguments.get("state") or ""),
-            limit=min(max(int(arguments.get("limit") or 50), 1), 500),
-        )
-
-    if name == "cccc_space_sync":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
-        return space_sync(
-            group_id=gid,
-            by=by,
-            provider=str(arguments.get("provider") or "notebooklm"),
-            action=str(arguments.get("action") or "run"),
-            force=bool(arguments.get("force") is True),
-        )
-
-    if name == "cccc_space_provider_auth":
-        by = _resolve_caller_from_by(arguments)
-        timeout_raw = arguments.get("timeout_seconds")
-        timeout_seconds = 900
-        if timeout_raw is not None:
-            try:
-                timeout_seconds = int(timeout_raw)
-            except Exception:
-                raise MCPError(code="invalid_request", message="timeout_seconds must be an integer")
-        return space_provider_auth(
-            provider=str(arguments.get("provider") or "notebooklm"),
-            by=by,
-            action=str(arguments.get("action") or "status"),
-            timeout_seconds=timeout_seconds,
-        )
-
-    if name == "cccc_space_provider_credential_status":
-        by = _resolve_caller_from_by(arguments)
-        return space_provider_credential_status(
-            provider=str(arguments.get("provider") or "notebooklm"),
-            by=by,
-        )
-
-    if name == "cccc_space_provider_credential_update":
-        by = _resolve_caller_from_by(arguments)
-        return space_provider_credential_update(
-            provider=str(arguments.get("provider") or "notebooklm"),
-            by=by,
-            auth_json=str(arguments.get("auth_json") or ""),
-            clear=coerce_bool(arguments.get("clear"), default=False),
-        )
-
-    # --- Group State / Automation ---
-    if name == "cccc_group_set_state":
+    # --- Automation ---
+    if name == "cccc_automation":
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_actor_id(arguments)
-        return group_set_state(
-            group_id=gid,
-            by=by,
-            state=str(arguments.get("state") or ""),
-        )
-
-    if name == "cccc_automation_state":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_actor_id(arguments)
-        return automation_state(group_id=gid, by=by)
-
-    if name == "cccc_automation_manage":
-        gid = _resolve_group_id(arguments)
-        by = _resolve_caller_actor_id(arguments)
+        action = str(arguments.get("action") or "state").strip().lower()
+        if action == "state":
+            return automation_state(group_id=gid, by=by)
+        if action != "manage":
+            raise MCPError(code="invalid_request", message="cccc_automation action must be 'state' or 'manage'")
         actions: List[Dict[str, Any]] = []
         mapped = _map_simple_automation_op_to_action(arguments)
         if isinstance(mapped, dict):
             actions.append(mapped)
         actions_raw = arguments.get("actions")
         if isinstance(actions_raw, list):
-            for i, action in enumerate(actions_raw):
-                if not isinstance(action, dict):
+            for i, item in enumerate(actions_raw):
+                if not isinstance(item, dict):
                     raise MCPError(code="invalid_request", message=f"actions[{i}] must be an object")
-                actions.append(action)
+                actions.append(item)
         if not actions:
             raise MCPError(code="invalid_request", message="provide op (simple mode) or actions[] (advanced mode)")
         _assert_action_trigger_compat(actions)
@@ -671,11 +641,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             except Exception:
                 raise MCPError(code="invalid_request", message="expected_version must be an integer")
         return automation_manage(group_id=gid, by=by, actions=actions, expected_version=expected_version)
-
-    # --- Misc ---
-    if name == "cccc_project_info":
-        gid = _resolve_group_id(arguments)
-        return project_info(group_id=gid)
 
     if name == "cccc_im_bind":
         gid = _resolve_group_id(arguments)
@@ -699,22 +664,15 @@ def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[
         context_get_fn=context_get,
         context_sync_fn=context_sync,
         vision_update_fn=vision_update,
-        sketch_update_fn=sketch_update,
-        milestone_create_fn=milestone_create,
-        milestone_update_fn=milestone_update,
-        milestone_complete_fn=milestone_complete,
+        overview_manual_update_fn=overview_manual_update,
         task_list_fn=task_list,
         task_create_fn=task_create,
         task_update_fn=task_update,
-        note_add_fn=note_add,
-        note_update_fn=note_update,
-        note_remove_fn=note_remove,
-        reference_add_fn=reference_add,
-        reference_update_fn=reference_update,
-        reference_remove_fn=reference_remove,
-        presence_get_fn=presence_get,
-        presence_update_fn=presence_update,
-        presence_clear_fn=presence_clear,
+        task_status_fn=task_status,
+        task_move_fn=task_move,
+        task_restore_fn=task_restore,
+        context_agent_update_fn=context_agent_update,
+        context_agent_clear_fn=context_agent_clear,
     )
 
 
@@ -882,5 +840,3 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
             out.append(spec)
             existing.add(dname)
     return out
-
-

@@ -17,8 +17,9 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "foreman"}, clear=False):
             with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
                 out = mcp_server.handle_tool_call(
-                    "cccc_actor_add",
+                    "cccc_actor",
                     {
+                        "action": "add",
                         "actor_id": "peer_new",
                         "runtime": "codex",
                         "runner": "pty",
@@ -46,8 +47,9 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "foreman"}, clear=False):
             with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
                 out = mcp_server.handle_tool_call(
-                    "cccc_actor_start",
+                    "cccc_actor",
                     {
+                        "action": "start",
                         "actor_id": "peer_new",
                     },
                 )
@@ -67,8 +69,9 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False):
             with self.assertRaises(MCPError) as raised:
                 mcp_server.handle_tool_call(
-                    "cccc_actor_add",
+                    "cccc_actor",
                     {
+                        "action": "add",
                         "group_id": "g_test",
                         "actor_id": "peer_new",
                         "runtime": "codex",
@@ -90,8 +93,9 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "foreman"}, clear=False):
             with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
                 out = mcp_server.handle_tool_call(
-                    "cccc_actor_add",
+                    "cccc_actor",
                     {
+                        "action": "add",
                         "actor_id": "peer_new",
                         "profile_id": "ap_test",
                     },
@@ -118,7 +122,7 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
 
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "foreman"}, clear=False):
             with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
-                out = mcp_server.handle_tool_call("cccc_actor_profile_list", {})
+                out = mcp_server.handle_tool_call("cccc_actor", {"action": "profile_list"})
 
         self.assertIn("profiles", out)
         req = captured.get("req") if isinstance(captured.get("req"), dict) else {}

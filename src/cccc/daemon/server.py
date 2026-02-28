@@ -90,13 +90,11 @@ from .ops.socket_special_ops import try_handle_socket_special_op
 from .ops.socket_accept_ops import handle_incoming_connection
 from .actors.actor_runtime_ops import start_actor_process as runtime_start_actor_process
 from .actors.runner_ops import stop_actor as runner_stop_actor
-from .ops.capability_ops import sync_capability_catalog_once
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
     start_automation_thread,
     start_space_jobs_thread,
     start_space_sync_thread,
-    start_capability_sync_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
@@ -866,31 +864,6 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         stop_event=stop_event,
         tick_space_sync=_tick_space_sync,
         interval_seconds=30.0,
-    )
-
-    def _tick_capability_sync() -> None:
-        result = sync_capability_catalog_once(force=False)
-        if not bool(result.get("ok")):
-            logger.debug("capability_sync_failed=%s", str(result.get("error") or "unknown"))
-            return
-        if bool(result.get("changed")):
-            logger.debug(
-                "capability_sync_changed upserted_total=%s pruned=%s",
-                int(result.get("upserted_total") or 0),
-                int(result.get("pruned") or 0),
-            )
-
-    capability_sync_interval = 900.0
-    try:
-        raw = str(os.environ.get("CCCC_CAPABILITY_SYNC_INTERVAL_SECONDS") or "").strip()
-        if raw:
-            capability_sync_interval = float(raw)
-    except Exception:
-        capability_sync_interval = 900.0
-    start_capability_sync_thread(
-        stop_event=stop_event,
-        tick_capability_sync=_tick_capability_sync,
-        interval_seconds=capability_sync_interval,
     )
 
     transport = _desired_daemon_transport()

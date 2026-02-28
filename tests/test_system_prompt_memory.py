@@ -65,20 +65,15 @@ class TestSystemPromptMemory(unittest.TestCase):
             # Memory header
             self.assertIn("Memory:", prompt)
 
-            # Memory vs Notes boundary
-            self.assertIn("Notes are sticky notes", prompt)
-            self.assertIn("Memory is a notebook", prompt)
+            # Memory vs short-term Context boundary
+            self.assertIn("Context agent state is short-term execution memory", prompt)
+            self.assertIn("memory.db is long-term reusable memory", prompt)
 
-            # Memory tool list mentioned
-            self.assertIn("cccc_memory_guide", prompt)
-            self.assertIn("cccc_memory_store", prompt)
-            self.assertIn("cccc_memory_search", prompt)
-            self.assertIn("cccc_memory_ingest", prompt)
-            self.assertIn("cccc_memory_stats", prompt)
-            self.assertIn("cccc_memory_delete", prompt)
-            self.assertIn("cccc_memory_decay", prompt)
-            self.assertIn("cccc_memory_export", prompt)
-            self.assertIn("Call cccc_memory_guide(topic) before complex memory operations for best practices.", prompt)
+            # Core memory workflow mentioned
+            self.assertIn("cccc_memory(action=search)", prompt)
+            self.assertIn('cccc_memory_admin(action="ingest", mode="signal")', prompt)
+            self.assertIn("cccc_memory(action=guide, topic=...)", prompt)
+            self.assertIn("Gap policy: info gap -> search evidence first", prompt)
         finally:
             cleanup()
 
@@ -103,22 +98,17 @@ class TestSystemPromptMemory(unittest.TestCase):
         lines = _memory_policy_lines("g_test")
         text = "\n".join(lines)
 
-        # Memory vs Notes boundary
-        self.assertIn("Notes are sticky notes", text)
-        self.assertIn("Memory is a notebook", text)
+        # Memory vs short-term Context boundary
+        self.assertIn("Context agent state is short-term execution memory", text)
+        self.assertIn("memory.db is long-term reusable memory", text)
 
         # Tool guidance
-        self.assertIn("cccc_memory_guide", text)
-        self.assertIn("cccc_memory_store", text)
-        self.assertIn("cccc_memory_search", text)
-        self.assertIn("cccc_memory_ingest", text)
-        self.assertIn("cccc_memory_stats", text)
-        self.assertIn("cccc_memory_delete", text)
-        self.assertIn("cccc_memory_decay", text)
-        self.assertIn("cccc_memory_export", text)
+        self.assertIn("cccc_memory(action=search)", text)
+        self.assertIn('cccc_memory_admin(action="ingest", mode="signal")', text)
+        self.assertIn("cccc_memory(action=guide, topic=...)", text)
 
-        # Guide call-to-action
-        self.assertIn("Call cccc_memory_guide(topic) before complex memory operations for best practices.", text)
+        # Lifecycle guidance
+        self.assertIn("Before storing, run cccc_memory(action=search) first", text)
 
 
 if __name__ == "__main__":

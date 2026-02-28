@@ -377,7 +377,7 @@ Result:
 
 #### `capability_search`
 
-Search capability registry records (built-in packs + synced external snapshot records).
+Search capability registry records (built-in packs + local curated catalog + cached remote records).
 
 Args:
 ```ts
@@ -389,7 +389,7 @@ Args:
   kind?: "mcp_toolpack" | "skill" | ""
   source_id?: string
   trust_tier?: string
-  qualification_status?: "qualified" | "manual_review" | "blocked" | ""
+  qualification_status?: "qualified" | "unavailable" | "blocked" | ""
   include_external?: boolean
   limit?: number
 }
@@ -411,16 +411,17 @@ Result:
     source_uri?: string
     trust_tier: string
     license?: string
-    qualification_status: "qualified" | "manual_review" | "blocked"
+    qualification_status: "qualified" | "unavailable" | "blocked"
     sync_state?: string
     enabled: boolean
     enable_supported: boolean
     install_mode?: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
-    enable_hint?: "enable_now" | "requires_approval" | "blocked" | "unsupported"
+    enable_hint?: "enable_now" | "blocked" | "unsupported"
     blocked_reason?: string
     tags?: string[]
     tool_count?: number
+    tool_names?: string[]
   }>
   count: number
   sources: Record<string, unknown>
@@ -446,11 +447,9 @@ Enable or disable a capability by scope.
 Notes:
 
 1. Built-in capability packs (`pack:*`) are directly enable-able and can change MCP exposure.
-2. External catalog entries require explicit approval when `qualification_status=manual_review`
-   (`approve=true`).
-3. Skills (`kind=skill`) use the same `capability_enable` op for pin/unpin and can auto-apply
+2. Skills (`kind=skill`) use the same `capability_enable` op for pin/unpin and can auto-apply
    declared dependencies.
-4. External MCP execution path is constrained to supported installers (`remote_only` and npm package via `npx`);
+3. External MCP execution path is constrained to supported installers (`remote_only` and npm package via `npx`);
    unsupported install metadata returns `state=failed`.
 
 Args:
@@ -461,7 +460,6 @@ Args:
   scope?: "group" | "actor" | "session"   // default: session
   enabled?: boolean                         // default: true
   cleanup?: boolean                         // default: false; disable path can also clean runtime cache
-  approve?: boolean                         // default: false (manual-review approval signal)
   reason?: string                           // optional short audit reason
   ttl_seconds?: number                      // session scope only
   by?: string
@@ -478,7 +476,7 @@ Result:
   capability_id: string
   scope: "group" | "actor" | "session"
   enabled: boolean
-  state: "ready" | "pending_approval" | "failed"
+  state: "ready" | "failed"
   refresh_required: boolean
   refresh_mode?: "relist_or_reconnect"
   wait?: "relist_or_reconnect"
@@ -505,8 +503,56 @@ Quota notes:
 
 1. `CCCC_CAPABILITY_MAX_ENABLED_PER_ACTOR` (default `12`) limits actor/session enabled capability count.
 2. `CCCC_CAPABILITY_MAX_ENABLED_PER_GROUP` (default `24`) limits group-scope enabled capability count.
-3. `CCCC_CAPABILITY_MAX_INSTALLATIONS_TOTAL` (default `128`) limits total cached external installations.
+3. `CCCC_CAPABILITY_MAX_INSTALLATIONS_TOTAL` (default `128`) limits total cached external artifacts.
 4. Quota failures return `ok=true` with `state="failed"` and deterministic `reason` code.
+
+#### `capability_block`
+
+Block/unblock capabilities at runtime.
+
+Notes:
+
+1. `scope=group`: foreman or user can block/unblock.
+2. `scope=global`: only user can block/unblock.
+3. Blocking revokes enabled bindings and runtime dynamic tool exposure immediately.
+
+Args:
+```ts
+{
+  group_id: string
+  capability_id: string
+  scope?: "group" | "global" // default: group
+  blocked?: boolean           // default: true
+  ttl_seconds?: number        // 0 means no expiry
+  reason?: string
+  by?: string
+  actor_id?: string
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  capability_id: string
+  scope: "group" | "global"
+  blocked: boolean
+  state: "ready"
+  removed_bindings: number
+  removed_runtime_bindings: number
+  refresh_required: boolean
+  refresh_mode?: "relist_or_reconnect"
+  wait?: "relist_or_reconnect"
+  block?: {
+    reason?: string
+    by?: string
+    blocked_at?: string
+    expires_at?: string
+  }
+}
+```
 
 #### `capability_state`
 
@@ -557,7 +603,12 @@ Result:
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
     state?: string
   }>
-  external_binding_states?: Record<string, { mode: "mcp" | "skill"; state: string; last_error?: string }>
+  external_binding_states?: Record<string, {
+    mode: "mcp" | "skill"
+    state: string
+    artifact_id?: string
+    last_error?: string
+  }>
   precedence_chain: ["session", "actor", "group"]
   session_bindings: Array<{
     capability_id: string
@@ -565,30 +616,160 @@ Result:
     ttl_seconds: number
   }>
   source_states: Record<string, unknown>
+  blocked_capabilities?: Array<{
+    capability_id: string
+    scope: "group" | "global"
+    reason?: string
+    by?: string
+    blocked_at?: string
+    expires_at?: string
+  }>
   is_foreman: boolean
 }
 ```
 
 Operational notes:
 
-1. Capability catalog sync is daemon-owned and runs in background.
-2. Search is local-snapshot by default (`CCCC_CAPABILITY_SEARCH_AUTO_SYNC=0`); opt-in inline
-   refresh can be enabled with `CCCC_CAPABILITY_SEARCH_AUTO_SYNC=1`.
+1. Capability catalog is daemon-owned local state seeded from allowlist and runtime discoveries.
+2. Search uses local curated catalog + cached remote results; no periodic capability sync loop.
 3. Source gates:
    - `CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SOURCE_AGENTSKILLS_VALIDATOR_ENABLED` (default `1`)
-4. Background sync cadence is controlled by `CCCC_CAPABILITY_SYNC_INTERVAL_SECONDS`
-   (default `900`).
-5. Dynamic tool exposure is capped by `CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE`
+   - `github_skills_curated` is allowlist-curated (no periodic source crawler).
+   - `github_skills_remote` is on-demand remote search (GitHub `SKILL.md` candidates).
+   - `agentskills_remote` is on-demand AgentSkills-aligned remote search.
+   - `skillsmp_remote` is on-demand SkillsMP remote search.
+   - `clawhub_remote` is on-demand ClawHub remote search.
+4. Dynamic tool exposure is capped by `CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE`
    (default `32`).
-6. Catalog snapshot size is capped by `CCCC_CAPABILITY_CATALOG_MAX_RECORDS`
-   (default `20000`); sync pass prunes excess records deterministically by tier/qualification/freshness.
-7. Search may perform remote MCP Registry augmentation when local hits are empty:
+5. Catalog snapshot size is capped by `CCCC_CAPABILITY_CATALOG_MAX_RECORDS`
+   (default `20000`); prune is applied during explicit sync operations.
+6. Search may perform remote augmentation (MCP + skill) when local hits are insufficient:
    - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK` (default `1`)
    - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK_LIMIT` (default `40`, max `100`)
-8. Allowlist policy can be overridden via `CCCC_CAPABILITY_ALLOWLIST_PATH`
-   (or `CCCC_HOME/config/capability-allowlist.yaml` when present).
+   - `CCCC_CAPABILITY_SOURCE_GITHUB_SKILLS_REMOTE_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_SKILL_LIMIT` (default follows remote fallback limit)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_AGENTSKILLS_LIMIT` (default follows remote fallback limit)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_SKILLSMP_LIMIT` (default follows remote fallback limit)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_CLAWHUB_LIMIT` (default follows remote fallback limit)
+   - `CCCC_CAPABILITY_SKILLSMP_PROXY_BASE` (default `https://r.jina.ai/http://skillsmp.com/search`)
+   - `CCCC_CAPABILITY_CLAWHUB_PROXY_BASE` (default `https://r.jina.ai/http://clawhub.ai/skills?focus=search`)
+7. Allowlist override env/path compatibility (`CCCC_CAPABILITY_ALLOWLIST_PATH` and
+   `CCCC_HOME/config/capability-allowlist.yaml`) is removed. Policy now always uses:
+   - packaged default: `cccc.resources/capability-allowlist.default.yaml`
+   - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
+   - effective policy: deterministic merge (`default <- overlay`).
+
+#### `capability_allowlist_get`
+
+Read allowlist default/overlay/effective snapshots and revision hash.
+
+Args:
+```ts
+{ by?: string } // write ops still enforce by=user; read is open
+```
+
+Result:
+```ts
+{
+  default: Record<string, unknown>
+  overlay: Record<string, unknown>
+  effective: Record<string, unknown>
+  revision: string
+  default_source: string
+  overlay_source: string
+  overlay_error: string
+  policy_source: string
+  policy_error: string
+}
+```
+
+#### `capability_allowlist_validate`
+
+Dry-run allowlist overlay validation (no persistence).
+
+Args:
+```ts
+{
+  mode?: "patch" | "replace" // default: patch
+  patch?: Record<string, unknown>   // required when mode=patch
+  overlay?: Record<string, unknown> // required when mode=replace
+}
+```
+
+Result:
+```ts
+{
+  valid: boolean
+  reason: string
+  default: Record<string, unknown>
+  overlay: Record<string, unknown>
+  effective: Record<string, unknown>
+  revision: string
+}
+```
+
+#### `capability_allowlist_update`
+
+Persist allowlist overlay with optimistic concurrency.
+
+Args:
+```ts
+{
+  by?: string // must be "user"
+  mode?: "patch" | "replace" // default: patch
+  expected_revision?: string
+  patch?: Record<string, unknown>   // required when mode=patch
+  overlay?: Record<string, unknown> // required when mode=replace
+}
+```
+
+Result:
+```ts
+{
+  updated: true
+  revision: string
+  default: Record<string, unknown>
+  overlay: Record<string, unknown>
+  effective: Record<string, unknown>
+  policy_source: string
+  policy_error: string
+}
+```
+
+Errors:
+- `allowlist_revision_mismatch`
+- `allowlist_validation_failed`
+
+#### `capability_allowlist_reset`
+
+Reset overlay to empty (removes `CCCC_HOME/config/capability-allowlist.user.yaml` when present).
+
+Args:
+```ts
+{ by?: string } // must be "user"
+```
+
+Result:
+```ts
+{
+  reset: true
+  removed_overlay_file: boolean
+  revision: string
+  default: Record<string, unknown>
+  overlay: Record<string, unknown>
+  effective: Record<string, unknown>
+  default_source: string
+  overlay_source: string
+  overlay_error: string
+  policy_source: string
+  policy_error: string
+}
+```
 
 #### `capability_uninstall`
 
@@ -1010,6 +1191,10 @@ Result:
 { actor: Record<string, unknown>; event: CCCSEventV1 }
 ```
 
+Notes:
+- For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
+- If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
+
 #### `actor_env_private_keys`
 
 List configured **private** env keys for an actor (keys only; never returns values).
@@ -1104,6 +1289,11 @@ Args:
     command?: string[] | string
     submit?: "enter" | "newline" | "none"
     env?: Record<string, string> // deprecated legacy input; values are migrated into profile secrets
+    capability_defaults?: {
+      pinned_capabilities?: string[]
+      default_scope?: "actor" | "session" // default actor
+      session_ttl_seconds?: number         // clamped to 60..86400
+    } | null
   }
   expected_revision?: number
 }
@@ -1346,7 +1536,46 @@ Args:
 { group_id: string }
 ```
 
-Result: implementation-defined JSON summary (vision/sketch/milestones/notes/references/tasks/presence).
+Result:
+```ts
+{
+  version: string
+  vision?: string
+  overview: {
+    manual: {
+      roles: string[]
+      collaboration_mode: string
+      current_focus: string
+      updated_by: string
+      updated_at: string
+    }
+    mermaid: string
+  }
+  tasks_summary: {
+    total: number
+    done: number
+    active: number
+    planned: number
+    root_count: number
+  }
+  active_tasks: Array<Record<string, unknown>>
+  presence: {
+    agents: Array<{
+      id: string
+      active_task_id?: string | null
+      focus: string
+      blockers: string[]
+      next_action: string
+      what_changed: string
+      decision_delta: string
+      environment: string
+      user_profile: string
+      notes: string
+      updated_at: string
+    }>
+  }
+}
+```
 
 #### `context_sync`
 
@@ -1362,7 +1591,7 @@ type ContextOpV1 = { op: string } & Record<string, unknown>
 
 Notes:
 - Unknown op names SHOULD be rejected.
-- See `docs/standards/CCCC_CONTEXT_OPS_V1.md` for the v1 operation list.
+- See `docs/standards/CCCC_CONTEXT_OPS_V1.md` for the v2 operation list.
 
 Result:
 ```ts
@@ -1400,10 +1629,9 @@ Args:
   scope_key?: string
   actor_id?: string
   task_id?: string
-  milestone_id?: string
   event_ts?: string
   tags?: string[]
-  strategy?: string     // "aggressive" | "conservative" | "milestone-only"
+  strategy?: string     // "aggressive" | "conservative" | "task-completion"
   solidify?: boolean    // immediately solidify after store/update
 }
 ```
@@ -1422,7 +1650,6 @@ Args:
   kind?: string
   actor_id?: string
   task_id?: string
-  milestone_id?: string
   confidence?: string
   tags?: string[]
   since?: string        // ISO 8601
@@ -1465,7 +1692,7 @@ Args:
 ```ts
 {
   group_id: string
-  milestone_id?: string  // filter by milestone
+  task_id?: string       // filter by task
   kind?: string          // filter by kind
 }
 ```
@@ -1556,17 +1783,7 @@ Result:
 { tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
 ```
 
-#### `presence_get`
-
-Args:
-```ts
-{ group_id: string }
-```
-
-Result:
-```ts
-{ agents: Array<{ id: string; status: string; updated_at: string }>; heartbeat_timeout_seconds: number }
-```
+`presence_get` has been removed in v2. Presence/agent state is returned in `context_get.result.presence.agents`.
 
 ### 8.9 Headless Runner
 

@@ -28,7 +28,7 @@ class Subscriber:
         self,
         chat_id: str,
         subscribed: bool = True,
-        verbose: bool = True,
+        verbose: bool = False,
         subscribed_at: Optional[str] = None,
         chat_title: str = "",
         thread_id: int = 0,
@@ -36,7 +36,7 @@ class Subscriber:
     ):
         self.chat_id = str(chat_id)
         self.subscribed = subscribed
-        self.verbose = verbose  # Default True: show all messages including agent-to-agent
+        self.verbose = verbose  # Default False: show only user-facing messages
         self.subscribed_at = subscribed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.chat_title = chat_title
         self.thread_id = int(thread_id or 0)

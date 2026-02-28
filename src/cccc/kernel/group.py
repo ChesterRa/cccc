@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import logging
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,30 +21,20 @@ from .scope import ScopeIdentity
 
 _DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passed. Stand-up + memory consolidation reminder (foreman only).
 
-⚠️ CRITICAL REMINDER: ALL responses MUST use cccc_message_send or cccc_message_reply. NEVER output text directly to terminal — terminal output is invisible to users. This applies to you AND all peers you coordinate.
+Use MCP chat only (`cccc_message_send` / `cccc_message_reply`); terminal output is invisible to users.
 
-## Part 0: Memory recall (apply past experience)
-Before alignment, recall relevant memories:
-1. Extract 2-3 keywords from current Sketch (work type, key technologies, active milestone).
-2. Run `cccc_memory_search(query=<keywords>, actor_id="")` for each keyword set.
-3. If relevant memories found, briefly list them and apply insights to Part 1 alignment and Part 2 decisions.
-This step makes past experience actionable — skip it and we waste what we learned.
+Checklist (5-8 min):
+1. Recall: run `cccc_memory(action=search, query=<2-3 keywords from current Overview/tasks>, actor_id="")`.
+2. Alignment: confirm goals/constraints/DoD, top blockers, and next 1-3 actions with owners.
+3. Gap triage:
+   - info gap -> search Context/PROJECT.md/inbox/memory first (then web if allowed)
+   - capability gap -> `cccc_capability_use(...)`; if needed:
+     `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)` -> `cccc_capability_use(capability_id=..., scope="session")`
+     then handle `refresh_required=true`
+4. State upkeep: sync tasks/context and update your agent state (`focus/next_action/what_changed`).
+5. Consolidation (on milestone/done): `cccc_memory_admin(action=ingest, mode=signal)`, then store one stable insight if any.
 
-## Part 1: Alignment checkpoint
-- Direction: Re-check goals/constraints/DoD (PROJECT.md if present; otherwise user + Context). Are we drifting?
-- Rigor: Which key points are evidence vs hypotheses? What needs investigation/verification next?
-- Coordination: Ask @peers for risks/alternatives/objections. Synthesize and update Context. If a major decision is unclear, ask the user.
-- MCP compliance: If any peer has been outputting to terminal instead of using MCP, remind them immediately.
-
-## Part 2: Memory consolidation (experience evolution)
-After the alignment check, perform these steps:
-1. Run `cccc_memory_ingest(mode=signal)` to capture recent chat into memory.
-2. Review recent memories via `cccc_memory_search` — look for patterns, repeated lessons, or decisions worth consolidating.
-3. If you find fragmented memories about the same topic, consolidate them into a single high-level insight using `cccc_memory_store(confidence=high, kind=instruction)`.
-4. Run `cccc_memory_decay` to identify stale candidates. Delete obvious low-value entries with `cccc_memory_delete`.
-5. Briefly report what you consolidated or cleaned (1-2 lines max).
-
-Keep it human and direct. Do not skip any part — memory recall + evolution is how we get smarter over time.
+Keep the report concise and evidence-based.
 """
 
 LOGGER = logging.getLogger(__name__)
@@ -398,7 +390,7 @@ def delete_group(reg: Registry, *, group_id: str) -> None:
     home = ensure_home()
     gp = home / "groups" / gid
     if gp.exists():
-        shutil.rmtree(gp)
+        _delete_group_dir(gp)
 
     reg.groups.pop(gid, None)
     for k, v in list(reg.defaults.items()):
@@ -409,6 +401,48 @@ def delete_group(reg: Registry, *, group_id: str) -> None:
     # Publish event for SSE subscribers
     from .events import publish_event
     publish_event("group.deleted", {"group_id": gid})
+
+
+def _delete_group_dir(path: Path) -> None:
+    """Delete group directory robustly under concurrent background writes.
+
+    In fast-moving runtimes, transient files may appear while deleting.
+    We retry a few times for ENOTEMPTY/EBUSY-like races, then quarantine
+    the directory name to unblock user-facing group deletion.
+    """
+    transient_errno = {errno.ENOTEMPTY, errno.EBUSY, errno.EACCES, errno.EPERM}
+    last_exc: Optional[BaseException] = None
+    for attempt in range(4):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            last_exc = e
+            if e.errno not in transient_errno:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+    # Last resort: move out of the canonical group_id path so user-level delete
+    # can complete even if an external process keeps writing briefly.
+    quarantine = path.with_name(f".deleting-{path.name}-{uuid.uuid4().hex[:8]}")
+    try:
+        path.rename(quarantine)
+    except FileNotFoundError:
+        return
+    except Exception:
+        if last_exc is not None:
+            raise last_exc
+        raise
+
+    try:
+        shutil.rmtree(quarantine, ignore_errors=True)
+    except Exception:
+        pass
+
+    if quarantine.exists():
+        LOGGER.warning("group deletion quarantined path not fully removed yet: %s", quarantine)
 
 
 def get_group_state(group: Group) -> str:

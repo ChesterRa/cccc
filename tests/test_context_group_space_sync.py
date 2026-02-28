@@ -56,7 +56,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "note.add", "content": "ship this"}],
+                    "ops": [{"op": "task.create", "name": "ship this", "goal": "deliver"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -79,12 +79,12 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             self.assertEqual(str(job.get("kind") or ""), "context_sync")
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-            notes = summary.get("notes") if isinstance(summary.get("notes"), list) else []
-            self.assertTrue(any(isinstance(n, dict) and n.get("content") == "ship this" for n in notes))
+            tasks = summary.get("tasks") if isinstance(summary.get("tasks"), list) else []
+            self.assertTrue(any(isinstance(t, dict) and t.get("name") == "ship this" for t in tasks))
         finally:
             cleanup()
 
-    def test_presence_only_change_does_not_enqueue_group_space_sync_job(self) -> None:
+    def test_agent_only_change_does_not_enqueue_group_space_sync_job(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -95,7 +95,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "presence.update", "agent_id": "peer1", "status": "working"}],
+                    "ops": [{"op": "agent.update", "agent_id": "peer1", "focus": "working"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -121,7 +121,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "note.add", "content": "not bound yet"}],
+                    "ops": [{"op": "task.create", "name": "not bound yet", "goal": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from ....kernel.scope import detect_scope
@@ -71,6 +71,69 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
     async def observability_get() -> Dict[str, Any]:
         """Get global observability settings (developer mode, log level)."""
         return await ctx.daemon({"op": "observability_get"})
+
+    @app.get("/api/v1/capabilities/allowlist")
+    async def capability_allowlist_get(by: str = "user") -> Dict[str, Any]:
+        """Get effective capability allowlist (default + overlay + merge result)."""
+        return await ctx.daemon({"op": "capability_allowlist_get", "args": {"by": str(by or "user")}})
+
+    @app.post("/api/v1/capabilities/allowlist/validate")
+    async def capability_allowlist_validate(request: Request) -> Dict[str, Any]:
+        """Validate a capability allowlist overlay patch/replace request without persisting."""
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        args: Dict[str, Any] = {"mode": str(payload.get("mode") or "patch").strip().lower() or "patch"}
+        if "patch" in payload:
+            args["patch"] = payload.get("patch")
+        if "overlay" in payload:
+            args["overlay"] = payload.get("overlay")
+        return await ctx.daemon({"op": "capability_allowlist_validate", "args": args})
+
+    @app.put("/api/v1/capabilities/allowlist")
+    async def capability_allowlist_update(request: Request) -> Dict[str, Any]:
+        """Update capability allowlist user overlay."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability allowlist write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        args: Dict[str, Any] = {
+            "by": str(payload.get("by") or "user").strip() or "user",
+            "mode": str(payload.get("mode") or "patch").strip().lower() or "patch",
+        }
+        if "expected_revision" in payload:
+            args["expected_revision"] = str(payload.get("expected_revision") or "").strip()
+        if "patch" in payload:
+            args["patch"] = payload.get("patch")
+        if "overlay" in payload:
+            args["overlay"] = payload.get("overlay")
+        return await ctx.daemon({"op": "capability_allowlist_update", "args": args})
+
+    @app.delete("/api/v1/capabilities/allowlist")
+    async def capability_allowlist_reset(by: str = "user") -> Dict[str, Any]:
+        """Reset capability allowlist overlay to empty."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability allowlist write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await ctx.daemon({"op": "capability_allowlist_reset", "args": {"by": str(by or "user")}})
 
     @app.put("/api/v1/observability")
     async def observability_update(req: ObservabilityUpdateRequest) -> Dict[str, Any]:

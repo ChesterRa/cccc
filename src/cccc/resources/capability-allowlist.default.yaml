@@ -9,14 +9,19 @@ description: >
 level_semantics:
   indexed: "Synced in local catalog only; not shown in normal search results."
   mounted: "Visible/discoverable; can be enabled on demand."
-  enabled: "Enabled by default for runtime (without pin)."
-  pinned: "Actor baseline capability/skill, persistently enabled for that role."
+  enabled: "Mounted + preferred baseline intent; requires explicit enable or profile default application."
+  pinned: "Enabled + long-lived baseline intent; should be applied via actor-profile/role pinned defaults."
 
 defaults:
   source_level:
     cccc_builtin: enabled
     anthropic_skills: mounted
-    mcp_registry_official: indexed
+    github_skills_curated: mounted
+    github_skills_remote: mounted
+    agentskills_remote: mounted
+    skillsmp_remote: mounted
+    clawhub_remote: mounted
+    mcp_registry_official: mounted
     agentskills_validator: indexed
 
   # Matches current CCCC implementation boundary.
@@ -24,16 +29,13 @@ defaults:
     - remote_only
     - package:npm
 
-  install_mode_manual_review:
-    - package:pypi
-    - package:oci
-    - package:nuget
-    - package:mcpb
-    - package:unknown
-
-  risk_tags_require_approval:
+  # High-impact tags are informational only in runtime.
+  # Enforcement is operational block/unblock via cccc_capability_block.
+  risk_tags_high_impact:
     - computer_use
     - desktop_control
+    - browser_automation
+    - filesystem_write
     - terminal_exec
     - trading
     - payment_write
@@ -45,6 +47,21 @@ sources:
   - source_id: anthropic_skills
     enabled: true
     rationale: "Official Anthropic skill source."
+  - source_id: github_skills_curated
+    enabled: true
+    rationale: "Curated third-party skill entries (manual curation, no periodic crawling)."
+  - source_id: github_skills_remote
+    enabled: true
+    rationale: "On-demand GitHub remote search for SKILL.md candidates."
+  - source_id: agentskills_remote
+    enabled: true
+    rationale: "On-demand AgentSkills-aligned remote search (GitHub ecosystem)."
+  - source_id: skillsmp_remote
+    enabled: true
+    rationale: "On-demand SkillsMP remote search via text proxy."
+  - source_id: clawhub_remote
+    enabled: true
+    rationale: "On-demand ClawHub remote search via text proxy."
   - source_id: mcp_registry_official
     enabled: true
     rationale: "Primary MCP discovery source (local snapshot + on-demand fallback)."
@@ -150,20 +167,38 @@ mcp_overrides:
     install_mode_preference: remote_only
     notes: "AgentSkills discovery bridge."
 
+  - capability_id: mcp:io.github.upstash/context7
+    level: mounted
+    trust: high
+    install_mode_preference: package:npm
+    notes: "High-ROI code/docs context retrieval."
+
+  - capability_id: mcp:ai.parallel/search-mcp
+    level: mounted
+    trust: medium
+    install_mode_preference: remote_only
+    notes: "Remote search MCP fallback with broad web coverage."
+
+  - capability_id: mcp:com.figma.mcp/mcp
+    level: mounted
+    trust: high
+    install_mode_preference: remote_only
+    notes: "Design-file execution surface for product/design workflows."
+
   # --------------------------------------------------------------------------
-  # Tier B: indexed only (high risk, high privilege, or unsupported installer)
+  # Tier B: mounted (high risk/high privilege; visible, use runtime blocklist as needed)
   # --------------------------------------------------------------------------
   - capability_id: mcp:io.github.domdomegg/computer-use-mcp
-    level: indexed
+    level: mounted
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
       - computer_use
       - desktop_control
-    notes: "Powerful desktop control; requires explicit promotion/approval."
+    notes: "Powerful desktop control; apply runtime blocklist when task boundary requires."
 
   - capability_id: mcp:io.github.CursorTouch/Windows-MCP
-    level: indexed
+    level: mounted
     trust: medium
     install_mode_preference: package:pypi
     risk_tags:
@@ -171,8 +206,44 @@ mcp_overrides:
       - desktop_control
     notes: "Windows computer-use MCP; currently outside default installer support."
 
+  - capability_id: mcp:io.github.wonderwhy-er/desktop-commander
+    level: mounted
+    trust: medium
+    install_mode_preference: package:npm
+    risk_tags:
+      - desktop_control
+      - terminal_exec
+      - filesystem_write
+    notes: "Desktop + file + terminal control; high-power local mutation surface."
+
+  - capability_id: mcp:io.github.bytedance/mcp-server-browser
+    level: mounted
+    trust: medium
+    install_mode_preference: package:npm
+    risk_tags:
+      - computer_use
+      - browser_automation
+    notes: "UI-TARS browser execution surface; high privilege, monitor and block when needed."
+
+  - capability_id: mcp:io.github.bytedance/mcp-server-filesystem
+    level: mounted
+    trust: medium
+    install_mode_preference: package:npm
+    risk_tags:
+      - filesystem_write
+    notes: "Filesystem mutation surface from UI-TARS stack."
+
+  - capability_id: mcp:io.github.therealtimex/browser-use
+    level: mounted
+    trust: medium
+    install_mode_preference: package:pypi
+    risk_tags:
+      - computer_use
+      - browser_automation
+    notes: "Browser-use execution MCP (pypi path currently unavailable in default installer matrix)."
+
   - capability_id: mcp:io.github.hummingbot/mcp
-    level: indexed
+    level: mounted
     trust: medium
     install_mode_preference: package:oci
     risk_tags:
@@ -180,7 +251,7 @@ mcp_overrides:
     notes: "Trading execution domain; keep indexed by default."
 
   - capability_id: mcp:agency.lona/trading
-    level: indexed
+    level: mounted
     trust: medium
     install_mode_preference: remote_only
     risk_tags:
@@ -188,7 +259,7 @@ mcp_overrides:
     notes: "Trading analytics/execution domain; explicit promotion only."
 
   - capability_id: mcp:com.stripe/mcp
-    level: indexed
+    level: mounted
     trust: high
     install_mode_preference: remote_only
     risk_tags:
@@ -196,7 +267,7 @@ mcp_overrides:
     notes: "Financial/payment mutation potential; keep out of default mounted set."
 
   - capability_id: mcp:io.github.amol21p/interactive-terminal
-    level: indexed
+    level: mounted
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
@@ -208,6 +279,9 @@ skills:
     - source_id: anthropic_skills
       level: mounted
       rationale: "Official high-quality skill corpus."
+    - source_id: github_skills_curated
+      level: mounted
+      rationale: "Curated third-party skills are discoverable by default."
 
   # Keep all official Anthropic skills discoverable by default.
   official_anthropic:
@@ -226,14 +300,14 @@ skills:
     - capability_id: skill:anthropic:internal-comms
       level: mounted
     - capability_id: skill:anthropic:mcp-builder
-      level: pinned
+      level: mounted
       pinned_roles: [foreman]
     - capability_id: skill:anthropic:pdf
       level: mounted
     - capability_id: skill:anthropic:pptx
       level: mounted
     - capability_id: skill:anthropic:skill-creator
-      level: pinned
+      level: mounted
       pinned_roles: [foreman]
     - capability_id: skill:anthropic:slack-gif-creator
       level: mounted
@@ -245,6 +319,37 @@ skills:
       level: enabled
     - capability_id: skill:anthropic:xlsx
       level: mounted
+
+  curated:
+    - capability_id: skill:github:blader:claudeception
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/blader/Claudeception
+      trust: medium
+      qualification_status: qualified
+      tags:
+        - self-evolution
+        - skill-authoring
+      description_short: "Captures non-obvious lessons and turns them into reusable skills."
+      capsule_text: |
+        Skill: Claudeception
+        Use when the actor discovers non-obvious debugging/workflow insights worth reusing.
+        Output should be concise and actionable; avoid rewriting baseline safety rules.
+
+    - capability_id: skill:github:blader:humanizer
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/blader/humanizer
+      trust: medium
+      qualification_status: qualified
+      tags:
+        - style
+        - communication
+      description_short: "Polishes phrasing to reduce robotic tone while preserving meaning."
+      capsule_text: |
+        Skill: Humanizer
+        Use for final-pass wording polish only.
+        Preserve facts, constraints, and actionability; do not alter technical intent.
 
 role_defaults:
   foreman:
@@ -263,4 +368,3 @@ operations:
     - "Use pinned sparingly; keep actor prompt baseline minimal."
   suggested_demotions:
     - "Demote to indexed on repeated auth/install failures, long tail latency, or unsafe behavior."
-

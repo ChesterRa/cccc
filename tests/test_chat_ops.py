@@ -517,7 +517,8 @@ class TestMCPToCoercion(unittest.TestCase):
             with patch("cccc.ports.mcp.server._resolve_group_id", return_value="g_test"):
                 with patch("cccc.ports.mcp.server._resolve_self_actor_id", return_value="peer1"):
                     try:
-                        _handle_cccc_namespace("cccc_file_send", {
+                        _handle_cccc_namespace("cccc_file", {
+                            "action": "send",
                             "to": "user",
                             "path": "/tmp/test.txt",
                             "text": "file caption",
@@ -542,7 +543,8 @@ class TestMCPToCoercion(unittest.TestCase):
             with patch("cccc.ports.mcp.server._resolve_group_id", return_value="g_test"):
                 with patch("cccc.ports.mcp.server._resolve_self_actor_id", return_value="peer1"):
                     try:
-                        _handle_cccc_namespace("cccc_file_send", {
+                        _handle_cccc_namespace("cccc_file", {
+                            "action": "send",
                             "path": "/tmp/test.txt",
                         })
                     except Exception:

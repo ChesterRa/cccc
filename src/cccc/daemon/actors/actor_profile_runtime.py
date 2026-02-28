@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, Optional
 
 from ...kernel.actors import find_actor, update_actor
 
 PROFILE_CONTROLLED_FIELDS = ("runtime", "runner", "command", "submit", "env")
+_LOG = logging.getLogger("cccc.daemon.actor_profile_runtime")
 
 
 class ActorProfileNotFoundError(RuntimeError):
@@ -125,7 +127,7 @@ def resolve_linked_actor_before_start(
     if not isinstance(profile, dict):
         raise ActorProfileNotFoundError(f"profile not found: {profile_id}")
 
-    return apply_profile_link_to_actor(
+    item = apply_profile_link_to_actor(
         group,
         actor_id,
         profile_id=profile_id,
@@ -133,3 +135,25 @@ def resolve_linked_actor_before_start(
         load_actor_profile_secrets=load_actor_profile_secrets,
         update_actor_private_env=update_actor_private_env,
     )
+    # A2: actor profile defaults can pin baseline capabilities for this actor.
+    try:
+        from ..ops.capability_ops import apply_actor_profile_capability_defaults
+
+        defaults_raw = profile.get("capability_defaults")
+        if isinstance(defaults_raw, dict):
+            apply_actor_profile_capability_defaults(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                profile_id=profile_id,
+                capability_defaults=defaults_raw,
+            )
+    except Exception as e:
+        _LOG.warning(
+            "profile capability defaults apply failed group=%s actor=%s profile=%s err=%s",
+            group.group_id,
+            actor_id,
+            profile_id,
+            str(e),
+        )
+
+    return item

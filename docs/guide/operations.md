@@ -169,7 +169,7 @@ cccc space health
 
 ### Validate curated context export path
 
-After a `context_sync` update (milestone/task/note/reference/vision/sketch), check queue:
+After a `context_sync` update (`vision.update` / `overview.manual.update` / `task.*` / `agent.*`), check queue:
 
 ```bash
 cccc space jobs list --state pending

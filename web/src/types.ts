@@ -113,7 +113,15 @@ export type ActorProfileUsage = {
 
 export type PresenceAgent = {
   id: string;
-  status?: string | null;
+  active_task_id?: string | null;
+  focus?: string | null;
+  blockers?: string[];
+  next_action?: string | null;
+  what_changed?: string | null;
+  decision_delta?: string | null;
+  environment?: string | null;
+  user_profile?: string | null;
+  notes?: string | null;
   updated_at?: string | null;
 };
 
@@ -144,57 +152,40 @@ export type Task = {
   id: string;
   name: string;
   goal?: string | null;
+  parent_id?: string | null;
   status?: string | null;
-  milestone?: string | null;
   assignee?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   steps?: TaskStep[];
   current_step?: string | null;
   progress?: number | null;
+  children?: Task[];
+};
+
+export type OverviewManual = {
+  roles?: string[];
+  collaboration_mode?: string | null;
+  current_focus?: string | null;
+  updated_by?: string | null;
+  updated_at?: string | null;
 };
 
 export type GroupContext = {
   version?: string;
   vision?: string | null;
-  sketch?: string | null;
-  milestones?: Array<{
-    id: string;
-    name: string;
-    description?: string | null;
-    status?: string | null;
-    started?: string | null;
-    completed?: string | null;
-    outcomes?: string | null;
-  }>;
-  notes?: Array<{
-    id: string;
-    content: string;
-  }>;
-  references?: Array<{
-    id: string;
-    url: string;
-    note?: string | null;
-  }>;
+  overview?: {
+    manual?: OverviewManual;
+    mermaid?: string;
+  };
   tasks_summary?: {
     total: number;
     done: number;
     active: number;
     planned: number;
+    root_count?: number;
   };
-  active_task?: {
-    id: string;
-    name: string;
-    goal?: string | null;
-    status?: string | null;
-    milestone?: string | null;
-    assignee?: string | null;
-    created_at?: string | null;
-    updated_at?: string | null;
-    steps?: Array<{ id: string; name: string; acceptance?: string | null; status?: string | null }>;
-    current_step?: string | null;
-    progress?: number | null;
-  } | null;
+  active_tasks?: Task[];
   presence?: {
     agents?: PresenceAgent[];
   };

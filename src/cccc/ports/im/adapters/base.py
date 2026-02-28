@@ -111,7 +111,7 @@ class IMAdapter(ABC):
         """Send a chat action indicator. Default: no-op."""
         return False
 
-    def add_reaction(self, message_id: str, emoji_type: str) -> Optional[str]:
+    def add_reaction(self, message_id: str, emoji_type: str = "") -> Optional[str]:
         """
         Add an emoji reaction to a message.
 

@@ -118,7 +118,7 @@ class TestStrategy(SolidifyTestBase):
         """All three strategies exist."""
         self.assertIn("aggressive", MEMORY_STRATEGIES)
         self.assertIn("conservative", MEMORY_STRATEGIES)
-        self.assertIn("milestone-only", MEMORY_STRATEGIES)
+        self.assertIn("task-completion", MEMORY_STRATEGIES)
 
     def test_aggressive_strategy(self):
         """aggressive: store as solid, medium confidence."""
@@ -136,9 +136,9 @@ class TestStrategy(SolidifyTestBase):
         self.assertEqual(mem["status"], "draft")
         self.assertEqual(mem["confidence"], "high")
 
-    def test_milestone_only_strategy(self):
-        """milestone-only: store as solid, high confidence."""
-        r = self.store.store("milestone test", strategy="milestone-only")
+    def test_task_completion_strategy(self):
+        """task-completion: store as solid, high confidence."""
+        r = self.store.store("task completion test", strategy="task-completion")
         self.assertEqual(r["status"], "solid")
         mem = self.store.get(r["id"])
         self.assertEqual(mem["status"], "solid")

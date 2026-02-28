@@ -109,7 +109,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "note.add", "content": "projection note"}],
+                    "ops": [{"op": "task.create", "name": "projection note", "goal": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -161,7 +161,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "note.add", "content": "worker refresh"}],
+                    "ops": [{"op": "task.create", "name": "worker refresh", "goal": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))

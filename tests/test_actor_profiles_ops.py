@@ -212,6 +212,61 @@ class TestActorProfilesOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_profile_capability_defaults_apply_on_actor_start(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group("ap-cap-defaults")
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "name": "Cap Defaults",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "enter",
+                        "capability_defaults": {
+                            "pinned_capabilities": ["pack:space"],
+                            "default_scope": "actor",
+                        },
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+            profile = (profile_upsert.result or {}).get("profile") if isinstance(profile_upsert.result, dict) else {}
+            self.assertIsInstance(profile, dict)
+            assert isinstance(profile, dict)
+            pid = str(profile.get("id") or "")
+            self.assertTrue(pid)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "headless",
+                    "profile_id": pid,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            start, _ = self._call("actor_start", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
+            self.assertTrue(start.ok, getattr(start, "error", None))
+
+            state, _ = self._call("capability_state", {"group_id": group_id, "actor_id": "peer1", "by": "peer1"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            result = state.result if isinstance(state.result, dict) else {}
+            enabled = result.get("enabled_capabilities") if isinstance(result.get("enabled_capabilities"), list) else []
+            self.assertIn("pack:space", enabled)
+        finally:
+            cleanup()
+
     def test_profile_delete_rejects_in_use_and_supports_force_detach(self) -> None:
         _, cleanup = self._with_home()
         try:

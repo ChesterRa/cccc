@@ -42,23 +42,23 @@ class TestContextSyncAtomicity(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "dry_run": "false",
-                    "ops": [{"op": "note.add", "content": "applied"}],
+                    "ops": [{"op": "task.create", "name": "applied", "goal": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
             result = sync_resp.result if isinstance(sync_resp.result, dict) else {}
             self.assertFalse(bool(result.get("dry_run")))
 
-            get_resp, _ = self._call("context_get", {"group_id": group_id})
-            self.assertTrue(get_resp.ok, getattr(get_resp, "error", None))
-            notes = (get_resp.result or {}).get("notes") if isinstance(get_resp.result, dict) else []
-            self.assertIsInstance(notes, list)
-            assert isinstance(notes, list)
-            self.assertTrue(any(isinstance(n, dict) and n.get("content") == "applied" for n in notes))
+            tasks_resp, _ = self._call("task_list", {"group_id": group_id})
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            tasks = (tasks_resp.result or {}).get("tasks") if isinstance(tasks_resp.result, dict) else []
+            self.assertIsInstance(tasks, list)
+            assert isinstance(tasks, list)
+            self.assertTrue(any(isinstance(t, dict) and t.get("name") == "applied" for t in tasks))
         finally:
             cleanup()
 
-    def test_presence_change_rolls_back_on_batch_error(self) -> None:
+    def test_agent_change_rolls_back_on_batch_error(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
@@ -68,16 +68,20 @@ class TestContextSyncAtomicity(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "ops": [
-                        {"op": "presence.update", "agent_id": "peer1", "status": "working"},
+                        {"op": "agent.update", "agent_id": "peer1", "focus": "working"},
                         {"op": "unknown.op"},
                     ],
                 },
             )
             self.assertFalse(sync_resp.ok)
 
-            presence_resp, _ = self._call("presence_get", {"group_id": group_id})
-            self.assertTrue(presence_resp.ok, getattr(presence_resp, "error", None))
-            agents = (presence_resp.result or {}).get("agents") if isinstance(presence_resp.result, dict) else []
+            ctx_resp, _ = self._call("context_get", {"group_id": group_id})
+            self.assertTrue(ctx_resp.ok, getattr(ctx_resp, "error", None))
+            agents = (
+                (ctx_resp.result or {}).get("presence", {}).get("agents")
+                if isinstance(ctx_resp.result, dict)
+                else []
+            )
             self.assertIsInstance(agents, list)
             assert isinstance(agents, list)
             self.assertEqual(agents, [])

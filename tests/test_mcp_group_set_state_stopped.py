@@ -21,8 +21,9 @@ class TestMcpGroupSetStateStopped(unittest.TestCase):
         with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
-                "cccc_group_set_state",
+                "cccc_group",
                 {
+                    "action": "set_state",
                     "group_id": "g_test",
                     "actor_id": "foreman",
                     "state": "stopped",

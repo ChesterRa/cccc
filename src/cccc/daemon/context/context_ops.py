@@ -1,13 +1,18 @@
 """
-Context operations for daemon.
+Context operations for daemon (v2).
 
 All context operations go through the daemon to preserve the single-writer invariant.
+
+v2 ops:
+- vision.update
+- overview.manual.update
+- task.create / task.update / task.status / task.move / task.restore
+- agent.update / agent.clear
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -18,26 +23,22 @@ from ...kernel.group import load_group
 from ...kernel.context import (
     ContextStorage,
     Context,
-    Milestone,
-    MilestoneStatus,
+    Overview,
+    OverviewManual,
     Task,
     TaskStatus,
     Step,
     StepStatus,
-    Note,
-    Reference,
-    AgentPresence,
+    AgentState,
+    _utc_now_iso,
 )
 from ...kernel.ledger import append_event
 from ...util.conv import coerce_bool
 
 _CURATED_SPACE_SYNC_PREFIXES = (
     "vision.",
-    "sketch.",
-    "milestone.",
+    "overview.",
     "task.",
-    "note.",
-    "reference.",
 )
 
 logger = logging.getLogger(__name__)
@@ -47,23 +48,11 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 def _normalize_status_token(value: str) -> str:
     s = str(value or "").strip().lower()
     if s == "pending":
         return "planned"
     return s
-
-
-def _parse_milestone_status(value: Any) -> MilestoneStatus:
-    s = _normalize_status_token(str(value or "planned"))
-    try:
-        return MilestoneStatus(s)
-    except ValueError as e:
-        raise ValueError(f"Invalid milestone status: {value}") from e
 
 
 def _parse_task_status(value: Any) -> TaskStatus:
@@ -89,14 +78,14 @@ def _get_storage(group_id: str) -> Optional[ContextStorage]:
 
 
 def _task_to_dict(task: Task) -> Dict[str, Any]:
-    """Convert Task to dict"""
+    """Convert Task to dict (v2: parent_id instead of milestone)."""
     current_step = task.current_step
     return {
         "id": task.id,
         "name": task.name,
         "goal": task.goal,
+        "parent_id": task.parent_id,
         "status": task.status.value if isinstance(task.status, TaskStatus) else task.status,
-        "milestone": task.milestone,
         "assignee": task.assignee,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
@@ -147,18 +136,7 @@ def _queue_group_space_context_sync(
     if not bool(provider_state.get("enabled")) or str(provider_state.get("mode") or "") == "disabled":
         return {"queued": False, "reason": "provider_disabled"}
 
-    milestones = [
-        {
-            "id": m.id,
-            "name": m.name,
-            "status": m.status.value if isinstance(m.status, MilestoneStatus) else str(m.status),
-            "description": m.description,
-        }
-        for m in context.milestones
-    ]
     tasks = [_task_to_dict(t) for t in sorted(tasks_by_id.values(), key=lambda x: str(x.id or ""))]
-    notes = [{"id": n.id, "content": n.content} for n in context.notes]
-    references = [{"id": r.id, "url": r.url, "note": r.note} for r in context.references]
     compact_changes = [
         {
             "index": int(item.get("index") or 0),
@@ -169,17 +147,24 @@ def _queue_group_space_context_sync(
         if isinstance(item, dict)
     ]
 
+    # Build overview.manual for space sync
+    manual = context.overview.manual if context.overview else OverviewManual()
+    overview_manual = {}
+    if manual.current_focus:
+        overview_manual["current_focus"] = manual.current_focus
+    if manual.roles:
+        overview_manual["roles"] = manual.roles
+    if manual.collaboration_mode:
+        overview_manual["collaboration_mode"] = manual.collaboration_mode
+
     payload = {
         "group_id": group_id,
         "context_version": str(version or "").strip(),
         "synced_at": _utc_now_iso(),
         "summary": {
             "vision": context.vision,
-            "sketch": context.sketch,
-            "milestones": milestones,
+            "overview_manual": overview_manual,
             "tasks": tasks,
-            "notes": notes,
-            "references": references,
         },
         "changes": compact_changes,
     }
@@ -204,12 +189,59 @@ def _queue_group_space_context_sync(
 
 
 # =============================================================================
-# Context Get
+# Permission Helpers
+# =============================================================================
+
+
+def _check_permission(
+    by: str, op_name: str, group_id: str,
+    task: Optional[Task] = None,
+    agent_id: Optional[str] = None,
+) -> Optional[str]:
+    """Check permission for an operation. Returns error message or None if allowed."""
+    # user and system always allowed
+    if by in ("user", "system"):
+        return None
+
+    # Resolve caller role
+    try:
+        from ...kernel.actors import get_effective_role
+        group = load_group(group_id)
+        if group is None:
+            return None  # let the op fail naturally
+        role = get_effective_role(group, by)
+    except Exception:
+        role = "peer"
+
+    # foreman allowed everything
+    if role == "foreman":
+        return None
+
+    # Peer restrictions
+    if op_name in ("vision.update", "overview.manual.update", "task.move"):
+        return f"Permission denied: {op_name} requires foreman or user"
+
+    if op_name in ("task.restore",):
+        return f"Permission denied: {op_name} requires foreman or user"
+
+    if op_name in ("task.update", "task.status"):
+        if task is not None and task.assignee and task.assignee != by:
+            return f"Permission denied: {op_name} on {task.id} (assigned to {task.assignee}, caller is {by})"
+
+    if op_name in ("agent.update", "agent.clear"):
+        if agent_id and agent_id != by:
+            return f"Permission denied: {op_name} for {agent_id} (caller is {by})"
+
+    return None
+
+
+# =============================================================================
+# Context Get (v2)
 # =============================================================================
 
 
 def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
-    """Return the full context for a group."""
+    """Return the full context for a group (v2 shape)."""
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -223,53 +255,67 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     presence = storage.load_presence()
 
     # Build tasks summary
-    done_count = sum(1 for t in tasks if t.status == TaskStatus.DONE)
-    active_count = sum(1 for t in tasks if t.status == TaskStatus.ACTIVE)
-    planned_count = sum(1 for t in tasks if t.status == TaskStatus.PLANNED)
+    non_archived = [t for t in tasks if t.status != TaskStatus.ARCHIVED]
+    done_count = sum(1 for t in non_archived if t.status == TaskStatus.DONE)
+    active_count = sum(1 for t in non_archived if t.status == TaskStatus.ACTIVE)
+    planned_count = sum(1 for t in non_archived if t.status == TaskStatus.PLANNED)
+    root_count = sum(1 for t in non_archived if t.is_root)
 
-    # Find active task
-    active_task = None
-    for t in tasks:
-        if t.status == TaskStatus.ACTIVE:
-            active_task = _task_to_dict(t)
-            break
+    # Active tasks (non-archived)
+    active_tasks = [_task_to_dict(t) for t in non_archived if t.status != TaskStatus.DONE]
+
+    # Build overview.manual
+    manual = context.overview.manual if context.overview else OverviewManual()
+    overview_manual = {
+        "roles": manual.roles,
+        "collaboration_mode": manual.collaboration_mode,
+        "current_focus": manual.current_focus,
+        "updated_by": manual.updated_by,
+        "updated_at": manual.updated_at,
+    }
+
+    # Compute overview.mermaid (daemon projection)
+    overview_mermaid = storage.compute_overview_mermaid(
+        tasks=tasks,
+        presence=presence,
+        overview=context.overview,
+    )
+
+    # Presence serialization (flat AgentState)
+    agents_out = [
+        {
+            "id": a.id,
+            "active_task_id": a.active_task_id,
+            "focus": a.focus,
+            "blockers": a.blockers,
+            "next_action": a.next_action,
+            "what_changed": a.what_changed,
+            "decision_delta": a.decision_delta,
+            "environment": a.environment,
+            "user_profile": a.user_profile,
+            "notes": a.notes,
+            "updated_at": a.updated_at,
+        }
+        for a in presence.agents
+    ]
 
     result = {
         "version": storage.compute_version(),
         "vision": context.vision,
-        "sketch": context.sketch,
-        "milestones": [
-            {
-                "id": m.id,
-                "name": m.name,
-                "description": m.description,
-                "status": m.status.value if isinstance(m.status, MilestoneStatus) else m.status,
-                "started": m.started,
-                "completed": m.completed,
-                "outcomes": m.outcomes,
-            }
-            for m in context.milestones
-        ],
-        "notes": [
-            {"id": n.id, "content": n.content}
-            for n in context.notes
-        ],
-        "references": [
-            {"id": r.id, "url": r.url, "note": r.note}
-            for r in context.references
-        ],
+        "overview": {
+            "manual": overview_manual,
+            "mermaid": overview_mermaid,
+        },
         "tasks_summary": {
-            "total": len(tasks),
+            "total": len(non_archived),
             "done": done_count,
             "active": active_count,
             "planned": planned_count,
+            "root_count": root_count,
         },
-        "active_task": active_task,
+        "active_tasks": active_tasks,
         "presence": {
-            "agents": [
-                {"id": a.id, "status": a.status, "updated_at": a.updated_at}
-                for a in presence.agents
-            ]
+            "agents": agents_out,
         },
     }
 
@@ -277,16 +323,17 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
 
 
 # =============================================================================
-# Context Sync (batch operations)
+# Context Sync (batch operations, v2)
 # =============================================================================
 
 
 def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
-    """Apply a batch of context operations."""
+    """Apply a batch of context operations (v2)."""
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "system").strip() or "system"
     ops = args.get("ops") or []
     dry_run = coerce_bool(args.get("dry_run"), default=False)
+    if_version = args.get("if_version")
 
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -296,6 +343,16 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     storage = _get_storage(group_id)
     if storage is None:
         return _error("group_not_found", f"group not found: {group_id}")
+
+    # CAS: check version before applying
+    if if_version is not None:
+        current_version = storage.compute_version()
+        if str(if_version).strip() != current_version:
+            return _error(
+                "version_conflict",
+                f"version conflict: expected {if_version}, current {current_version}",
+                details={"expected": str(if_version), "current": current_version},
+            )
 
     context = storage.load_context()
     presence = storage.load_presence()
@@ -309,21 +366,16 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     def _mark_change(idx: int, op_name: str, detail: str) -> None:
         changes.append({"index": idx, "op": op_name, "detail": detail})
 
-    def _apply_presence_update(agent_id: str, status: str) -> None:
+    def _get_or_create_agent(agent_id: str) -> AgentState:
         canonical_id = storage._canonicalize_agent_id(agent_id)  # noqa: SLF001
         if not canonical_id:
             raise ValueError("agent_id must be a non-empty string")
-        status_norm = " ".join(str(status or "").split())
-        agent = None
-        for existing in presence.agents:
-            if existing.id == canonical_id:
-                agent = existing
-                break
-        if agent is None:
-            agent = AgentPresence(id=canonical_id)
-            presence.agents.append(agent)
-        agent.status = status_norm
-        agent.updated_at = _utc_now_iso()
+        for a in presence.agents:
+            if a.id == canonical_id:
+                return a
+        agent = AgentState(id=canonical_id)
+        presence.agents.append(agent)
+        return agent
 
     try:
         for idx, item in enumerate(ops):
@@ -332,156 +384,57 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
             op_name = str(item.get("op") or "")
 
+            # --- Vision ---
             if op_name == "vision.update":
+                perm_err = _check_permission(by, op_name, group_id)
+                if perm_err:
+                    raise ValueError(perm_err)
                 vision = str(item.get("vision") or "")
                 context.vision = vision
                 context_dirty = True
                 _mark_change(idx, op_name, "Set vision")
 
-            elif op_name == "sketch.update":
-                sketch = str(item.get("sketch") or "")
-                context.sketch = sketch
+            # --- Overview Manual ---
+            elif op_name == "overview.manual.update":
+                perm_err = _check_permission(by, op_name, group_id)
+                if perm_err:
+                    raise ValueError(perm_err)
+                manual = context.overview.manual if context.overview else OverviewManual()
+                if "roles" in item:
+                    roles_raw = item["roles"]
+                    manual.roles = list(roles_raw) if isinstance(roles_raw, list) else []
+                if "collaboration_mode" in item:
+                    manual.collaboration_mode = str(item["collaboration_mode"])
+                if "current_focus" in item:
+                    manual.current_focus = str(item["current_focus"])
+                manual.updated_by = by
+                manual.updated_at = _utc_now_iso()
+                if context.overview is None:
+                    context.overview = Overview(manual=manual)
+                else:
+                    context.overview.manual = manual
                 context_dirty = True
-                _mark_change(idx, op_name, "Set sketch")
+                _mark_change(idx, op_name, "Updated overview.manual")
 
-            elif op_name == "milestone.create":
-                name = str(item.get("name") or "")
-                description = str(item.get("description") or "")
-                status = _parse_milestone_status(item.get("status") or "planned")
-
-                milestone_id = storage.generate_milestone_id(context)
-                started = None
-                if status == MilestoneStatus.ACTIVE:
-                    started = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-                milestone = Milestone(
-                    id=milestone_id,
-                    name=name,
-                    description=description,
-                    status=status,
-                    started=started,
-                    updated_at=_utc_now_iso(),
-                )
-                context.milestones.append(milestone)
-                context_dirty = True
-                _mark_change(idx, op_name, f"Created {milestone_id}")
-
-            elif op_name == "milestone.update":
-                milestone_id = str(item.get("milestone_id") or "")
-                milestone = storage.get_milestone(context, milestone_id)
-                if milestone is None:
-                    raise ValueError(f"Milestone not found: {milestone_id}")
-
-                if "name" in item:
-                    milestone.name = str(item["name"])
-                if "description" in item:
-                    milestone.description = str(item["description"])
-                if "status" in item:
-                    new_status = _parse_milestone_status(item["status"])
-                    prev_status = milestone.status
-                    prev_status_value = _normalize_status_token(_status_value(prev_status))
-
-                    if new_status == MilestoneStatus.ARCHIVED:
-                        if prev_status_value and prev_status_value != "archived":
-                            milestone.archived_from = prev_status_value
-                    else:
-                        milestone.archived_from = None
-
-                    if new_status == MilestoneStatus.ACTIVE and prev_status_value != "active":
-                        if milestone.started is None:
-                            milestone.started = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    milestone.status = new_status
-
-                milestone.updated_at = _utc_now_iso()
-                context_dirty = True
-                _mark_change(idx, op_name, f"Updated {milestone_id}")
-
-            elif op_name == "milestone.complete":
-                milestone_id = str(item.get("milestone_id") or "")
-                outcomes = str(item.get("outcomes") or "")
-                milestone = storage.get_milestone(context, milestone_id)
-                if milestone is None:
-                    raise ValueError(f"Milestone not found: {milestone_id}")
-
-                milestone.status = MilestoneStatus.DONE
-                milestone.archived_from = None
-                milestone.completed = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                milestone.outcomes = outcomes
-                milestone.updated_at = _utc_now_iso()
-                context_dirty = True
-                _mark_change(idx, op_name, f"Completed {milestone_id}")
-
-                # Memory hook: solidify_batch → export for this milestone
-                # Best-effort, never blocks the main flow
-                try:
-                    from ..memory.memory_ops import handle_memory_solidify_batch, handle_memory_export
-                    solidify_result = handle_memory_solidify_batch({
-                        "group_id": group_id,
-                        "milestone_id": milestone_id,
-                    })
-                    # Chain: export after solidify
-                    export_result = handle_memory_export({
-                        "group_id": group_id,
-                    })
-                    # Record hook results in memory_meta
-                    try:
-                        from ..memory.memory_ops import _get_memory_store
-                        _store = _get_memory_store(group_id)
-                        if _store is not None:
-                            import json as _json
-                            _store.set_meta(
-                                f"milestone_hook:{milestone_id}",
-                                _json.dumps({
-                                    "solidified": solidify_result.result.get("solidified", 0) if solidify_result.ok else 0,
-                                    "exported": export_result.ok,
-                                    "at": _utc_now_iso(),
-                                }),
-                            )
-                    except Exception:
-                        logger.exception(
-                            "memory_milestone_hook_meta_record_failed group_id=%s milestone_id=%s",
-                            group_id,
-                            milestone_id,
-                        )
-                except Exception:
-                    logger.exception(
-                        "memory_milestone_hook_failed group_id=%s milestone_id=%s",
-                        group_id,
-                        milestone_id,
-                    )
-
-            elif op_name == "milestone.restore":
-                milestone_id = str(item.get("milestone_id") or "")
-                milestone = storage.get_milestone(context, milestone_id)
-                if milestone is None:
-                    raise ValueError(f"Milestone not found: {milestone_id}")
-
-                if milestone.status != MilestoneStatus.ARCHIVED:
-                    raise ValueError(f"Milestone is not archived: {milestone_id}")
-
-                target_raw = str(getattr(milestone, "archived_from", "") or "planned")
-                target = _normalize_status_token(target_raw)
-                if target == "archived":
-                    target = "planned"
-
-                new_status = _parse_milestone_status(target)
-                if new_status == MilestoneStatus.ACTIVE and milestone.started is None:
-                    milestone.started = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-                milestone.status = new_status
-                milestone.archived_from = None
-                milestone.updated_at = _utc_now_iso()
-                context_dirty = True
-                _mark_change(idx, op_name, f"Restored {milestone_id} -> {new_status.value}")
-
+            # --- Task Create ---
             elif op_name == "task.create":
                 name = str(item.get("name") or "")
                 goal = str(item.get("goal") or "")
-                steps_raw = item.get("steps") or []
-                milestone_id = item.get("milestone_id") or item.get("milestone")
+                parent_id = item.get("parent_id")
                 assignee = item.get("assignee")
+                steps_raw = item.get("steps") or []
 
+                # Validate parent exists if specified
+                if parent_id is not None:
+                    parent_id = str(parent_id)
+                    if parent_id not in tasks_by_id:
+                        raise ValueError(f"Parent task not found: {parent_id}")
+
+                # Account for in-flight tasks not yet on disk
                 task_id = storage.generate_task_id()
+                while task_id in tasks_by_id:
+                    num = int(task_id[1:]) + 1
+                    task_id = f"T{num:03d}"
                 task_steps = []
                 for i, s in enumerate(steps_raw, start=1):
                     if isinstance(s, dict):
@@ -497,8 +450,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     id=task_id,
                     name=name,
                     goal=goal,
+                    parent_id=parent_id,
                     status=TaskStatus.PLANNED,
-                    milestone=str(milestone_id) if milestone_id else None,
                     assignee=str(assignee) if assignee else None,
                     created_at=now,
                     updated_at=now,
@@ -508,30 +461,23 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 dirty_task_ids.add(task_id)
                 _mark_change(idx, op_name, f"Created {task_id}")
 
+            # --- Task Update (metadata only, not status) ---
             elif op_name == "task.update":
                 task_id = str(item.get("task_id") or "")
                 task = tasks_by_id.get(task_id)
                 if task is None:
                     raise ValueError(f"Task not found: {task_id}")
 
-                if "status" in item:
-                    new_status = _parse_task_status(item["status"])
-                    prev_status_value = _normalize_status_token(_status_value(task.status))
-                    if new_status == TaskStatus.ARCHIVED:
-                        if prev_status_value and prev_status_value != "archived":
-                            task.archived_from = prev_status_value
-                    else:
-                        task.archived_from = None
-                    task.status = new_status
+                perm_err = _check_permission(by, op_name, group_id, task=task)
+                if perm_err:
+                    raise ValueError(perm_err)
+
                 if "name" in item:
                     task.name = str(item["name"])
                 if "goal" in item:
                     task.goal = str(item["goal"])
                 if "assignee" in item:
                     task.assignee = str(item["assignee"]) if item["assignee"] else None
-                if "milestone_id" in item or "milestone" in item:
-                    mid = item.get("milestone_id") or item.get("milestone")
-                    task.milestone = str(mid) if mid else None
 
                 # Step update
                 if "step_id" in item and "step_status" in item:
@@ -553,11 +499,146 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 dirty_task_ids.add(task_id)
                 _mark_change(idx, op_name, f"Updated {task_id}")
 
+            # --- Task Status (separate from update for clarity) ---
+            elif op_name == "task.status":
+                task_id = str(item.get("task_id") or "")
+                task = tasks_by_id.get(task_id)
+                if task is None:
+                    raise ValueError(f"Task not found: {task_id}")
+
+                perm_err = _check_permission(by, op_name, group_id, task=task)
+                if perm_err:
+                    raise ValueError(perm_err)
+
+                new_status = _parse_task_status(item.get("status"))
+                prev_status_value = _normalize_status_token(_status_value(task.status))
+
+                if new_status == TaskStatus.ARCHIVED:
+                    if prev_status_value and prev_status_value != "archived":
+                        task.archived_from = prev_status_value
+                else:
+                    task.archived_from = None
+
+                task.status = new_status
+                task.updated_at = _utc_now_iso()
+                dirty_task_ids.add(task_id)
+                _mark_change(idx, op_name, f"Status {task_id} -> {new_status.value}")
+
+                # Auto-refresh short-term agent state from task lifecycle.
+                # This keeps presence usable even when agents forget explicit updates.
+                assignee_id = str(task.assignee or "").strip()
+                if assignee_id:
+                    agent = _get_or_create_agent(assignee_id)
+                    auto_changed = False
+                    status_label = new_status.value
+
+                    if new_status == TaskStatus.ACTIVE:
+                        if str(agent.active_task_id or "").strip() != task_id:
+                            agent.active_task_id = task_id
+                            auto_changed = True
+                        focus_hint = str(task.name or "").strip()
+                        if focus_hint and str(agent.focus or "").strip() != focus_hint:
+                            agent.focus = focus_hint
+                            auto_changed = True
+                        changed_hint = f"{task_id} -> active"
+                        if str(agent.what_changed or "").strip() != changed_hint:
+                            agent.what_changed = changed_hint
+                            auto_changed = True
+                    elif new_status in {TaskStatus.DONE, TaskStatus.ARCHIVED}:
+                        if str(agent.active_task_id or "").strip() == task_id:
+                            agent.active_task_id = None
+                            auto_changed = True
+                        changed_hint = f"{task_id} -> {status_label}"
+                        if str(agent.what_changed or "").strip() != changed_hint:
+                            agent.what_changed = changed_hint
+                            auto_changed = True
+                        if str(agent.focus or "").strip() == str(task.name or "").strip():
+                            agent.focus = ""
+                            auto_changed = True
+
+                    if auto_changed:
+                        agent.updated_at = _utc_now_iso()
+                        presence_dirty = True
+                        _mark_change(
+                            idx,
+                            "agent.autosync",
+                            f"Auto-synced agent {assignee_id} from {task_id} status={status_label}",
+                        )
+
+                # Memory hook: root task completion triggers solidify+export.
+                # dry_run must be side-effect free.
+                if (not dry_run) and new_status == TaskStatus.DONE and task.is_root:
+                    try:
+                        from ..memory.memory_ops import handle_memory_solidify_batch, handle_memory_export
+                        solidify_result = handle_memory_solidify_batch({
+                            "group_id": group_id,
+                            "task_id": task_id,
+                        })
+                        export_result = handle_memory_export({
+                            "group_id": group_id,
+                        })
+                        try:
+                            from ..memory.memory_ops import _get_memory_store
+                            _store = _get_memory_store(group_id)
+                            if _store is not None:
+                                import json as _json
+                                _store.set_meta(
+                                    f"root_task_hook:{task_id}",
+                                    _json.dumps({
+                                        "solidified": solidify_result.result.get("solidified", 0) if solidify_result.ok else 0,
+                                        "exported": export_result.ok,
+                                        "at": _utc_now_iso(),
+                                    }),
+                                )
+                        except Exception:
+                            logger.exception(
+                                "memory_root_task_hook_meta_record_failed group_id=%s task_id=%s",
+                                group_id, task_id,
+                            )
+                    except Exception:
+                        logger.exception(
+                            "memory_root_task_hook_failed group_id=%s task_id=%s",
+                            group_id, task_id,
+                        )
+
+            # --- Task Move ---
+            elif op_name == "task.move":
+                task_id = str(item.get("task_id") or "")
+                task = tasks_by_id.get(task_id)
+                if task is None:
+                    raise ValueError(f"Task not found: {task_id}")
+
+                perm_err = _check_permission(by, op_name, group_id)
+                if perm_err:
+                    raise ValueError(perm_err)
+
+                new_parent_id = item.get("new_parent_id")
+                if new_parent_id is not None:
+                    new_parent_id = str(new_parent_id)
+                    if new_parent_id not in tasks_by_id:
+                        raise ValueError(f"Target parent not found: {new_parent_id}")
+
+                # Cycle detection
+                all_tasks = list(tasks_by_id.values())
+                if storage.detect_cycle(task_id, new_parent_id, tasks=all_tasks):
+                    raise ValueError(f"Moving {task_id} under {new_parent_id} would create a cycle")
+
+                task.parent_id = new_parent_id
+                task.updated_at = _utc_now_iso()
+                dirty_task_ids.add(task_id)
+                _mark_change(idx, op_name, f"Moved {task_id} -> parent={new_parent_id}")
+
+            # --- Task Restore ---
             elif op_name == "task.restore":
                 task_id = str(item.get("task_id") or "")
                 task = tasks_by_id.get(task_id)
                 if task is None:
                     raise ValueError(f"Task not found: {task_id}")
+
+                perm_err = _check_permission(by, op_name, group_id)
+                if perm_err:
+                    raise ValueError(perm_err)
+
                 if task.status != TaskStatus.ARCHIVED:
                     raise ValueError(f"Task is not archived: {task_id}")
 
@@ -573,81 +654,58 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 dirty_task_ids.add(task_id)
                 _mark_change(idx, op_name, f"Restored {task_id} -> {new_status.value}")
 
-            elif op_name == "note.add":
-                content = str(item.get("content") or "")
-
-                note_id = storage.generate_note_id(context)
-                note = Note(id=note_id, content=content)
-                context.notes.append(note)
-                context_dirty = True
-                _mark_change(idx, op_name, f"Added {note_id}")
-
-            elif op_name == "note.update":
-                note_id = str(item.get("note_id") or "")
-                note = storage.get_note_by_id(context, note_id)
-                if note is None:
-                    raise ValueError(f"Note not found: {note_id}")
-
-                if "content" in item:
-                    note.content = str(item["content"])
-
-                context_dirty = True
-                _mark_change(idx, op_name, f"Updated {note_id}")
-
-            elif op_name == "note.remove":
-                note_id = str(item.get("note_id") or "")
-                before = len(context.notes)
-                context.notes = [n for n in context.notes if n.id != note_id]
-                if len(context.notes) == before:
-                    raise ValueError(f"Note not found: {note_id}")
-                context_dirty = True
-                _mark_change(idx, op_name, f"Removed {note_id}")
-
-            elif op_name == "reference.add":
-                url = str(item.get("url") or "")
-                note_text = str(item.get("note") or "")
-
-                ref_id = storage.generate_reference_id(context)
-                ref = Reference(id=ref_id, url=url, note=note_text)
-                context.references.append(ref)
-                context_dirty = True
-                _mark_change(idx, op_name, f"Added {ref_id}")
-
-            elif op_name == "reference.update":
-                ref_id = str(item.get("reference_id") or "")
-                ref = storage.get_reference_by_id(context, ref_id)
-                if ref is None:
-                    raise ValueError(f"Reference not found: {ref_id}")
-
-                if "url" in item:
-                    ref.url = str(item["url"])
-                if "note" in item:
-                    ref.note = str(item["note"])
-
-                context_dirty = True
-                _mark_change(idx, op_name, f"Updated {ref_id}")
-
-            elif op_name == "reference.remove":
-                ref_id = str(item.get("reference_id") or "")
-                before = len(context.references)
-                context.references = [r for r in context.references if r.id != ref_id]
-                if len(context.references) == before:
-                    raise ValueError(f"Reference not found: {ref_id}")
-                context_dirty = True
-                _mark_change(idx, op_name, f"Removed {ref_id}")
-
-            elif op_name == "presence.update":
+            # --- Agent Update (flat short-term memory) ---
+            elif op_name == "agent.update":
                 agent_id = str(item.get("agent_id") or "")
-                status = str(item.get("status") or "")
-                _apply_presence_update(agent_id, status)
-                presence_dirty = True
-                _mark_change(idx, op_name, f"Updated presence for {agent_id}")
+                perm_err = _check_permission(by, op_name, group_id, agent_id=agent_id)
+                if perm_err:
+                    raise ValueError(perm_err)
 
-            elif op_name == "presence.clear":
-                agent_id = str(item.get("agent_id") or "")
-                _apply_presence_update(agent_id, "")
+                agent = _get_or_create_agent(agent_id)
+                if "active_task_id" in item:
+                    active_task_id = str(item.get("active_task_id") or "").strip()
+                    agent.active_task_id = active_task_id or None
+                if "focus" in item:
+                    agent.focus = str(item.get("focus") or "")
+                if "blockers" in item:
+                    raw_blockers = item.get("blockers")
+                    agent.blockers = list(raw_blockers) if isinstance(raw_blockers, list) else []
+                if "next_action" in item:
+                    agent.next_action = str(item.get("next_action") or "")
+                if "what_changed" in item:
+                    agent.what_changed = str(item.get("what_changed") or "")
+                if "decision_delta" in item:
+                    agent.decision_delta = str(item.get("decision_delta") or "")
+                if "environment" in item:
+                    agent.environment = str(item.get("environment") or "")
+                if "user_profile" in item:
+                    agent.user_profile = str(item.get("user_profile") or "")
+                if "notes" in item:
+                    agent.notes = str(item.get("notes") or "")
+                agent.updated_at = _utc_now_iso()
                 presence_dirty = True
-                _mark_change(idx, op_name, f"Cleared presence for {agent_id}")
+                _mark_change(idx, op_name, f"Updated agent {agent_id}")
+
+            # --- Agent Clear ---
+            elif op_name == "agent.clear":
+                agent_id = str(item.get("agent_id") or "")
+                perm_err = _check_permission(by, op_name, group_id, agent_id=agent_id)
+                if perm_err:
+                    raise ValueError(perm_err)
+
+                agent = _get_or_create_agent(agent_id)
+                agent.active_task_id = None
+                agent.focus = ""
+                agent.blockers = []
+                agent.next_action = ""
+                agent.what_changed = ""
+                agent.decision_delta = ""
+                agent.environment = ""
+                agent.user_profile = ""
+                agent.notes = ""
+                agent.updated_at = _utc_now_iso()
+                presence_dirty = True
+                _mark_change(idx, op_name, f"Cleared agent {agent_id}")
 
             else:
                 raise ValueError(f"Unknown operation: {op_name}")
@@ -675,7 +733,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     data={"version": version, "changes": changes},
                 )
             except Exception:
-                # Best-effort only: context changes already persisted to files.
                 pass
 
         space_sync: Optional[Dict[str, Any]] = None
@@ -733,36 +790,15 @@ def handle_task_list(args: Dict[str, Any]) -> DaemonResponse:
         task = storage.load_task(str(task_id))
         if task is None:
             return _error("task_not_found", f"Task not found: {task_id}")
-        return DaemonResponse(ok=True, result={"task": _task_to_dict(task)})
+        # Include children info
+        all_tasks = storage.list_tasks()
+        children = storage.get_task_children(str(task_id), tasks=all_tasks)
+        task_dict = _task_to_dict(task)
+        task_dict["children"] = [_task_to_dict(c) for c in children]
+        return DaemonResponse(ok=True, result={"task": task_dict})
 
     tasks = storage.list_tasks()
     return DaemonResponse(ok=True, result={"tasks": [_task_to_dict(t) for t in tasks]})
-
-
-# =============================================================================
-# Presence Get
-# =============================================================================
-
-
-def handle_presence_get(args: Dict[str, Any]) -> DaemonResponse:
-    """Get presence state."""
-    group_id = str(args.get("group_id") or "").strip()
-
-    if not group_id:
-        return _error("missing_group_id", "missing group_id")
-
-    storage = _get_storage(group_id)
-    if storage is None:
-        return _error("group_not_found", f"group not found: {group_id}")
-
-    presence = storage.load_presence()
-    return DaemonResponse(ok=True, result={
-        "agents": [
-            {"id": a.id, "status": a.status, "updated_at": a.updated_at}
-            for a in presence.agents
-        ],
-        "heartbeat_timeout_seconds": presence.heartbeat_timeout_seconds,
-    })
 
 
 def try_handle_context_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
@@ -772,6 +808,4 @@ def try_handle_context_op(op: str, args: Dict[str, Any]) -> Optional[DaemonRespo
         return handle_context_sync(args)
     if op == "task_list":
         return handle_task_list(args)
-    if op == "presence_get":
-        return handle_presence_get(args)
     return None

@@ -618,12 +618,7 @@ export async function updateVision(groupId: string, vision: string) {
   });
 }
 
-export async function updateSketch(groupId: string, sketch: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
-    method: "POST",
-    body: JSON.stringify({ ops: [{ op: "sketch.update", sketch }], by: "user" }),
-  });
-}
+
 
 export async function fetchSettings(groupId: string) {
   return apiJson<{ settings: GroupSettings }>(
@@ -891,6 +886,7 @@ export interface IMAuthorizedChat {
   platform: string;
   authorized_at: number;
   key_used?: string;
+  verbose?: boolean;
 }
 
 export interface IMPendingRequest {
@@ -932,6 +928,13 @@ export async function bindIMChat(groupId: string, key: string) {
   return apiJson<{ chat_id: string; thread_id: number; platform: string }>(
     "/api/im/bind",
     { method: "POST", body: JSON.stringify({ group_id: groupId, key }) },
+  );
+}
+
+export async function setIMVerbose(groupId: string, chatId: string, verbose: boolean, threadId: number = 0) {
+  return apiJson<{ chat_id: string; thread_id: number; verbose: boolean }>(
+    `/api/im/verbose?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&verbose=${verbose}&thread_id=${threadId}`,
+    { method: "POST" },
   );
 }
 

@@ -164,7 +164,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.get("/api/v1/groups/{group_id}/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
-        """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
+        """Get full group context (vision/overview/tasks/presence)."""
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:
@@ -384,18 +384,14 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.post("/api/v1/groups/{group_id}/context")
     async def group_context_sync(group_id: str, request: Request) -> Dict[str, Any]:
-        """Update group context via batch operations.
+        """Update group context via batch operations (v2).
 
         Body: {"ops": [{"op": "vision.update", "vision": "..."}, ...], "by": "user"}
 
         Supported ops:
-        - vision.update: {"op": "vision.update", "vision": "..."}
-        - sketch.update: {"op": "sketch.update", "sketch": "..."}
-        - milestone.create/update/complete/remove
-        - task.create/update/delete
-        - note.add/update/remove
-        - reference.add/update/remove
-        - presence.update/clear
+        - vision.update, overview.manual.update
+        - task.create/update/status/move/restore
+        - agent.update/clear
         """
         try:
             body = await request.json()

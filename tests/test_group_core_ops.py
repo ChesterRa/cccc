@@ -2,6 +2,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+import errno
+import shutil
 
 
 class TestGroupCoreOps(unittest.TestCase):
@@ -110,6 +113,35 @@ class TestGroupCoreOps(unittest.TestCase):
             show_resp, _ = self._call("group_show", {"group_id": group_id})
             self.assertFalse(show_resp.ok)
             self.assertEqual((show_resp.error.code if show_resp.error else ""), "group_not_found")
+        finally:
+            cleanup()
+
+    def test_group_delete_tolerates_transient_directory_not_empty(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "delete-race", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            real_rmtree = shutil.rmtree
+            injected = {"raised": False}
+
+            def _flaky_rmtree(path, *args, **kwargs):
+                name = Path(path).name
+                if name == group_id and not injected["raised"]:
+                    injected["raised"] = True
+                    raise OSError(errno.ENOTEMPTY, "Directory not empty")
+                return real_rmtree(path, *args, **kwargs)
+
+            with patch("cccc.kernel.group.shutil.rmtree", side_effect=_flaky_rmtree):
+                delete_resp, _ = self._call("group_delete", {"group_id": group_id, "by": "user"})
+
+            self.assertTrue(injected["raised"])
+            self.assertTrue(delete_resp.ok, getattr(delete_resp, "error", None))
+            self.assertIsNone(load_group(group_id))
         finally:
             cleanup()
 

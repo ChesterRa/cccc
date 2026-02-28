@@ -397,6 +397,7 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         key = km.generate_key("chat_auth", 0, "telegram")
         km.authorize("chat_auth", 0, "telegram", key)
         sm.subscribe("chat_auth", chat_title="auth", thread_id=0, platform="telegram")
+        sm.set_verbose("chat_auth", True)
 
         fake_group = SimpleNamespace(
             group_id="g_demo",

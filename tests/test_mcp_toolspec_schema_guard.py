@@ -30,7 +30,7 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             self.assertIsInstance(required, list, msg=f"MCP_TOOLS[{idx}] inputSchema.required must be list")
 
     def test_space_query_toolspec_options_are_explicit(self) -> None:
-        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_space_query"), None)
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_space"), None)
         self.assertIsInstance(spec, dict)
         schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
         self.assertIsInstance(schema, dict)
@@ -45,7 +45,7 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertNotIn("lang", opt_props)
 
     def test_memory_guide_topic_enum_is_strict(self) -> None:
-        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory_guide"), None)
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory"), None)
         self.assertIsInstance(spec, dict)
         schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
         self.assertIsInstance(schema, dict)
@@ -54,8 +54,9 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         topic = props.get("topic") if isinstance(props, dict) else {}
         self.assertIsInstance(topic, dict)
         self.assertEqual(topic.get("enum"), ["store", "search", "consolidation", "lifecycle"])
-        required = schema.get("required") if isinstance(schema, dict) else []
-        self.assertEqual(required, ["topic"])
+        action = props.get("action") if isinstance(props, dict) else {}
+        self.assertIsInstance(action, dict)
+        self.assertIn("guide", action.get("enum") or [])
 
 
     def test_memory_kind_enum_matches_kernel(self) -> None:
@@ -66,7 +67,7 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         kernel_source_types = set(MEMORY_SOURCE_TYPES)
         for spec in MCP_TOOLS:
             name = str(spec.get("name") or "")
-            if name not in ("cccc_memory_store", "cccc_memory_search"):
+            if name != "cccc_memory":
                 continue
             schema = spec.get("inputSchema") or {}
             props = schema.get("properties") or {}
@@ -79,15 +80,14 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
                 msg=f"{name} kind enum mismatch with MEMORY_KINDS",
             )
 
-            if name == "cccc_memory_store":
-                source_type_prop = props.get("source_type") or {}
-                source_enum = source_type_prop.get("enum")
-                self.assertIsNotNone(source_enum, msg=f"{name} source_type missing enum")
-                self.assertEqual(
-                    set(source_enum),
-                    kernel_source_types,
-                    msg=f"{name} source_type enum mismatch with MEMORY_SOURCE_TYPES",
-                )
+            source_type_prop = props.get("source_type") or {}
+            source_enum = source_type_prop.get("enum")
+            self.assertIsNotNone(source_enum, msg=f"{name} source_type missing enum")
+            self.assertEqual(
+                set(source_enum),
+                kernel_source_types,
+                msg=f"{name} source_type enum mismatch with MEMORY_SOURCE_TYPES",
+            )
 
 
 if __name__ == "__main__":

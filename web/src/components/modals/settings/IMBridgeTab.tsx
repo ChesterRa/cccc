@@ -248,6 +248,22 @@ export function IMBridgeTab({
     }
   };
 
+  const handleToggleVerbose = async (chatId: string, threadId: number, verbose: boolean) => {
+    if (!groupId) return;
+    try {
+      const resp = await api.setIMVerbose(groupId, chatId, verbose, threadId);
+      if (resp.ok) {
+        setAuthChats((prev) =>
+          prev.map((c) =>
+            c.chat_id === chatId && c.thread_id === threadId ? { ...c, verbose } : c,
+          ),
+        );
+      }
+    } catch {
+      // silent fail — user can retry
+    }
+  };
+
   const maskKey = (value: string) => {
     const key = String(value || "");
     if (key.length <= 8) return key;
@@ -721,17 +737,38 @@ export function IMBridgeTab({
                         {chat.authorized_at && ` • ${new Date(chat.authorized_at * 1000).toLocaleDateString()}`}
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
-                      disabled={isRevoking}
-                      className={`ml-3 px-3 py-1 text-xs rounded-lg transition-colors font-medium shrink-0 ${
-                        isDark
-                          ? "bg-red-900/40 hover:bg-red-800/50 text-red-400"
-                          : "bg-red-50 hover:bg-red-100 text-red-600"
-                      } disabled:opacity-50`}
-                    >
-                      {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleToggleVerbose(chat.chat_id, chat.thread_id, !chat.verbose)}
+                        title={chat.verbose
+                          ? t("imBridge.verboseOnHint", "Receiving all messages. Click to receive user-only messages.")
+                          : t("imBridge.verboseOffHint", "Receiving user-only messages. Click to receive all messages.")}
+                        className={`px-2.5 py-1 text-xs rounded-lg transition-colors font-medium ${
+                          chat.verbose
+                            ? isDark
+                              ? "bg-blue-900/40 hover:bg-blue-800/50 text-blue-400"
+                              : "bg-blue-50 hover:bg-blue-100 text-blue-600"
+                            : isDark
+                              ? "bg-slate-700/50 hover:bg-slate-600/50 text-slate-400"
+                              : "bg-gray-100 hover:bg-gray-200 text-gray-500"
+                        }`}
+                      >
+                        {chat.verbose
+                          ? t("imBridge.verboseAll", "All")
+                          : t("imBridge.verboseUserOnly", "User only")}
+                      </button>
+                      <button
+                        onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
+                        disabled={isRevoking}
+                        className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium ${
+                          isDark
+                            ? "bg-red-900/40 hover:bg-red-800/50 text-red-400"
+                            : "bg-red-50 hover:bg-red-100 text-red-600"
+                        } disabled:opacity-50`}
+                      >
+                        {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
+                      </button>
+                    </div>
                   </div>
                 );
               })}

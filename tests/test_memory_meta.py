@@ -1,4 +1,4 @@
-"""Tests for memory_meta KV table + Schema v1→v2 migration (Step 1)."""
+"""Tests for memory_meta KV table + schema migration behavior."""
 
 import os
 import sqlite3
@@ -30,14 +30,13 @@ class MemoryMetaTestBase(unittest.TestCase):
 
 
 class TestSchemaV2(MemoryMetaTestBase):
-    """Schema v3: summary column + PRAGMA user_version=3."""
+    """Latest schema: memory_meta table + PRAGMA user_version=SCHEMA_VERSION."""
 
-    def test_schema_version_is_3(self):
-        """New DB has SCHEMA_VERSION == 3."""
-        self.assertEqual(SCHEMA_VERSION, 3)
+    def test_schema_version_matches_latest(self):
+        """New DB has PRAGMA user_version == SCHEMA_VERSION."""
         assert self.store._conn is not None
         v = self.store._conn.execute("PRAGMA user_version").fetchone()[0]
-        self.assertEqual(v, 3)
+        self.assertEqual(v, SCHEMA_VERSION)
 
     def test_memory_meta_table_exists(self):
         """memory_meta table is created."""
@@ -59,7 +58,7 @@ class TestSchemaV2(MemoryMetaTestBase):
 
 
 class TestSchemaV1Migration(unittest.TestCase):
-    """Migrate existing v1 DB to v2."""
+    """Migrate existing v1 DB to latest schema."""
 
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
@@ -133,14 +132,14 @@ class TestSchemaV1Migration(unittest.TestCase):
         conn.commit()
         conn.close()
 
-    def test_v1_to_v2_migration(self):
-        """Opening a v1 DB auto-migrates to latest (v3)."""
+    def test_v1_to_latest_migration(self):
+        """Opening a v1 DB auto-migrates to the latest schema."""
         self._create_v1_db()
         store = MemoryStore(self.db_path, group_id=self.group_id)
         try:
             assert store._conn is not None
             v = store._conn.execute("PRAGMA user_version").fetchone()[0]
-            self.assertEqual(v, 3)
+            self.assertEqual(v, SCHEMA_VERSION)
             # memory_meta table exists
             tables = {
                 r[0]
@@ -156,8 +155,8 @@ class TestSchemaV1Migration(unittest.TestCase):
         finally:
             store.close()
 
-    def test_v2_db_no_double_migrate(self):
-        """Opening a v2 DB doesn't re-run migration."""
+    def test_latest_db_no_double_migrate(self):
+        """Opening a latest-version DB doesn't re-run migration."""
         store = MemoryStore(self.db_path, group_id=self.group_id)
         store.set_meta("test_key", "test_value")
         store.close()
@@ -362,7 +361,7 @@ class TestLastRecalledAt(MemoryMetaTestBase):
         self.assertEqual(mem["last_recalled_at"], "")
 
     def test_v1_migration_adds_last_recalled_at(self):
-        """v1→v2 migration adds last_recalled_at column."""
+        """v1 migration adds last_recalled_at column."""
         self.store.close()
         # Create a v1 DB manually
         conn = sqlite3.connect(self.db_path)
@@ -478,186 +477,6 @@ class TestRecallSideEffects(MemoryMetaTestBase):
         self.store.recall(track_hit=True)  # no query
         mem = self.store.get(r["id"])
         self.assertEqual(mem["hit_count"], 1)
-
-
-class TestSummaryField(MemoryMetaTestBase):
-    """Summary column store/retrieve (T118 Step 5)."""
-
-    def test_store_with_summary(self):
-        """store() accepts summary parameter."""
-        r = self.store.store("full content here", summary="short summary")
-        mem = self.store.get(r["id"])
-        self.assertEqual(mem["summary"], "short summary")
-        self.assertEqual(mem["content"], "full content here")
-
-    def test_store_without_summary_defaults_empty(self):
-        """store() without summary defaults to empty string."""
-        r = self.store.store("content without summary")
-        mem = self.store.get(r["id"])
-        self.assertEqual(mem["summary"], "")
-
-    def test_update_summary(self):
-        """update() can set summary on existing memory."""
-        r = self.store.store("original content")
-        self.store.update(r["id"], summary="added summary")
-        mem = self.store.get(r["id"])
-        self.assertEqual(mem["summary"], "added summary")
-        self.assertEqual(mem["content"], "original content")
-
-    def test_update_summary_to_empty(self):
-        """update() can clear summary."""
-        r = self.store.store("content", summary="has summary")
-        self.store.update(r["id"], summary="")
-        mem = self.store.get(r["id"])
-        self.assertEqual(mem["summary"], "")
-
-
-class TestDepthProjection(MemoryMetaTestBase):
-    """Depth L0/L2 projection in recall() (T118 Step 5)."""
-
-    def test_recall_default_depth_is_l0(self):
-        """recall() default depth is L0."""
-        self.store.store("searchable depth default", summary="the summary")
-        results = self.store.recall("searchable depth default")
-        self.assertTrue(len(results) > 0)
-        m = results[0]
-        self.assertEqual(m["depth"], "L0")
-        self.assertEqual(m["summary"], "the summary")
-        self.assertNotIn("content", m)
-
-    def test_recall_l0_strips_content(self):
-        """L0 depth strips content, returns summary."""
-        self.store.store("full content for l0 test", summary="l0 summary")
-        results = self.store.recall("full content for l0 test", depth="L0")
-        m = results[0]
-        self.assertNotIn("content", m)
-        self.assertEqual(m["summary"], "l0 summary")
-
-    def test_recall_l2_keeps_both(self):
-        """L2 depth keeps both content and summary."""
-        self.store.store("full content for l2 test", summary="l2 summary")
-        results = self.store.recall("full content for l2 test", depth="L2")
-        m = results[0]
-        self.assertEqual(m["content"], "full content for l2 test")
-        self.assertEqual(m["summary"], "l2 summary")
-        self.assertEqual(m["depth"], "L2")
-
-    def test_recall_l0_empty_summary_fallback_short(self):
-        """L0 with empty summary and short content returns content as-is."""
-        self.store.store("short content")
-        results = self.store.recall("short content", depth="L0")
-        m = results[0]
-        self.assertEqual(m["summary"], "short content")
-        self.assertNotIn("content", m)
-
-    def test_recall_l0_empty_summary_fallback_long(self):
-        """L0 with empty summary and long content truncates to 150 chars + ellipsis."""
-        long_content = "A" * 200
-        self.store.store(long_content, tags=["long_test"])
-        results = self.store.recall(tags=["long_test"], depth="L0")
-        m = results[0]
-        self.assertEqual(len(m["summary"]), 151)  # 150 + ellipsis char
-        self.assertTrue(m["summary"].endswith("\u2026"))
-        self.assertEqual(m["summary"][:150], "A" * 150)
-        self.assertNotIn("content", m)
-
-    def test_recall_invalid_depth_rejected(self):
-        """recall() rejects invalid depth value."""
-        with self.assertRaises(ValueError):
-            self.store.recall(depth="L1")
-
-    def test_recall_l0_no_query_with_summary(self):
-        """L0 works with no-query recall (list all)."""
-        self.store.store("no query l0 content", summary="nq summary", tags=["nq_l0"])
-        results = self.store.recall(tags=["nq_l0"], depth="L0")
-        self.assertTrue(len(results) > 0)
-        m = results[0]
-        self.assertEqual(m["summary"], "nq summary")
-        self.assertNotIn("content", m)
-
-
-class TestSchemaV2ToV3Migration(unittest.TestCase):
-    """Migrate v2 DB (no summary column) to v3."""
-
-    def setUp(self):
-        self._td = tempfile.TemporaryDirectory()
-        self.db_path = os.path.join(self._td.name, "memory.db")
-        self.group_id = "g_test_v2_to_v3"
-
-    def tearDown(self):
-        self._td.cleanup()
-
-    def _create_v2_db(self):
-        """Create a v2 database (has last_recalled_at, memory_meta, but no summary)."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                kind TEXT NOT NULL DEFAULT 'observation',
-                source_type TEXT NOT NULL DEFAULT 'manual',
-                source_ref TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'draft',
-                confidence TEXT NOT NULL DEFAULT 'medium',
-                group_id TEXT NOT NULL,
-                scope_key TEXT NOT NULL DEFAULT '',
-                actor_id TEXT NOT NULL DEFAULT '',
-                task_id TEXT NOT NULL DEFAULT '',
-                milestone_id TEXT NOT NULL DEFAULT '',
-                event_ts TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                content_hash TEXT NOT NULL DEFAULT '',
-                hit_count INTEGER NOT NULL DEFAULT 0,
-                last_recalled_at TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS memory_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS memory_relations (
-                from_id TEXT NOT NULL, to_id TEXT NOT NULL,
-                relation TEXT NOT NULL, created_at TEXT NOT NULL,
-                PRIMARY KEY (from_id, to_id, relation)
-            );
-            CREATE TABLE IF NOT EXISTS memory_tags (
-                memory_id TEXT NOT NULL, tag TEXT NOT NULL,
-                PRIMARY KEY (memory_id, tag)
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-                content, content=memories, content_rowid=rowid
-            );
-        """)
-        conn.execute(
-            "INSERT INTO memories (id, content, group_id, created_at, updated_at) "
-            "VALUES ('m_v2', 'v2 memory content', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-            (self.group_id,),
-        )
-        conn.execute("PRAGMA user_version = 2")
-        conn.commit()
-        conn.close()
-
-    def test_v2_to_v3_migration_adds_summary(self):
-        """Opening a v2 DB auto-migrates to v3 with summary column."""
-        self._create_v2_db()
-        store = MemoryStore(self.db_path, group_id=self.group_id)
-        try:
-            assert store._conn is not None
-            v = store._conn.execute("PRAGMA user_version").fetchone()[0]
-            self.assertEqual(v, 3)
-            # summary column exists
-            cols = store._conn.execute("PRAGMA table_info(memories)").fetchall()
-            col_names = {c[1] for c in cols}
-            self.assertIn("summary", col_names)
-            # Existing data preserved with empty summary
-            mem = store.get("m_v2")
-            self.assertIsNotNone(mem)
-            self.assertEqual(mem["content"], "v2 memory content")
-            self.assertEqual(mem["summary"], "")
-        finally:
-            store.close()
 
 
 if __name__ == "__main__":

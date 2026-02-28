@@ -60,7 +60,7 @@ class TestSystemPromptGroupSpace(unittest.TestCase):
             self.assertIsNotNone(actor)
             prompt = render_system_prompt(group=group, actor=actor or {})
             self.assertNotIn("Group Space:", prompt)
-            self.assertNotIn("cccc_space_query", prompt)
+            self.assertNotIn("cccc_space(action=query)", prompt)
         finally:
             cleanup()
 
@@ -94,9 +94,9 @@ class TestSystemPromptGroupSpace(unittest.TestCase):
             self.assertIsNotNone(actor)
             prompt = render_system_prompt(group=group, actor=actor or {})
             self.assertIn("Group Space:", prompt)
-            self.assertIn("cccc_space_query", prompt)
-            self.assertIn("cccc_space_ingest", prompt)
-            self.assertIn("cccc_space_artifact", prompt)
+            self.assertIn("cccc_space(action=query)", prompt)
+            self.assertIn("cccc_space(action=ingest)", prompt)
+            self.assertIn("cccc_space(action=artifact)", prompt)
             self.assertIn("source_type", prompt)
             self.assertIn("*.conflict.remote.*", prompt)
         finally:

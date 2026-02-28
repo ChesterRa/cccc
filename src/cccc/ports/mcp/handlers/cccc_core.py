@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -11,6 +12,7 @@ from ....kernel.group import load_group
 from ....kernel.inbox import is_message_for_actor
 from ....kernel.ledger import read_last_lines
 from ....kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_group_prompt_file
+from ....util.time import parse_utc_iso
 from ..common import MCPError, _call_daemon_or_raise
 from ..utils.help_markdown import _select_help_markdown
 from . import cccc_group_actor as _group_actor_mod
@@ -19,12 +21,76 @@ from . import context as _context_mod
 
 _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 
+_PACK_QUICK_USE_EXAMPLES: Dict[str, str] = {
+    "pack:space": 'cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"})',
+    "pack:group-runtime": 'cccc_capability_use(tool_name="cccc_group", tool_arguments={"action":"info"})',
+    "pack:file-im": 'cccc_capability_use(tool_name="cccc_file", tool_arguments={"action":"blob_path","rel_path":"state/blobs/..."})',
+    "pack:automation": 'cccc_capability_use(tool_name="cccc_automation", tool_arguments={"action":"state"})',
+    "pack:context-advanced": 'cccc_capability_use(tool_name="cccc_memory_admin", tool_arguments={"action":"ingest","mode":"signal"})',
+}
+
+
+def _build_context_hygiene_hint(*, context: Dict[str, Any], actor_id: str) -> Dict[str, Any]:
+    aid = str(actor_id or "").strip()
+    hint: Dict[str, Any] = {
+        "actor_id": aid,
+        "present": False,
+        "stale": True,
+        "age_seconds": None,
+        "min_fields_ready": False,
+        "update_command": (
+            'cccc_context_agent(action="update", agent_id="<self>", '
+            'focus="...", next_action="...", what_changed="...")'
+        ),
+        "recommendation": "update_agent_state_now",
+    }
+    if not aid or not isinstance(context, dict):
+        return hint
+    presence = context.get("presence") if isinstance(context.get("presence"), dict) else {}
+    agents = presence.get("agents") if isinstance(presence.get("agents"), list) else []
+    target: Optional[Dict[str, Any]] = None
+    aid_lower = aid.lower()
+    for item in agents:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "").strip()
+        if not item_id:
+            continue
+        if item_id == aid or item_id.lower() == aid_lower:
+            target = item
+            break
+    if target is None:
+        return hint
+    hint["present"] = True
+    blockers = target.get("blockers") if isinstance(target.get("blockers"), list) else []
+    min_fields_ready = any(
+        str(target.get(k) or "").strip()
+        for k in ("focus", "next_action", "what_changed")
+    ) or bool(blockers)
+    hint["min_fields_ready"] = bool(min_fields_ready)
+    updated_at = str(target.get("updated_at") or "").strip()
+    age_seconds: Optional[int] = None
+    if updated_at:
+        dt = parse_utc_iso(updated_at)
+        if dt is not None:
+            age_seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+    hint["age_seconds"] = age_seconds
+    stale = (age_seconds is None) or (age_seconds > 20 * 60)
+    hint["stale"] = bool(stale)
+    if (not stale) and min_fields_ready:
+        hint["recommendation"] = "state_healthy"
+    elif stale and min_fields_ready:
+        hint["recommendation"] = "refresh_agent_state"
+    else:
+        hint["recommendation"] = "fill_agent_state_basics"
+    return hint
+
 
 def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str) -> str:
     base = str(markdown or "")
     if not base.strip():
         return base
-    if "## Active Skills (Runtime)" in base:
+    if "## Active Skills (Runtime)" in base or "## Capability Quick Use (Runtime)" in base:
         return base
     gid = str(group_id or "").strip()
     aid = str(actor_id or "").strip()
@@ -37,38 +103,99 @@ def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str)
         )
     except Exception:
         return base
+    enabled_caps = state.get("enabled_capabilities") if isinstance(state, dict) else []
+    hidden_caps = state.get("hidden_capabilities") if isinstance(state, dict) else []
     active = state.get("active_skills") if isinstance(state, dict) else []
     pinned = state.get("pinned_skills") if isinstance(state, dict) else []
+    enabled_list = enabled_caps if isinstance(enabled_caps, list) else []
+    hidden_list = hidden_caps if isinstance(hidden_caps, list) else []
     active_list = active if isinstance(active, list) else []
     pinned_list = pinned if isinstance(pinned, list) else []
-    if not active_list and not pinned_list:
+    sections: List[str] = []
+
+    if active_list or pinned_list:
+        lines: List[str] = ["## Active Skills (Runtime)"]
+        if pinned_list:
+            lines.append("- pinned:")
+            for item in pinned_list[:8]:
+                if not isinstance(item, dict):
+                    continue
+                sid = str(item.get("capability_id") or "").strip()
+                name = str(item.get("name") or sid).strip()
+                desc = str(item.get("description_short") or "").strip()
+                line = f"  - {name} ({sid})"
+                if desc:
+                    line += f": {desc[:120]}"
+                lines.append(line)
+        if active_list:
+            lines.append("- active_now:")
+            for item in active_list[:8]:
+                if not isinstance(item, dict):
+                    continue
+                sid = str(item.get("capability_id") or "").strip()
+                name = str(item.get("name") or sid).strip()
+                desc = str(item.get("description_short") or "").strip()
+                line = f"  - {name} ({sid})"
+                if desc:
+                    line += f": {desc[:120]}"
+                lines.append(line)
+        sections.append("\n".join(lines).rstrip())
+
+    enabled_packs = [
+        str(x).strip()
+        for x in enabled_list
+        if str(x).strip().startswith("pack:")
+    ]
+    suggested_packs: List[str] = []
+    seen: set[str] = set()
+    for item in hidden_list:
+        if not isinstance(item, dict):
+            continue
+        cid = str(item.get("capability_id") or "").strip()
+        reason = str(item.get("reason") or "").strip().lower()
+        if not cid.startswith("pack:"):
+            continue
+        if reason not in {"not_enabled", "scope_mismatch"}:
+            continue
+        if cid in seen:
+            continue
+        seen.add(cid)
+        suggested_packs.append(cid)
+        if len(suggested_packs) >= 4:
+            break
+    if not suggested_packs:
+        for cid in ("pack:space", "pack:file-im", "pack:group-runtime", "pack:context-advanced"):
+            if cid in seen:
+                continue
+            seen.add(cid)
+            suggested_packs.append(cid)
+            if len(suggested_packs) >= 4:
+                break
+
+    if enabled_packs or suggested_packs:
+        lines_cap: List[str] = [
+            "## Capability Quick Use (Runtime)",
+            '- list packs quickly: `cccc_capability_search(kind="mcp_toolpack")`',
+        ]
+        if enabled_packs:
+            lines_cap.append(
+                "- enabled_packs: " + ", ".join(enabled_packs[:8])
+            )
+        if suggested_packs:
+            lines_cap.append("- one-step examples:")
+            for cid in suggested_packs:
+                example = _PACK_QUICK_USE_EXAMPLES.get(cid)
+                if example:
+                    lines_cap.append(f"  - {cid}: `{example}`")
+                else:
+                    lines_cap.append(
+                        f'  - {cid}: `cccc_capability_use(capability_id="{cid}", scope="session")`'
+                    )
+        sections.append("\n".join(lines_cap).rstrip())
+
+    if not sections:
         return base
-    lines: List[str] = ["## Active Skills (Runtime)"]
-    if pinned_list:
-        lines.append("- pinned:")
-        for item in pinned_list[:8]:
-            if not isinstance(item, dict):
-                continue
-            sid = str(item.get("capability_id") or "").strip()
-            name = str(item.get("name") or sid).strip()
-            desc = str(item.get("description_short") or "").strip()
-            line = f"  - {name} ({sid})"
-            if desc:
-                line += f": {desc[:120]}"
-            lines.append(line)
-    if active_list:
-        lines.append("- active_now:")
-        for item in active_list[:8]:
-            if not isinstance(item, dict):
-                continue
-            sid = str(item.get("capability_id") or "").strip()
-            name = str(item.get("name") or sid).strip()
-            desc = str(item.get("description_short") or "").strip()
-            line = f"  - {name} ({sid})"
-            if desc:
-                line += f": {desc[:120]}"
-            lines.append(line)
-    return base.rstrip() + "\n\n" + "\n".join(lines).rstrip() + "\n"
+    return base.rstrip() + "\n\n" + "\n\n".join(sections).rstrip() + "\n"
 
 
 def inbox_list(*, group_id: str, actor_id: str, limit: int = 50, kind_filter: str = "all") -> Dict[str, Any]:
@@ -221,12 +348,17 @@ def bootstrap(
     except Exception:
         last_event_id = ""
 
-    memory_guide: Optional[str] = None
+    memory_guide: Optional[Dict[str, Any]] = None
     try:
         from ....kernel.memory_guide import build_memory_guide
-        memory_guide = build_memory_guide(group_id=group_id)
+        memory_guide = build_memory_guide("lifecycle")
     except Exception:
         pass
+
+    context_hygiene = _build_context_hygiene_hint(
+        context=context if isinstance(context, dict) else {},
+        actor_id=actor_id,
+    )
 
     return {
         "group": group,
@@ -238,6 +370,7 @@ def bootstrap(
         "ledger_tail": ledger_tail,
         "ledger_tail_truncated": ledger_tail_truncated,
         "suggested_mark_read_event_id": last_event_id,
+        "context_hygiene": context_hygiene,
         "memory_guide": memory_guide,
     }
 

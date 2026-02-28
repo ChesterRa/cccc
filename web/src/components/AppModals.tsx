@@ -279,17 +279,6 @@ export function AppModals({
     }
   };
 
-  const handleUpdateSketch = async (sketch: string) => {
-    if (!selectedGroupId) return;
-    setBusy("context-update");
-    try {
-      const resp = await api.updateSketch(selectedGroupId, sketch);
-      if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
-      void fetchContext(selectedGroupId);
-    } finally {
-      setBusy("");
-    }
-  };
 
   const handleUpdateSettings = async (settings: Partial<GroupSettings>) => {
     if (!selectedGroupId) return;
@@ -972,7 +961,6 @@ export function AppModals({
           if (selectedGroupId) await fetchContext(selectedGroupId);
         }}
         onUpdateVision={handleUpdateVision}
-        onUpdateSketch={handleUpdateSketch}
         busy={busy === "context-update"}
         isDark={isDark}
       />

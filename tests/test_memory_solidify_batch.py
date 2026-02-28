@@ -1,4 +1,4 @@
-"""Tests for solidify_batch() + milestone hook (Step 2)."""
+"""Tests for solidify_batch() + root-task hook (Step 2)."""
 
 import os
 import tempfile
@@ -41,11 +41,11 @@ class TestSolidifyBatch(SolidifyBatchTestBase):
         result = self.store.solidify_batch(kind="decision")
         self.assertEqual(result["solidified"], 1)
 
-    def test_solidify_batch_by_milestone(self):
-        """solidify_batch(milestone_id=...) only solidifies that milestone."""
-        self.store.store("m1 mem", milestone_id="M1")
-        self.store.store("m2 mem", milestone_id="M2")
-        result = self.store.solidify_batch(milestone_id="M1")
+    def test_solidify_batch_by_task(self):
+        """solidify_batch(task_id=...) only solidifies that task."""
+        self.store.store("t1 mem", task_id="T001")
+        self.store.store("t2 mem", task_id="T002")
+        result = self.store.solidify_batch(task_id="T001")
         self.assertEqual(result["solidified"], 1)
 
     def test_solidify_batch_empty(self):
@@ -66,10 +66,10 @@ class TestSolidifyBatch(SolidifyBatchTestBase):
         result = self.store.solidify_batch()
         self.assertEqual(set(result["ids"]), {r1["id"], r2["id"]})
 
-    def test_solidify_batch_records_milestone(self):
-        """solidify_batch(milestone_id=...) records milestone in meta."""
-        self.store.store("content", milestone_id="M5")
-        result = self.store.solidify_batch(milestone_id="M5")
+    def test_solidify_batch_records_task(self):
+        """solidify_batch(task_id=...) records task in meta."""
+        self.store.store("content", task_id="T005")
+        result = self.store.solidify_batch(task_id="T005")
         self.assertEqual(result["solidified"], 1)
         # Check meta records last solidify event
         meta_val = self.store.get_meta("last_solidify_batch")

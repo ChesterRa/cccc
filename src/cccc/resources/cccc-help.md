@@ -11,10 +11,10 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 3) **Be explicit about verification.** If you claim done/fixed/verified, include what you checked; otherwise say not verified.
 4) **PROJECT.md is the constitution (if present).** If missing, ask the user for goals/constraints/DoD and write a short DoD into Context.
 5) **Visible chat must use MCP.** Use `cccc_message_send` / `cccc_message_reply`. Terminal output is not delivered as chat.
-6) **Inbox hygiene.** Read via `cccc_inbox_list`. Mark handled items read via `cccc_inbox_mark_read` / `cccc_inbox_mark_all_read`.
+6) **Inbox hygiene.** Read via `cccc_inbox_list`. Mark handled items read via `cccc_inbox_mark_read(action=read|read_all)`.
    - “Unread” means “after your read cursor”, not “unprocessed”. Use mark-read intentionally.
    - `mark_all_read` only moves unread cursor; it does **not** clear pending reply-required obligations.
-7) **Shared memory lives in Context.** Commitments, decisions, progress, and risk notes go into tasks/notes/presence.
+7) **Shared memory lives in Context.** Commitments, decisions, progress, and risks go into tasks/overview/agent state (+ long-term facts in memory).
 8) **No empty agreement.** If you endorse someone's result, say what you checked (or name one concrete risk/question).
 9) **Task completion.** After finishing work, always message the requester with your result or status.
 
@@ -41,8 +41,30 @@ CCCC is a collaboration hub, not an orchestration engine:
 
 ### Context (shared memory)
 
-- Keep stable state here: DoD, tasks, notes, references, presence.
+- Keep stable state here: DoD, tasks, overview.manual, and per-agent short-term state.
 - If something matters later, write it into Context (not only in chat).
+- Think of Context as **short-term working memory** for the current execution horizon.
+- Minimum agent-state upkeep at key transitions (start/milestone/blocker/unblock/done):
+  - `focus` (what you are doing now)
+  - `active_task_id` (which task is currently active)
+  - `blockers` (what prevents progress)
+  - `next_action` (next concrete step)
+  - `what_changed` (delta since last update)
+- Practical cadence:
+  - whenever you send a progress/blocker/decision message, update your agent state in the same turn.
+  - minimum payload each update: `focus` + `next_action` + `what_changed`.
+
+### Memory (long-term)
+
+- Use memory.db for reusable facts/decisions/patterns that should survive restarts and phase changes.
+- Do not store transient per-turn status in memory.db; keep that in Context agent state.
+- Practical loop:
+  - recall first: `cccc_memory(action=search, ...)`
+  - ingest at milestones: `cccc_memory_admin(action=ingest, mode="signal")`
+  - store/update only stable results: `cccc_memory(action=store, ...)`
+  - cleanup intentionally when needed: `cccc_memory_admin(action=decay|delete, ...)`
+- Promotion rule (short-term -> long-term):
+  - milestone/done -> `ingest(signal)` -> `search` related -> `store/update` stable outcome.
 
 ### Inbox (unread queue)
 
@@ -85,7 +107,7 @@ CCCC is a collaboration hub, not an orchestration engine:
 - Be proactive: surface risks/alternatives early; don’t just execute blindly.
 - Deliver small, reviewable outputs plus a basis (“what I checked” / “what remains unverified”).
 - If you think the direction is wrong, say so clearly and propose an alternative.
-- If you are no longer needed, remove yourself: `cccc_actor_remove`.
+- If you are no longer needed, remove yourself: `cccc_actor(action=remove, actor_id=<self>)`.
 
 ## 4) Appendix (reference)
 
@@ -113,30 +135,46 @@ CCCC is a collaboration hub, not an orchestration engine:
 Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs/`.
 
 - Inbox events may include `data.attachments[]` with `path` like `state/blobs/<sha256>_<name>`.
-- Use `cccc_blob_path` to resolve that `path` to an absolute filesystem path.
-- Use `cccc_file_send` to send a local file as an attachment.
+- Use `cccc_file(action=blob_path, rel_path=...)` to resolve that `path` to an absolute filesystem path.
+- Use `cccc_file(action=send, path=...)` to send a local file as an attachment.
 
 ### Terminal transcript
 
-- Use `cccc_terminal_tail` to tail an actor’s terminal transcript (subject to group policy).
+- Use `cccc_terminal(action=tail, target_actor_id=...)` to tail an actor’s terminal transcript (subject to group policy).
 
 ### Key tools (most used)
 
 - Alignment: `cccc_project_info`, `cccc_context_get`
 - Chat: `cccc_message_send`, `cccc_message_reply`
-- Inbox: `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_inbox_mark_all_read`
+- Inbox: `cccc_inbox_list`, `cccc_inbox_mark_read`
 - Session: `cccc_bootstrap`
-- Group: `cccc_group_info`, `cccc_actor_list`, `cccc_group_set_state`
+- Group: `cccc_group(action=info|set_state)`, `cccc_actor(action=list|...)`
+
+### Gap routing (high ROI)
+
+- If information is insufficient, search before asking:
+  1. `cccc_context_get` / `cccc_project_info` / `cccc_inbox_list`
+  2. `cccc_memory(action=search, ...)`
+  3. external web search (if runtime/policy allows)
+- If capability is insufficient, expand tools before declaring blocked:
+  1. fast path: `cccc_capability_use(...)`
+  2. discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`
+  3. then `cccc_capability_use(capability_id=..., scope="session")`
+  4. if response has `refresh_required=true`, relist/reconnect then retry
+  5. remote fallback can augment both MCP and skill search when local results are insufficient
 
 ### Capability hygiene (keep MCP surface lean)
 
 - Discover first: `cccc_capability_search`
+- Discover built-in packs without guessing keywords: `cccc_capability_search(kind="mcp_toolpack")`
 - Enable only what is needed now: `cccc_capability_enable` (prefer `scope=session`)
 - Fast path for execution: `cccc_capability_use` (auto-enable + optional tool call)
 - Skills use the same control plane:
   - One-off skill activation: `cccc_capability_use(capability_id=skill:..., scope=session)`
   - Pin/unpin stable skill baseline: `cccc_capability_enable(scope=actor, enabled=true|false)`
 - Verify current exposure: `cccc_capability_state`
+- Emergency deny (runtime side effects): `cccc_capability_block(scope=group, blocked=true, reason=...)`
+- Recovery after verification: `cccc_capability_block(scope=group, blocked=false)`
 - Temporary stop only (keep cache warm): `cccc_capability_enable(enabled=false)`
 - Stop + best-effort cache cleanup in one call: `cccc_capability_enable(enabled=false, cleanup=true)`
 - After task completion, clean up unused external capability cache/bindings:
@@ -145,8 +183,8 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
 
 ### Automation tools (when needed)
 
-- Read current automation: `cccc_automation_state`
-- Manage automation reminders: `cccc_automation_manage`
+- Read current automation: `cccc_automation(action=state)`
+- Manage automation reminders: `cccc_automation(action=manage)`
   - Simple ops: `op=create|update|enable|disable|delete|replace_all` (recommended).
   - Naming note: API field names keep protocol terms (`rule`, `rule_id`, `ruleset`), but conceptually these are reminders.
   - For `op=create|update`, `rule` must use canonical contract fields: `id`, `enabled`, `scope`, `owner_actor_id`, `to`, `trigger`, `action`.

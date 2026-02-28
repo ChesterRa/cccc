@@ -17,18 +17,12 @@ def _memory_policy_lines(group_id: str) -> List[str]:
         return []
     return [
         "Memory:",
-        "- Memory vs Notes: Notes are sticky notes (temporary, in Context), Memory is a notebook (persistent, in memory.db).",
-        "- cccc_memory_guide: topic-specific memory best practices (store/search/consolidation/lifecycle).",
-        "- cccc_memory_store: create/update memories.",
-        "- cccc_memory_search: recall memories via FTS5 + filters (default depth=L0 returns summary; depth=L2 returns full content).",
-        "- cccc_memory_ingest: ingest recent chat into memory (signal/raw).",
-        "- cccc_memory_stats: inspect memory health metrics.",
-        "- cccc_memory_decay: identify stale cleanup candidates (non-destructive).",
-        "- cccc_memory_delete: delete low-value memories intentionally (single/batch).",
-        "- cccc_memory_export: export read-only memory.md + manifest.",
-        "- Before storing, run consolidation first (ingest signal + search related memories).",
-        "- Use cccc_memory_search(track_hit=true) only for confirmed reinforcement paths that should contribute to auto-solidify.",
-        "- Call cccc_memory_guide(topic) before complex memory operations for best practices.",
+        "- Split by horizon: Context agent state is short-term execution memory; memory.db is long-term reusable memory.",
+        "- Keep transient status in Context (focus/task/blockers/next/changed); keep only stable facts/decisions/patterns in memory.db.",
+        "- Before storing, run cccc_memory(action=search) first; avoid duplicates and drift.",
+        '- At milestones, run cccc_memory_admin(action="ingest", mode="signal"), then consolidate deliberately.',
+        '- Promotion path: milestone/done -> cccc_memory_admin(action="ingest", mode="signal") -> cccc_memory(action="store", ...).',
+        "- Use cccc_memory(action=guide, topic=...) when unsure about store/search/consolidation/lifecycle workflows.",
     ]
 
 
@@ -45,10 +39,10 @@ def _group_space_policy_lines(group_id: str) -> List[str]:
         return [
             "Group Space:",
             f"- Bound memory provider: {provider} ({mode})",
-            "- Use cccc_space_query for long-horizon/shared knowledge lookup.",
-            "- Use cccc_space_ingest only for stable findings/resources worth reusing.",
+            "- Use cccc_space(action=query) for long-horizon/shared knowledge lookup.",
+            "- Use cccc_space(action=ingest) only for stable findings/resources worth reusing.",
             "- For resource_ingest payloads: use source_type + {url|content|file_id} depending on source kind.",
-            "- Use cccc_space_artifact for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).",
+            "- Use cccc_space(action=artifact) for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).",
             "- If you see files matching '*.conflict.remote.*' under space/, report and ask user for resolution; do not auto-merge/delete.",
             "- If provider is degraded/disabled, continue with Context + ledger and report fallback explicitly.",
         ]
@@ -174,7 +168,11 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- No fabrication: do not invent facts/results/sources. Investigate first; mark hypotheses.",
         "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
-        "- Keep MCP surface lean: prefer cccc_capability_use for one-step use; pin stable skills via actor-scope capability_enable; uninstall unused external capabilities after work.",
+        "- Keep Context fresh at key transitions (start/milestone/blocker/resume/done): update tasks + your agent state.",
+        '- Agent-state minimum each update: focus + next_action + what_changed (and active_task_id when applicable).',
+        "- Gap policy: info gap -> search evidence first (Context/PROJECT/memory/inbox, then web if allowed); capability gap -> use cccc_capability_use (or search then use).",
+        "- If capability ops return refresh_required=true, relist/reconnect then retry.",
+        "- Detailed collaboration workflow lives in cccc_help (refresh when nudged).",
     ]
     memory_lines = _memory_policy_lines(group_id)
     if memory_lines:

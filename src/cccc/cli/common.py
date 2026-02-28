@@ -41,6 +41,21 @@ from ..util.conv import coerce_bool
 
 _SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 
+
+def _display_local_host(host: str) -> str:
+    h = str(host or "").strip()
+    if h in {"0.0.0.0", "::", "[::]"}:
+        return "localhost"
+    return h or "localhost"
+
+
+def _http_host_literal(host: str) -> str:
+    h = _display_local_host(host)
+    # Keep localhost as-is; bracket raw IPv6 literals for URL correctness.
+    if h != "localhost" and ":" in h and not (h.startswith("[") and h.endswith("]")):
+        return f"[{h}]"
+    return h
+
 def _print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -534,7 +549,7 @@ def _default_entry() -> int:
 
     try:
         print("[cccc] Starting web server...", file=sys.stderr)
-        print(f"[cccc]   Local:   http://{host}:{port}", file=sys.stderr)
+        print(f"[cccc]   Local:   http://{_http_host_literal(host)}:{port}", file=sys.stderr)
         lan_ip = _get_lan_ip()
         if lan_ip and lan_ip != host and lan_ip != "127.0.0.1":
             print(f"[cccc]   Network: http://{lan_ip}:{port}", file=sys.stderr)

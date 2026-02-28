@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
-from ..common import _call_daemon_or_raise
+from ..common import MCPError, _call_daemon_or_raise
 
 
 def headless_status(*, group_id: str, actor_id: str) -> Dict[str, Any]:
@@ -44,27 +44,26 @@ def _handle_headless_namespace(
     headless_set_status_fn: Callable[..., Dict[str, Any]],
     headless_ack_message_fn: Callable[..., Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    if name == "cccc_headless_status":
+    if name == "cccc_headless":
         gid = resolve_group_id(arguments)
         aid = resolve_self_actor_id(arguments)
-        return headless_status_fn(group_id=gid, actor_id=aid)
-
-    if name == "cccc_headless_set_status":
-        gid = resolve_group_id(arguments)
-        aid = resolve_self_actor_id(arguments)
-        return headless_set_status_fn(
-            group_id=gid,
-            actor_id=aid,
-            status=str(arguments.get("status") or ""),
-            task_id=arguments.get("task_id"),
-        )
-
-    if name == "cccc_headless_ack_message":
-        gid = resolve_group_id(arguments)
-        aid = resolve_self_actor_id(arguments)
-        return headless_ack_message_fn(
-            group_id=gid, actor_id=aid, message_id=str(arguments.get("message_id") or "")
+        action = str(arguments.get("action") or "status").strip().lower()
+        if action == "status":
+            return headless_status_fn(group_id=gid, actor_id=aid)
+        if action == "set_status":
+            return headless_set_status_fn(
+                group_id=gid,
+                actor_id=aid,
+                status=str(arguments.get("status") or ""),
+                task_id=arguments.get("task_id"),
+            )
+        if action == "ack_message":
+            return headless_ack_message_fn(
+                group_id=gid, actor_id=aid, message_id=str(arguments.get("message_id") or "")
+            )
+        raise MCPError(
+            code="invalid_request",
+            message="cccc_headless action must be one of: status/set_status/ack_message",
         )
 
     return None
-

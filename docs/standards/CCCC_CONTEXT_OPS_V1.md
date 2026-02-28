@@ -1,6 +1,6 @@
-# CCCC Context Ops Contract v1
+# CCCC Context Ops Contract v2
 
-Status: Draft (for CCCC v0.4.x ecosystem)
+Status: Active (for CCCC v0.5.x ecosystem)
 
 This document defines the operation list and payload shapes for the daemon IPC operation:
 - `context_sync` (see `docs/standards/CCCC_DAEMON_IPC_V1.md`)
@@ -13,7 +13,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** in
 
 ## 1. Overview
 
-`context_sync` applies a batch of small “context ops” to a group’s shared context storage (vision/sketch/milestones/tasks/notes/references/presence).
+`context_sync` applies a batch of small "context ops" to a group's shared context storage (vision/overview/tasks/presence).
 
 All operations are applied in order. If any op is invalid, the daemon rejects the entire batch.
 
@@ -22,7 +22,7 @@ All operations are applied in order. If any op is invalid, the daemon rejects th
 Each item in `args.ops` MUST be a JSON object with:
 
 ```ts
-type ContextOpV1 = { op: string } & Record<string, unknown>
+type ContextOpV2 = { op: string } & Record<string, unknown>
 ```
 
 Rules:
@@ -30,9 +30,9 @@ Rules:
 - Unknown `op` values MUST be rejected.
 - Unknown fields in an op item MUST be ignored (forward compatibility), unless an op explicitly forbids them.
 
-## 3. Operation List (v1)
+## 3. Operation List (v2)
 
-### 3.1 Vision / Sketch
+### 3.1 Vision / Overview
 
 #### `vision.update`
 
@@ -40,77 +40,34 @@ Rules:
 { op: "vision.update"; vision: string }
 ```
 
-#### `sketch.update`
+Permission: foreman or user.
 
-```ts
-{ op: "sketch.update"; sketch: string }
-```
-
-### 3.2 Milestones
-
-Milestone statuses:
-```ts
-type MilestoneStatusV1 = "planned" | "active" | "done" | "archived"
-```
-
-#### `milestone.create`
+#### `overview.manual.update`
 
 ```ts
 {
-  op: "milestone.create"
-  name: string
-  description?: string
-  status?: MilestoneStatusV1 // default "planned"
+  op: "overview.manual.update"
+  roles?: string[]
+  collaboration_mode?: string
+  current_focus?: string
 }
 ```
 
-#### `milestone.update`
-
-```ts
-{
-  op: "milestone.update"
-  milestone_id: string
-  name?: string
-  description?: string
-  status?: MilestoneStatusV1
-}
-```
-
+Permission: foreman or user.
 Notes:
-- Changing `status` to `"active"` may set `started` if not already present.
-- Changing `status` to `"archived"` records `archived_from` to support restore.
+- Only provided fields are updated (partial patch).
+- `updated_by` and `updated_at` are set automatically by daemon.
 
-#### `milestone.complete`
-
-```ts
-{
-  op: "milestone.complete"
-  milestone_id: string
-  outcomes?: string
-}
-```
-
-#### `milestone.restore`
-
-Restore an archived milestone to its previous status.
-
-```ts
-{ op: "milestone.restore"; milestone_id: string }
-```
-
-Rules:
-- The milestone MUST currently be archived.
-
-### 3.3 Tasks
+### 3.2 Tasks (multi-level tree)
 
 Task statuses:
 ```ts
-type TaskStatusV1 = "planned" | "active" | "done" | "archived"
+type TaskStatusV2 = "planned" | "active" | "done" | "archived"
 ```
 
 Step statuses:
 ```ts
-type StepStatusV1 = "pending" | "in_progress" | "done"
+type StepStatusV2 = "pending" | "in_progress" | "done"
 ```
 
 #### `task.create`
@@ -121,14 +78,16 @@ type StepStatusV1 = "pending" | "in_progress" | "done"
   name: string
   goal?: string
   steps?: Array<{ name?: string; acceptance?: string }>
-  milestone_id?: string | null
-  milestone?: string | null
+  parent_id?: string | null    // null or omitted = root task
   assignee?: string | null
 }
 ```
 
+Permission: any actor.
 Notes:
-- `milestone_id` and `milestone` are aliases (either may be used).
+- Root tasks (parent_id=null) carry stage/phase semantics (old milestone).
+- Child tasks carry execution semantics.
+- If `parent_id` is provided, the parent task MUST exist.
 
 #### `task.update`
 
@@ -137,22 +96,51 @@ Notes:
   op: "task.update"
   task_id: string
 
-  // Task fields
-  status?: TaskStatusV1
+  // Metadata fields (partial patch)
   name?: string
   goal?: string
   assignee?: string | null
-  milestone_id?: string | null
-  milestone?: string | null
 
   // Optional step update
   step_id?: string
-  step_status?: StepStatusV1
+  step_status?: StepStatusV2
 }
 ```
 
+Permission: assignee or foreman.
 Rules:
 - If `step_id` is provided, `step_status` MUST also be provided (and vice versa).
+- Does NOT change task status — use `task.status` for that.
+
+#### `task.status`
+
+```ts
+{
+  op: "task.status"
+  task_id: string
+  status: TaskStatusV2
+}
+```
+
+Permission: assignee or foreman.
+Notes:
+- Changing to `"archived"` records `archived_from` to support restore.
+- Root task completion (`status="done"` on root task) triggers memory solidify+export hook.
+
+#### `task.move`
+
+```ts
+{
+  op: "task.move"
+  task_id: string
+  new_parent_id: string | null    // null = promote to root
+}
+```
+
+Permission: foreman or user.
+Rules:
+- MUST reject if `new_parent_id` creates a cycle (ancestor traversal check).
+- If `new_parent_id` is not null, the target parent MUST exist.
 
 #### `task.restore`
 
@@ -162,75 +150,73 @@ Restore an archived task to its previous status.
 { op: "task.restore"; task_id: string }
 ```
 
+Permission: foreman or user.
 Rules:
 - The task MUST currently be archived.
 
-### 3.4 Notes
+### 3.3 Agent State (short-term working memory)
 
-#### `note.add`
+Agent state entries are keyed by `agent_id` (typically an `actor_id`).
 
-```ts
-{ op: "note.add"; content: string }
-```
-
-#### `note.update`
-
-```ts
-{ op: "note.update"; note_id: string; content?: string }
-```
-
-#### `note.remove`
-
-```ts
-{ op: "note.remove"; note_id: string }
-```
-
-### 3.5 References
-
-#### `reference.add`
-
-```ts
-{ op: "reference.add"; url: string; note?: string }
-```
-
-#### `reference.update`
+#### `agent.update`
 
 ```ts
 {
-  op: "reference.update"
-  reference_id: string
-  url?: string
-  note?: string
+  op: "agent.update"
+  agent_id: string
+  active_task_id?: string | null
+  focus?: string
+  blockers?: string[]
+  next_action?: string
+  what_changed?: string
+  decision_delta?: string
+  environment?: string
+  user_profile?: string
+  notes?: string
 }
 ```
 
-#### `reference.remove`
+Permission: self or foreman.
+Notes:
+- Only provided fields are updated (partial patch).
+- Daemon sets `updated_at` automatically.
+- Legacy `status` alias is removed in v2; write `focus` explicitly.
+
+#### `agent.clear`
 
 ```ts
-{ op: "reference.remove"; reference_id: string }
+{ op: "agent.clear"; agent_id: string }
 ```
 
-### 3.6 Presence
+Permission: self or foreman.
+Notes:
+- Clears all short-term fields for the target agent and refreshes `updated_at`.
 
-Presence entries are keyed by `agent_id` (typically an `actor_id`).
+### 3.4 Removed ops (from v1)
 
-#### `presence.update`
+The following ops are no longer supported in v2:
+- `sketch.update` → use `overview.manual.update`
+- `milestone.create` / `milestone.update` / `milestone.complete` / `milestone.restore` → use `task.*` with `parent_id=null` for root tasks
+- `note.add` / `note.update` / `note.remove` → removed (use memory store)
+- `reference.add` / `reference.update` / `reference.remove` → removed (use memory store)
+
+## 4. Optimistic Concurrency (CAS)
+
+`context_sync` accepts an optional `if_version` field:
 
 ```ts
-{ op: "presence.update"; agent_id: string; status: string }
+{ group_id: string; ops: [...]; if_version?: string }
 ```
 
-#### `presence.clear`
+Rules:
+- If `if_version` is provided and does not match the current context version hash, the entire batch MUST be rejected with error code `version_conflict`.
+- If `if_version` is omitted, no version check is performed.
 
-```ts
-{ op: "presence.clear"; agent_id: string }
-```
-
-## 4. Dry Run
+## 5. Dry Run
 
 If `context_sync.args.dry_run == true`, the daemon MUST NOT persist changes and SHOULD still return a computed `changes` list.
 
-## 5. Result Notes (Non-normative)
+## 6. Result Notes (Non-normative)
 
 `context_sync` returns `changes: Array<{ index, op, detail }>` where `detail` is intended for logs/UI.
 SDKs SHOULD NOT parse `detail` as a stable machine contract.
@@ -250,13 +236,20 @@ space_sync?: {
 }
 ```
 
-Curated trigger allowlist (current v1 behavior):
+Curated trigger allowlist (v2):
 
 - `vision.*`
-- `sketch.*`
-- `milestone.*`
+- `overview.*`
 - `task.*`
-- `note.*`
-- `reference.*`
 
-`presence.*` updates do not trigger Group Space export.
+`agent.*` updates do not trigger Group Space export.
+
+## 7. Permission Model
+
+| Role | Allowed ops |
+|------|------------|
+| `user` | All ops |
+| `foreman` | All ops |
+| `peer` | `task.create`, `task.update` (own assigned), `task.status` (own assigned), `agent.update` (self), `agent.clear` (self) |
+
+Permission check uses the `by` field in `context_sync` args.

@@ -174,7 +174,7 @@ def format_help(platform: str = "telegram") -> str:
 
 📊 Status:
   /status - show group and agents status
-  /context - show project context (vision/sketch/tasks)
+  /context - show project context (vision/overview/tasks)
 
 🎮 Control:
   /pause - pause message delivery
@@ -254,31 +254,28 @@ def format_context(context: dict) -> str:
         lines.append(f"🎯 Vision: {vision[:200]}{'...' if len(vision) > 200 else ''}")
         lines.append("")
 
-    sketch = context.get("sketch")
-    if sketch:
-        lines.append(f"📐 Sketch: {sketch[:300]}{'...' if len(sketch) > 300 else ''}")
-        lines.append("")
+    overview = context.get("overview")
+    if isinstance(overview, dict):
+        manual = overview.get("manual")
+        if isinstance(manual, dict):
+            focus = manual.get("current_focus")
+            if focus:
+                lines.append(f"📐 Focus: {focus[:300]}{'...' if len(str(focus)) > 300 else ''}")
+                lines.append("")
 
-    milestones = context.get("milestones", [])
-    if milestones:
-        lines.append("🏁 Milestones:")
-        for m in milestones[:5]:
-            status = m.get("status", "planned")
-            icon = "✅" if status == "done" else "🔄" if status == "active" else "⏳"
-            lines.append(f"  {icon} {m.get('name', m.get('title', '?'))}")
-        lines.append("")
-
-    tasks = context.get("tasks", [])
-    if tasks:
-        lines.append("📝 Tasks:")
-        for t in tasks[:5]:
+    active_tasks = context.get("active_tasks", [])
+    if active_tasks:
+        lines.append("📝 Active Tasks:")
+        for t in active_tasks[:8]:
             status = t.get("status", "planned")
             icon = "✅" if status == "done" else "🔄" if status == "active" else "📋"
             assignee = t.get("assignee", "")
             assignee_str = f" → {assignee}" if assignee else ""
-            lines.append(f"  {icon} {t.get('name', t.get('title', '?'))}{assignee_str}")
+            parent = t.get("parent_id")
+            parent_str = f" (↑{parent})" if parent else ""
+            lines.append(f"  {icon} {t.get('name', t.get('title', '?'))}{assignee_str}{parent_str}")
 
-    if not vision and not sketch and not milestones and not tasks:
+    if not vision and not active_tasks:
         lines.append("No context set yet")
 
     return "\n".join(lines)

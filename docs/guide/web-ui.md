@@ -84,31 +84,23 @@ Click the reply icon on a message to quote and reply.
 
 ## Context Panel
 
-The Context panel shows shared project state:
+The Context panel shows shared project state (v2):
+
+### Presence
+
+Agent runtime status and capsule (short-term memory: focus, blockers, next action).
 
 ### Vision
 
 One-sentence project goal. Agents should align with this.
 
-### Sketch
+### Overview
 
-Execution plan or architecture sketch. Static, no TODOs.
-
-### Milestones
-
-Coarse-grained project phases (2-6 total).
+Structured project view with manual section (roles, collaboration mode, current focus) and live daemon-computed snapshot.
 
 ### Tasks
 
-Detailed work items with steps and acceptance criteria.
-
-### Notes
-
-Lessons learned, discoveries, warnings.
-
-### References
-
-Useful files and URLs.
+Multi-level task tree. Root tasks = phases/stages. Child tasks = execution units. Each task has steps and acceptance criteria.
 
 ## Settings Panel
 

@@ -384,12 +384,37 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.get("/api/im/authorized")
     async def im_list_authorized(group_id: str) -> Dict[str, Any]:
-        """List authorized chats for a group."""
+        """List authorized chats for a group (enriched with verbose status)."""
         resp = await ctx.daemon({"op": "im_list_authorized", "args": {"group_id": group_id}})
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)
+        # Enrich with subscriber verbose status
+        group = load_group(group_id)
+        if group is not None:
+            from ....ports.im.subscribers import SubscriberManager
+            sm = SubscriberManager(group.path / "state")
+            authorized = (resp.get("result") or {}).get("authorized", [])
+            for chat in authorized:
+                if isinstance(chat, dict):
+                    chat["verbose"] = sm.is_verbose(
+                        str(chat.get("chat_id", "")),
+                        int(chat.get("thread_id", 0)),
+                    )
         return resp
+
+    @app.post("/api/im/verbose")
+    async def im_set_verbose(group_id: str, chat_id: str, verbose: bool, thread_id: int = 0) -> Dict[str, Any]:
+        """Set verbose mode for an IM subscriber."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        from ....ports.im.subscribers import SubscriberManager
+        sm = SubscriberManager(group.path / "state")
+        ok = sm.set_verbose(chat_id, verbose, thread_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail={"code": "subscriber_not_found", "message": "subscriber not found"})
+        return {"ok": True, "result": {"chat_id": chat_id, "thread_id": thread_id, "verbose": verbose}}
 
     @app.get("/api/im/pending")
     async def im_list_pending(group_id: str) -> Dict[str, Any]:

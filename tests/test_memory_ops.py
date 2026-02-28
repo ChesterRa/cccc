@@ -134,7 +134,6 @@ class TestHandleMemoryStore(MemoryOpsTestBase):
             "scope_key": "s_test",
             "actor_id": "peer-impl",
             "task_id": "T097",
-            "milestone_id": "M7",
             "event_ts": "2026-02-25T00:00:00Z",
             "tags": ["test", "memory"],
             "strategy": "aggressive",
@@ -354,19 +353,19 @@ class TestHandleMemorySearch(MemoryOpsTestBase):
         self.assertTrue(resp.ok)
 
     def test_search_memory_dict_shape(self):
-        """Search results have normalized memory shape (L2 includes all fields)."""
+        """Search results have normalized memory shape."""
         handle_memory_store({
             "group_id": self.group_id,
             "content": "shape check",
         })
-        resp = handle_memory_search({"group_id": self.group_id, "depth": "L2"})
+        resp = handle_memory_search({"group_id": self.group_id})
         self.assertTrue(resp.ok)
         mem = resp.result["memories"][0]
         for key in ("id", "content", "kind", "status", "confidence",
                      "source_type", "source_ref", "group_id", "scope_key",
-                     "actor_id", "task_id", "milestone_id", "event_ts",
+                     "actor_id", "task_id", "event_ts",
                      "created_at", "updated_at", "last_recalled_at",
-                     "content_hash", "hit_count", "tags", "summary", "depth"):
+                     "content_hash", "hit_count", "tags"):
             self.assertIn(key, mem, f"Missing key: {key}")
 
     def test_search_invalid_enum_returns_validation_error(self):
@@ -580,112 +579,6 @@ class TestTryHandleMemoryOp(MemoryOpsTestBase):
     def test_returns_none_for_non_memory_op(self):
         resp = try_handle_memory_op("context_get", {"group_id": "test"})
         self.assertIsNone(resp)
-
-
-class TestSummaryOps(MemoryOpsTestBase):
-    """Summary field via daemon ops (T118 Step 5)."""
-
-    def test_store_with_summary(self):
-        resp = handle_memory_store({
-            "group_id": self.group_id,
-            "content": "ops summary content",
-            "summary": "ops short summary",
-        })
-        self.assertTrue(resp.ok)
-        mem = _get_memory_store(self.group_id).get(resp.result["id"])
-        self.assertEqual(mem["summary"], "ops short summary")
-
-    def test_update_summary(self):
-        create = handle_memory_store({
-            "group_id": self.group_id,
-            "content": "update summary content",
-        })
-        resp = handle_memory_store({
-            "group_id": self.group_id,
-            "id": create.result["id"],
-            "summary": "updated summary",
-        })
-        self.assertTrue(resp.ok)
-        mem = _get_memory_store(self.group_id).get(create.result["id"])
-        self.assertEqual(mem["summary"], "updated summary")
-
-    def test_search_dict_shape_includes_summary(self):
-        handle_memory_store({
-            "group_id": self.group_id,
-            "content": "shape summary check",
-            "summary": "shape sum",
-        })
-        resp = handle_memory_search({"group_id": self.group_id, "depth": "L2"})
-        self.assertTrue(resp.ok)
-        mem = resp.result["memories"][0]
-        self.assertIn("summary", mem)
-        self.assertEqual(mem["summary"], "shape sum")
-
-
-class TestDepthOps(MemoryOpsTestBase):
-    """Depth L0/L2 via daemon ops (T118 Step 5)."""
-
-    def test_search_default_depth_l0(self):
-        """Default search returns L0 (summary, no content)."""
-        handle_memory_store({
-            "group_id": self.group_id,
-            "content": "depth default test",
-            "summary": "depth default summary",
-        })
-        resp = handle_memory_search({
-            "group_id": self.group_id,
-            "query": "depth default test",
-        })
-        self.assertTrue(resp.ok)
-        mem = resp.result["memories"][0]
-        self.assertEqual(mem["depth"], "L0")
-        self.assertEqual(mem["summary"], "depth default summary")
-        self.assertNotIn("content", mem)
-
-    def test_search_depth_l2_returns_content(self):
-        """depth=L2 search returns both content and summary."""
-        handle_memory_store({
-            "group_id": self.group_id,
-            "content": "l2 depth content",
-            "summary": "l2 depth summary",
-        })
-        resp = handle_memory_search({
-            "group_id": self.group_id,
-            "query": "l2 depth content",
-            "depth": "L2",
-        })
-        self.assertTrue(resp.ok)
-        mem = resp.result["memories"][0]
-        self.assertEqual(mem["depth"], "L2")
-        self.assertEqual(mem["content"], "l2 depth content")
-        self.assertEqual(mem["summary"], "l2 depth summary")
-
-    def test_search_l0_empty_summary_fallback(self):
-        """L0 with empty summary falls back to truncated content."""
-        long_content = "B" * 200
-        handle_memory_store({
-            "group_id": self.group_id,
-            "content": long_content,
-        })
-        resp = handle_memory_search({
-            "group_id": self.group_id,
-            "depth": "L0",
-        })
-        self.assertTrue(resp.ok)
-        mem = resp.result["memories"][0]
-        self.assertEqual(mem["depth"], "L0")
-        self.assertTrue(mem["summary"].endswith("\u2026"))
-        self.assertEqual(len(mem["summary"]), 151)
-        self.assertNotIn("content", mem)
-
-    def test_search_invalid_depth_returns_error(self):
-        """Invalid depth returns validation error."""
-        resp = handle_memory_search({
-            "group_id": self.group_id,
-            "depth": "L1",
-        })
-        self.assertFalse(resp.ok)
-        self.assertEqual(resp.error.code, "validation_error")
 
 
 if __name__ == "__main__":

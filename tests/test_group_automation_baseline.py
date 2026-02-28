@@ -40,6 +40,10 @@ class TestGroupAutomationBaseline(unittest.TestCase):
                         break
                 self.assertIsNotNone(standup_rule, "default standup rule should exist on group_create")
                 self.assertIn("standup", snippets)
+                standup_snippet = str(snippets.get("standup") or "")
+                self.assertIn("Gap triage", standup_snippet)
+                self.assertIn("cccc_capability_use", standup_snippet)
+                self.assertIn('cccc_capability_search(kind="mcp_toolpack"|"skill"', standup_snippet)
 
                 clear_resp, _ = handle_request(
                     DaemonRequest.model_validate(

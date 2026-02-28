@@ -177,12 +177,12 @@ MCP is exposed as capability groups (tool count is intentionally not hardcoded):
 - Automation: `cccc_automation_state`, `cccc_automation_manage`
 - Project/help info: `cccc_project_info`, `cccc_help`
 
-### Context Sync (`cccc_context_*` and related)
+### Context Sync (`cccc_context_*` and related, v2)
 
 - Context batch operations: `cccc_context_get`, `cccc_context_sync`
-- Vision/sketch: `cccc_vision_update`, `cccc_sketch_update`
-- Milestones/tasks: `cccc_milestone_*`, `cccc_task_*`
-- Notes/references/presence: `cccc_note_*`, `cccc_reference_*`, `cccc_presence_*`
+- Vision/overview: `cccc_vision_update`, `cccc_overview_manual_update`
+- Tasks (tree): `cccc_task_list`, `cccc_task_create`, `cccc_task_update`, `cccc_task_status`, `cccc_task_move`, `cccc_task_restore`
+- Agent state: `cccc_context_agent`
 
 ### Headless and Notifications
 

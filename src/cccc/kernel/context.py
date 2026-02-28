@@ -1,13 +1,11 @@
 """
-Context storage for CCCC groups.
+Context storage for CCCC groups (v2).
 
-Inspired by the "ccontext" pattern, each group has a small, shared working context:
-- Vision/Sketch: project vision and high-level blueprint
-- Milestones: 2–6 coarse phases
-- Tasks: deliverable work items with 3–7 steps
-- Notes: short notes (manually managed)
-- References: file/URL references (manually managed)
-- Presence: what each agent is doing
+Context v2 core fields:
+- Vision: project north star
+- Overview: mermaid project panorama (manual strategic info + auto-generated mermaid)
+- Tasks: multi-level tree via parent_id (root tasks = phases/stages)
+- Agents: flat per-agent working memory (short-term memory)
 
 Storage: ~/.cccc/groups/<group_id>/context/
 """
@@ -32,13 +30,6 @@ from .group import Group
 # =============================================================================
 
 
-class MilestoneStatus(str, Enum):
-    DONE = "done"
-    ACTIVE = "active"
-    PLANNED = "planned"
-    ARCHIVED = "archived"
-
-
 class TaskStatus(str, Enum):
     PLANNED = "planned"
     ACTIVE = "active"
@@ -57,41 +48,25 @@ class StepStatus(str, Enum):
 # =============================================================================
 
 
-class Milestone:
+class OverviewManual:
     def __init__(
         self,
-        id: str,
-        name: str,
-        description: str = "",
-        status: MilestoneStatus = MilestoneStatus.PLANNED,
-        archived_from: Optional[str] = None,
-        started: Optional[str] = None,
-        completed: Optional[str] = None,
-        outcomes: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+        collaboration_mode: str = "",
+        current_focus: str = "",
+        updated_by: str = "",
         updated_at: Optional[str] = None,
     ):
-        self.id = id
-        self.name = name
-        self.description = description
-        self.status = status
-        self.archived_from = archived_from
-        self.started = started
-        self.completed = completed
-        self.outcomes = outcomes
+        self.roles = roles or []
+        self.collaboration_mode = collaboration_mode
+        self.current_focus = current_focus
+        self.updated_by = updated_by
         self.updated_at = updated_at
 
 
-class Note:
-    def __init__(self, id: str, content: str):
-        self.id = id
-        self.content = content
-
-
-class Reference:
-    def __init__(self, id: str, url: str, note: str):
-        self.id = id
-        self.url = url
-        self.note = note
+class Overview:
+    def __init__(self, manual: Optional[OverviewManual] = None):
+        self.manual = manual or OverviewManual()
 
 
 class Step:
@@ -114,9 +89,9 @@ class Task:
         id: str,
         name: str,
         goal: str = "",
+        parent_id: Optional[str] = None,
         status: TaskStatus = TaskStatus.PLANNED,
         archived_from: Optional[str] = None,
-        milestone: Optional[str] = None,
         assignee: Optional[str] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
@@ -125,13 +100,17 @@ class Task:
         self.id = id
         self.name = name
         self.goal = goal
+        self.parent_id = parent_id
         self.status = status
         self.archived_from = archived_from
-        self.milestone = milestone
         self.assignee = assignee
         self.created_at = created_at or _utc_now_iso()
         self.updated_at = updated_at
         self.steps = steps or []
+
+    @property
+    def is_root(self) -> bool:
+        return self.parent_id is None
 
     @property
     def current_step(self) -> Optional[Step]:
@@ -148,39 +127,61 @@ class Task:
         return done_count / len(self.steps)
 
 
-class AgentPresence:
-    def __init__(self, id: str, status: str = "", updated_at: Optional[str] = None):
-        self.id = id
-        self.status = status
-        self.updated_at = updated_at or _utc_now_iso()
+class AgentState:
+    """Flat agent working memory (short-term memory).
 
+    Replaces the former AgentRuntime + AgentCapsule split.
+    All fields are flat — no nested sub-objects.
+    """
+
+    def __init__(
+        self,
+        id: str,
+        active_task_id: Optional[str] = None,
+        focus: str = "",
+        blockers: Optional[List[str]] = None,
+        next_action: str = "",
+        what_changed: str = "",
+        decision_delta: str = "",
+        environment: str = "",
+        user_profile: str = "",
+        notes: str = "",
+        updated_at: Optional[str] = None,
+    ):
+        self.id = id
+        # Task state
+        self.active_task_id = active_task_id
+        self.focus = focus
+        self.blockers = blockers or []
+        self.next_action = next_action
+        # Episodic buffer
+        self.what_changed = what_changed
+        self.decision_delta = decision_delta
+        # World model
+        self.environment = environment
+        self.user_profile = user_profile
+        # Lessons & notes
+        self.notes = notes
+        self.updated_at = updated_at or _utc_now_iso()
 
 class Context:
     def __init__(
         self,
         vision: Optional[str] = None,
-        sketch: Optional[str] = None,
-        milestones: Optional[List[Milestone]] = None,
-        notes: Optional[List[Note]] = None,
-        references: Optional[List[Reference]] = None,
+        overview: Optional[Overview] = None,
         meta: Optional[Dict[str, Any]] = None,
     ):
         self.vision = vision
-        self.sketch = sketch
-        self.milestones = milestones or []
-        self.notes = notes or []
-        self.references = references or []
+        self.overview = overview or Overview()
         self.meta = meta or {}
 
 
-class PresenceData:
+class AgentsData:
     def __init__(
         self,
-        agents: Optional[List[AgentPresence]] = None,
-        heartbeat_timeout_seconds: int = 300,
+        agents: Optional[List[AgentState]] = None,
     ):
         self.agents = agents or []
-        self.heartbeat_timeout_seconds = heartbeat_timeout_seconds
 
 
 # =============================================================================
@@ -190,16 +191,6 @@ class PresenceData:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _coerce_milestone_status(value: Any) -> MilestoneStatus:
-    raw = str(value or "planned").strip().lower()
-    if raw == "pending":
-        raw = "planned"
-    try:
-        return MilestoneStatus(raw)
-    except Exception:
-        return MilestoneStatus.PLANNED
 
 
 def _coerce_task_status(value: Any) -> TaskStatus:
@@ -227,6 +218,7 @@ def _coerce_int(value: Any, default: int) -> int:
         return int(value)
     except Exception:
         return default
+
 
 # =============================================================================
 # Context Storage
@@ -315,10 +307,9 @@ class ContextStorage:
         return {
             "contract": {
                 "vision": "One-sentence north star; update rarely.",
-                "sketch": "Static blueprint only (architecture/strategy). No TODO/progress/tasks.",
-                "milestones": "Coarse phase timeline (2-6). Exactly one active.",
-                "tasks": "Deliverable work items with 3-7 steps.",
-                "linking": "Each task should set milestone: Mx to form Vision→Milestones→Tasks tree.",
+                "overview": "Structured project view. manual=human-maintained, mermaid=daemon-computed.",
+                "tasks": "Multi-level task tree. Root tasks = phases/stages. Child tasks = execution.",
+                "presence": "Flat per-agent short-term working memory.",
             }
         }
 
@@ -336,61 +327,30 @@ class ContextStorage:
             self._context_raw = data
 
             vision = data.get("vision")
-            sketch = data.get("sketch")
+
+            # Parse overview.manual
+            overview_raw = data.get("overview")
+            manual = OverviewManual()
+            if isinstance(overview_raw, dict):
+                manual_raw = overview_raw.get("manual")
+                if isinstance(manual_raw, dict):
+                    roles_raw = manual_raw.get("roles")
+                    manual = OverviewManual(
+                        roles=list(roles_raw) if isinstance(roles_raw, list) else [],
+                        collaboration_mode=str(manual_raw.get("collaboration_mode") or ""),
+                        current_focus=str(manual_raw.get("current_focus") or ""),
+                        updated_by=str(manual_raw.get("updated_by") or ""),
+                        updated_at=manual_raw.get("updated_at"),
+                    )
+            overview = Overview(manual=manual)
+
             meta = data.get("meta")
             if not isinstance(meta, dict) or not meta:
                 meta = self._default_meta()
 
-            milestones = []
-            milestones_raw = data.get("milestones")
-            if not isinstance(milestones_raw, list):
-                milestones_raw = []
-            for m in milestones_raw:
-                if not isinstance(m, dict):
-                    continue
-                milestones.append(
-                    Milestone(
-                        id=m.get("id", ""),
-                        name=m.get("name", ""),
-                        description=m.get("description", ""),
-                        status=_coerce_milestone_status(m.get("status")),
-                        archived_from=m.get("archived_from"),
-                        started=m.get("started"),
-                        completed=m.get("completed"),
-                        outcomes=m.get("outcomes"),
-                        updated_at=m.get("updated_at"),
-                    )
-                )
-
-            notes = []
-            for n in data.get("notes", []):
-                if not isinstance(n, dict):
-                    continue
-                notes.append(
-                    Note(
-                        id=n.get("id", ""),
-                        content=n.get("content", ""),
-                    )
-                )
-
-            refs = []
-            for r in data.get("references", []):
-                if not isinstance(r, dict):
-                    continue
-                refs.append(
-                    Reference(
-                        id=r.get("id", ""),
-                        url=r.get("url", ""),
-                        note=r.get("note", ""),
-                    )
-                )
-
             return Context(
                 vision=vision,
-                sketch=sketch,
-                milestones=milestones,
-                notes=notes,
-                references=refs,
+                overview=overview,
                 meta=meta,
             )
         except Exception:
@@ -402,97 +362,33 @@ class ContextStorage:
         data: Dict[str, Any] = {}
         if context.vision is not None:
             data["vision"] = context.vision
-        if context.sketch is not None:
-            data["sketch"] = context.sketch
+
+        # Serialize overview.manual
+        manual = context.overview.manual if context.overview else OverviewManual()
+        manual_data: Dict[str, Any] = {}
+        if manual.roles:
+            manual_data["roles"] = manual.roles
+        if manual.collaboration_mode:
+            manual_data["collaboration_mode"] = manual.collaboration_mode
+        if manual.current_focus:
+            manual_data["current_focus"] = manual.current_focus
+        if manual.updated_by:
+            manual_data["updated_by"] = manual.updated_by
+        if manual.updated_at:
+            manual_data["updated_at"] = manual.updated_at
+        if manual_data:
+            data["overview"] = {"manual": manual_data}
 
         meta = context.meta if isinstance(context.meta, dict) else {}
         if not meta:
             meta = self._default_meta()
         data["meta"] = meta
 
-        data["milestones"] = [
-            {
-                k: v
-                for k, v in {
-                    "id": m.id,
-                    "name": m.name,
-                    "description": m.description,
-                    "status": m.status.value if isinstance(m.status, MilestoneStatus) else m.status,
-                    "archived_from": getattr(m, "archived_from", None),
-                    "started": m.started,
-                    "completed": m.completed,
-                    "outcomes": m.outcomes,
-                    "updated_at": m.updated_at,
-                }.items()
-                if v is not None
-            }
-            for m in context.milestones
-        ]
-
-        data["notes"] = [{"id": n.id, "content": n.content} for n in context.notes]
-        data["references"] = [
-            {"id": r.id, "url": r.url, "note": r.note} for r in context.references
-        ]
-
         path = self._context_path()
         path.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False),
             encoding="utf-8",
         )
-
-    # =========================================================================
-    # Milestone Operations
-    # =========================================================================
-
-    def generate_milestone_id(self, context: Context) -> str:
-        max_num = 0
-        for m in context.milestones:
-            match = re.match(r"M(\d+)", m.id)
-            if match:
-                max_num = max(max_num, int(match.group(1)))
-        return f"M{max_num + 1}"
-
-    def get_milestone(self, context: Context, milestone_id: str) -> Optional[Milestone]:
-        for m in context.milestones:
-            if m.id == milestone_id:
-                return m
-        return None
-
-    # =========================================================================
-    # Note Operations
-    # =========================================================================
-
-    def generate_note_id(self, context: Context) -> str:
-        max_num = 0
-        for note in context.notes:
-            match = re.match(r"N(\d+)", note.id)
-            if match:
-                max_num = max(max_num, int(match.group(1)))
-        return f"N{max_num + 1:03d}"
-
-    def get_note_by_id(self, context: Context, note_id: str) -> Optional[Note]:
-        for n in context.notes:
-            if n.id == note_id:
-                return n
-        return None
-
-    # =========================================================================
-    # Reference Operations
-    # =========================================================================
-
-    def generate_reference_id(self, context: Context) -> str:
-        max_num = 0
-        for ref in context.references:
-            match = re.match(r"R(\d+)", ref.id)
-            if match:
-                max_num = max(max_num, int(match.group(1)))
-        return f"R{max_num + 1:03d}"
-
-    def get_reference_by_id(self, context: Context, ref_id: str) -> Optional[Reference]:
-        for r in context.references:
-            if r.id == ref_id:
-                return r
-        return None
 
     # =========================================================================
     # Task Operations
@@ -531,13 +427,15 @@ class ContextStorage:
 
             task_status = _coerce_task_status(data.get("status", "planned"))
 
+            parent_id = data.get("parent_id")
+
             return Task(
                 id=data.get("id", ""),
                 name=data.get("name", ""),
                 goal=data.get("goal", ""),
+                parent_id=parent_id,
                 status=task_status,
                 archived_from=data.get("archived_from"),
-                milestone=data.get("milestone") or data.get("milestone_id"),
                 assignee=data.get("assignee"),
                 created_at=data.get("created_at", ""),
                 updated_at=data.get("updated_at"),
@@ -553,9 +451,9 @@ class ContextStorage:
             "id": task.id,
             "name": task.name,
             "goal": task.goal,
+            "parent_id": task.parent_id,
             "status": task.status.value if isinstance(task.status, TaskStatus) else task.status,
             "archived_from": getattr(task, "archived_from", None),
-            "milestone": task.milestone,
             "assignee": task.assignee,
             "created_at": task.created_at,
             "updated_at": task.updated_at,
@@ -596,52 +494,114 @@ class ContextStorage:
                     max_num = max(max_num, int(match.group(1)))
         return f"T{max_num + 1:03d}"
 
+    def get_task_children(self, task_id: str, tasks: Optional[List[Task]] = None) -> List[Task]:
+        """Get direct children of a task."""
+        if tasks is None:
+            tasks = self.list_tasks()
+        return [t for t in tasks if t.parent_id == task_id]
+
+    def detect_cycle(self, task_id: str, new_parent_id: Optional[str], tasks: Optional[List[Task]] = None) -> bool:
+        """Detect if moving task_id under new_parent_id would create a cycle.
+
+        Returns True if a cycle would be created.
+        """
+        if new_parent_id is None:
+            return False
+        if new_parent_id == task_id:
+            return True
+
+        if tasks is None:
+            tasks = self.list_tasks()
+        tasks_by_id = {t.id: t for t in tasks}
+
+        # Traverse from new_parent_id up to root; if we hit task_id, it's a cycle
+        visited = set()
+        current = new_parent_id
+        while current is not None:
+            if current == task_id:
+                return True
+            if current in visited:
+                return True  # pre-existing cycle
+            visited.add(current)
+            parent_task = tasks_by_id.get(current)
+            if parent_task is None:
+                break
+            current = parent_task.parent_id
+        return False
+
     # =========================================================================
     # Presence Operations
     # =========================================================================
 
-    def load_presence(self) -> PresenceData:
+    def load_presence(self) -> AgentsData:
         path = self._presence_path()
         if not path.exists():
-            return PresenceData()
+            return AgentsData()
 
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
             if data is None:
-                return PresenceData()
+                return AgentsData()
 
-            agents = []
+            agents: List[AgentState] = []
             agents_raw = data.get("agents")
             if not isinstance(agents_raw, list):
                 agents_raw = []
             for a in agents_raw:
                 if not isinstance(a, dict):
                     continue
-                agents.append(
-                    AgentPresence(
-                        id=a.get("id", ""),
-                        status=a.get("status", ""),
-                        updated_at=a.get("updated_at", ""),
-                    )
-                )
 
-            return PresenceData(
-                agents=agents,
-                heartbeat_timeout_seconds=max(0, _coerce_int(data.get("heartbeat_timeout_seconds", 300), 300)),
-            )
+                aid = str(a.get("id") or "").strip()
+                if not aid:
+                    continue
+                blockers_raw = a.get("blockers")
+                agents.append(AgentState(
+                    id=aid,
+                    active_task_id=str(a.get("active_task_id") or "").strip() or None,
+                    focus=str(a.get("focus") or ""),
+                    blockers=list(blockers_raw) if isinstance(blockers_raw, list) else [],
+                    next_action=str(a.get("next_action") or ""),
+                    what_changed=str(a.get("what_changed") or ""),
+                    decision_delta=str(a.get("decision_delta") or ""),
+                    environment=str(a.get("environment") or ""),
+                    user_profile=str(a.get("user_profile") or ""),
+                    notes=str(a.get("notes") or ""),
+                    updated_at=str(a.get("updated_at") or "") or None,
+                ))
+
+            return AgentsData(agents=agents)
         except Exception:
-            return PresenceData()
+            return AgentsData()
 
-    def save_presence(self, presence: PresenceData) -> None:
+    def save_presence(self, presence: AgentsData) -> None:
         self._ensure_dirs()
 
-        data = {
-            "agents": [
-                {k: v for k, v in {"id": a.id, "status": a.status, "updated_at": a.updated_at}.items() if v}
-                for a in presence.agents
-            ],
-            "heartbeat_timeout_seconds": presence.heartbeat_timeout_seconds,
-        }
+        agents_data = []
+        for a in presence.agents:
+            entry: Dict[str, Any] = {"id": a.id}
+            if a.active_task_id:
+                entry["active_task_id"] = a.active_task_id
+            if a.focus:
+                entry["focus"] = a.focus
+            if a.blockers:
+                entry["blockers"] = a.blockers
+            if a.next_action:
+                entry["next_action"] = a.next_action
+            if a.what_changed:
+                entry["what_changed"] = a.what_changed
+            if a.decision_delta:
+                entry["decision_delta"] = a.decision_delta
+            if a.environment:
+                entry["environment"] = a.environment
+            if a.user_profile:
+                entry["user_profile"] = a.user_profile
+            if a.notes:
+                entry["notes"] = a.notes
+            if a.updated_at:
+                entry["updated_at"] = a.updated_at
+            agents_data.append(entry)
+
+        data: Dict[str, Any] = {"agents": agents_data}
 
         path = self._presence_path()
         path.write_text(
@@ -659,32 +619,52 @@ class ContextStorage:
         s = s.strip("-")
         return s.lower()
 
-    def update_agent_presence(self, agent_id: str, status: str) -> AgentPresence:
+    def _get_or_create_agent(self, presence: AgentsData, agent_id: str) -> AgentState:
         canonical_id = self._canonicalize_agent_id(agent_id)
         if not canonical_id:
             raise ValueError("agent_id must be a non-empty string")
-
-        status_norm = re.sub(r"\s+", " ", str(status or "")).strip()
-        presence = self.load_presence()
-
-        agent = None
         for a in presence.agents:
             if a.id == canonical_id:
-                agent = a
-                break
+                return a
+        agent = AgentState(id=canonical_id)
+        presence.agents.append(agent)
+        return agent
 
-        if agent is None:
-            agent = AgentPresence(id=canonical_id)
-            presence.agents.append(agent)
-
-        agent.status = status_norm
+    def update_agent_state(
+        self, agent_id: str, status: str, active_task_id: Optional[str] = None
+    ) -> AgentState:
+        canonical_id = self._canonicalize_agent_id(agent_id)
+        if not canonical_id:
+            raise ValueError("agent_id must be a non-empty string")
+        presence = self.load_presence()
+        agent = self._get_or_create_agent(presence, canonical_id)
+        agent.focus = re.sub(r"\s+", " ", str(status or "")).strip()
+        agent.active_task_id = str(active_task_id or "").strip() or None
         agent.updated_at = _utc_now_iso()
-
         self.save_presence(presence)
         return agent
 
-    def clear_agent_status(self, agent_id: str) -> AgentPresence:
-        return self.update_agent_presence(agent_id=agent_id, status="")
+    def clear_agent_state(self, agent_id: str) -> AgentState:
+        canonical_id = self._canonicalize_agent_id(agent_id)
+        if not canonical_id:
+            raise ValueError("agent_id must be a non-empty string")
+        presence = self.load_presence()
+        agent = self._get_or_create_agent(presence, canonical_id)
+        agent.active_task_id = None
+        agent.focus = ""
+        agent.blockers = []
+        agent.next_action = ""
+        agent.what_changed = ""
+        agent.decision_delta = ""
+        agent.environment = ""
+        agent.user_profile = ""
+        agent.notes = ""
+        agent.updated_at = _utc_now_iso()
+        self.save_presence(presence)
+        return agent
+
+    def clear_agent_status(self, agent_id: str) -> AgentState:
+        return self.clear_agent_state(agent_id=agent_id)
 
     def clear_agent_status_if_present(self, agent_id: str) -> bool:
         """Clear an agent status only if an entry already exists."""
@@ -700,8 +680,7 @@ class ContextStorage:
                 break
         if agent is None:
             return False
-
-        agent.status = ""
+        agent.focus = ""
         agent.updated_at = _utc_now_iso()
         self.save_presence(presence)
         return True
@@ -723,3 +702,70 @@ class ContextStorage:
             return False
         self.save_presence(presence)
         return True
+
+    # =========================================================================
+    # Overview Mermaid Projection
+    # =========================================================================
+
+    def compute_overview_mermaid(
+        self,
+        tasks: Optional[List[Task]] = None,
+        presence: Optional[AgentsData] = None,
+        overview: Optional[Overview] = None,
+    ) -> str:
+        """Compute deterministic mermaid project panorama from tasks + agents."""
+        if tasks is None:
+            tasks = self.list_tasks()
+        if presence is None:
+            presence = self.load_presence()
+        if overview is None:
+            context = self.load_context()
+            overview = context.overview
+
+        def _safe_node_id(prefix: str, raw: str) -> str:
+            cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", str(raw or ""))
+            cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+            if not cleaned:
+                cleaned = "unknown"
+            return f"{prefix}_{cleaned}"
+
+        def _safe_label(raw: str) -> str:
+            txt = str(raw or "").replace('"', "'").replace("\n", " ").strip()
+            return re.sub(r"\s+", " ", txt)[:120]
+
+        lines: List[str] = ["graph TD"]
+        lines.append('OVR["Group Overview"]')
+
+        manual = overview.manual if isinstance(overview, Overview) else OverviewManual()
+        if manual.current_focus:
+            lines.append(f'FOCUS["focus: {_safe_label(manual.current_focus)}"]')
+            lines.append("OVR --> FOCUS")
+
+        if manual.roles:
+            roles_label = _safe_label(", ".join(str(x) for x in manual.roles if str(x).strip()))
+            if roles_label:
+                lines.append(f'ROLES["roles: {roles_label}"]')
+                lines.append("OVR --> ROLES")
+
+        for task in tasks:
+            status = task.status.value if isinstance(task.status, TaskStatus) else str(task.status)
+            task_node = _safe_node_id("T", task.id)
+            task_label = _safe_label(f"{task.id} {task.name} [{status}]")
+            lines.append(f'{task_node}["{task_label}"]')
+            if task.parent_id:
+                parent_node = _safe_node_id("T", task.parent_id)
+                lines.append(f"{parent_node} --> {task_node}")
+            else:
+                lines.append(f"OVR --> {task_node}")
+
+        for agent in presence.agents:
+            agent_node = _safe_node_id("A", agent.id)
+            agent_focus = _safe_label(agent.focus or "")
+            agent_label = _safe_label(f"{agent.id}: {agent_focus or 'idle'}")
+            lines.append(f'{agent_node}["{agent_label}"]')
+            lines.append(f"OVR -.-> {agent_node}")
+            if agent.active_task_id:
+                task_node = _safe_node_id("T", agent.active_task_id)
+                lines.append(f"{agent_node} --> {task_node}")
+
+        return "\n".join(lines)

@@ -641,6 +641,10 @@ export function AgentTab({
   }, [canControl, isVisible, isSmallScreen, terminalReady]);
 
   const isBusy = busy.includes(actor.id);
+  const stateHeadline = String(presenceAgent?.focus || presenceAgent?.next_action || "").trim() || t('noAgentStateYet');
+  const stateTask = String(presenceAgent?.active_task_id || "").trim();
+  const blockerCount = Array.isArray(presenceAgent?.blockers) ? presenceAgent.blockers.length : 0;
+  const stateNext = String(presenceAgent?.next_action || "").trim();
 
   return (
     <div className="flex flex-col h-full">
@@ -673,30 +677,28 @@ export function AgentTab({
             <div
               className={classNames(
                 "sm:hidden mt-1 text-[11px] truncate leading-tight",
-                presenceAgent?.status
+                stateHeadline !== t('noAgentStateYet')
                   ? isDark ? "text-slate-300" : "text-gray-600"
                   : isDark ? "text-slate-500 italic" : "text-gray-400 italic"
               )}
-              title={presenceAgent?.status || t('noPresenceYet')}
+              title={stateHeadline}
             >
-              {presenceAgent?.status || t('noPresenceYet')}
+              {stateHeadline}
             </div>
           </div>
 
           <div
             className={classNames(
-              "hidden sm:flex flex-shrink-0 px-3 py-2 rounded-xl border shadow-sm backdrop-blur-sm max-w-[min(420px,36vw)]",
+              "hidden sm:flex flex-col gap-1 flex-shrink-0 px-3 py-2 rounded-xl border shadow-sm backdrop-blur-sm max-w-[min(460px,40vw)]",
               isDark ? "bg-slate-950/30 border-white/10" : "bg-white/70 border-black/10"
             )}
-            aria-label={t('agentPresence')}
+            aria-label={t('agentState')}
           >
             <div
               className={classNames(
                 "text-xs font-medium leading-snug min-w-0",
-                presenceAgent?.status
-                  ? isDark
-                    ? "text-slate-200"
-                    : "text-gray-800"
+                stateHeadline !== t('noAgentStateYet')
+                  ? isDark ? "text-slate-200" : "text-gray-800"
                   : isDark
                     ? "text-slate-500 italic"
                     : "text-gray-500 italic"
@@ -704,17 +706,39 @@ export function AgentTab({
               style={statusClamp2Style}
               title={
                 presenceAgent?.updated_at
-                  ? `${presenceAgent?.status || t('noPresenceYet')}\nUpdated: ${formatFullTime(presenceAgent.updated_at)}`
-                  : (presenceAgent?.status || t('noPresenceYet'))
+                  ? `${stateHeadline}\nUpdated: ${formatFullTime(presenceAgent.updated_at)}`
+                  : stateHeadline
               }
             >
-              <span>{presenceAgent?.status ? presenceAgent.status : t('noPresenceYet')}</span>
+              <span>{stateHeadline}</span>
               {presenceAgent?.updated_at ? (
                 <span className={classNames("ml-2 text-[11px] tabular-nums font-normal", isDark ? "text-slate-400" : "text-gray-600")}>
                   · {formatTime(presenceAgent.updated_at)}
                 </span>
               ) : null}
             </div>
+            {(stateTask || blockerCount > 0 || stateNext) ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {stateTask ? (
+                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", isDark ? "bg-slate-700 text-slate-200" : "bg-gray-100 text-gray-700")}>
+                    {t("taskShort", { id: stateTask })}
+                  </span>
+                ) : null}
+                {blockerCount > 0 ? (
+                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-100 text-rose-700")}>
+                    {t("blockersShort", { count: blockerCount })}
+                  </span>
+                ) : null}
+                {stateNext ? (
+                  <span
+                    className={classNames("text-[11px] truncate", isDark ? "text-slate-400" : "text-gray-600")}
+                    title={stateNext}
+                  >
+                    {t("nextShort", { value: stateNext })}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

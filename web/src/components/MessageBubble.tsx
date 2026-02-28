@@ -164,6 +164,12 @@ export const MessageBubble = memo(function MessageBubble({
     const dismiss = useDismiss(context);
     const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
     const { t } = useTranslation('chat');
+    const presenceText = String(presenceAgent?.focus || "").trim();
+    const presenceDisplay = presenceText || t('noAgentStateYet');
+    const stateTask = String(presenceAgent?.active_task_id || "").trim();
+    const stateNext = String(presenceAgent?.next_action || "").trim();
+    const stateChanged = String(presenceAgent?.what_changed || "").trim();
+    const blockerCount = Array.isArray(presenceAgent?.blockers) ? presenceAgent.blockers.length : 0;
 
 
     // Treat data as ChatMessageData.
@@ -796,8 +802,34 @@ export const MessageBubble = memo(function MessageBubble({
                         <div
                             className={classNames("mt-1 text-xs whitespace-pre-wrap", isDark ? "text-slate-300" : "text-gray-700")}
                         >
-                            {presenceAgent?.status ? presenceAgent.status : t('noPresenceYet')}
+                            {presenceDisplay}
                         </div>
+                        {(stateTask || blockerCount > 0 || stateNext || stateChanged) ? (
+                            <div className="mt-2 space-y-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    {stateTask ? (
+                                        <span className={classNames("text-[11px] px-2 py-0.5 rounded", isDark ? "bg-slate-700 text-slate-200" : "bg-gray-100 text-gray-700")}>
+                                            {t("taskShort", { id: stateTask })}
+                                        </span>
+                                    ) : null}
+                                    {blockerCount > 0 ? (
+                                        <span className={classNames("text-[11px] px-2 py-0.5 rounded", isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-100 text-rose-700")}>
+                                            {t("blockersShort", { count: blockerCount })}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                {stateNext ? (
+                                    <div className={classNames("text-[11px]", isDark ? "text-slate-400" : "text-gray-600")}>
+                                        {t("nextShort", { value: stateNext })}
+                                    </div>
+                                ) : null}
+                                {stateChanged ? (
+                                    <div className={classNames("text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                        {t("changedShort", { value: stateChanged })}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
                     </div>
                 </FloatingPortal>
             )}

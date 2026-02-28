@@ -21,8 +21,9 @@ class TestMcpAutomationManageActorIdAlias(unittest.TestCase):
         with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
-                "cccc_automation_manage",
+                "cccc_automation",
                 {
+                    "action": "manage",
                     "group_id": "g_test",
                     "actor_id": "foreman",
                     "op": "create",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ....util.conv import coerce_bool
-from ..common import _call_daemon_or_raise
+from ..common import MCPError, _call_daemon_or_raise
 
 
 def debug_snapshot(*, group_id: str, actor_id: str) -> Dict[str, Any]:
@@ -58,9 +58,12 @@ def _handle_terminal_namespace(
     terminal_tail_fn: Callable[..., Dict[str, Any]],
     coerce_bool_fn: Callable[..., bool] = coerce_bool,
 ) -> Optional[Dict[str, Any]]:
-    if name == "cccc_terminal_tail":
+    if name == "cccc_terminal":
         gid = resolve_group_id(arguments)
         aid = resolve_self_actor_id(arguments)
+        action = str(arguments.get("action") or "tail").strip().lower()
+        if action != "tail":
+            raise MCPError(code="invalid_request", message="cccc_terminal action must be 'tail'")
         return terminal_tail_fn(
             group_id=gid,
             actor_id=aid,
@@ -80,18 +83,21 @@ def _handle_debug_namespace(
     debug_snapshot_fn: Callable[..., Dict[str, Any]],
     debug_tail_logs_fn: Callable[..., Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    if name == "cccc_debug_snapshot":
+    if name == "cccc_debug":
         gid = resolve_group_id(arguments)
         aid = resolve_self_actor_id(arguments)
-        return debug_snapshot_fn(group_id=gid, actor_id=aid)
-
-    if name == "cccc_debug_tail_logs":
-        gid = resolve_group_id(arguments)
-        aid = resolve_self_actor_id(arguments)
-        return debug_tail_logs_fn(
-            group_id=gid,
-            actor_id=aid,
-            component=str(arguments.get("component") or ""),
-            lines=min(max(int(arguments.get("lines") or 200), 1), 10000),
+        action = str(arguments.get("action") or "snapshot").strip().lower()
+        if action == "snapshot":
+            return debug_snapshot_fn(group_id=gid, actor_id=aid)
+        if action == "tail_logs":
+            return debug_tail_logs_fn(
+                group_id=gid,
+                actor_id=aid,
+                component=str(arguments.get("component") or ""),
+                lines=min(max(int(arguments.get("lines") or 200), 1), 10000),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message="cccc_debug action must be 'snapshot' or 'tail_logs'",
         )
     return None

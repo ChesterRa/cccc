@@ -1769,7 +1769,10 @@ class AutomationManager:
                 kind="help_nudge",
                 priority="normal",
                 title="Refresh collaboration rules",
-                message="Run `cccc_help` now to refresh collaboration rules (ignoring will keep reminding).",
+                message=(
+                    "Run `cccc_help` now to refresh collaboration rules; then update your agent state "
+                    "(`cccc_context_agent`: focus/next_action/what_changed)."
+                ),
                 target_actor_id=aid,
                 requires_ack=False,
             )

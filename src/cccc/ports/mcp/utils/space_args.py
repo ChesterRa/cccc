@@ -56,14 +56,14 @@ def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, A
             raise MCPError(
                 code="invalid_request",
                 message=(
-                    "cccc_space_query does not support top-level language/lang. "
+                    "cccc_space(action=query) does not support top-level language/lang. "
                     "NotebookLM query API has no language parameter; put language requirements in query text."
                 ),
             )
         raise MCPError(
             code="invalid_request",
             message=(
-                "cccc_space_query unsupported top-level args: "
+                "cccc_space(action=query) unsupported top-level args: "
                 f"{', '.join(unknown_top)}. Supported args: group_id, provider, query, options."
             ),
         )
@@ -74,7 +74,7 @@ def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, A
     elif isinstance(options_raw, dict):
         options = dict(options_raw)
     else:
-        raise MCPError(code="invalid_request", message="cccc_space_query options must be an object")
+        raise MCPError(code="invalid_request", message="cccc_space(action=query) options must be an object")
 
     unsupported_options = sorted(k for k in options.keys() if str(k or "").strip() not in _SPACE_QUERY_OPTION_KEYS)
     if unsupported_options:
@@ -82,14 +82,14 @@ def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, A
             raise MCPError(
                 code="invalid_request",
                 message=(
-                    "cccc_space_query options do not support language/lang. "
+                    "cccc_space(action=query) options do not support language/lang. "
                     "NotebookLM query API has no language parameter; put language requirements in query text."
                 ),
             )
         raise MCPError(
             code="invalid_request",
             message=(
-                "cccc_space_query unsupported options: "
+                "cccc_space(action=query) unsupported options: "
                 f"{', '.join(str(k or '').strip() for k in unsupported_options)}. "
                 "Supported options: source_ids."
             ),
@@ -102,7 +102,7 @@ def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, A
         elif not isinstance(raw_source_ids, list):
             raise MCPError(
                 code="invalid_request",
-                message="cccc_space_query options.source_ids must be an array of non-empty strings",
+                message="cccc_space(action=query) options.source_ids must be an array of non-empty strings",
             )
         else:
             source_ids: List[str] = []
@@ -111,10 +111,9 @@ def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, A
                 if not sid:
                     raise MCPError(
                         code="invalid_request",
-                        message=f"cccc_space_query options.source_ids[{idx}] must be a non-empty string",
+                        message=f"cccc_space(action=query) options.source_ids[{idx}] must be a non-empty string",
                     )
                 source_ids.append(sid)
             options["source_ids"] = source_ids
 
     return options
-

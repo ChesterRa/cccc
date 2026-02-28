@@ -6,20 +6,18 @@ from ..common import MCPError, _call_daemon_or_raise
 
 
 def context_get(*, group_id: str, include_archived: bool = False) -> Dict[str, Any]:
-    """Get full context.
-
-    By default, archived milestones are hidden to reduce cognitive load.
-    """
+    """Get full context (v2)."""
     result = _call_daemon_or_raise({"op": "context_get", "args": {"group_id": group_id}})
     if include_archived:
         return result
 
-    milestones = result.get("milestones")
-    if isinstance(milestones, list):
-        result["milestones"] = [
-            m
-            for m in milestones
-            if isinstance(m, dict) and str(m.get("status") or "").strip().lower() != "archived"
+    # Filter archived tasks from active_tasks
+    active_tasks = result.get("active_tasks")
+    if isinstance(active_tasks, list):
+        result["active_tasks"] = [
+            t
+            for t in active_tasks
+            if isinstance(t, dict) and str(t.get("status") or "").strip().lower() != "archived"
         ]
 
     tasks_summary = result.get("tasks_summary")
@@ -35,20 +33,28 @@ def context_get(*, group_id: str, include_archived: bool = False) -> Dict[str, A
     return result
 
 
-def context_sync(*, group_id: str, ops: List[Dict[str, Any]], dry_run: bool = False) -> Dict[str, Any]:
-    """Batch sync context operations."""
-    return _call_daemon_or_raise(
-        {"op": "context_sync", "args": {"group_id": group_id, "ops": ops, "dry_run": dry_run}}
-    )
+def context_sync(
+    *,
+    group_id: str,
+    ops: List[Dict[str, Any]],
+    dry_run: bool = False,
+    if_version: Optional[str] = None,
+    by: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Batch sync context operations (v2)."""
+    args: Dict[str, Any] = {"group_id": group_id, "ops": ops, "dry_run": dry_run}
+    if if_version is not None:
+        args["if_version"] = if_version
+    by_norm = str(by or "").strip()
+    if by_norm:
+        args["by"] = by_norm
+    return _call_daemon_or_raise({"op": "context_sync", "args": args})
 
 
 def task_list(
     *, group_id: str, task_id: Optional[str] = None, include_archived: bool = False
 ) -> Dict[str, Any]:
-    """List tasks.
-
-    By default, archived tasks are hidden to reduce cognitive load.
-    """
+    """List tasks (v2: tree structure with parent_id)."""
     args: Dict[str, Any] = {"group_id": group_id}
     if task_id:
         args["task_id"] = task_id
@@ -73,49 +79,25 @@ def task_list(
     return result
 
 
-def presence_get(*, group_id: str) -> Dict[str, Any]:
-    """Get presence status."""
-    return _call_daemon_or_raise({"op": "presence_get", "args": {"group_id": group_id}})
+def vision_update(*, group_id: str, vision: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(group_id=group_id, ops=[{"op": "vision.update", "vision": vision}], by=by)
 
 
-def vision_update(*, group_id: str, vision: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "vision.update", "vision": vision}])
-
-
-def sketch_update(*, group_id: str, sketch: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "sketch.update", "sketch": sketch}])
-
-
-def milestone_create(*, group_id: str, name: str, description: str, status: str = "planned") -> Dict[str, Any]:
-    return context_sync(
-        group_id=group_id,
-        ops=[{"op": "milestone.create", "name": name, "description": description, "status": status}],
-    )
-
-
-def milestone_update(
-    *,
-    group_id: str,
-    milestone_id: str,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    status: Optional[str] = None,
+def overview_manual_update(
+    *, group_id: str,
+    roles: Optional[List[str]] = None,
+    collaboration_mode: Optional[str] = None,
+    current_focus: Optional[str] = None,
+    by: Optional[str] = None,
 ) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "milestone.update", "milestone_id": milestone_id}
-    if name is not None:
-        op["name"] = name
-    if description is not None:
-        op["description"] = description
-    if status is not None:
-        op["status"] = status
-    return context_sync(group_id=group_id, ops=[op])
-
-
-def milestone_complete(*, group_id: str, milestone_id: str, outcomes: str) -> Dict[str, Any]:
-    return context_sync(
-        group_id=group_id,
-        ops=[{"op": "milestone.complete", "milestone_id": milestone_id, "outcomes": outcomes}],
-    )
+    op: Dict[str, Any] = {"op": "overview.manual.update"}
+    if roles is not None:
+        op["roles"] = roles
+    if collaboration_mode is not None:
+        op["collaboration_mode"] = collaboration_mode
+    if current_focus is not None:
+        op["current_focus"] = current_focus
+    return context_sync(group_id=group_id, ops=[op], by=by)
 
 
 def task_create(
@@ -124,8 +106,9 @@ def task_create(
     name: str,
     goal: str,
     steps: List[Dict[str, str]],
-    milestone_id: Optional[str] = None,
+    parent_id: Optional[str] = None,
     assignee: Optional[str] = None,
+    by: Optional[str] = None,
 ) -> Dict[str, Any]:
     return context_sync(
         group_id=group_id,
@@ -135,10 +118,11 @@ def task_create(
                 "name": name,
                 "goal": goal,
                 "steps": steps,
-                "milestone_id": milestone_id,
+                "parent_id": parent_id,
                 "assignee": assignee,
             }
         ],
+        by=by,
     )
 
 
@@ -146,71 +130,89 @@ def task_update(
     *,
     group_id: str,
     task_id: str,
-    status: Optional[str] = None,
     name: Optional[str] = None,
     goal: Optional[str] = None,
     assignee: Optional[str] = None,
-    milestone_id: Optional[str] = None,
     step_id: Optional[str] = None,
     step_status: Optional[str] = None,
+    by: Optional[str] = None,
 ) -> Dict[str, Any]:
     op: Dict[str, Any] = {"op": "task.update", "task_id": task_id}
-    if status is not None:
-        op["status"] = status
     if name is not None:
         op["name"] = name
     if goal is not None:
         op["goal"] = goal
     if assignee is not None:
         op["assignee"] = assignee
-    if milestone_id is not None:
-        op["milestone_id"] = milestone_id
     if step_id is not None and step_status is not None:
         op["step_id"] = step_id
         op["step_status"] = step_status
-    return context_sync(group_id=group_id, ops=[op])
+    return context_sync(group_id=group_id, ops=[op], by=by)
 
 
-def note_add(*, group_id: str, content: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "note.add", "content": content}])
+def task_status(*, group_id: str, task_id: str, status: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(
+        group_id=group_id,
+        ops=[{"op": "task.status", "task_id": task_id, "status": status}],
+        by=by,
+    )
 
 
-def note_update(*, group_id: str, note_id: str, content: Optional[str] = None) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "note.update", "note_id": note_id}
-    if content is not None:
-        op["content"] = content
-    return context_sync(group_id=group_id, ops=[op])
+def task_move(*, group_id: str, task_id: str, new_parent_id: Optional[str], by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(
+        group_id=group_id,
+        ops=[{"op": "task.move", "task_id": task_id, "new_parent_id": new_parent_id}],
+        by=by,
+    )
 
 
-def note_remove(*, group_id: str, note_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "note.remove", "note_id": note_id}])
+def task_restore(*, group_id: str, task_id: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(
+        group_id=group_id,
+        ops=[{"op": "task.restore", "task_id": task_id}],
+        by=by,
+    )
 
 
-def reference_add(*, group_id: str, url: str, note: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "reference.add", "url": url, "note": note}])
-
-
-def reference_update(
-    *, group_id: str, reference_id: str, url: Optional[str] = None, note: Optional[str] = None
+def context_agent_update(
+    *,
+    group_id: str,
+    agent_id: str,
+    active_task_id: Optional[str] = None,
+    focus: Optional[str] = None,
+    blockers: Optional[List[str]] = None,
+    next_action: Optional[str] = None,
+    what_changed: Optional[str] = None,
+    decision_delta: Optional[str] = None,
+    environment: Optional[str] = None,
+    user_profile: Optional[str] = None,
+    notes: Optional[str] = None,
+    by: Optional[str] = None,
 ) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "reference.update", "reference_id": reference_id}
-    if url is not None:
-        op["url"] = url
-    if note is not None:
-        op["note"] = note
-    return context_sync(group_id=group_id, ops=[op])
+    op: Dict[str, Any] = {"op": "agent.update", "agent_id": agent_id}
+    if active_task_id is not None:
+        op["active_task_id"] = active_task_id
+    if focus is not None:
+        op["focus"] = focus
+    if blockers is not None:
+        op["blockers"] = blockers
+    if next_action is not None:
+        op["next_action"] = next_action
+    if what_changed is not None:
+        op["what_changed"] = what_changed
+    if decision_delta is not None:
+        op["decision_delta"] = decision_delta
+    if environment is not None:
+        op["environment"] = environment
+    if user_profile is not None:
+        op["user_profile"] = user_profile
+    if notes is not None:
+        op["notes"] = notes
+    return context_sync(group_id=group_id, ops=[op], by=by)
 
 
-def reference_remove(*, group_id: str, reference_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "reference.remove", "reference_id": reference_id}])
-
-
-def presence_update(*, group_id: str, agent_id: str, status: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "presence.update", "agent_id": agent_id, "status": status}])
-
-
-def presence_clear(*, group_id: str, agent_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "presence.clear", "agent_id": agent_id}])
+def context_agent_clear(*, group_id: str, agent_id: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(group_id=group_id, ops=[{"op": "agent.clear", "agent_id": agent_id}], by=by)
 
 
 def _handle_context_namespace(
@@ -219,26 +221,19 @@ def _handle_context_namespace(
     *,
     resolve_group_id: Callable[[Dict[str, Any]], str],
     resolve_self_actor_id: Callable[[Dict[str, Any]], str],
-    coerce_bool: Callable[[Any], bool],
+    coerce_bool: Callable[..., bool],
     context_get_fn: Callable[..., Dict[str, Any]],
     context_sync_fn: Callable[..., Dict[str, Any]],
     vision_update_fn: Callable[..., Dict[str, Any]],
-    sketch_update_fn: Callable[..., Dict[str, Any]],
-    milestone_create_fn: Callable[..., Dict[str, Any]],
-    milestone_update_fn: Callable[..., Dict[str, Any]],
-    milestone_complete_fn: Callable[..., Dict[str, Any]],
+    overview_manual_update_fn: Callable[..., Dict[str, Any]],
     task_list_fn: Callable[..., Dict[str, Any]],
     task_create_fn: Callable[..., Dict[str, Any]],
     task_update_fn: Callable[..., Dict[str, Any]],
-    note_add_fn: Callable[..., Dict[str, Any]],
-    note_update_fn: Callable[..., Dict[str, Any]],
-    note_remove_fn: Callable[..., Dict[str, Any]],
-    reference_add_fn: Callable[..., Dict[str, Any]],
-    reference_update_fn: Callable[..., Dict[str, Any]],
-    reference_remove_fn: Callable[..., Dict[str, Any]],
-    presence_get_fn: Callable[..., Dict[str, Any]],
-    presence_update_fn: Callable[..., Dict[str, Any]],
-    presence_clear_fn: Callable[..., Dict[str, Any]],
+    task_status_fn: Callable[..., Dict[str, Any]],
+    task_move_fn: Callable[..., Dict[str, Any]],
+    task_restore_fn: Callable[..., Dict[str, Any]],
+    context_agent_update_fn: Callable[..., Dict[str, Any]],
+    context_agent_clear_fn: Callable[..., Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     if name == "cccc_context_get":
         gid = resolve_group_id(arguments)
@@ -246,126 +241,123 @@ def _handle_context_namespace(
 
     if name == "cccc_context_sync":
         gid = resolve_group_id(arguments)
+        by = resolve_self_actor_id(arguments)
         ops_raw = arguments.get("ops")
+        if_version = arguments.get("if_version")
         return context_sync_fn(
             group_id=gid,
             ops=list(ops_raw) if isinstance(ops_raw, list) else [],
             dry_run=coerce_bool(arguments.get("dry_run"), default=False),
+            if_version=str(if_version) if if_version is not None else None,
+            by=by,
         )
 
-    if name == "cccc_vision_update":
+    if name == "cccc_context_admin":
         gid = resolve_group_id(arguments)
-        return vision_update_fn(group_id=gid, vision=str(arguments.get("vision") or ""))
-
-    if name == "cccc_sketch_update":
-        gid = resolve_group_id(arguments)
-        return sketch_update_fn(group_id=gid, sketch=str(arguments.get("sketch") or ""))
-
-    if name == "cccc_milestone_create":
-        gid = resolve_group_id(arguments)
-        return milestone_create_fn(
-            group_id=gid,
-            name=str(arguments.get("name") or ""),
-            description=str(arguments.get("description") or ""),
-            status=str(arguments.get("status") or "planned"),
+        by = resolve_self_actor_id(arguments)
+        action = str(arguments.get("action") or "vision_update").strip().lower()
+        if action == "vision_update":
+            return vision_update_fn(group_id=gid, vision=str(arguments.get("vision") or ""), by=by)
+        if action == "overview_update":
+            kwargs: Dict[str, Any] = {"group_id": gid}
+            if "roles" in arguments:
+                roles_raw = arguments["roles"]
+                kwargs["roles"] = list(roles_raw) if isinstance(roles_raw, list) else []
+            if "collaboration_mode" in arguments:
+                kwargs["collaboration_mode"] = str(arguments["collaboration_mode"])
+            if "current_focus" in arguments:
+                kwargs["current_focus"] = str(arguments["current_focus"])
+            kwargs["by"] = by
+            return overview_manual_update_fn(**kwargs)
+        raise MCPError(
+            code="invalid_request",
+            message="cccc_context_admin action must be 'vision_update' or 'overview_update'",
         )
 
-    if name == "cccc_milestone_update":
+    if name == "cccc_task":
         gid = resolve_group_id(arguments)
-        return milestone_update_fn(
-            group_id=gid,
-            milestone_id=str(arguments.get("milestone_id") or ""),
-            name=arguments.get("name"),
-            description=arguments.get("description"),
-            status=arguments.get("status"),
+        by = resolve_self_actor_id(arguments)
+        action = str(arguments.get("action") or "list").strip().lower()
+        if action == "list":
+            return task_list_fn(
+                group_id=gid,
+                task_id=arguments.get("task_id"),
+                include_archived=coerce_bool(arguments.get("include_archived"), default=False),
+            )
+        if action == "create":
+            steps_raw = arguments.get("steps")
+            return task_create_fn(
+                group_id=gid,
+                name=str(arguments.get("name") or ""),
+                goal=str(arguments.get("goal") or ""),
+                steps=list(steps_raw) if isinstance(steps_raw, list) else [],
+                parent_id=arguments.get("parent_id"),
+                assignee=arguments.get("assignee"),
+                by=by,
+            )
+        if action == "update":
+            return task_update_fn(
+                group_id=gid,
+                task_id=str(arguments.get("task_id") or ""),
+                name=arguments.get("name"),
+                goal=arguments.get("goal"),
+                assignee=arguments.get("assignee"),
+                step_id=arguments.get("step_id"),
+                step_status=arguments.get("step_status"),
+                by=by,
+            )
+        if action == "status":
+            return task_status_fn(
+                group_id=gid,
+                task_id=str(arguments.get("task_id") or ""),
+                status=str(arguments.get("status") or ""),
+                by=by,
+            )
+        if action == "move":
+            new_parent = arguments.get("new_parent_id")
+            return task_move_fn(
+                group_id=gid,
+                task_id=str(arguments.get("task_id") or ""),
+                new_parent_id=str(new_parent) if new_parent is not None else None,
+                by=by,
+            )
+        if action == "restore":
+            return task_restore_fn(
+                group_id=gid,
+                task_id=str(arguments.get("task_id") or ""),
+                by=by,
+            )
+        raise MCPError(
+            code="invalid_request",
+            message="cccc_task action must be one of: list/create/update/status/move/restore",
         )
 
-    if name == "cccc_milestone_complete":
-        gid = resolve_group_id(arguments)
-        return milestone_complete_fn(
-            group_id=gid,
-            milestone_id=str(arguments.get("milestone_id") or ""),
-            outcomes=str(arguments.get("outcomes") or ""),
-        )
-
-    if name == "cccc_task_list":
-        gid = resolve_group_id(arguments)
-        return task_list_fn(
-            group_id=gid,
-            task_id=arguments.get("task_id"),
-            include_archived=coerce_bool(arguments.get("include_archived"), default=False),
-        )
-
-    if name == "cccc_task_create":
-        gid = resolve_group_id(arguments)
-        steps_raw = arguments.get("steps")
-        return task_create_fn(
-            group_id=gid,
-            name=str(arguments.get("name") or ""),
-            goal=str(arguments.get("goal") or ""),
-            steps=list(steps_raw) if isinstance(steps_raw, list) else [],
-            milestone_id=arguments.get("milestone_id"),
-            assignee=arguments.get("assignee"),
-        )
-
-    if name == "cccc_task_update":
-        gid = resolve_group_id(arguments)
-        return task_update_fn(
-            group_id=gid,
-            task_id=str(arguments.get("task_id") or ""),
-            status=arguments.get("status"),
-            name=arguments.get("name"),
-            goal=arguments.get("goal"),
-            assignee=arguments.get("assignee"),
-            milestone_id=arguments.get("milestone_id"),
-            step_id=arguments.get("step_id"),
-            step_status=arguments.get("step_status"),
-        )
-
-    if name == "cccc_note_add":
-        gid = resolve_group_id(arguments)
-        return note_add_fn(group_id=gid, content=str(arguments.get("content") or ""))
-
-    if name == "cccc_note_update":
-        gid = resolve_group_id(arguments)
-        return note_update_fn(group_id=gid, note_id=str(arguments.get("note_id") or ""), content=arguments.get("content"))
-
-    if name == "cccc_note_remove":
-        gid = resolve_group_id(arguments)
-        return note_remove_fn(group_id=gid, note_id=str(arguments.get("note_id") or ""))
-
-    if name == "cccc_reference_add":
-        gid = resolve_group_id(arguments)
-        return reference_add_fn(group_id=gid, url=str(arguments.get("url") or ""), note=str(arguments.get("note") or ""))
-
-    if name == "cccc_reference_update":
-        gid = resolve_group_id(arguments)
-        return reference_update_fn(
-            group_id=gid,
-            reference_id=str(arguments.get("reference_id") or ""),
-            url=arguments.get("url"),
-            note=arguments.get("note"),
-        )
-
-    if name == "cccc_reference_remove":
-        gid = resolve_group_id(arguments)
-        return reference_remove_fn(group_id=gid, reference_id=str(arguments.get("reference_id") or ""))
-
-    if name == "cccc_presence_get":
-        gid = resolve_group_id(arguments)
-        return presence_get_fn(group_id=gid)
-
-    if name == "cccc_presence_update":
+    if name == "cccc_context_agent":
         gid = resolve_group_id(arguments)
         self_aid = resolve_self_actor_id(arguments)
         agent_id = str(arguments.get("agent_id") or "").strip() or self_aid
-        return presence_update_fn(group_id=gid, agent_id=agent_id, status=str(arguments.get("status") or ""))
-
-    if name == "cccc_presence_clear":
-        gid = resolve_group_id(arguments)
-        self_aid = resolve_self_actor_id(arguments)
-        agent_id = str(arguments.get("agent_id") or "").strip() or self_aid
-        return presence_clear_fn(group_id=gid, agent_id=agent_id)
+        action = str(arguments.get("action") or "update").strip().lower()
+        if action == "clear":
+            return context_agent_clear_fn(group_id=gid, agent_id=agent_id, by=self_aid)
+        if action != "update":
+            raise MCPError(code="invalid_request", message="cccc_context_agent action must be 'update' or 'clear'")
+        kwargs_agent: Dict[str, Any] = {"group_id": gid, "agent_id": agent_id}
+        for field in (
+            "active_task_id",
+            "focus",
+            "next_action",
+            "what_changed",
+            "decision_delta",
+            "environment",
+            "user_profile",
+            "notes",
+        ):
+            if field in arguments:
+                kwargs_agent[field] = arguments[field]
+        if "blockers" in arguments:
+            blockers_raw = arguments["blockers"]
+            kwargs_agent["blockers"] = list(blockers_raw) if isinstance(blockers_raw, list) else []
+        kwargs_agent["by"] = self_aid
+        return context_agent_update_fn(**kwargs_agent)
 
     return None
-

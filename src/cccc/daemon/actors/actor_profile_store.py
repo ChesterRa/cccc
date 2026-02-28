@@ -193,6 +193,39 @@ def upsert_actor_profile(
     command_in = profile.get("command") if "command" in profile else (existing or {}).get("command")
     command = _normalize_profile_command(runtime=runtime, runner=runner, command=command_in)
 
+    capability_defaults_in = (
+        profile.get("capability_defaults")
+        if "capability_defaults" in profile
+        else (existing or {}).get("capability_defaults")
+    )
+    capability_defaults: Optional[Dict[str, Any]] = None
+    if capability_defaults_in is not None:
+        if not isinstance(capability_defaults_in, dict):
+            raise ValueError("capability_defaults must be an object or null")
+        pinned_raw = capability_defaults_in.get("pinned_capabilities")
+        pinned: List[str] = []
+        seen: set[str] = set()
+        if isinstance(pinned_raw, list):
+            for item in pinned_raw:
+                cap_id = str(item or "").strip()
+                if not cap_id or cap_id in seen:
+                    continue
+                seen.add(cap_id)
+                pinned.append(cap_id)
+        default_scope = str(capability_defaults_in.get("default_scope") or "actor").strip().lower()
+        if default_scope not in {"actor", "session"}:
+            raise ValueError("capability_defaults.default_scope must be actor or session")
+        try:
+            ttl_seconds = int(capability_defaults_in.get("session_ttl_seconds") or 3600)
+        except Exception:
+            ttl_seconds = 3600
+        ttl_seconds = max(60, min(ttl_seconds, 24 * 3600))
+        capability_defaults = {
+            "pinned_capabilities": pinned,
+            "default_scope": default_scope,
+            "session_ttl_seconds": ttl_seconds,
+        }
+
     created_at = str((existing or {}).get("created_at") or now)
     revision = int((existing or {}).get("revision") or 0) + 1
 
@@ -207,6 +240,7 @@ def upsert_actor_profile(
         "created_at": created_at,
         "updated_at": now,
         "revision": revision,
+        "capability_defaults": capability_defaults,
     }
     model = ActorProfile.model_validate(payload)
     out = model.model_dump(exclude_none=True)

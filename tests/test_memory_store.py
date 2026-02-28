@@ -42,7 +42,7 @@ class TestSchema(MemoryStoreTestBase):
         self.assertEqual(ver, SCHEMA_VERSION)
 
     def test_indexes_created(self):
-        """12+ indexes exist."""
+        """Core indexes exist."""
         assert self.store._conn is not None
         indexes = self.store._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
@@ -53,7 +53,6 @@ class TestSchema(MemoryStoreTestBase):
             "idx_memories_status",
             "idx_memories_actor_id",
             "idx_memories_task_id",
-            "idx_memories_milestone_id",
             "idx_memories_kind",
             "idx_memories_source_type",
             "idx_memories_event_ts",
@@ -130,7 +129,6 @@ class TestStore(MemoryStoreTestBase):
             scope_key="s_abc",
             actor_id="peer-impl",
             task_id="T094",
-            milestone_id="M7",
             event_ts="2026-02-25T00:00:00Z",
             tags=["architecture", "memory"],
         )
@@ -146,7 +144,6 @@ class TestStore(MemoryStoreTestBase):
         self.assertEqual(mem["scope_key"], "s_abc")
         self.assertEqual(mem["actor_id"], "peer-impl")
         self.assertEqual(mem["task_id"], "T094")
-        self.assertEqual(mem["milestone_id"], "M7")
         self.assertEqual(mem["event_ts"], "2026-02-25T00:00:00Z")
         self.assertEqual(mem["group_id"], self.group_id)
         self.assertEqual(sorted(mem["tags"]), ["architecture", "memory"])
@@ -269,13 +266,11 @@ class TestUpdate(MemoryStoreTestBase):
             confidence="high",
             actor_id="peer-1",
             task_id="T001",
-            milestone_id="M1",
         )
         self.assertEqual(updated["kind"], "fact")
         self.assertEqual(updated["confidence"], "high")
         self.assertEqual(updated["actor_id"], "peer-1")
         self.assertEqual(updated["task_id"], "T001")
-        self.assertEqual(updated["milestone_id"], "M1")
 
     def test_update_updated_at_changes(self):
         result = self.store.store("timekeep")

@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 
@@ -30,19 +31,23 @@ class TestCapabilityOps(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
-    def _write_allowlist_override(self, *, mcp_registry_level: str = "mounted") -> Path:
+    def _write_allowlist_override(self, *, mcp_registry_level: str = "mounted", extra: str = "") -> Path:
         home = Path(str(os.environ.get("CCCC_HOME") or "")).expanduser()
         cfg_dir = home / "config"
         cfg_dir.mkdir(parents=True, exist_ok=True)
-        path = cfg_dir / "capability-allowlist.yaml"
+        path = cfg_dir / "capability-allowlist.user.yaml"
+        body = (
+            "defaults:\n"
+            "  source_level:\n"
+            f"    mcp_registry_official: {mcp_registry_level}\n"
+            "    anthropic_skills: mounted\n"
+            "    github_skills_curated: indexed\n"
+            "    cccc_builtin: enabled\n"
+        )
+        if extra.strip():
+            body = f"{body}{extra.rstrip()}\n"
         path.write_text(
-            (
-                "defaults:\n"
-                "  source_level:\n"
-                f"    mcp_registry_official: {mcp_registry_level}\n"
-                "    anthropic_skills: mounted\n"
-                "    cccc_builtin: enabled\n"
-            ),
+            body,
             encoding="utf-8",
         )
         return path
@@ -67,6 +72,60 @@ class TestCapabilityOps(unittest.TestCase):
         )
         self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
 
+    def _seed_runtime_external_install(
+        self,
+        ops: Any,
+        runtime_doc: dict,
+        *,
+        capability_id: str = "mcp:test-server",
+        url: str = "http://127.0.0.1:9900/mcp",
+        synthetic_tool_name: str = "cccc_ext_deadbeef_echo",
+        real_tool_name: str = "echo",
+        state: str = "installed",
+        last_error: str = "",
+        tools: Any = None,
+    ) -> str:
+        rec = {
+            "install_mode": "remote_only",
+            "install_spec": {"transport": "http", "url": url},
+        }
+        install_key = ops._external_artifact_cache_key(rec, capability_id=capability_id)
+        artifact_id = ops._external_artifact_id(rec, capability_id=capability_id)
+        normalized_tools = (
+            list(tools)
+            if isinstance(tools, list)
+            else [
+                {
+                    "name": synthetic_tool_name,
+                    "real_tool_name": real_tool_name,
+                    "description": f"{real_tool_name} tool",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        )
+        install_payload = {
+            "state": state,
+            "installer": "remote_http",
+            "install_mode": "remote_only",
+            "invoker": {"type": "remote_http", "url": url},
+            "tools": normalized_tools,
+            "last_error": last_error,
+            "updated_at": "2026-02-25T00:00:00Z",
+        }
+        artifact = ops._artifact_entry_from_install(
+            install_payload,
+            artifact_id=artifact_id,
+            install_key=install_key,
+            capability_id=capability_id,
+        )
+        ops._upsert_runtime_artifact_for_capability(
+            runtime_doc,
+            artifact_id=artifact_id,
+            capability_id=capability_id,
+            artifact_entry=artifact,
+        )
+        return artifact_id
+
     def test_capability_state_defaults_to_core_surface(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -78,7 +137,7 @@ class TestCapabilityOps(unittest.TestCase):
             visible = result.get("visible_tools") if isinstance(result.get("visible_tools"), list) else []
             self.assertIn("cccc_help", visible)
             self.assertIn("cccc_capability_search", visible)
-            self.assertNotIn("cccc_space_status", visible)
+            self.assertNotIn("cccc_space", visible)
         finally:
             cleanup()
 
@@ -108,7 +167,7 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
             result = state_resp.result if isinstance(state_resp.result, dict) else {}
             visible = result.get("visible_tools") if isinstance(result.get("visible_tools"), list) else []
-            self.assertIn("cccc_space_status", visible)
+            self.assertIn("cccc_space", visible)
             self.assertIn("pack:space", result.get("enabled_capabilities") or [])
         finally:
             cleanup()
@@ -140,18 +199,17 @@ class TestCapabilityOps(unittest.TestCase):
         try:
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
-            with patch("cccc.daemon.ops.capability_ops._auto_sync_catalog", return_value=False):
-                resp, _ = self._call(
-                    "capability_search",
-                    {
-                        "group_id": gid,
-                        "actor_id": "peer-1",
-                        "by": "peer-1",
-                        "query": "space",
-                        "include_external": False,
-                        "limit": 20,
-                    },
-                )
+            resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "space",
+                    "include_external": False,
+                    "limit": 20,
+                },
+            )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
             items = result.get("items") if isinstance(result.get("items"), list) else []
@@ -160,7 +218,212 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_search_without_external_skips_auto_sync(self) -> None:
+    def test_search_without_query_returns_builtin_packs(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "",
+                    "kind": "mcp_toolpack",
+                    "include_external": False,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            ids = {str(item.get("capability_id") or "") for item in items if isinstance(item, dict)}
+            self.assertIn("pack:space", ids)
+            self.assertIn("pack:group-runtime", ids)
+            self.assertGreaterEqual(len(ids), 5)
+        finally:
+            cleanup()
+
+    def test_search_empty_query_uses_context_signal_for_pack_ranking(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            create_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [
+                        {
+                            "op": "task.create",
+                            "name": "Automation reminder cleanup",
+                            "goal": "stabilize reminder jobs",
+                            "assignee": "peer-1",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            tasks_resp, _ = self._call("task_list", {"group_id": gid})
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            tasks = tasks_resp.result.get("tasks") if isinstance(tasks_resp.result, dict) else []
+            self.assertTrue(isinstance(tasks, list) and tasks)
+            task_id = str((tasks[0] if isinstance(tasks[0], dict) else {}).get("id") or "")
+            self.assertTrue(task_id)
+            sync_agent_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "ops": [
+                        {
+                            "op": "agent.update",
+                            "agent_id": "peer-1",
+                            "active_task_id": task_id,
+                            "focus": "automation schedule hygiene",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(sync_agent_resp.ok, getattr(sync_agent_resp, "error", None))
+
+            resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "",
+                    "kind": "mcp_toolpack",
+                    "include_external": False,
+                    "limit": 5,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            self.assertTrue(items)
+            top = items[0] if isinstance(items[0], dict) else {}
+            self.assertEqual(str(top.get("capability_id") or ""), "pack:automation")
+        finally:
+            cleanup()
+
+    def test_search_builtin_pack_includes_tool_names(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "space",
+                    "include_external": False,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            pack = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "pack:space"
+                ),
+                {},
+            )
+            tool_names = pack.get("tool_names") if isinstance(pack.get("tool_names"), list) else []
+            self.assertIn("cccc_space", tool_names)
+            self.assertGreaterEqual(int(pack.get("tool_count") or 0), len(tool_names))
+        finally:
+            cleanup()
+
+    def test_allowlist_overlay_update_validate_and_reset(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            get_before, _ = self._call("capability_allowlist_get", {"by": "user"})
+            self.assertTrue(get_before.ok, getattr(get_before, "error", None))
+            before = get_before.result if isinstance(get_before.result, dict) else {}
+            revision_before = str(before.get("revision") or "")
+            self.assertTrue(revision_before)
+
+            validate, _ = self._call(
+                "capability_allowlist_validate",
+                {
+                    "mode": "patch",
+                    "patch": {
+                        "defaults": {"source_level": {"mcp_registry_official": "indexed"}},
+                    },
+                },
+            )
+            self.assertTrue(validate.ok, getattr(validate, "error", None))
+            validate_result = validate.result if isinstance(validate.result, dict) else {}
+            self.assertTrue(bool(validate_result.get("valid")))
+
+            update, _ = self._call(
+                "capability_allowlist_update",
+                {
+                    "by": "user",
+                    "mode": "patch",
+                    "expected_revision": revision_before,
+                    "patch": {
+                        "defaults": {"source_level": {"mcp_registry_official": "indexed"}},
+                    },
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+            update_result = update.result if isinstance(update.result, dict) else {}
+            revision_after = str(update_result.get("revision") or "")
+            self.assertTrue(revision_after)
+            self.assertNotEqual(revision_after, revision_before)
+            effective = update_result.get("effective") if isinstance(update_result.get("effective"), dict) else {}
+            defaults = effective.get("defaults") if isinstance(effective.get("defaults"), dict) else {}
+            source_level = defaults.get("source_level") if isinstance(defaults.get("source_level"), dict) else {}
+            self.assertEqual(str(source_level.get("mcp_registry_official") or ""), "indexed")
+
+            reset, _ = self._call("capability_allowlist_reset", {"by": "user"})
+            self.assertTrue(reset.ok, getattr(reset, "error", None))
+            reset_result = reset.result if isinstance(reset.result, dict) else {}
+            overlay_after_reset = (
+                reset_result.get("overlay") if isinstance(reset_result.get("overlay"), dict) else {}
+            )
+            self.assertEqual(overlay_after_reset, {})
+        finally:
+            cleanup()
+
+    def test_allowlist_update_rejects_revision_mismatch(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            first, _ = self._call(
+                "capability_allowlist_update",
+                {
+                    "by": "user",
+                    "mode": "patch",
+                    "patch": {"defaults": {"source_level": {"anthropic_skills": "mounted"}}},
+                },
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            stale_revision = "deadbeef"
+            second, _ = self._call(
+                "capability_allowlist_update",
+                {
+                    "by": "user",
+                    "mode": "patch",
+                    "expected_revision": stale_revision,
+                    "patch": {"defaults": {"source_level": {"anthropic_skills": "indexed"}}},
+                },
+            )
+            self.assertFalse(second.ok)
+            self.assertEqual(getattr(second.error, "code", ""), "allowlist_revision_mismatch")
+        finally:
+            cleanup()
+
+    def test_search_without_external_never_triggers_auto_sync(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -182,7 +445,7 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_search_with_external_does_not_auto_sync_by_default(self) -> None:
+    def test_search_with_external_never_triggers_auto_sync(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -204,7 +467,7 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_search_with_external_can_auto_sync_when_enabled(self) -> None:
+    def test_search_with_external_ignores_auto_sync_flag(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -225,7 +488,7 @@ class TestCapabilityOps(unittest.TestCase):
                     },
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
-            auto_sync.assert_called_once()
+            auto_sync.assert_not_called()
         finally:
             cleanup()
 
@@ -318,7 +581,7 @@ class TestCapabilityOps(unittest.TestCase):
         self.assertEqual(int(result.get("upserted_total") or 0), 2)
         save_doc.assert_called_once_with(fake_path, fake_doc)
 
-    def test_external_enable_requires_approve_when_manual_review(self) -> None:
+    def test_external_enable_succeeds_for_qualified_external(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
@@ -330,11 +593,23 @@ class TestCapabilityOps(unittest.TestCase):
                 "capability_id": "mcp:test-server",
                 "kind": "mcp_toolpack",
                 "name": "test-server",
-                "qualification_status": "manual_review",
+                "qualification_status": "qualified",
                 "install_mode": "remote_only",
                 "install_spec": {"transport": "http", "url": "http://127.0.0.1:9900/mcp"},
             }
-            with patch("cccc.daemon.ops.capability_ops._load_catalog_doc", return_value=(Path("/tmp/cat.json"), catalog)):
+            installed = {
+                "state": "installed",
+                "installer": "remote_http",
+                "install_mode": "remote_only",
+                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
+                "tools": [],
+                "last_error": "",
+                "updated_at": "2026-02-25T00:00:00Z",
+            }
+            with patch("cccc.daemon.ops.capability_ops._load_catalog_doc", return_value=(Path("/tmp/cat.json"), catalog)), patch(
+                "cccc.daemon.ops.capability_ops._install_external_capability",
+                return_value=installed,
+            ):
                 resp, _ = self._call(
                     "capability_enable",
                     {
@@ -348,12 +623,12 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "pending_approval")
-            self.assertFalse(bool(result.get("enabled")))
+            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertTrue(bool(result.get("enabled")))
         finally:
             cleanup()
 
-    def test_external_enable_with_approve_installs_and_exposes_dynamic_tools(self) -> None:
+    def test_external_enable_installs_and_exposes_dynamic_tools(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
@@ -365,7 +640,7 @@ class TestCapabilityOps(unittest.TestCase):
                 "capability_id": "mcp:test-server",
                 "kind": "mcp_toolpack",
                 "name": "test-server",
-                "qualification_status": "manual_review",
+                "qualification_status": "qualified",
                 "install_mode": "remote_only",
                 "install_spec": {"transport": "http", "url": "http://127.0.0.1:9900/mcp"},
             }
@@ -398,7 +673,6 @@ class TestCapabilityOps(unittest.TestCase):
                         "capability_id": "mcp:test-server",
                         "scope": "session",
                         "enabled": True,
-                        "approve": True,
                     },
                 )
                 self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
@@ -437,23 +711,16 @@ class TestCapabilityOps(unittest.TestCase):
             ops._save_state_doc(state_path, state_doc)
 
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [
-                    {
-                        "name": "cccc_ext_deadbeef_echo",
-                        "real_tool_name": "echo",
-                        "description": "echo tool",
-                        "inputSchema": {"type": "object", "properties": {}, "required": []},
-                    }
-                ],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc)
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             with patch(
@@ -475,6 +742,133 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertEqual(str(result.get("capability_id") or ""), "mcp:test-server")
             call_result = result.get("result") if isinstance(result.get("result"), dict) else {}
             self.assertIn("content", call_result)
+        finally:
+            cleanup()
+
+    def test_capability_tool_call_accepts_real_tool_name_with_capability_hint(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_enabled_capability(
+                state_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                scope="session",
+                capability_id="mcp:test-server",
+                enabled=True,
+                ttl_seconds=600,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc)
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._invoke_installed_external_tool",
+                return_value={"content": [{"type": "text", "text": "ok"}]},
+            ):
+                resp, _ = self._call(
+                    "capability_tool_call",
+                    {
+                        "group_id": gid,
+                        "actor_id": "peer-1",
+                        "by": "peer-1",
+                        "capability_id": "mcp:test-server",
+                        "tool_name": "echo",
+                        "arguments": {"message": "hello"},
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("capability_id") or ""), "mcp:test-server")
+            self.assertEqual(str(result.get("resolved_tool_name") or ""), "cccc_ext_deadbeef_echo")
+            self.assertEqual(str(result.get("real_tool_name") or ""), "echo")
+        finally:
+            cleanup()
+
+    def test_capability_tool_call_real_name_requires_capability_when_ambiguous(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            state_path, state_doc = ops._load_state_doc()
+            for cap_id in ("mcp:test-server-a", "mcp:test-server-b"):
+                ops._set_enabled_capability(
+                    state_doc,
+                    group_id=gid,
+                    actor_id="peer-1",
+                    scope="session",
+                    capability_id=cap_id,
+                    enabled=True,
+                    ttl_seconds=600,
+                )
+            ops._save_state_doc(state_path, state_doc)
+
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            artifact_a = self._seed_runtime_external_install(
+                ops,
+                runtime_doc,
+                capability_id="mcp:test-server-a",
+                synthetic_tool_name="cccc_ext_deadbeef_echo_a",
+                real_tool_name="echo",
+            )
+            artifact_b = self._seed_runtime_external_install(
+                ops,
+                runtime_doc,
+                capability_id="mcp:test-server-b",
+                synthetic_tool_name="cccc_ext_deadbeef_echo_b",
+                real_tool_name="echo",
+            )
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server-a",
+                artifact_id=artifact_a,
+                state="ready",
+                last_error="",
+            )
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server-b",
+                artifact_id=artifact_b,
+                state="ready",
+                last_error="",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            resp, _ = self._call(
+                "capability_tool_call",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "tool_name": "echo",
+                    "arguments": {"message": "hello"},
+                },
+            )
+            self.assertFalse(resp.ok)
+            self.assertEqual((resp.error.code if resp.error else ""), "capability_tool_ambiguous")
         finally:
             cleanup()
 
@@ -510,23 +904,16 @@ class TestCapabilityOps(unittest.TestCase):
             ops._save_state_doc(state_path, state_doc)
 
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [
-                    {
-                        "name": "cccc_ext_deadbeef_echo",
-                        "real_tool_name": "echo",
-                        "description": "echo tool",
-                        "inputSchema": {"type": "object", "properties": {}, "required": []},
-                    }
-                ],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc)
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             before_resp, _ = self._call(
@@ -599,11 +986,10 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
             self.assertEqual(str(result.get("state") or ""), "failed")
-            self.assertIn("install_failed", str(result.get("reason") or ""))
+            self.assertIn(str(result.get("reason") or ""), {"install_failed:probe_failed", "install_failed"})
 
             _, runtime_doc = ops._load_runtime_doc()
-            installs = runtime_doc.get("installations") if isinstance(runtime_doc.get("installations"), dict) else {}
-            entry = installs.get("mcp:test-server") if isinstance(installs, dict) else None
+            _, entry = ops._runtime_install_for_capability(runtime_doc, capability_id="mcp:test-server")
             self.assertIsInstance(entry, dict)
             self.assertEqual(str(entry.get("state") or ""), "install_failed")
             self.assertIn("probe_failed", str(entry.get("last_error") or ""))
@@ -618,23 +1004,56 @@ class TestCapabilityOps(unittest.TestCase):
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [
-                    {
-                        "name": "cccc_ext_deadbeef_echo",
-                        "real_tool_name": "echo",
-                        "description": "echo tool",
-                        "inputSchema": {"type": "object", "properties": {}, "required": []},
-                    }
-                ],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc)
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            resp, _ = self._call(
+                "capability_tool_call",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "tool_name": "cccc_ext_deadbeef_echo",
+                    "arguments": {"message": "hello"},
+                },
+            )
+            self.assertFalse(resp.ok)
+            self.assertEqual((resp.error.code if resp.error else ""), "capability_tool_not_found")
+        finally:
+            cleanup()
+
+    def test_capability_tool_call_requires_actor_runtime_binding(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_enabled_capability(
+                state_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                scope="session",
+                capability_id="mcp:test-server",
+                enabled=True,
+                ttl_seconds=600,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            self._seed_runtime_external_install(ops, runtime_doc)
+            # Intentionally no runtime actor binding for peer-1.
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             resp, _ = self._call(
@@ -719,7 +1138,7 @@ class TestCapabilityOps(unittest.TestCase):
                 "source_id": "anthropic_skills",
                 "source_tier": "tier1",
                 "trust_tier": "community",
-                "qualification_status": "manual_review",
+                "qualification_status": "unavailable",
                 "enable_supported": True,
                 "sync_state": "fresh",
                 "install_mode": "remote_only",
@@ -736,7 +1155,7 @@ class TestCapabilityOps(unittest.TestCase):
                     "include_external": True,
                     "source_id": "anthropic_skills",
                     "trust_tier": "community",
-                    "qualification_status": "manual_review",
+                    "qualification_status": "unavailable",
                     "limit": 20,
                 },
             )
@@ -749,11 +1168,113 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_search_surfaces_curated_third_party_skill_as_enable_now(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: github_skills_curated\n"
+                    "      level: mounted\n"
+                    "  curated:\n"
+                    "    - capability_id: skill:github:blader:claudeception\n"
+                    "      level: mounted\n"
+                    "      source_id: github_skills_curated\n"
+                    "      source_uri: https://github.com/blader/Claudeception\n"
+                    "      qualification_status: qualified\n"
+                    "      description_short: Captures reusable lessons.\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            search_resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "claudeception",
+                    "kind": "skill",
+                    "include_external": True,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            result = search_resp.result if isinstance(search_resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            row = next(
+                (x for x in items if isinstance(x, dict) and str(x.get("capability_id") or "") == "skill:github:blader:claudeception"),
+                None,
+            )
+            self.assertIsNotNone(row)
+            item = row if isinstance(row, dict) else {}
+            self.assertEqual(str(item.get("source_id") or ""), "github_skills_curated")
+            self.assertEqual(str(item.get("qualification_status") or ""), "qualified")
+            self.assertEqual(str(item.get("enable_hint") or ""), "enable_now")
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "scope": "session",
+                    "capability_id": "skill:github:blader:claudeception",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+            enable_result = enable_resp.result if isinstance(enable_resp.result, dict) else {}
+            self.assertEqual(str(enable_result.get("state") or ""), "ready")
+        finally:
+            cleanup()
+
+    def test_default_policy_surfaces_risky_third_party_mcp_not_hidden(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            search_resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "desktop-commander",
+                    "kind": "mcp_toolpack",
+                    "include_external": True,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            result = search_resp.result if isinstance(search_resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            row = next(
+                (
+                    x
+                    for x in items
+                    if isinstance(x, dict)
+                    and str(x.get("capability_id") or "") == "mcp:io.github.wonderwhy-er/desktop-commander"
+                ),
+                None,
+            )
+            self.assertIsNotNone(row)
+            item = row if isinstance(row, dict) else {}
+            self.assertEqual(str(item.get("policy_level") or ""), "mounted")
+            self.assertIn(str(item.get("qualification_status") or ""), {"qualified", "unavailable"})
+            self.assertIn(str(item.get("enable_hint") or ""), {"enable_now", "unsupported"})
+        finally:
+            cleanup()
+
     def test_search_hides_indexed_capability_by_default_policy(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
         try:
+            self._write_allowlist_override(mcp_registry_level="indexed")
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
             catalog_path, catalog_doc = ops._load_catalog_doc()
@@ -799,6 +1320,7 @@ class TestCapabilityOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
+            self._write_allowlist_override(mcp_registry_level="indexed")
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
             catalog_path, catalog_doc = ops._load_catalog_doc()
@@ -827,7 +1349,6 @@ class TestCapabilityOps(unittest.TestCase):
                     "scope": "session",
                     "capability_id": "mcp:indexed-default",
                     "enabled": True,
-                    "approve": True,
                 },
             )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
@@ -838,7 +1359,53 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_capability_state_reports_scope_mismatch_and_manual_review_hidden_reasons(self) -> None:
+    def test_ensure_curated_catalog_records_refreshes_existing_entry(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        catalog = ops._new_catalog_doc()
+        policy_v1 = ops._compile_allowlist_policy(
+            {
+                "skills": {
+                    "curated": [
+                        {
+                            "capability_id": "skill:github:demo:s1",
+                            "level": "mounted",
+                            "source_id": "github_skills_curated",
+                            "description_short": "v1",
+                        }
+                    ]
+                }
+            }
+        )
+        changed_v1 = ops._ensure_curated_catalog_records(catalog, policy=policy_v1)
+        self.assertTrue(changed_v1)
+
+        rec_v1 = catalog.get("records", {}).get("skill:github:demo:s1")
+        self.assertIsInstance(rec_v1, dict)
+        self.assertEqual(str((rec_v1 or {}).get("description_short") or ""), "v1")
+
+        policy_v2 = ops._compile_allowlist_policy(
+            {
+                "skills": {
+                    "curated": [
+                        {
+                            "capability_id": "skill:github:demo:s1",
+                            "level": "enabled",
+                            "source_id": "github_skills_curated",
+                            "description_short": "v2",
+                        }
+                    ]
+                }
+            }
+        )
+        changed_v2 = ops._ensure_curated_catalog_records(catalog, policy=policy_v2)
+        self.assertTrue(changed_v2)
+
+        rec_v2 = catalog.get("records", {}).get("skill:github:demo:s1")
+        self.assertIsInstance(rec_v2, dict)
+        self.assertEqual(str((rec_v2 or {}).get("description_short") or ""), "v2")
+
+    def test_capability_state_reports_scope_mismatch_and_unavailable_hidden_reasons(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
@@ -871,8 +1438,8 @@ class TestCapabilityOps(unittest.TestCase):
                 "source_id": "anthropic_skills",
                 "source_tier": "tier1",
                 "trust_tier": "community",
-                "qualification_status": "manual_review",
-                "enable_supported": True,
+                "qualification_status": "unavailable",
+                "enable_supported": False,
                 "sync_state": "fresh",
                 "install_mode": "remote_only",
                 "install_spec": {"transport": "http", "url": "http://127.0.0.1:9903/mcp"},
@@ -903,7 +1470,7 @@ class TestCapabilityOps(unittest.TestCase):
                 for item in hidden
                 if isinstance(item, dict)
             }
-            self.assertEqual(by_id.get("mcp:manual"), "manual_review_required")
+            self.assertEqual(by_id.get("mcp:manual"), "unavailable")
             self.assertEqual(by_id.get("mcp:shared"), "scope_mismatch")
         finally:
             cleanup()
@@ -977,16 +1544,16 @@ class TestCapabilityOps(unittest.TestCase):
             ops._save_state_doc(state_path, state_doc)
 
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc, tools=[])
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             uninstall_resp, _ = self._call(
@@ -1013,8 +1580,8 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertNotIn("mcp:test-server", state_result.get("enabled_capabilities") or [])
 
             _, runtime_doc_after = ops._load_runtime_doc()
-            installs = runtime_doc_after.get("installations") if isinstance(runtime_doc_after.get("installations"), dict) else {}
-            self.assertNotIn("mcp:test-server", installs)
+            _, install_after = ops._runtime_install_for_capability(runtime_doc_after, capability_id="mcp:test-server")
+            self.assertIsNone(install_after)
         finally:
             cleanup()
 
@@ -1039,13 +1606,10 @@ class TestCapabilityOps(unittest.TestCase):
             ops._save_state_doc(state_path, state_doc)
 
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [
+            artifact_id = self._seed_runtime_external_install(
+                ops,
+                runtime_doc,
+                tools=[
                     {
                         "name": "cccc_ext_deadbeef_a",
                         "real_tool_name": "a",
@@ -1065,9 +1629,16 @@ class TestCapabilityOps(unittest.TestCase):
                         "inputSchema": {"type": "object", "properties": {}, "required": []},
                     },
                 ],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            )
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             with patch.dict(os.environ, {"CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE": "2"}, clear=False):
@@ -1081,6 +1652,164 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertEqual(len(dynamic), 2)
             self.assertEqual(int(result.get("dynamic_tool_limit") or 0), 2)
             self.assertEqual(int(result.get("dynamic_tool_dropped") or 0), 1)
+        finally:
+            cleanup()
+
+    def test_group_block_by_foreman_revokes_binding_and_hides_tools(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "foreman-1", by="user")
+            self._add_actor(gid, "peer-1", by="user")
+            self._call(
+                "actor_update",
+                {
+                    "group_id": gid,
+                    "actor_id": "foreman-1",
+                    "by": "user",
+                    "patch": {"role": "foreman"},
+                },
+            )
+
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_enabled_capability(
+                state_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                scope="session",
+                capability_id="mcp:test-server",
+                enabled=True,
+                ttl_seconds=600,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc, tools=[])
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            block_resp, _ = self._call(
+                "capability_block",
+                {
+                    "group_id": gid,
+                    "by": "foreman-1",
+                    "actor_id": "foreman-1",
+                    "scope": "group",
+                    "capability_id": "mcp:test-server",
+                    "blocked": True,
+                    "reason": "side_effect_detected",
+                },
+            )
+            self.assertTrue(block_resp.ok, getattr(block_resp, "error", None))
+            block_result = block_resp.result if isinstance(block_resp.result, dict) else {}
+            self.assertTrue(bool(block_result.get("refresh_required")))
+            self.assertGreaterEqual(int(block_result.get("removed_bindings") or 0), 1)
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state_result = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertNotIn("mcp:test-server", state_result.get("enabled_capabilities") or [])
+            blocked_rows = state_result.get("blocked_capabilities") if isinstance(state_result.get("blocked_capabilities"), list) else []
+            blocked_ids = {str(item.get("capability_id") or "") for item in blocked_rows if isinstance(item, dict)}
+            self.assertIn("mcp:test-server", blocked_ids)
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": "mcp:test-server",
+                    "scope": "session",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+            enable_result = enable_resp.result if isinstance(enable_resp.result, dict) else {}
+            self.assertEqual(str(enable_result.get("reason") or ""), "blocked_by_group_policy")
+        finally:
+            cleanup()
+
+    def test_group_block_requires_foreman(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "foreman-1", by="user")
+            self._add_actor(gid, "peer-1", by="user")
+            self._call(
+                "actor_update",
+                {
+                    "group_id": gid,
+                    "actor_id": "foreman-1",
+                    "by": "user",
+                    "patch": {"role": "foreman"},
+                },
+            )
+            self._call(
+                "actor_update",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "user",
+                    "patch": {"role": "peer"},
+                },
+            )
+            resp, _ = self._call(
+                "capability_block",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "scope": "group",
+                    "capability_id": "mcp:test-server",
+                    "blocked": True,
+                },
+            )
+            self.assertFalse(resp.ok)
+            self.assertEqual(str(getattr(resp.error, "code", "")), "permission_denied")
+        finally:
+            cleanup()
+
+    def test_global_block_requires_user(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "foreman-1", by="user")
+            self._call(
+                "actor_update",
+                {
+                    "group_id": gid,
+                    "actor_id": "foreman-1",
+                    "by": "user",
+                    "patch": {"role": "foreman"},
+                },
+            )
+            resp, _ = self._call(
+                "capability_block",
+                {
+                    "group_id": gid,
+                    "by": "foreman-1",
+                    "actor_id": "foreman-1",
+                    "scope": "global",
+                    "capability_id": "mcp:test-server",
+                    "blocked": True,
+                },
+            )
+            self.assertFalse(resp.ok)
+            self.assertEqual(str(getattr(resp.error, "code", "")), "permission_denied")
         finally:
             cleanup()
 
@@ -1220,16 +1949,7 @@ class TestCapabilityOps(unittest.TestCase):
             ops._save_state_doc(state_path, state_doc)
 
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            self._seed_runtime_external_install(ops, runtime_doc, tools=[])
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             resp, _ = self._call(
@@ -1249,8 +1969,8 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(bool(result.get("removed_installation")))
 
             _, runtime_after = ops._load_runtime_doc()
-            installs = runtime_after.get("installations") if isinstance(runtime_after.get("installations"), dict) else {}
-            self.assertNotIn("mcp:test-server", installs)
+            _, install_after = ops._runtime_install_for_capability(runtime_after, capability_id="mcp:test-server")
+            self.assertIsNone(install_after)
         finally:
             cleanup()
 
@@ -1285,16 +2005,7 @@ class TestCapabilityOps(unittest.TestCase):
             ops._save_state_doc(state_path, state_doc)
 
             runtime_path, runtime_doc = ops._load_runtime_doc()
-            runtime_doc["installations"]["mcp:test-server"] = {
-                "capability_id": "mcp:test-server",
-                "state": "installed",
-                "installer": "remote_http",
-                "install_mode": "remote_only",
-                "invoker": {"type": "remote_http", "url": "http://127.0.0.1:9900/mcp"},
-                "tools": [],
-                "last_error": "",
-                "updated_at": "2026-02-25T00:00:00Z",
-            }
+            self._seed_runtime_external_install(ops, runtime_doc, tools=[])
             ops._save_runtime_doc(runtime_path, runtime_doc)
 
             resp, _ = self._call(
@@ -1318,8 +2029,8 @@ class TestCapabilityOps(unittest.TestCase):
             )
 
             _, runtime_after = ops._load_runtime_doc()
-            installs = runtime_after.get("installations") if isinstance(runtime_after.get("installations"), dict) else {}
-            self.assertIn("mcp:test-server", installs)
+            _, install_after = ops._runtime_install_for_capability(runtime_after, capability_id="mcp:test-server")
+            self.assertIsInstance(install_after, dict)
         finally:
             cleanup()
 
@@ -1428,6 +2139,276 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_search_remote_fallback_augments_skill_from_github(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            repo_search_payload = {
+                "total_count": 1,
+                "items": [
+                    {
+                        "full_name": "example/skill-repo",
+                        "description": "Playful generation skill",
+                        "default_branch": "main",
+                    }
+                ],
+            }
+            tree_payload = {
+                "tree": [
+                    {
+                        "path": "skills/fun-maker/SKILL.md",
+                        "type": "blob",
+                    }
+                ]
+            }
+
+            def _fake_github(url: str, *, headers=None, timeout=10.0):
+                if "/search/repositories" in str(url):
+                    if "agentskills" in str(url):
+                        return {"total_count": 0, "items": []}
+                    return repo_search_payload
+                if "/git/trees/" in str(url):
+                    return tree_payload
+                raise AssertionError(f"unexpected github URL: {url}")
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._http_get_json_obj",
+                side_effect=_fake_github,
+            ), patch.dict(
+                os.environ,
+                {
+                    "CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED": "0",
+                },
+                clear=False,
+            ):
+                resp, _ = self._call(
+                    "capability_search",
+                    {
+                        "group_id": gid,
+                        "actor_id": "peer-1",
+                        "by": "peer-1",
+                        "query": "fun",
+                        "kind": "skill",
+                        "include_external": True,
+                        "limit": 20,
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            row = next(
+                (
+                    x
+                    for x in items
+                    if isinstance(x, dict)
+                    and str(x.get("capability_id") or "").startswith("skill:github:example:skill-repo:")
+                ),
+                None,
+            )
+            self.assertIsNotNone(row)
+            item = row if isinstance(row, dict) else {}
+            self.assertEqual(str(item.get("source_id") or ""), "github_skills_remote")
+            self.assertEqual(str(item.get("enable_hint") or ""), "enable_now")
+            diag = result.get("search_diagnostics") if isinstance(result.get("search_diagnostics"), dict) else {}
+            self.assertTrue(bool(diag.get("remote_augmented")))
+            self.assertGreaterEqual(int(diag.get("remote_added") or 0), 1)
+
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            self.assertTrue(catalog_path.exists())
+            cached_ids = {
+                str(k or "")
+                for k in (
+                    catalog_doc.get("records").keys()
+                    if isinstance(catalog_doc.get("records"), dict)
+                    else []
+                )
+            }
+            self.assertTrue(any(cid.startswith("skill:github:example:skill-repo:") for cid in cached_ids))
+        finally:
+            cleanup()
+
+    def test_search_remote_skill_fallback_can_be_disabled(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            with patch.dict(
+                os.environ,
+                {
+                    "CCCC_CAPABILITY_SOURCE_GITHUB_SKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED": "0",
+                },
+                clear=False,
+            ), patch(
+                "cccc.daemon.ops.capability_ops._http_get_json_obj",
+                side_effect=AssertionError("github remote fallback must be disabled"),
+            ), patch(
+                "cccc.daemon.ops.capability_ops._http_get_text",
+                side_effect=AssertionError("skillsmp/clawhub remote fallback must be disabled"),
+            ):
+                resp, _ = self._call(
+                    "capability_search",
+                    {
+                        "group_id": gid,
+                        "actor_id": "peer-1",
+                        "by": "peer-1",
+                        "query": "creative",
+                        "kind": "skill",
+                        "include_external": True,
+                        "limit": 20,
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            diag = result.get("search_diagnostics") if isinstance(result.get("search_diagnostics"), dict) else {}
+            self.assertFalse(bool(diag.get("remote_augmented")))
+        finally:
+            cleanup()
+
+    def test_parse_skillsmp_proxy_search_markdown(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        markdown = (
+            '[claudeception.md 1.7k ### export claudeception from "blader/Claudeception" '
+            "Continuous learning skill 2026-02-21]"
+            "(https://skillsmp.com/skills/blader-claudeception-skill-md)\n"
+        )
+        rows = ops._parse_skillsmp_proxy_search_markdown(markdown, limit=10)
+        self.assertTrue(rows)
+        first = rows[0] if isinstance(rows[0], dict) else {}
+        self.assertEqual(str(first.get("source_id") or ""), "skillsmp_remote")
+        self.assertEqual(str(first.get("kind") or ""), "skill")
+        self.assertTrue(str(first.get("capability_id") or "").startswith("skill:skillsmp:"))
+        self.assertIn("Continuous learning skill", str(first.get("description_short") or ""))
+
+    def test_remote_search_skill_records_aggregates_sources(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        with patch(
+            "cccc.daemon.ops.capability_ops._remote_search_skillsmp_records",
+            return_value=[
+                {
+                    "capability_id": "skill:skillsmp:a",
+                    "kind": "skill",
+                    "name": "a",
+                    "description_short": "a",
+                    "source_id": "skillsmp_remote",
+                }
+            ],
+        ), patch(
+            "cccc.daemon.ops.capability_ops._remote_search_agentskills_records",
+            return_value=[
+                {
+                    "capability_id": "skill:agentskills:b",
+                    "kind": "skill",
+                    "name": "b",
+                    "description_short": "b",
+                    "source_id": "agentskills_remote",
+                }
+            ],
+        ), patch(
+            "cccc.daemon.ops.capability_ops._remote_search_clawhub_records",
+            return_value=[
+                {
+                    "capability_id": "skill:clawhub:d",
+                    "kind": "skill",
+                    "name": "d",
+                    "description_short": "d",
+                    "source_id": "clawhub_remote",
+                }
+            ],
+        ), patch(
+            "cccc.daemon.ops.capability_ops._remote_search_github_skill_records",
+            return_value=[
+                {
+                    "capability_id": "skill:github:c",
+                    "kind": "skill",
+                    "name": "c",
+                    "description_short": "c",
+                    "source_id": "github_skills_remote",
+                }
+            ],
+        ):
+            rows = ops._remote_search_skill_records(query="skill", limit=4)
+        self.assertEqual(len(rows), 4)
+        ids = {str(item.get("capability_id") or "") for item in rows if isinstance(item, dict)}
+        self.assertIn("skill:skillsmp:a", ids)
+        self.assertIn("skill:agentskills:b", ids)
+        self.assertIn("skill:clawhub:d", ids)
+        self.assertIn("skill:github:c", ids)
+
+    def test_remote_search_skill_records_honors_source_filter(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        with patch(
+            "cccc.daemon.ops.capability_ops._remote_search_skillsmp_records",
+            return_value=[
+                {
+                    "capability_id": "skill:skillsmp:a",
+                    "kind": "skill",
+                    "name": "a",
+                    "description_short": "a",
+                    "source_id": "skillsmp_remote",
+                }
+            ],
+        ), patch(
+            "cccc.daemon.ops.capability_ops._remote_search_agentskills_records",
+            return_value=[
+                {
+                    "capability_id": "skill:agentskills:b",
+                    "kind": "skill",
+                    "name": "b",
+                    "description_short": "b",
+                    "source_id": "agentskills_remote",
+                }
+            ],
+        ), patch(
+            "cccc.daemon.ops.capability_ops._remote_search_clawhub_records",
+            return_value=[
+                {
+                    "capability_id": "skill:clawhub:d",
+                    "kind": "skill",
+                    "name": "d",
+                    "description_short": "d",
+                    "source_id": "clawhub_remote",
+                }
+            ],
+        ), patch(
+            "cccc.daemon.ops.capability_ops._remote_search_github_skill_records",
+            return_value=[
+                {
+                    "capability_id": "skill:github:c",
+                    "kind": "skill",
+                    "name": "c",
+                    "description_short": "c",
+                    "source_id": "github_skills_remote",
+                }
+            ],
+        ):
+            rows = ops._remote_search_skill_records(query="skill", limit=5, source_filter="agentskills_remote")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(str(rows[0].get("source_id") or ""), "agentskills_remote")
+
+    def test_parse_clawhub_proxy_markdown(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        markdown = (
+            "[Humanizer/humanizer Remove AI tone from text by@foo 21.9k★]"
+            "(https://clawhub.ai/biostartechnology/humanizer)\n"
+        )
+        rows = ops._parse_clawhub_proxy_markdown(markdown, query="humanizer", limit=10)
+        self.assertTrue(rows)
+        first = rows[0] if isinstance(rows[0], dict) else {}
+        self.assertEqual(str(first.get("source_id") or ""), "clawhub_remote")
+        self.assertEqual(str(first.get("name") or ""), "humanizer")
+        self.assertTrue(str(first.get("capability_id") or "").startswith("skill:clawhub:"))
+
     def test_enable_can_fetch_missing_mcp_record_from_registry(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1473,7 +2454,6 @@ class TestCapabilityOps(unittest.TestCase):
                         "capability_id": "mcp:test-server",
                         "scope": "session",
                         "enabled": True,
-                        "approve": True,
                     },
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
