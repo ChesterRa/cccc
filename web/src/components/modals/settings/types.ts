@@ -10,7 +10,7 @@ export type GroupTabId =
   | "im"
   | "transcript"
   | "blueprint";
-export type GlobalTabId = "actorProfiles" | "remote" | "developer";
+export type GlobalTabId = "capabilities" | "actorProfiles" | "remote" | "developer";
 
 // Shared style class helpers
 export const inputClass = (isDark: boolean) =>

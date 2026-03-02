@@ -59,5 +59,6 @@
   "addFirstAgent": "最初のエージェント（Foreman）を追加",
   "addAgent": "エージェントを追加",
   "navigationTabs": "ナビゲーションタブ",
-  "chat": "チャット"
+  "chat": "チャット",
+  "panorama": "パノラマ"
 }

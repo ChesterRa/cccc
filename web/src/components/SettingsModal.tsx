@@ -13,6 +13,7 @@ import {
   GuidanceTab,
   GroupSpaceTab,
   BlueprintTab,
+  CapabilitiesTab,
   ActorProfilesTab,
   RemoteAccessTab,
   DeveloperTab,
@@ -51,7 +52,7 @@ export function SettingsModal({
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
   const [groupTab, setGroupTab] = useState<GroupTabId>("automation");
-  const [globalTab, setGlobalTab] = useState<GlobalTabId>("actorProfiles");
+  const [globalTab, setGlobalTab] = useState<GlobalTabId>("capabilities");
 
   // Automation + delivery settings state
   const [nudgeSeconds, setNudgeSeconds] = useState(300);
@@ -709,6 +710,7 @@ export function SettingsModal({
     { id: "blueprint", label: t("tabs.blueprint") },
   ];
   const globalTabs: { id: GlobalTabId; label: string }[] = [
+    { id: "capabilities", label: t("tabs.capabilities") },
     { id: "actorProfiles", label: t("tabs.actorProfiles") },
     { id: "remote", label: t("tabs.remote") },
     { id: "developer", label: t("tabs.developer") },
@@ -878,6 +880,14 @@ export function SettingsModal({
               )}
 
               {activeTab === "blueprint" && <BlueprintTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
+
+              {activeTab === "capabilities" && (
+                <CapabilitiesTab
+                  isDark={isDark}
+                  isActive={scope === "global" && activeTab === "capabilities"}
+                  groupId={groupId}
+                />
+              )}
 
               {activeTab === "actorProfiles" && (
                 <ActorProfilesTab

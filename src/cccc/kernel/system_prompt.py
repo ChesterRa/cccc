@@ -170,9 +170,18 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
         "- Keep Context fresh at key transitions (start/milestone/blocker/resume/done): update tasks + your agent state.",
         '- Agent-state minimum each update: focus + next_action + what_changed (and active_task_id when applicable).',
+        "- Fact-Goal gate: strategy/scope discussion first; implement only after explicit action intent.",
+        "- Planning gate (6D) for non-trivial changes: value/ROI, complexity load, feasibility, verifiability, risk/side-effects, reversibility.",
+        "- Todo discipline: track every concrete or implicit user ask as a runtime todo; keep parallel asks separate.",
+        "- Reconcile the full current approved scope before implementation; do not execute only the latest discussed part.",
+        "- Delivery rule: once implementation is approved, complete the agreed scope in one pass unless a real blocker stops progress.",
+        "- Completion rule (current approved scope): report each in-scope ask as done/pending/blocked(owner); do not claim full done with unresolved in-scope asks.",
+        "- Promote to shared cccc_task only for multi-actor, long-horizon, or user-explicit tracking.",
         "- Gap policy: info gap -> search evidence first (Context/PROJECT/memory/inbox, then web if allowed); capability gap -> use cccc_capability_use (or search then use).",
         "- If capability ops return refresh_required=true, relist/reconnect then retry.",
-        "- Detailed collaboration workflow lives in cccc_help (refresh when nudged).",
+        "- On capability install/enable failure, inspect diagnostics/resolution_plan first; escalate only for real user-side blockers (keys/permissions).",
+        "- Prefer simplification/removal over stacking fallback patches.",
+        "- Detailed collaboration workflow lives in cccc_help (refresh when needed).",
     ]
     memory_lines = _memory_policy_lines(group_id)
     if memory_lines:

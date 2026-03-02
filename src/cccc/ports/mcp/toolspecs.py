@@ -5,9 +5,9 @@ from __future__ import annotations
 from ...kernel.memory import MEMORY_KINDS, MEMORY_SOURCE_TYPES
 
 _CCCC_HELP_DESCRIPTION = (
-    "Load the effective CCCC collaboration playbook for this group "
-    "(role-aware sections + runtime quick-use hints). "
-    "Use when rules/workflow/capability routing are unclear."
+    "Load the effective collaboration playbook for this group "
+    "(role-aware, on-demand, with runtime quick-use hints). "
+    "Use when workflow or capability-routing details are unclear."
 )
 
 
@@ -212,6 +212,11 @@ MCP_TOOLS = [
                 "title": {"type": "string"},
                 "command": {"type": "array", "items": {"type": "string"}},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},
+                "capability_autoload": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Actor startup autoload capability ids (applies on actor start/restart).",
+                },
                 "profile_id": {"type": "string"},
             }
         ),
@@ -293,7 +298,11 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_capability_use",
-        "description": "One-step capability use: enable capability and optionally call a target tool.",
+        "description": (
+            "One-step capability use: enable capability and optionally call a target tool. "
+            "For skill:* capabilities this is runtime capsule activation (not full local skill package install). "
+            "If enable is not ready, inspect diagnostics/resolution_plan and resolve blockers before retry."
+        ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -394,7 +403,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_get",
-        "description": "Get context snapshot (vision/overview/tasks/presence).",
+        "description": "Get context snapshot (vision/overview/tasks/agents).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -437,7 +446,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_task",
-        "description": "Task hub tool: action=list|create|update|status|move|restore.",
+        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|status|move|restore. Use for multi-actor/long-horizon/user-tracked work.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -474,7 +483,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_agent",
-        "description": "Per-agent short-term context: action=update|clear. Keep focus/next_action/what_changed fresh at milestones, blockers, and progress updates.",
+        "description": "Per-agent short-term execution state: action=update|clear. Keep focus/next_action/what_changed fresh; when evidence/scope changes, update or restructure immediately (use pending_confirm in text fields when objective is unclear). Use blockers for execution impediments (task UI 'Blocked' projection source).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,

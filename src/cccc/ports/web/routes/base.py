@@ -135,6 +135,55 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             )
         return await ctx.daemon({"op": "capability_allowlist_reset", "args": {"by": str(by or "user")}})
 
+    @app.get("/api/v1/capabilities/overview")
+    async def capability_overview(
+        query: str = "",
+        limit: int = 400,
+        include_indexed: bool = True,
+    ) -> Dict[str, Any]:
+        """Get global capability overview (policy + blocked + recent-success + source states)."""
+        args = {
+            "query": str(query or ""),
+            "limit": int(limit or 400),
+            "include_indexed": bool(include_indexed),
+        }
+        return await ctx.daemon({"op": "capability_overview", "args": args})
+
+    @app.post("/api/v1/capabilities/block")
+    async def capability_block_global(request: Request) -> Dict[str, Any]:
+        """Global block/unblock capability (user only in Web)."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability block write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        capability_id = str(payload.get("capability_id") or "").strip()
+        group_id = str(payload.get("group_id") or "").strip()
+        if not capability_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_capability_id", "message": "missing capability_id"})
+        if not group_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "missing group_id"})
+        args = {
+            "group_id": group_id,
+            "by": str(payload.get("by") or "user").strip() or "user",
+            "actor_id": str(payload.get("actor_id") or payload.get("by") or "user").strip() or "user",
+            "capability_id": capability_id,
+            "scope": "global",
+            "blocked": bool(payload.get("blocked", True)),
+            "reason": str(payload.get("reason") or "").strip(),
+            "ttl_seconds": int(payload.get("ttl_seconds") or 0),
+        }
+        return await ctx.daemon({"op": "capability_block", "args": args})
+
     @app.put("/api/v1/observability")
     async def observability_update(req: ObservabilityUpdateRequest) -> Dict[str, Any]:
         """Update global observability settings (daemon-owned persistence)."""

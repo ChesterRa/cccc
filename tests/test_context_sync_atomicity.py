@@ -78,7 +78,7 @@ class TestContextSyncAtomicity(unittest.TestCase):
             ctx_resp, _ = self._call("context_get", {"group_id": group_id})
             self.assertTrue(ctx_resp.ok, getattr(ctx_resp, "error", None))
             agents = (
-                (ctx_resp.result or {}).get("presence", {}).get("agents")
+                (ctx_resp.result or {}).get("agents")
                 if isinstance(ctx_resp.result, dict)
                 else []
             )

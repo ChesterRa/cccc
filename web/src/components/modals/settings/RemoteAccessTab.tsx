@@ -93,6 +93,7 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
         setErr(t("remoteAccess.invalidPort"));
         return;
       }
+      const submittedToken = clearWebToken ? "" : String(webToken || "").trim();
       const resp = await api.updateRemoteAccessConfig({
         provider,
         mode,
@@ -100,7 +101,7 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
         webHost: String(webHost || "").trim(),
         webPort: nPort,
         webPublicUrl: String(webPublicUrl || "").trim(),
-        webToken: clearWebToken ? undefined : (String(webToken || "").trim() || undefined),
+        webToken: clearWebToken ? undefined : (submittedToken || undefined),
         clearWebToken,
       });
       if (!resp.ok) {
@@ -114,6 +115,12 @@ export function RemoteAccessTab({ isDark, isActive = true }: RemoteAccessTabProp
         setWebHost(String(ra.config?.web_host || ra.diagnostics?.web_host || "127.0.0.1"));
         setWebPort(String(ra.config?.web_port || ra.diagnostics?.web_port || 8848));
         setWebPublicUrl(String(ra.config?.web_public_url || ra.diagnostics?.web_public_url || ""));
+      }
+      // Sync token to browser auth cache so WebSocket/SSE connections include it
+      if (clearWebToken) {
+        api.clearAuthToken();
+      } else if (submittedToken) {
+        api.setAuthToken(submittedToken);
       }
       setWebToken("");
       setClearWebToken(false);

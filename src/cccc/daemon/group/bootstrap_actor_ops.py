@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Dict, Optional
 
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
@@ -35,6 +35,7 @@ def autostart_running_groups(
     throttle_reset_actor: Callable[[str, str], None],
     automation_on_resume: Callable[[Any], None],
     get_group_state: Callable[[Any], str],
+    resolve_linked_actor_before_start: Optional[Callable[[Any, str], Dict[str, Any]]] = None,
 ) -> None:
     base = home / "groups"
     if not base.exists():
@@ -65,6 +66,13 @@ def autostart_running_groups(
                 continue
             if not coerce_bool(actor.get("enabled"), default=True):
                 continue
+
+            if callable(resolve_linked_actor_before_start):
+                try:
+                    actor = resolve_linked_actor_before_start(group, actor_id)
+                except Exception as e:
+                    logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, e)
+                    continue
 
             runner_kind = str(actor.get("runner") or "pty").strip()
             effective_runner = effective_runner_kind(runner_kind)

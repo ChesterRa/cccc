@@ -53,6 +53,7 @@ def _sanitize_actors_for_agent(raw: Any) -> List[Dict[str, Any]]:
             "runner": a.get("runner"),
             "runtime": a.get("runtime"),
             "submit": a.get("submit"),
+            "capability_autoload": a.get("capability_autoload"),
             "unread_count": a.get("unread_count"),
             "updated_at": a.get("updated_at"),
             "created_at": a.get("created_at"),
@@ -109,7 +110,10 @@ def actor_profile_list(*, by: str) -> Dict[str, Any]:
 def actor_add(
     *, group_id: str, by: str, actor_id: str,
     runtime: str = "codex", runner: str = "pty", title: str = "",
-    command: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None, profile_id: str = ""
+    command: Optional[List[str]] = None,
+    env: Optional[Dict[str, str]] = None,
+    profile_id: str = "",
+    capability_autoload: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Add a new actor (foreman only). Role is auto-determined by position."""
     req_args: Dict[str, Any] = {
@@ -125,6 +129,8 @@ def actor_add(
     pid = str(profile_id or "").strip()
     if pid:
         req_args["profile_id"] = pid
+    if isinstance(capability_autoload, list):
+        req_args["capability_autoload"] = [str(x).strip() for x in capability_autoload if str(x or "").strip()]
     return _call_daemon_or_raise({
         "op": "actor_add",
         "args": req_args,

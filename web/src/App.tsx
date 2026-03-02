@@ -18,6 +18,7 @@ import { useGlobalEvents } from "./hooks/useGlobalEvents";
 import { useViewportHeight } from "./hooks/useViewportHeight";
 import { ActorTab } from "./pages/ActorTab";
 import { ChatTab } from "./pages/chat";
+import { PanoramaTab } from "./pages/PanoramaTab";
 import {
   useGroupStore,
   useUIStore,
@@ -210,7 +211,7 @@ export default function App() {
 
   // Keep visited actor tabs mounted (sticky) so their terminal sessions do not reconnect/replay on tab switches.
   useEffect(() => {
-    if (!activeTab || activeTab === "chat") return;
+    if (!activeTab || activeTab === "chat" || activeTab === "panorama") return;
     setMountedActorIds((prev) => (prev.includes(activeTab) ? prev : [...prev, activeTab]));
   }, [activeTab]);
 
@@ -279,7 +280,7 @@ export default function App() {
   }, [hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
 
   const renderedActorIds = useMemo(() => {
-    if (activeTab !== "chat" && !mountedActorIds.includes(activeTab)) {
+    if (activeTab !== "chat" && activeTab !== "panorama" && !mountedActorIds.includes(activeTab)) {
       return [...mountedActorIds, activeTab];
     }
     return mountedActorIds;
@@ -531,15 +532,32 @@ export default function App() {
               />
               </ErrorBoundary>
             </div>
+            {/* Panorama Tab */}
             <div
-              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" ? "invisible pointer-events-none" : ""}`}
-              aria-hidden={activeTab === "chat"}
+              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "panorama" ? "" : "invisible pointer-events-none"}`}
+              aria-hidden={activeTab !== "panorama"}
+            >
+              <ErrorBoundary>
+                <PanoramaTab
+                  agents={(groupContext?.agents || []).filter(
+                    (a) => actors.some((act) => act.id === a.id)
+                  )}
+                  actors={actors}
+                  tasks={groupContext?.active_tasks}
+                  isDark={isDark}
+                  groupId={selectedGroupId}
+                />
+              </ErrorBoundary>
+            </div>
+            <div
+              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" || activeTab === "panorama" ? "invisible pointer-events-none" : ""}`}
+              aria-hidden={activeTab === "chat" || activeTab === "panorama"}
             >
               {renderedActorIds.map((actorId) => {
                 const actor = actors.find((a) => a.id === actorId) || null;
-                const isVisible = activeTab === actorId && activeTab !== "chat";
-                const presence =
-                  (groupContext?.presence?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
+                const isVisible = activeTab === actorId && activeTab !== "chat" && activeTab !== "panorama";
+                const agentState =
+                  (groupContext?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
 
                 return (
                   <div key={actorId} className={isVisible ? "flex min-h-0 flex-col flex-1" : "hidden"}>
@@ -547,7 +565,7 @@ export default function App() {
                     <ActorTab
                       actor={actor}
                       groupId={selectedGroupId}
-                      presenceAgent={presence}
+                      agentState={agentState}
                       termEpoch={actor ? getTermEpoch(actor.id) : 0}
                       busy={busy}
                       isDark={isDark}

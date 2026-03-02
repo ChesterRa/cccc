@@ -539,26 +539,19 @@ class TestCapabilityOps(unittest.TestCase):
             {
                 "CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED": "1",
                 "CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED": "0",
-                "CCCC_CAPABILITY_SOURCE_AGENTSKILLS_VALIDATOR_ENABLED": "0",
             },
             clear=False,
         ), patch("cccc.daemon.ops.capability_ops._sync_mcp_registry_source", return_value=0), patch(
             "cccc.daemon.ops.capability_ops._sync_anthropic_skills_source",
             side_effect=AssertionError("anthropic source should be disabled"),
-        ), patch(
-            "cccc.daemon.ops.capability_ops._mark_agentskills_validator_state",
-            side_effect=AssertionError("agentskills validator should be disabled"),
         ):
             changed = ops._auto_sync_catalog(catalog)
 
         self.assertTrue(changed)
         sources = catalog.get("sources", {})
         anthropic = sources.get("anthropic_skills", {})
-        validator = sources.get("agentskills_validator", {})
         self.assertEqual(anthropic.get("sync_state"), "disabled")
-        self.assertEqual(validator.get("sync_state"), "disabled")
         self.assertEqual(anthropic.get("error"), "source_disabled_by_policy")
-        self.assertEqual(validator.get("error"), "source_disabled_by_policy")
 
     def test_sync_capability_catalog_once_saves_when_changed(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
@@ -687,6 +680,57 @@ class TestCapabilityOps(unittest.TestCase):
             dynamic = state.get("dynamic_tools") if isinstance(state.get("dynamic_tools"), list) else []
             names = {str(x.get("name") or "") for x in dynamic if isinstance(x, dict)}
             self.assertIn("cccc_ext_deadbeef_echo", names)
+        finally:
+            cleanup()
+
+    def test_external_enable_reports_degraded_install_state(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            catalog = ops._new_catalog_doc()
+            catalog["records"]["mcp:test-server"] = {
+                "capability_id": "mcp:test-server",
+                "kind": "mcp_toolpack",
+                "name": "test-server",
+                "qualification_status": "qualified",
+                "install_mode": "package",
+                "install_spec": {"registry_type": "npm", "identifier": "@example/mcp-server"},
+            }
+            installed = {
+                "state": "installed_degraded",
+                "installer": "npm_npx",
+                "install_mode": "package",
+                "invoker": {"type": "package_stdio", "command": ["npx", "-y", "@example/mcp-server"]},
+                "tools": [],
+                "last_error": "stdio mcp request timed out",
+                "last_error_code": "probe_timeout",
+                "updated_at": "2026-02-25T00:00:00Z",
+            }
+            with patch("cccc.daemon.ops.capability_ops._load_catalog_doc", return_value=(Path("/tmp/cat.json"), catalog)), patch(
+                "cccc.daemon.ops.capability_ops._install_external_capability",
+                return_value=installed,
+            ):
+                resp, _ = self._call(
+                    "capability_enable",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "capability_id": "mcp:test-server",
+                        "scope": "session",
+                        "enabled": True,
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertTrue(bool(result.get("degraded")))
+            self.assertEqual(str(result.get("install_state") or ""), "installed_degraded")
+            self.assertEqual(str(result.get("install_error_code") or ""), "probe_timeout")
+            self.assertIn("tools_not_listed_call_capability_use", str(result.get("degraded_call_hint") or ""))
         finally:
             cleanup()
 
@@ -986,13 +1030,66 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
             self.assertEqual(str(result.get("state") or ""), "failed")
-            self.assertIn(str(result.get("reason") or ""), {"install_failed:probe_failed", "install_failed"})
+            self.assertEqual(str(result.get("reason") or ""), "install_failed:probe_failed")
+            self.assertEqual(str(result.get("install_error_code") or ""), "probe_failed")
+            self.assertTrue(bool(result.get("retryable")))
+            diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), list) else []
+            self.assertTrue(diagnostics)
+            first_diag = diagnostics[0] if isinstance(diagnostics[0], dict) else {}
+            self.assertEqual(str(first_diag.get("code") or ""), "probe_failed")
 
             _, runtime_doc = ops._load_runtime_doc()
             _, entry = ops._runtime_install_for_capability(runtime_doc, capability_id="mcp:test-server")
             self.assertIsInstance(entry, dict)
             self.assertEqual(str(entry.get("state") or ""), "install_failed")
             self.assertIn("probe_failed", str(entry.get("last_error") or ""))
+        finally:
+            cleanup()
+
+    def test_external_install_failure_classifies_runtime_dependency_missing(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            catalog_doc["records"]["mcp:test-server"] = {
+                "capability_id": "mcp:test-server",
+                "kind": "mcp_toolpack",
+                "name": "test-server",
+                "qualification_status": "qualified",
+                "install_mode": "package",
+                "install_spec": {"registry_type": "npm", "identifier": "@example/mcp"},
+            }
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._install_external_capability",
+                side_effect=RuntimeError("stdio mcp exited with code 1: Error: Cannot find module 'foo'"),
+            ):
+                resp, _ = self._call(
+                    "capability_enable",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "capability_id": "mcp:test-server",
+                        "scope": "session",
+                        "enabled": True,
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("state") or ""), "failed")
+            self.assertEqual(str(result.get("reason") or ""), "install_failed:runtime_dependency_missing")
+            self.assertEqual(str(result.get("install_error_code") or ""), "runtime_dependency_missing")
+            self.assertFalse(bool(result.get("retryable")))
+            diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), list) else []
+            self.assertTrue(diagnostics)
+            first_diag = diagnostics[0] if isinstance(diagnostics[0], dict) else {}
+            self.assertEqual(str(first_diag.get("code") or ""), "runtime_dependency_missing")
         finally:
             cleanup()
 
@@ -1068,6 +1165,67 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertFalse(resp.ok)
             self.assertEqual((resp.error.code if resp.error else ""), "capability_tool_not_found")
+        finally:
+            cleanup()
+
+    def test_capability_tool_call_accepts_hyphen_underscore_alias(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_enabled_capability(
+                state_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                scope="session",
+                capability_id="mcp:test-server",
+                enabled=True,
+                ttl_seconds=600,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            artifact_id = self._seed_runtime_external_install(
+                ops,
+                runtime_doc,
+                capability_id="mcp:test-server",
+                synthetic_tool_name="cccc_ext_deadbeef_resolve_library_id",
+                real_tool_name="resolve_library_id",
+                state="installed",
+            )
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._invoke_installed_external_tool_with_aliases",
+                return_value=({"ok": True}, "resolve_library_id"),
+            ):
+                resp, _ = self._call(
+                    "capability_tool_call",
+                    {
+                        "group_id": gid,
+                        "actor_id": "peer-1",
+                        "by": "peer-1",
+                        "capability_id": "mcp:test-server",
+                        "tool_name": "resolve-library-id",
+                        "arguments": {"libraryName": "cccc"},
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("real_tool_name") or ""), "resolve_library_id")
         finally:
             cleanup()
 
@@ -1585,6 +1743,94 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_uninstall_isolated_to_target_group(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid_a = self._create_group(title="cap-uninstall-a")
+            gid_b = self._create_group(title="cap-uninstall-b")
+            self._add_actor(gid_a, "peer-1", by="user")
+            self._add_actor(gid_b, "peer-1", by="user")
+
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_enabled_capability(
+                state_doc,
+                group_id=gid_a,
+                actor_id="peer-1",
+                scope="session",
+                capability_id="mcp:test-server",
+                enabled=True,
+                ttl_seconds=600,
+            )
+            ops._set_enabled_capability(
+                state_doc,
+                group_id=gid_b,
+                actor_id="peer-1",
+                scope="session",
+                capability_id="mcp:test-server",
+                enabled=True,
+                ttl_seconds=600,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            artifact_id = self._seed_runtime_external_install(ops, runtime_doc, capability_id="mcp:test-server")
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid_a,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
+            ops._set_runtime_actor_binding(
+                runtime_doc,
+                group_id=gid_b,
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                artifact_id=artifact_id,
+                state="ready",
+                last_error="",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            uninstall_resp, _ = self._call(
+                "capability_uninstall",
+                {
+                    "group_id": gid_a,
+                    "by": "user",
+                    "actor_id": "peer-1",
+                    "capability_id": "mcp:test-server",
+                    "reason": "group-a cleanup",
+                },
+            )
+            self.assertTrue(uninstall_resp.ok, getattr(uninstall_resp, "error", None))
+            uninstall_result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
+            self.assertFalse(bool(uninstall_result.get("removed_installation")))
+            self.assertEqual(
+                str(uninstall_result.get("cleanup_skipped_reason") or ""),
+                "cleanup_skipped_capability_still_bound",
+            )
+
+            _, state_doc_after = ops._load_state_doc()
+            enabled_a, _ = ops._collect_enabled_capabilities(state_doc_after, group_id=gid_a, actor_id="peer-1")
+            enabled_b, _ = ops._collect_enabled_capabilities(state_doc_after, group_id=gid_b, actor_id="peer-1")
+            self.assertNotIn("mcp:test-server", set(enabled_a))
+            self.assertIn("mcp:test-server", set(enabled_b))
+
+            state_b_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid_b, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_b_resp.ok, getattr(state_b_resp, "error", None))
+            state_b = state_b_resp.result if isinstance(state_b_resp.result, dict) else {}
+            visible_b = state_b.get("visible_tools") if isinstance(state_b.get("visible_tools"), list) else []
+            self.assertIn("cccc_ext_deadbeef_echo", visible_b)
+        finally:
+            cleanup()
+
     def test_capability_state_dynamic_tools_respects_visibility_limit(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -1813,6 +2059,115 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_overview_returns_builtin_items_and_sources(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": "",
+                    "limit": 200,
+                    "include_indexed": True,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            self.assertTrue(items)
+            ids = {str(item.get("capability_id") or "") for item in items if isinstance(item, dict)}
+            self.assertIn("pack:group-runtime", ids)
+            sources = result.get("sources") if isinstance(result.get("sources"), dict) else {}
+            self.assertIn("mcp_registry_official", sources)
+        finally:
+            cleanup()
+
+    def test_capability_overview_includes_recent_success_entry(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            ops._record_runtime_recent_success(
+                runtime_doc,
+                capability_id="mcp:io.github.upstash/context7",
+                group_id="g_recent",
+                actor_id="peer-1",
+                action="enable",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": "context7",
+                    "limit": 50,
+                    "include_indexed": True,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            target = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("capability_id") or "") == "mcp:io.github.upstash/context7"
+                ),
+                {},
+            )
+            self.assertTrue(target)
+            recent = target.get("recent_success") if isinstance(target.get("recent_success"), dict) else {}
+            self.assertEqual(int(recent.get("success_count") or 0), 1)
+            self.assertEqual(str(recent.get("last_action") or ""), "enable")
+        finally:
+            cleanup()
+
+    def test_capability_overview_marks_global_blocked_entries(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            block_resp, _ = self._call(
+                "capability_block",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "scope": "global",
+                    "capability_id": "pack:space",
+                    "blocked": True,
+                    "reason": "manual_block_test",
+                },
+            )
+            self.assertTrue(block_resp.ok, getattr(block_resp, "error", None))
+
+            overview_resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": "pack:space",
+                    "limit": 50,
+                    "include_indexed": True,
+                },
+            )
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            result = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            target = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "pack:space"
+                ),
+                {},
+            )
+            self.assertTrue(target)
+            self.assertTrue(bool(target.get("blocked_global")))
+            blocked = result.get("blocked_capabilities") if isinstance(result.get("blocked_capabilities"), list) else []
+            blocked_ids = {str(item.get("capability_id") or "") for item in blocked if isinstance(item, dict)}
+            self.assertIn("pack:space", blocked_ids)
+        finally:
+            cleanup()
+
     def test_skill_enable_session_reports_active_skill_and_applies_dependencies(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -1868,9 +2223,9 @@ class TestCapabilityOps(unittest.TestCase):
             active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
             active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
             self.assertIn("skill:anthropic:write-pr", active_ids)
-            pinned_skills = state.get("pinned_skills") if isinstance(state.get("pinned_skills"), list) else []
-            pinned_ids = {str(item.get("capability_id") or "") for item in pinned_skills if isinstance(item, dict)}
-            self.assertNotIn("skill:anthropic:write-pr", pinned_ids)
+            autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
+            autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
+            self.assertNotIn("skill:anthropic:write-pr", autoload_ids)
             binding_states = (
                 state.get("external_binding_states") if isinstance(state.get("external_binding_states"), dict) else {}
             )
@@ -1879,7 +2234,7 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_skill_actor_scope_is_reported_as_pinned(self) -> None:
+    def test_skill_actor_scope_enable_is_active_not_autoload(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
@@ -1922,9 +2277,64 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
             state = state_resp.result if isinstance(state_resp.result, dict) else {}
-            pinned_skills = state.get("pinned_skills") if isinstance(state.get("pinned_skills"), list) else []
-            pinned_ids = {str(item.get("capability_id") or "") for item in pinned_skills if isinstance(item, dict)}
-            self.assertIn("skill:anthropic:triage", pinned_ids)
+            autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
+            autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
+            # actor-scope enable does not mutate startup autoload config.
+            self.assertNotIn("skill:anthropic:triage", autoload_ids)
+            active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
+            self.assertIn("skill:anthropic:triage", active_ids)
+        finally:
+            cleanup()
+
+    def test_actor_autoload_skill_is_reported_in_autoload_skills(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "capability_autoload": ["skill:anthropic:triage"],
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            catalog_doc["records"]["skill:anthropic:triage"] = {
+                "capability_id": "skill:anthropic:triage",
+                "kind": "skill",
+                "name": "triage",
+                "description_short": "Issue triage checklist",
+                "source_id": "anthropic_skills",
+                "source_tier": "tier1",
+                "trust_tier": "tier1",
+                "qualification_status": "qualified",
+                "enable_supported": True,
+            }
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            actor_autoload = (
+                state.get("actor_autoload_capabilities")
+                if isinstance(state.get("actor_autoload_capabilities"), list)
+                else []
+            )
+            self.assertIn("skill:anthropic:triage", actor_autoload)
+            autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
+            autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
+            self.assertIn("skill:anthropic:triage", autoload_ids)
         finally:
             cleanup()
 
@@ -2085,6 +2495,15 @@ class TestCapabilityOps(unittest.TestCase):
             with patch(
                 "cccc.daemon.ops.capability_ops._http_get_json_obj",
                 return_value=registry_payload,
+            ), patch.dict(
+                os.environ,
+                {
+                    "CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED": "0",
+                },
+                clear=False,
             ):
                 resp, _ = self._call(
                     "capability_search",
@@ -2139,49 +2558,52 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_search_remote_fallback_augments_skill_from_github(self) -> None:
+    def test_search_remote_fallback_augments_skill_from_openclaw(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
-            repo_search_payload = {
-                "total_count": 1,
-                "items": [
-                    {
-                        "full_name": "example/skill-repo",
-                        "description": "Playful generation skill",
-                        "default_branch": "main",
-                    }
-                ],
-            }
             tree_payload = {
                 "tree": [
                     {
-                        "path": "skills/fun-maker/SKILL.md",
+                        "path": "skills/demo/rareskilltoken/SKILL.md",
                         "type": "blob",
                     }
                 ]
             }
+            openclaw_markdown = (
+                "---\n"
+                "name: rareskilltoken\n"
+                "description: Unique OpenClaw test skill\n"
+                "---\n"
+                "Workflow notes\n"
+            )
 
-            def _fake_github(url: str, *, headers=None, timeout=10.0):
-                if "/search/repositories" in str(url):
-                    if "agentskills" in str(url):
-                        return {"total_count": 0, "items": []}
-                    return repo_search_payload
+            def _fake_github_json(url: str, *, headers=None, timeout=10.0):
                 if "/git/trees/" in str(url):
                     return tree_payload
                 raise AssertionError(f"unexpected github URL: {url}")
 
             with patch(
                 "cccc.daemon.ops.capability_ops._http_get_json_obj",
-                side_effect=_fake_github,
+                side_effect=_fake_github_json,
+            ), patch(
+                "cccc.daemon.ops.capability_ops._http_get_text",
+                return_value=openclaw_markdown,
+            ), patch.dict(
+                "cccc.daemon.ops.capability_ops._OPENCLAW_TREE_CACHE",
+                {"fetched_at": 0.0, "paths": []},
+                clear=True,
             ), patch.dict(
                 os.environ,
                 {
-                    "CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED": "1",
                     "CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_OPENCLAW_FRONTMATTER_FETCH_MAX": "1",
                 },
                 clear=False,
             ):
@@ -2191,7 +2613,7 @@ class TestCapabilityOps(unittest.TestCase):
                         "group_id": gid,
                         "actor_id": "peer-1",
                         "by": "peer-1",
-                        "query": "fun",
+                        "query": "rareskilltoken",
                         "kind": "skill",
                         "include_external": True,
                         "limit": 20,
@@ -2205,13 +2627,13 @@ class TestCapabilityOps(unittest.TestCase):
                     x
                     for x in items
                     if isinstance(x, dict)
-                    and str(x.get("capability_id") or "").startswith("skill:github:example:skill-repo:")
+                    and str(x.get("capability_id") or "").startswith("skill:openclaw:rareskilltoken-")
                 ),
                 None,
             )
             self.assertIsNotNone(row)
             item = row if isinstance(row, dict) else {}
-            self.assertEqual(str(item.get("source_id") or ""), "github_skills_remote")
+            self.assertEqual(str(item.get("source_id") or ""), "openclaw_skills_remote")
             self.assertEqual(str(item.get("enable_hint") or ""), "enable_now")
             diag = result.get("search_diagnostics") if isinstance(result.get("search_diagnostics"), dict) else {}
             self.assertTrue(bool(diag.get("remote_augmented")))
@@ -2227,7 +2649,7 @@ class TestCapabilityOps(unittest.TestCase):
                     else []
                 )
             }
-            self.assertTrue(any(cid.startswith("skill:github:example:skill-repo:") for cid in cached_ids))
+            self.assertTrue(any(cid.startswith("skill:openclaw:rareskilltoken-") for cid in cached_ids))
         finally:
             cleanup()
 
@@ -2239,18 +2661,18 @@ class TestCapabilityOps(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "CCCC_CAPABILITY_SOURCE_GITHUB_SKILLS_REMOTE_ENABLED": "0",
-                    "CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED": "0",
                     "CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED": "0",
                     "CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED": "0",
                 },
                 clear=False,
             ), patch(
                 "cccc.daemon.ops.capability_ops._http_get_json_obj",
-                side_effect=AssertionError("github remote fallback must be disabled"),
+                side_effect=AssertionError("openclaw remote fallback must be disabled"),
             ), patch(
                 "cccc.daemon.ops.capability_ops._http_get_text",
-                side_effect=AssertionError("skillsmp/clawhub remote fallback must be disabled"),
+                side_effect=AssertionError("skillsmp/clawhub/clawskills remote fallback must be disabled"),
             ):
                 resp, _ = self._call(
                     "capability_search",
@@ -2302,14 +2724,14 @@ class TestCapabilityOps(unittest.TestCase):
                 }
             ],
         ), patch(
-            "cccc.daemon.ops.capability_ops._remote_search_agentskills_records",
+            "cccc.daemon.ops.capability_ops._remote_search_openclaw_skill_records",
             return_value=[
                 {
-                    "capability_id": "skill:agentskills:b",
+                    "capability_id": "skill:openclaw:b",
                     "kind": "skill",
                     "name": "b",
                     "description_short": "b",
-                    "source_id": "agentskills_remote",
+                    "source_id": "openclaw_skills_remote",
                 }
             ],
         ), patch(
@@ -2324,14 +2746,14 @@ class TestCapabilityOps(unittest.TestCase):
                 }
             ],
         ), patch(
-            "cccc.daemon.ops.capability_ops._remote_search_github_skill_records",
+            "cccc.daemon.ops.capability_ops._remote_search_clawskills_records",
             return_value=[
                 {
-                    "capability_id": "skill:github:c",
+                    "capability_id": "skill:clawskills:c",
                     "kind": "skill",
                     "name": "c",
                     "description_short": "c",
-                    "source_id": "github_skills_remote",
+                    "source_id": "clawskills_remote",
                 }
             ],
         ):
@@ -2339,9 +2761,9 @@ class TestCapabilityOps(unittest.TestCase):
         self.assertEqual(len(rows), 4)
         ids = {str(item.get("capability_id") or "") for item in rows if isinstance(item, dict)}
         self.assertIn("skill:skillsmp:a", ids)
-        self.assertIn("skill:agentskills:b", ids)
+        self.assertIn("skill:openclaw:b", ids)
         self.assertIn("skill:clawhub:d", ids)
-        self.assertIn("skill:github:c", ids)
+        self.assertIn("skill:clawskills:c", ids)
 
     def test_remote_search_skill_records_honors_source_filter(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
@@ -2358,14 +2780,14 @@ class TestCapabilityOps(unittest.TestCase):
                 }
             ],
         ), patch(
-            "cccc.daemon.ops.capability_ops._remote_search_agentskills_records",
+            "cccc.daemon.ops.capability_ops._remote_search_openclaw_skill_records",
             return_value=[
                 {
-                    "capability_id": "skill:agentskills:b",
+                    "capability_id": "skill:openclaw:b",
                     "kind": "skill",
                     "name": "b",
                     "description_short": "b",
-                    "source_id": "agentskills_remote",
+                    "source_id": "openclaw_skills_remote",
                 }
             ],
         ), patch(
@@ -2380,34 +2802,56 @@ class TestCapabilityOps(unittest.TestCase):
                 }
             ],
         ), patch(
-            "cccc.daemon.ops.capability_ops._remote_search_github_skill_records",
+            "cccc.daemon.ops.capability_ops._remote_search_clawskills_records",
             return_value=[
                 {
-                    "capability_id": "skill:github:c",
+                    "capability_id": "skill:clawskills:c",
                     "kind": "skill",
                     "name": "c",
                     "description_short": "c",
-                    "source_id": "github_skills_remote",
+                    "source_id": "clawskills_remote",
                 }
             ],
         ):
-            rows = ops._remote_search_skill_records(query="skill", limit=5, source_filter="agentskills_remote")
+            rows = ops._remote_search_skill_records(query="skill", limit=5, source_filter="openclaw_skills_remote")
         self.assertEqual(len(rows), 1)
-        self.assertEqual(str(rows[0].get("source_id") or ""), "agentskills_remote")
+        self.assertEqual(str(rows[0].get("source_id") or ""), "openclaw_skills_remote")
 
-    def test_parse_clawhub_proxy_markdown(self) -> None:
+    def test_parse_clawskills_data_js(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
-        markdown = (
-            "[Humanizer/humanizer Remove AI tone from text by@foo 21.9k★]"
-            "(https://clawhub.ai/biostartechnology/humanizer)\n"
+        script = (
+            "// Auto-generated from awesome-openclaw-skills README.md\n"
+            "var SKILLS_DATA = [\n"
+            "  {name:'humanizer',desc:\"Remove AI tone from text\",category:'Writing',slug:'humanizer',author:'biostartechnology'},\n"
+            "  {name:'foo',desc:\"bar\",category:'Misc',slug:'foo',author:'alice'}\n"
+            "];\n"
         )
-        rows = ops._parse_clawhub_proxy_markdown(markdown, query="humanizer", limit=10)
+        rows = ops._parse_clawskills_data_js(script=script, query="humanizer", limit=10)
         self.assertTrue(rows)
         first = rows[0] if isinstance(rows[0], dict) else {}
-        self.assertEqual(str(first.get("source_id") or ""), "clawhub_remote")
+        self.assertEqual(str(first.get("source_id") or ""), "clawskills_remote")
         self.assertEqual(str(first.get("name") or ""), "humanizer")
-        self.assertTrue(str(first.get("capability_id") or "").startswith("skill:clawhub:"))
+        self.assertTrue(str(first.get("capability_id") or "").startswith("skill:clawskills:"))
+
+    def test_clawhub_item_to_record(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        record = ops._clawhub_item_to_record(
+            {
+                "slug": "humanizer",
+                "displayName": "Humanizer",
+                "summary": "Remove AI tone from text",
+                "latestVersion": {"version": "1.2.3"},
+            },
+            now_iso="2026-02-28T00:00:00Z",
+        )
+        self.assertIsInstance(record, dict)
+        row = record if isinstance(record, dict) else {}
+        self.assertEqual(str(row.get("source_id") or ""), "clawhub_remote")
+        self.assertEqual(str(row.get("name") or ""), "humanizer")
+        self.assertEqual(str(row.get("source_record_version") or ""), "1.2.3")
+        self.assertTrue(str(row.get("capability_id") or "").startswith("skill:clawhub:"))
 
     def test_enable_can_fetch_missing_mcp_record_from_registry(self) -> None:
         _, cleanup = self._with_home()
@@ -2459,6 +2903,336 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
             self.assertEqual(str(result.get("state") or ""), "ready")
+        finally:
+            cleanup()
+
+    def test_supported_external_install_record_accepts_pypi_and_oci(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        supported_pypi, reason_pypi = ops._supported_external_install_record(
+            {
+                "install_mode": "package",
+                "install_spec": {
+                    "registry_type": "pypi",
+                    "identifier": "example-mcp",
+                    "version": "1.2.3",
+                    "runtime_hint": "uvx",
+                },
+            }
+        )
+        self.assertTrue(supported_pypi, reason_pypi)
+        self.assertEqual(reason_pypi, "")
+
+        supported_oci, reason_oci = ops._supported_external_install_record(
+            {
+                "install_mode": "package",
+                "install_spec": {
+                    "registry_type": "oci",
+                    "identifier": "ghcr.io/example/mcp:0.1.0",
+                    "runtime_hint": "docker",
+                },
+            }
+        )
+        self.assertTrue(supported_oci, reason_oci)
+        self.assertEqual(reason_oci, "")
+
+        supported_alias_python, reason_alias_python = ops._supported_external_install_record(
+            {
+                "install_mode": "package",
+                "install_spec": {
+                    "registry_type": "python",
+                    "identifier": "example-mcp",
+                    "runtime_hint": "pipx",
+                },
+            }
+        )
+        self.assertTrue(supported_alias_python, reason_alias_python)
+        self.assertEqual(reason_alias_python, "")
+
+        supported_alias_docker, reason_alias_docker = ops._supported_external_install_record(
+            {
+                "install_mode": "package",
+                "install_spec": {
+                    "registry_type": "docker",
+                    "identifier": "ghcr.io/example/mcp:0.1.0",
+                },
+            }
+        )
+        self.assertTrue(supported_alias_docker, reason_alias_docker)
+        self.assertEqual(reason_alias_docker, "")
+
+    def test_install_external_capability_pypi_prefers_uvx(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "pypi",
+                "identifier": "realtimex-browser-use",
+                "version": "0.7.10",
+                "runtime_hint": "uvx",
+                "runtime_arguments": [{"type": "positional", "value": "realtimex-browser-use[cli]@0.7.10"}],
+                "package_arguments": [{"type": "positional", "value": "--mcp"}],
+            },
+        }
+
+        with patch(
+            "cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip",
+            return_value=[
+                {"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "search"}]}},
+            ],
+        ) as probe:
+            install = ops._install_external_capability(rec, capability_id="mcp:io.github.therealtimex/browser-use")
+
+        self.assertEqual(str(install.get("installer") or ""), "pypi_uvx")
+        invoker = install.get("invoker") if isinstance(install.get("invoker"), dict) else {}
+        self.assertEqual(str(invoker.get("type") or ""), "package_stdio")
+        command = invoker.get("command") if isinstance(invoker.get("command"), list) else []
+        self.assertTrue(command and str(command[0]) == "uvx")
+        self.assertIn("--mcp", [str(x) for x in command])
+        called_cmd = probe.call_args[0][0]
+        self.assertTrue(isinstance(called_cmd, list) and called_cmd and str(called_cmd[0]) == "uvx")
+
+    def test_install_external_capability_oci_builds_container_command(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "oci",
+                "identifier": "ghcr.io/github/github-mcp-server:0.31.0",
+                "runtime_hint": "docker",
+                "runtime_arguments": [
+                    {"type": "named", "name": "-e", "value": "GITHUB_PERSONAL_ACCESS_TOKEN={token}"}
+                ],
+                "required_env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+            },
+        }
+
+        with patch.dict(os.environ, {"GITHUB_PERSONAL_ACCESS_TOKEN": "dummy-token"}, clear=False), patch(
+            "cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip",
+            return_value=[
+                {"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "create_issue"}]}},
+            ],
+        ) as probe:
+            install = ops._install_external_capability(rec, capability_id="mcp:io.github.github/github-mcp-server")
+
+        self.assertEqual(str(install.get("installer") or ""), "oci_docker")
+        invoker = install.get("invoker") if isinstance(install.get("invoker"), dict) else {}
+        command = invoker.get("command") if isinstance(invoker.get("command"), list) else []
+        self.assertGreaterEqual(len(command), 6)
+        self.assertEqual(str(command[0]), "docker")
+        self.assertEqual(str(command[1]), "run")
+        self.assertIn("ghcr.io/github/github-mcp-server:0.31.0", [str(x) for x in command])
+        self.assertIn("GITHUB_PERSONAL_ACCESS_TOKEN", [str(x) for x in command])
+        called_cmd = probe.call_args[0][0]
+        self.assertTrue(isinstance(called_cmd, list) and called_cmd and str(called_cmd[0]) == "docker")
+
+    def test_install_external_capability_fails_fast_when_required_env_missing(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "npm",
+                "identifier": "@brave/brave-search-mcp-server",
+                "version": "2.0.75",
+                "required_env": ["BRAVE_API_KEY"],
+            },
+        }
+        with patch.dict(os.environ, {"BRAVE_API_KEY": ""}, clear=False):
+            with self.assertRaises(ValueError) as ctx:
+                ops._install_external_capability(rec, capability_id="mcp:io.github.brave/brave-search-mcp-server")
+        self.assertIn("missing_required_env:BRAVE_API_KEY", str(ctx.exception))
+
+    def test_install_external_capability_package_falls_back_to_next_runner(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "pypi",
+                "identifier": "demo-mcp",
+                "version": "1.0.0",
+                "runtime_hint": "auto",
+            },
+        }
+
+        def _roundtrip(cmd, requests, *, timeout_s):  # type: ignore[no-untyped-def]
+            if isinstance(cmd, list) and cmd and str(cmd[0]) == "uvx":
+                raise RuntimeError("uvx failed")
+            return [{"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "demo"}]}}]
+
+        with patch("cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip", side_effect=_roundtrip):
+            install = ops._install_external_capability(rec, capability_id="mcp:demo/runner-fallback")
+
+        self.assertEqual(str(install.get("installer") or ""), "pypi_pipx")
+        invoker = install.get("invoker") if isinstance(install.get("invoker"), dict) else {}
+        command = invoker.get("command") if isinstance(invoker.get("command"), list) else []
+        self.assertTrue(command and str(command[0]) == "pipx")
+
+    def test_install_external_capability_npm_retries_with_safe_env_flags(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "npm",
+                "identifier": "@example/mcp-server",
+            },
+        }
+
+        call_count = {"n": 0}
+
+        def _roundtrip(cmd, requests, *, timeout_s, env_override=None):  # type: ignore[no-untyped-def]
+            call_count["n"] += 1
+            if not env_override:
+                raise RuntimeError("stdio mcp exited with code 1: Error: Cannot find module 'puppeteer'")
+            return [{"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "demo"}]}}]
+
+        with patch("cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip", side_effect=_roundtrip):
+            install = ops._install_external_capability(rec, capability_id="mcp:example/npm-autofix")
+
+        self.assertEqual(str(install.get("state") or ""), "installed")
+        self.assertEqual(str(install.get("installer") or ""), "npm_npx")
+        invoker = install.get("invoker") if isinstance(install.get("invoker"), dict) else {}
+        self.assertEqual(str(invoker.get("type") or ""), "package_stdio")
+        self.assertIn("env", invoker)
+        env = invoker.get("env") if isinstance(invoker.get("env"), dict) else {}
+        self.assertEqual(str(env.get("PUPPETEER_SKIP_DOWNLOAD") or ""), "1")
+        self.assertGreaterEqual(call_count["n"], 2)
+
+    def test_install_external_capability_npm_falls_back_to_unpinned_version(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "npm",
+                "identifier": "@example/mcp-server",
+                "version": "1.0.0",
+            },
+        }
+
+        def _roundtrip(cmd, requests, *, timeout_s, env_override=None):  # type: ignore[no-untyped-def]
+            token = " ".join(str(x) for x in cmd)
+            if "@example/mcp-server@1.0.0" in token:
+                raise RuntimeError("stdio mcp exited with code 1: Error: Cannot find module 'broken-version'")
+            return [{"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "demo"}]}}]
+
+        with patch("cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip", side_effect=_roundtrip):
+            install = ops._install_external_capability(rec, capability_id="mcp:example/npm-unpinned-fallback")
+
+        self.assertEqual(str(install.get("state") or ""), "installed")
+        invoker = install.get("invoker") if isinstance(install.get("invoker"), dict) else {}
+        command = invoker.get("command") if isinstance(invoker.get("command"), list) else []
+        cmd_token = " ".join(str(x) for x in command)
+        self.assertIn("@example/mcp-server", cmd_token)
+        self.assertNotIn("@example/mcp-server@1.0.0", cmd_token)
+
+    def test_install_external_capability_degrades_when_probe_times_out(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        rec = {
+            "install_mode": "package",
+            "install_spec": {
+                "registry_type": "npm",
+                "identifier": "@example/mcp-server",
+                "runtime_hint": "node",
+            },
+        }
+
+        with patch("cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip", side_effect=TimeoutError("stdio mcp request timed out")), patch(
+            "cccc.daemon.ops.capability_ops._choose_available_command",
+            return_value=[["npx", "-y", "@example/mcp-server"]],
+        ):
+            install = ops._install_external_capability(rec, capability_id="mcp:example/timeout")
+
+            self.assertEqual(str(install.get("state") or ""), "installed_degraded")
+            self.assertEqual(str(install.get("installer") or ""), "npm_npx")
+            invoker = install.get("invoker") if isinstance(install.get("invoker"), dict) else {}
+            self.assertEqual(str(invoker.get("type") or ""), "package_stdio")
+            command = invoker.get("command") if isinstance(invoker.get("command"), list) else []
+            self.assertTrue(command and str(command[0]) == "npx")
+        self.assertEqual(install.get("tools"), [])
+        self.assertEqual(str(install.get("last_error_code") or ""), "probe_timeout")
+
+    def test_classify_external_install_error_detects_runtime_permission_denied(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        info = ops._classify_external_install_error(
+            RuntimeError(
+                "docker: permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"
+            )
+        )
+        self.assertEqual(str(info.get("code") or ""), "runtime_permission_denied")
+
+    def test_capability_uninstall_skill_removes_bindings(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            catalog_doc["records"]["skill:anthropic:triage"] = {
+                "capability_id": "skill:anthropic:triage",
+                "kind": "skill",
+                "name": "triage",
+                "description_short": "triage helper",
+                "source_id": "anthropic_skills",
+                "source_tier": "tier1",
+                "trust_tier": "tier1",
+                "qualification_status": "qualified",
+                "enable_supported": True,
+                "install_mode": "builtin",
+                "install_spec": {},
+            }
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": "skill:anthropic:triage",
+                    "scope": "actor",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            uninstall_resp, _ = self._call(
+                "capability_uninstall",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "peer-1",
+                    "capability_id": "skill:anthropic:triage",
+                    "reason": "cleanup skill binding",
+                },
+            )
+            self.assertTrue(uninstall_resp.ok, getattr(uninstall_resp, "error", None))
+            result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
+            self.assertGreaterEqual(int(result.get("removed_bindings") or 0), 1)
+            self.assertFalse(bool(result.get("removed_installation")))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            enabled = set(state.get("enabled_capabilities") or [])
+            self.assertNotIn("skill:anthropic:triage", enabled)
+            active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
+            self.assertNotIn("skill:anthropic:triage", active_ids)
+            autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
+            autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
+            self.assertNotIn("skill:anthropic:triage", autoload_ids)
         finally:
             cleanup()
 

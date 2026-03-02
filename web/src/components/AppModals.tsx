@@ -19,6 +19,7 @@ import { InboxModal } from "./modals/InboxModal";
 import { RelayMessageModal } from "./modals/RelayMessageModal";
 import { RecipientsModal } from "./modals/RecipientsModal";
 import { parsePrivateEnvSetText } from "../utils/privateEnvInput";
+import { formatCapabilityIdInput, normalizeCapabilityIdList, parseCapabilityIdInput } from "../utils/capabilityAutoload";
 import {
   useGroupStore,
   useUIStore,
@@ -28,7 +29,7 @@ import {
 } from "../stores";
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import * as api from "../services/api";
-import { ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, SupportedRuntime } from "../types";
+import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, SupportedRuntime } from "../types";
 
 interface AppModalsProps {
   isDark: boolean;
@@ -114,15 +115,18 @@ export function AppModals({
     editActorRuntime,
     editActorCommand,
     editActorTitle,
+    editActorCapabilityAutoloadText,
     setEditActorRuntime,
     setEditActorCommand,
     setEditActorTitle,
+    setEditActorCapabilityAutoloadText,
     newActorId,
     newActorRole,
     newActorRuntime,
     newActorCommand,
     newActorUseDefaultCommand,
     newActorSecretsSetText,
+    newActorCapabilityAutoloadText,
     newActorUseProfile,
     newActorProfileId,
     showAdvancedActor,
@@ -133,6 +137,7 @@ export function AppModals({
     setNewActorCommand,
     setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
+    setNewActorCapabilityAutoloadText,
     setNewActorUseProfile,
     setNewActorProfileId,
     setShowAdvancedActor,
@@ -391,15 +396,24 @@ export function AppModals({
       ? editingActor.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
       : "";
     const currentTitle = String(editingActor.title || "").trim();
+    const currentCapabilityAutoload = normalizeCapabilityIdList(
+      (editingActor as { capability_autoload?: unknown[] })?.capability_autoload
+    );
     const nextRuntime = String(editActorRuntime || "codex").trim();
     const nextCommand = String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
+    const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
+      ? normalizeCapabilityIdList(payload.capabilityAutoload)
+      : [];
 
     const runtimeChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
     const commandChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
     const titleChanged = nextTitle !== currentTitle;
+    const autoloadChanged =
+      JSON.stringify(nextCapabilityAutoload) !== JSON.stringify(currentCapabilityAutoload);
     const profileChanged = mode === "profile" && profileId !== String(editingActor.profile_id || "").trim();
-    const hasActorMutation = convertToCustom || runtimeChanged || commandChanged || titleChanged || profileChanged;
+    const hasActorMutation =
+      convertToCustom || runtimeChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
 
     if (!options.restart && !hasActorMutation && !willChangeSecrets) {
       throw new Error(NO_CHANGES_SENTINEL);
@@ -423,7 +437,10 @@ export function AppModals({
           undefined,
           undefined,
           nextTitle,
-          { profileAction: "convert_to_custom" }
+          {
+            profileAction: "convert_to_custom",
+            capabilityAutoload: nextCapabilityAutoload,
+          }
         );
         if (!convertResp.ok) {
           showError(`${convertResp.error.code}: ${convertResp.error.message}`);
@@ -437,7 +454,7 @@ export function AppModals({
       }
 
       if (mode === "profile") {
-        const needProfilePatch = profileChanged || titleChanged;
+        const needProfilePatch = profileChanged || titleChanged || autoloadChanged;
         if (needProfilePatch) {
           const profileResp = await api.updateActor(
             selectedGroupId,
@@ -445,7 +462,10 @@ export function AppModals({
             undefined,
             undefined,
             nextTitle,
-            { profileId }
+            {
+              profileId,
+              capabilityAutoload: nextCapabilityAutoload,
+            }
           );
           if (!profileResp.ok) {
             showError(`${profileResp.error.code}: ${profileResp.error.message}`);
@@ -464,14 +484,18 @@ export function AppModals({
           : currentCommand;
         const snapshotTitle = String(actorSnapshot.title || "").trim();
         const needCustomPatch =
-          nextRuntime !== snapshotRuntime || nextCommand !== snapshotCommand || nextTitle !== snapshotTitle;
+          nextRuntime !== snapshotRuntime ||
+          nextCommand !== snapshotCommand ||
+          nextTitle !== snapshotTitle ||
+          autoloadChanged;
         if (needCustomPatch) {
           const customResp = await api.updateActor(
             selectedGroupId,
             actorId,
             editActorRuntime,
             editActorCommand,
-            nextTitle
+            nextTitle,
+            { capabilityAutoload: nextCapabilityAutoload }
           );
           if (!customResp.ok) {
             showError(`${customResp.error.code}: ${customResp.error.message}`);
@@ -524,13 +548,16 @@ export function AppModals({
     await handleSaveEditActor(payload, { restart: true });
   };
 
-  const _applyEditingActor = (actor: Record<string, unknown>) => {
+  const applyEditingActor = useCallback((actor: Record<string, unknown>) => {
     const runtime = String(actor.runtime || "").trim();
     setEditActorRuntime((runtime || "codex") as SupportedRuntime);
     setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
     setEditActorTitle(String(actor.title || ""));
-    setEditingActor(actor as any);
-  };
+    setEditActorCapabilityAutoloadText(
+      formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload)
+    );
+    setEditingActor(actor as Actor);
+  }, [setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText, setEditingActor]);
 
   useEffect(() => {
     if (!editingActor) return;
@@ -544,9 +571,17 @@ export function AppModals({
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
       String(editingActor.title || "") !== String(latest.title || "") ||
       String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
-        String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "");
-    if (changed) _applyEditingActor(latest as Record<string, unknown>);
-  }, [actors, editingActor]);
+        String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "") ||
+      String(
+        normalizeCapabilityIdList((editingActor as { capability_autoload?: unknown[] }).capability_autoload).join(
+          "\u0000"
+        )
+      ) !==
+        String(
+          normalizeCapabilityIdList((latest as { capability_autoload?: unknown[] }).capability_autoload).join("\u0000")
+        );
+    if (changed) applyEditingActor(latest as Record<string, unknown>);
+  }, [actors, editingActor, applyEditingActor]);
 
   const handleSaveEditActorAsProfile = async (): Promise<SaveActorProfileResult | void> => {
     if (!editingActor || !selectedGroupId) return;
@@ -562,6 +597,11 @@ export function AppModals({
         command: editActorCommand.trim(),
         submit: String(editingActor.submit || "enter"),
         env: editingActor.env && typeof editingActor.env === "object" ? editingActor.env : {},
+        capability_defaults: {
+          autoload_capabilities: parseCapabilityIdInput(editActorCapabilityAutoloadText),
+          default_scope: "actor",
+          session_ttl_seconds: 3600,
+        },
       });
       if (!resp.ok) {
         showError(`${resp.error.code}: ${resp.error.message}`);
@@ -684,6 +724,7 @@ export function AppModals({
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
     const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || "")) || null;
+    const capabilityAutoload = parseCapabilityIdInput(newActorCapabilityAutoloadText);
 
     if (newActorUseProfile && !selectedProfile) {
       setAddActorError(t("selectProfileFirst"));
@@ -715,8 +756,11 @@ export function AppModals({
           ? {
               profileId: String(selectedProfile?.id || "").trim(),
               runner: String(selectedProfile?.runner || "pty") === "headless" ? "headless" : "pty",
+              capabilityAutoload,
             }
-          : undefined
+          : {
+              capabilityAutoload,
+            }
       );
       if (!resp.ok) {
         setAddActorError(resp.error?.message || t('failedToAddAgent'));
@@ -746,6 +790,11 @@ export function AppModals({
         command: commandToUse,
         submit: "enter",
         env: {},
+        capability_defaults: {
+          autoload_capabilities: parseCapabilityIdInput(newActorCapabilityAutoloadText),
+          default_scope: "actor",
+          session_ttl_seconds: 3600,
+        },
       });
       if (!resp.ok) {
         setAddActorError(resp.error?.message || t("failedToSaveActorProfile"));
@@ -1036,6 +1085,8 @@ export function AppModals({
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
+        capabilityAutoloadText={editActorCapabilityAutoloadText}
+        onChangeCapabilityAutoloadText={setEditActorCapabilityAutoloadText}
         onSave={handleSaveEditActorOnly}
         onSaveAndRestart={handleSaveEditActorAndRestart}
         linkedProfileId={String(editingActor?.profile_id || "") || undefined}
@@ -1100,6 +1151,8 @@ export function AppModals({
         setNewActorUseDefaultCommand={setNewActorUseDefaultCommand}
         newActorSecretsSetText={newActorSecretsSetText}
         setNewActorSecretsSetText={setNewActorSecretsSetText}
+        newActorCapabilityAutoloadText={newActorCapabilityAutoloadText}
+        setNewActorCapabilityAutoloadText={setNewActorCapabilityAutoloadText}
         showAdvancedActor={showAdvancedActor}
         setShowAdvancedActor={setShowAdvancedActor}
         addActorError={addActorError}

@@ -419,7 +419,7 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
             pass
 
         try:
-            storage.delete_agent_presence(aid)
+            storage.delete_agent_state(aid)
         except Exception:
             pass
         try:
@@ -584,7 +584,7 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
     except Exception as e:
         return _error("template_apply_failed", f"failed to apply automation rules: {e}")
 
-    # If we stopped a running actor, clear its status to avoid stale presence.
+    # If we stopped a running actor, clear its status to avoid stale agent state.
     try:
         for aid, was_running in running_before.items():
             if not was_running:

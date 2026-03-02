@@ -63,3 +63,23 @@ jobs:
 
           print("OK: bundled web UI + help playbook")
           PY
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e . pytest
+
+      - name: Run Windows PTY smoke tests
+        run: |
+          python -m pytest -q tests/test_socket_special_ops.py tests/test_windows_pty_backend.py

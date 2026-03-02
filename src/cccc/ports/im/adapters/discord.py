@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import threading
 import time
@@ -21,6 +22,32 @@ from .base import IMAdapter
 DISCORD_MAX_MESSAGE_LENGTH = 2000
 DEFAULT_MAX_CHARS = 2000
 DEFAULT_MAX_LINES = 64
+
+
+def _resolve_proxy() -> Optional[str]:
+    """Resolve HTTP(S) proxy from env vars or OS-level proxy settings."""
+    for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        val = os.environ.get(key, "").strip()
+        if val:
+            return val
+    try:
+        system_proxies = urllib.request.getproxies()
+        return system_proxies.get("https") or system_proxies.get("http") or None
+    except Exception:
+        return None
+
+
+def _sanitize_proxy_url(url: str) -> str:
+    """Strip userinfo (credentials) from a proxy URL for safe logging."""
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            replaced = parsed._replace(netloc=f"***@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
+            return urlunparse(replaced)
+    except Exception:
+        pass
+    return url
 
 
 class DiscordAdapter(IMAdapter):
@@ -69,7 +96,11 @@ class DiscordAdapter(IMAdapter):
 
         Requires discord.py package.
         """
-        # Clear message queue on reconnect to avoid duplicate messages
+        # Reset state so reconnect attempts don't see stale signals.
+        self._ready_event.clear()
+        self._connected = False
+        self._connect_error: Optional[str] = None
+
         with self._queue_lock:
             self._message_queue.clear()
 
@@ -79,12 +110,13 @@ class DiscordAdapter(IMAdapter):
             self._log("[error] discord.py not installed. Run: pip install discord.py")
             return False
 
-        # Create client with message content intent
         intents = discord.Intents.default()
         intents.message_content = True
-        self._client = discord.Client(intents=intents)
+        proxy = _resolve_proxy()
+        if proxy:
+            self._log(f"[connect] Using proxy: {_sanitize_proxy_url(proxy)}")
+        self._client = discord.Client(intents=intents, proxy=proxy)
 
-        # Register event handlers
         @self._client.event
         async def on_ready():
             self._log(f"[connect] Connected as {self._client.user}")
@@ -94,26 +126,31 @@ class DiscordAdapter(IMAdapter):
         async def on_message(message):
             await self._handle_message(message)
 
-        # Start event loop in background thread
         def run_loop():
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             try:
                 self._loop.run_until_complete(self._client.start(self.token))
             except Exception as e:
+                self._connect_error = str(e)
                 self._log(f"[error] Discord client error: {e}")
             finally:
+                # Unblock the wait() below so connect() doesn't hang when
+                # the client crashes before on_ready fires.
+                self._ready_event.set()
                 self._loop.close()
 
         self._thread = threading.Thread(target=run_loop, daemon=True)
         self._thread.start()
 
-        # Wait for ready with timeout
         if self._ready_event.wait(timeout=30):
+            if self._connect_error:
+                self._log(f"[error] Discord connection failed: {self._connect_error}")
+                return False
             self._connected = True
             return True
         else:
-            self._log("[error] Discord connection timeout")
+            self._log("[error] Discord connection timeout (30s). Check network or proxy settings.")
             return False
 
     async def _handle_message(self, message: Any) -> None:
@@ -223,6 +260,22 @@ class DiscordAdapter(IMAdapter):
 
         return messages
 
+    async def _resolve_channel(self, chat_id: str) -> Any:
+        """Resolve a channel by ID, falling back to API fetch if not in cache."""
+        try:
+            cid = int(chat_id)
+        except Exception:
+            return None
+        channel = self._client.get_channel(cid)
+        if channel:
+            return channel
+        try:
+            channel = await self._client.fetch_channel(cid)
+            return channel
+        except Exception as e:
+            self._log(f"[warn] Channel {chat_id} not found (cache miss + fetch failed: {e})")
+            return None
+
     def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
         """
         Send a message to a Discord channel.
@@ -234,23 +287,15 @@ class DiscordAdapter(IMAdapter):
         if not text:
             return True
 
-        # Ensure message fits Discord limit
         safe_text = self._compose_safe(text)
 
         try:
-            # Get channel and send
             async def do_send():
-                try:
-                    cid = int(chat_id)
-                except Exception:
-                    cid = None
-                channel = self._client.get_channel(cid) if cid is not None else None
+                channel = await self._resolve_channel(chat_id)
                 if channel:
                     await channel.send(safe_text)
                     return True
-                else:
-                    self._log(f"[warn] Channel {chat_id} not found")
-                    return False
+                return False
 
             future = asyncio.run_coroutine_threadsafe(do_send(), self._loop)
             return future.result(timeout=10)
@@ -288,13 +333,8 @@ class DiscordAdapter(IMAdapter):
 
         try:
             async def do_send():
-                try:
-                    cid = int(chat_id)
-                except Exception:
-                    cid = None
-                channel = self._client.get_channel(cid) if cid is not None else None
+                channel = await self._resolve_channel(chat_id)
                 if not channel:
-                    self._log(f"[warn] Channel {chat_id} not found")
                     return False
                 try:
                     f = discord.File(fp=str(file_path), filename=str(filename or file_path.name or "file"))

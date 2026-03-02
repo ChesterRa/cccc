@@ -41,7 +41,7 @@ class PtySupervisor:
         env: Dict[str, str],
         max_backlog_bytes: int = 2_000_000,
     ) -> PtySession:
-        raise RuntimeError("pty runner is not supported on this platform; use runner='headless'")
+        raise RuntimeError("pty runner is not supported on this platform; use runner='headless' (Windows: install pywinpty for ConPTY)")
 
     def stop_actor(self, *, group_id: str, actor_id: str) -> None:
         return None
@@ -53,7 +53,7 @@ class PtySupervisor:
         return None
 
     def attach(self, *, group_id: str, actor_id: str, sock: socket.socket) -> None:
-        raise RuntimeError("pty runner is not supported on this platform")
+        raise RuntimeError("pty runner is not supported on this platform (Windows: install pywinpty for ConPTY)")
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
         return False
@@ -75,4 +75,3 @@ class PtySupervisor:
 
 
 SUPERVISOR = PtySupervisor()
-

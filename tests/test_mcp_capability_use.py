@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import patch
 
@@ -81,6 +82,87 @@ class TestMcpCapabilityUse(unittest.TestCase):
         enable_mock.assert_called_once()
         call_mock.assert_not_called()
 
+    def test_capability_use_retries_on_retryable_diagnostics(self) -> None:
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+            side_effect=[
+                {
+                    "state": "failed",
+                    "enabled": False,
+                    "reason": "install_failed:probe_timeout",
+                    "diagnostics": [
+                        {"code": "probe_timeout", "message": "timed out", "retryable": True}
+                    ],
+                },
+                {
+                    "state": "ready",
+                    "refresh_required": False,
+                    "enabled": True,
+                },
+            ],
+        ) as enable_mock, patch(
+            "cccc.ports.mcp.server.handle_tool_call",
+        ) as call_mock:
+            result = capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="mcp:test",
+                tool_name="",
+                tool_arguments={},
+            )
+
+        self.assertTrue(bool(result.get("enabled")))
+        self.assertFalse(bool(result.get("tool_called")))
+        self.assertEqual(enable_mock.call_count, 2)
+        call_mock.assert_not_called()
+
+    def test_capability_use_failed_result_contains_resolution_plan(self) -> None:
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+            return_value={
+                "state": "failed",
+                "enabled": False,
+                "reason": "install_failed:missing_required_env",
+                "diagnostics": [
+                    {
+                        "code": "missing_required_env",
+                        "message": "missing_required_env:OPENAI_API_KEY",
+                        "required_env": ["OPENAI_API_KEY"],
+                        "retryable": False,
+                    }
+                ],
+            },
+        ) as enable_mock, patch(
+            "cccc.ports.mcp.server.handle_tool_call",
+        ) as call_mock:
+            result = capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="mcp:test",
+                tool_name="cccc_ext_test_tool",
+                tool_arguments={},
+            )
+
+        self.assertFalse(bool(result.get("enabled")))
+        self.assertFalse(bool(result.get("tool_called")))
+        diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), list) else []
+        self.assertTrue(diagnostics)
+        plan = result.get("resolution_plan") if isinstance(result.get("resolution_plan"), dict) else {}
+        self.assertEqual(str(plan.get("status") or ""), "needs_user_input")
+        user_requests = plan.get("user_requests") if isinstance(plan.get("user_requests"), list) else []
+        self.assertTrue(user_requests)
+        first = user_requests[0] if isinstance(user_requests[0], dict) else {}
+        required_env = first.get("required_env") if isinstance(first.get("required_env"), list) else []
+        self.assertIn("OPENAI_API_KEY", required_env)
+        enable_mock.assert_called_once()
+        call_mock.assert_not_called()
+
     def test_capability_use_passes_skill_payload_when_no_tool_call(self) -> None:
         from cccc.ports.mcp.server import capability_use
 
@@ -111,8 +193,36 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertFalse(bool(result.get("tool_called")))
         skill_payload = result.get("skill") if isinstance(result.get("skill"), dict) else {}
         self.assertEqual(str(skill_payload.get("capability_id") or ""), "skill:anthropic:triage")
+        self.assertEqual(str(result.get("skill_mode") or ""), "capsule_runtime")
+        self.assertFalse(bool(result.get("full_local_skill_equivalent")))
+        self.assertIn("$CODEX_HOME/skills", str(result.get("next_step_hint") or ""))
         enable_mock.assert_called_once()
         call_mock.assert_not_called()
+
+    def test_capability_use_skill_failure_contains_runtime_contract_fields(self) -> None:
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+            return_value={
+                "state": "failed",
+                "enabled": False,
+                "reason": "capability_unavailable",
+            },
+        ):
+            result = capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="skill:anthropic:triage",
+                tool_name="",
+                tool_arguments={},
+            )
+
+        self.assertFalse(bool(result.get("enabled")))
+        self.assertEqual(str(result.get("skill_mode") or ""), "capsule_runtime")
+        self.assertFalse(bool(result.get("full_local_skill_equivalent")))
+        self.assertIn("$CODEX_HOME/skills", str(result.get("next_step_hint") or ""))
 
 
     def test_memory_read_tools_skip_actor_id_injection(self) -> None:
@@ -234,8 +344,9 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertTrue(bool(result.get("enabled")))
         self.assertTrue(bool(result.get("tool_called")))
         enable_mock.assert_called_once()
-        daemon_call.assert_called_once()
-        req = daemon_call.call_args.args[0] if daemon_call.call_args.args else {}
+        self.assertGreaterEqual(daemon_call.call_count, 1)
+        last = daemon_call.call_args_list[-1] if daemon_call.call_args_list else None
+        req = last.args[0] if (last and last.args) else {}
         req_args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(str(req.get("op") or ""), "capability_tool_call")
         self.assertEqual(str(req_args.get("capability_id") or ""), "mcp:test-server")
@@ -276,6 +387,89 @@ class TestMcpCapabilityUse(unittest.TestCase):
 
         self.assertEqual(str(result.get("capability_id") or ""), "mcp:test-server")
         self.assertTrue(bool(result.get("tool_called")))
+
+    def test_capability_use_infers_external_capability_from_hyphen_underscore_alias(self) -> None:
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_state",
+            return_value={
+                "dynamic_tools": [
+                    {
+                        "name": "cccc_ext_deadbeef_resolve_library_id",
+                        "real_tool_name": "resolve_library_id",
+                        "capability_id": "mcp:io.github.upstash/context7",
+                    }
+                ]
+            },
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_capability._call_daemon_or_raise",
+            return_value={"result": {"ok": True}},
+        ):
+            result = capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="",
+                tool_name="resolve-library-id",
+                tool_arguments={"libraryName": "claude code sdk"},
+            )
+
+        self.assertEqual(str(result.get("capability_id") or ""), "mcp:io.github.upstash/context7")
+        self.assertTrue(bool(result.get("tool_called")))
+
+    def test_capability_use_skips_reenable_when_capability_already_enabled_for_tool_call(self) -> None:
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_state",
+            return_value={"enabled_capabilities": ["mcp:test-server"]},
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+        ) as enable_mock, patch(
+            "cccc.ports.mcp.handlers.cccc_capability._call_daemon_or_raise",
+            return_value={"result": {"ok": True}},
+        ):
+            result = capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="mcp:test-server",
+                tool_name="echo",
+                tool_arguments={"message": "hello"},
+            )
+
+        enable_mock.assert_not_called()
+        self.assertTrue(bool(result.get("tool_called")))
+        self.assertTrue(bool(result.get("reused_existing_binding")))
+        self.assertFalse(bool(result.get("refresh_required")))
+
+    def test_mcp_router_capability_use_accepts_actor_id_without_by(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False), patch(
+            "cccc.ports.mcp.server.capability_use",
+            return_value={"ok": True},
+        ) as use_mock:
+            out = mcp_server.handle_tool_call(
+                "cccc_capability_use",
+                {
+                    "group_id": "g_test",
+                    "actor_id": "peer-1",
+                    "capability_id": "mcp:test-server",
+                    "tool_name": "echo",
+                    "tool_arguments": {"message": "hello"},
+                },
+            )
+
+        self.assertEqual(out.get("ok"), True)
+        self.assertTrue(use_mock.called)
+        kwargs = use_mock.call_args.kwargs if use_mock.call_args else {}
+        self.assertEqual(str(kwargs.get("by") or ""), "peer-1")
+        self.assertEqual(str(kwargs.get("actor_id") or ""), "peer-1")
 
 
 if __name__ == "__main__":

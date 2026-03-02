@@ -30,7 +30,7 @@ Checklist (5-8 min):
    - info gap -> search Context/PROJECT.md/inbox/memory first (then web if allowed)
    - capability gap -> `cccc_capability_use(...)`; if needed:
      `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)` -> `cccc_capability_use(capability_id=..., scope="session")`
-     then handle `refresh_required=true`
+     then handle `refresh_required=true`; if still failed, follow `diagnostics` + `resolution_plan`
 4. State upkeep: sync tasks/context and update your agent state (`focus/next_action/what_changed`).
 5. Consolidation (on milestone/done): `cccc_memory_admin(action=ingest, mode=signal)`, then store one stable insight if any.
 

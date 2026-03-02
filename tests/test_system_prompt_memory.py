@@ -73,7 +73,14 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("cccc_memory(action=search)", prompt)
             self.assertIn('cccc_memory_admin(action="ingest", mode="signal")', prompt)
             self.assertIn("cccc_memory(action=guide, topic=...)", prompt)
+            self.assertIn("Fact-Goal gate: strategy/scope discussion first; implement only after explicit action intent", prompt)
+            self.assertIn("Planning gate (6D) for non-trivial changes: value/ROI", prompt)
+            self.assertIn("Todo discipline: track every concrete or implicit user ask as a runtime todo", prompt)
+            self.assertIn("Reconcile the full current approved scope before implementation", prompt)
+            self.assertIn("Delivery rule: once implementation is approved, complete the agreed scope in one pass", prompt)
+            self.assertIn("Completion rule (current approved scope): report each in-scope ask as done/pending/blocked(owner)", prompt)
             self.assertIn("Gap policy: info gap -> search evidence first", prompt)
+            self.assertIn("Prefer simplification/removal over stacking fallback patches", prompt)
         finally:
             cleanup()
 

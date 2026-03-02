@@ -32,6 +32,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: None,
             find_actor=lambda _group, _by: None,
+            effective_runner_kind=lambda rk: rk,
             supported_stream_kinds=lambda: {"chat.message"},
             start_events_stream=lambda *_args: False,
         )
@@ -54,8 +55,9 @@ class TestSocketSpecialOps(unittest.TestCase):
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
             attach_actor_socket=lambda gid, aid, _sock: attached.append((gid, aid)),
-            load_group=lambda _gid: None,
-            find_actor=lambda _group, _by: None,
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
             supported_stream_kinds=lambda: {"chat.message"},
             start_events_stream=lambda *_args: False,
         )
@@ -82,6 +84,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _by: {"id": "x"},
+            effective_runner_kind=lambda rk: rk,
             supported_stream_kinds=lambda: {"chat.message"},
             start_events_stream=lambda *_args: False,
         )
@@ -110,6 +113,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _by: {"id": "x"},
+            effective_runner_kind=lambda rk: rk,
             supported_stream_kinds=lambda: {"chat.message"},
             start_events_stream=lambda _sock, group_id, by, _kinds, _since_event_id, _since_ts: started.append(
                 (group_id, by)
@@ -121,6 +125,33 @@ class TestSocketSpecialOps(unittest.TestCase):
         self.assertIsNone(conn.timeout)
         self.assertTrue(sent and bool(sent[0].get("ok")))
         self.assertEqual(started, [("g1", "user")])
+
+    def test_term_attach_rejects_non_pty_actor(self) -> None:
+        req = DaemonRequest.model_validate({"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1"}})
+        conn = _FakeConn()
+        sent: list[dict] = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: False,
+            attach_actor_socket=lambda _gid, _aid, _sock: None,
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "headless"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+        self.assertTrue(handled)
+        self.assertTrue(conn.closed)
+        self.assertTrue(sent)
+        payload = sent[0]
+        self.assertFalse(bool(payload.get("ok")))
+        err = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+        self.assertEqual(str(err.get("code") or ""), "not_pty_actor")
 
     @staticmethod
     def _error_payload(code: str, message: str, details=None):

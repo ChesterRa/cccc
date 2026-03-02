@@ -543,6 +543,13 @@ def _maybe_autostart_running_groups() -> None:
         throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
         automation_on_resume=AUTOMATION.on_resume,
         get_group_state=get_group_state,
+        resolve_linked_actor_before_start=lambda grp, aid: _resolve_linked_actor_before_start(
+            grp,
+            aid,
+            get_actor_profile=_get_actor_profile,
+            load_actor_profile_secrets=_load_actor_profile_secrets,
+            update_actor_private_env=_update_actor_private_env,
+        ),
     )
 
 
@@ -932,6 +939,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     ),
                     load_group=load_group,
                     find_actor=find_actor,
+                    effective_runner_kind=_effective_runner_kind,
                     supported_stream_kinds=_supported_stream_kinds,
                     start_events_stream=lambda sock2, group_id, by, kinds, since_event_id, since_ts: _start_events_stream(
                         sock=sock2,

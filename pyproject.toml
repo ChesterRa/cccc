@@ -20,6 +20,7 @@ dependencies = [
   "httpx>=0.24,<1.0",
   "lark-oapi>=1.0.0",
   "pydantic>=2.0,<3.0",
+  "pywinpty>=2.0; platform_system == 'Windows'",
   "python-multipart>=0.0.7,<1.0",
   "uvicorn[standard]>=0.27,<1.0",
 ]
@@ -35,6 +36,7 @@ classifiers = [
   "Environment :: Console",
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
   "Topic :: Software Development :: Build Tools",
 ]
 

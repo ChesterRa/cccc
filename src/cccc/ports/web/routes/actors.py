@@ -44,6 +44,7 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                     "title": req.title,
                     "command": command,
                     "env": dict(req.env),
+                    "capability_autoload": list(req.capability_autoload or []),
                     "env_private": env_private,
                     "profile_id": profile_id,
                     "default_scope_key": req.default_scope_key,
@@ -63,6 +64,8 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             patch["command"] = _normalize_command(req.command)
         if req.env is not None:
             patch["env"] = dict(req.env)
+        if req.capability_autoload is not None:
+            patch["capability_autoload"] = list(req.capability_autoload)
         if req.default_scope_key is not None:
             patch["default_scope_key"] = req.default_scope_key
         if req.submit is not None:
@@ -359,10 +362,11 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             provided = str(websocket.query_params.get("token") or "").strip()
             cookie = ""
             try:
-                cookie = str(getattr(websocket, "cookies", {}) or {}).get("cccc_web_token") or ""
+                cookies = getattr(websocket, "cookies", None) or {}
+                cookie = str(cookies.get("cccc_web_token", "") or "").strip()
             except Exception:
                 cookie = ""
-            if provided != token and str(cookie).strip() != token:
+            if provided != token and cookie != token:
                 await websocket.close(code=4401)
                 return
 

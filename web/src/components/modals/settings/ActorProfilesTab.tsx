@@ -3,8 +3,10 @@ import { useTranslation } from "react-i18next";
 import { ActorProfile, ActorProfileUsage, RUNTIME_INFO, SUPPORTED_RUNTIMES } from "../../../types";
 import * as api from "../../../services/api";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../../utils/privateEnvInput";
+import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../../utils/capabilityAutoload";
 import { useGroupStore } from "../../../stores";
 import { cardClass, inputClass, labelClass, primaryButtonClass } from "./types";
+import { CapabilityPicker } from "../../CapabilityPicker";
 
 interface ActorProfilesTabProps {
   isDark: boolean;
@@ -20,6 +22,9 @@ type EditorState = {
   command: string;
   useDefaultCommand: boolean;
   submit: "enter" | "newline" | "none";
+  capabilityAutoloadText: string;
+  capabilityDefaultScope: "actor" | "session";
+  capabilitySessionTtlSeconds: number;
 };
 
 function formatCommand(cmd: string[] | undefined): string {
@@ -68,6 +73,15 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
     command,
     useDefaultCommand,
     submit: (String(profile?.submit || "enter") as "enter" | "newline" | "none"),
+    capabilityAutoloadText: formatCapabilityIdInput(profile?.capability_defaults?.autoload_capabilities),
+    capabilityDefaultScope:
+      String(profile?.capability_defaults?.default_scope || "actor").trim().toLowerCase() === "session"
+        ? "session"
+        : "actor",
+    capabilitySessionTtlSeconds: Math.max(
+      60,
+      Number(profile?.capability_defaults?.session_ttl_seconds || 3600)
+    ),
   };
 }
 
@@ -351,6 +365,11 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
         command: editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
         submit: editor.submit,
         env: {},
+        capability_defaults: {
+          autoload_capabilities: parseCapabilityIdInput(editor.capabilityAutoloadText),
+          default_scope: editor.capabilityDefaultScope,
+          session_ttl_seconds: Math.max(60, Math.trunc(editor.capabilitySessionTtlSeconds || 3600)),
+        },
       };
       if (
         editorSupportsDefaultCommand &&
@@ -605,6 +624,64 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                   <option value="newline">Newline</option>
                   <option value="none">None</option>
                 </select>
+              </div>
+
+              <div className={cardClass(isDark)}>
+                <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+                  {t("actorProfiles.capabilityDefaults")}
+                </div>
+                <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  {t("actorProfiles.capabilityDefaultsHint")}
+                </div>
+                <div className="mt-3">
+                  <CapabilityPicker
+                    isDark={isDark}
+                    value={parseCapabilityIdInput(editor.capabilityAutoloadText)}
+                    onChange={(next) =>
+                      setEditor((prev) => ({
+                        ...prev,
+                        capabilityAutoloadText: formatCapabilityIdInput(next),
+                      }))
+                    }
+                    disabled={editorBusy}
+                    label={t("actorProfiles.autoloadCapabilities")}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClass(isDark)}>{t("actorProfiles.autoloadScope")}</label>
+                    <select
+                      value={editor.capabilityDefaultScope}
+                      onChange={(e) =>
+                        setEditor((prev) => ({
+                          ...prev,
+                          capabilityDefaultScope: e.target.value === "session" ? "session" : "actor",
+                        }))
+                      }
+                      className={inputClass(isDark)}
+                    >
+                      <option value="actor">{t("actorProfiles.autoloadScopeActor")}</option>
+                      <option value="session">{t("actorProfiles.autoloadScopeSession")}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClass(isDark)}>{t("actorProfiles.sessionTtlSeconds")}</label>
+                    <input
+                      type="number"
+                      min={60}
+                      step={60}
+                      value={String(editor.capabilitySessionTtlSeconds || 3600)}
+                      onChange={(e) =>
+                        setEditor((prev) => ({
+                          ...prev,
+                          capabilitySessionTtlSeconds: Math.max(60, Number(e.target.value || 3600)),
+                        }))
+                      }
+                      className={inputClass(isDark)}
+                      disabled={editor.capabilityDefaultScope !== "session"}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className={cardClass(isDark)}>

@@ -7,7 +7,7 @@ from ...util.time import utc_now_iso
 from .actor import ActorSubmit, AgentRuntime, RunnerKind
 
 class CapabilityDefaults(BaseModel):
-    pinned_capabilities: List[str] = Field(default_factory=list)
+    autoload_capabilities: List[str] = Field(default_factory=list)
     default_scope: Literal["actor", "session"] = "actor"
     session_ttl_seconds: int = 3600
 

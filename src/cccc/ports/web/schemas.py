@@ -86,6 +86,7 @@ class ActorCreateRequest(BaseModel):
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
+    capability_autoload: list[str] = Field(default_factory=list)
     # Write-only runtime-only secrets (stored under CCCC_HOME/state; never persisted into ledger).
     # Values are never returned by the daemon; only keys can be listed via the dedicated endpoints.
     env_private: Optional[Dict[str, str]] = None
@@ -101,6 +102,7 @@ class ActorUpdateRequest(BaseModel):
     title: Optional[str] = None
     command: Optional[Union[str, list[str]]] = None
     env: Optional[Dict[str, str]] = None
+    capability_autoload: Optional[list[str]] = None
     default_scope_key: Optional[str] = None
     submit: Optional[ActorSubmit] = None
     runner: Optional[RunnerKind] = None

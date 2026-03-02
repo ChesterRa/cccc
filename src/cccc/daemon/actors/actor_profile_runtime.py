@@ -120,36 +120,49 @@ def resolve_linked_actor_before_start(
     if item is None:
         raise ValueError(f"actor not found: {actor_id}")
     profile_id = actor_profile_id(item)
-    if not profile_id:
-        return dict(item)
+    profile: Optional[Dict[str, Any]] = None
+    if profile_id:
+        profile = get_actor_profile(profile_id)
+        if not isinstance(profile, dict):
+            raise ActorProfileNotFoundError(f"profile not found: {profile_id}")
 
-    profile = get_actor_profile(profile_id)
-    if not isinstance(profile, dict):
-        raise ActorProfileNotFoundError(f"profile not found: {profile_id}")
+        item = apply_profile_link_to_actor(
+            group,
+            actor_id,
+            profile_id=profile_id,
+            profile=profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
+        )
 
-    item = apply_profile_link_to_actor(
-        group,
-        actor_id,
-        profile_id=profile_id,
-        profile=profile,
-        load_actor_profile_secrets=load_actor_profile_secrets,
-        update_actor_private_env=update_actor_private_env,
-    )
-    # A2: actor profile defaults can pin baseline capabilities for this actor.
+    # Apply capability autoload at startup:
+    # 1) profile capability defaults (if linked)
+    # 2) actor-specific autoload list
     try:
-        from ..ops.capability_ops import apply_actor_profile_capability_defaults
+        from ..ops.capability_ops import (
+            apply_actor_capability_autoload,
+            apply_actor_profile_capability_defaults,
+        )
 
-        defaults_raw = profile.get("capability_defaults")
-        if isinstance(defaults_raw, dict):
-            apply_actor_profile_capability_defaults(
-                group_id=group.group_id,
-                actor_id=actor_id,
-                profile_id=profile_id,
-                capability_defaults=defaults_raw,
-            )
+        if isinstance(profile, dict):
+            defaults_raw = profile.get("capability_defaults")
+            if isinstance(defaults_raw, dict):
+                apply_actor_profile_capability_defaults(
+                    group_id=group.group_id,
+                    actor_id=actor_id,
+                    profile_id=profile_id,
+                    capability_defaults=defaults_raw,
+                )
+        apply_actor_capability_autoload(
+            group_id=group.group_id,
+            actor_id=actor_id,
+            autoload_capabilities=item.get("capability_autoload"),
+            scope="actor",
+            reason=f"actor_autoload:{actor_id}",
+        )
     except Exception as e:
         _LOG.warning(
-            "profile capability defaults apply failed group=%s actor=%s profile=%s err=%s",
+            "actor capability autoload apply failed group=%s actor=%s profile=%s err=%s",
             group.group_id,
             actor_id,
             profile_id,

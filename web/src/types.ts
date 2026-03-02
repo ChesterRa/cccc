@@ -81,6 +81,7 @@ export type Actor = {
   running?: boolean;  // Actual process running status
   command?: string[];
   env?: Record<string, string>;
+  capability_autoload?: string[];
   runner?: string;
   runtime?: string;
   submit?: "enter" | "newline" | "none";
@@ -98,6 +99,11 @@ export type ActorProfile = {
   command: string[];
   submit: "enter" | "newline" | "none";
   env: Record<string, string>;
+  capability_defaults?: {
+    autoload_capabilities?: string[];
+    default_scope?: "actor" | "session";
+    session_ttl_seconds?: number;
+  };
   created_at: string;
   updated_at: string;
   revision: number;
@@ -111,7 +117,64 @@ export type ActorProfileUsage = {
   actor_title?: string;
 };
 
-export type PresenceAgent = {
+export type CapabilityRecentSuccess = {
+  success_count: number;
+  last_success_at?: string;
+  last_group_id?: string;
+  last_actor_id?: string;
+  last_action?: string;
+};
+
+export type CapabilityOverviewItem = {
+  capability_id: string;
+  kind?: string;
+  name?: string;
+  description_short?: string;
+  source_id?: string;
+  source_uri?: string;
+  source_tier?: string;
+  trust_tier?: string;
+  license?: string;
+  sync_state?: string;
+  policy_level?: string;
+  policy_visible?: boolean;
+  enable_supported?: boolean;
+  qualification_status?: string;
+  install_mode?: string;
+  tags?: string[];
+  blocked_global?: boolean;
+  blocked_reason?: string;
+  autoload_candidate?: boolean;
+  recent_success?: CapabilityRecentSuccess;
+  cached_install_state?: string;
+  cached_install_error_code?: string;
+  cached_install_error?: string;
+  tool_count?: number;
+  tool_names?: string[];
+};
+
+export type CapabilitySourceState = {
+  source_id: string;
+  enabled: boolean;
+  source_level?: string;
+  rationale?: string;
+  sync_state?: string;
+  last_synced_at?: string;
+  staleness_seconds?: number;
+  record_count?: number;
+  error?: string;
+};
+
+export type CapabilityBlockEntry = {
+  capability_id: string;
+  scope?: string;
+  reason?: string;
+  by?: string;
+  blocked_at?: string;
+  expires_at?: string;
+};
+
+export type AgentState = {
   id: string;
   active_task_id?: string | null;
   focus?: string | null;
@@ -186,9 +249,8 @@ export type GroupContext = {
     root_count?: number;
   };
   active_tasks?: Task[];
-  presence?: {
-    agents?: PresenceAgent[];
-  };
+  agents?: AgentState[];
+  presence?: { agents?: AgentState[] };
 };
 
 export type ProjectMdInfo = {

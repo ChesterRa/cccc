@@ -127,8 +127,8 @@ export function ChatTab({
     setDestGroupId,
     mentionSuggestions,
 
-    // Presence
-    presenceAgents,
+    // Agent state
+    agentStates,
 
     // Actions
     sendMessage,
@@ -408,7 +408,7 @@ export function ChatTab({
         <VirtualMessageList
           messages={chatMessages}
           actors={actors}
-          presenceAgents={presenceAgents}
+          agentStates={agentStates}
           isDark={isDark}
           readOnly={readOnly}
           groupId={selectedGroupId}

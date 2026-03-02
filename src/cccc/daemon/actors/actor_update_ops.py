@@ -64,7 +64,18 @@ def handle_actor_update(
         return _error("group_not_found", f"group not found: {group_id}")
     if not actor_id:
         return _error("missing_actor_id", "missing actor_id")
-    allowed = {"role", "title", "command", "env", "default_scope_key", "submit", "enabled", "runner", "runtime"}
+    allowed = {
+        "role",
+        "title",
+        "command",
+        "env",
+        "default_scope_key",
+        "submit",
+        "capability_autoload",
+        "enabled",
+        "runner",
+        "runtime",
+    }
     unknown = set(patch.keys()) - allowed
     if unknown:
         return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)})

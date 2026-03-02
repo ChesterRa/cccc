@@ -1,13 +1,13 @@
 import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, PresenceAgent } from "../types";
+import { Actor, AgentState } from "../types";
 
 const LazyAgentTab = lazy(() => import("../components/AgentTab").then((m) => ({ default: m.AgentTab })));
 
 export interface ActorTabProps {
   actor: Actor | null;
   groupId: string;
-  presenceAgent: PresenceAgent | null;
+  agentState: AgentState | null;
   termEpoch: number;
   busy: string;
   isDark: boolean;
@@ -26,7 +26,7 @@ export interface ActorTabProps {
 export function ActorTab({
   actor,
   groupId,
-  presenceAgent,
+  agentState,
   termEpoch,
   busy,
   isDark,
@@ -54,7 +54,7 @@ export function ActorTab({
         key={`${groupId}:${actor.id}:${termEpoch}`}
         actor={actor}
         groupId={groupId}
-        presenceAgent={presenceAgent}
+        agentState={agentState}
         isVisible={isVisible}
         readOnly={readOnly}
         onQuit={onToggleEnabled}

@@ -25,6 +25,7 @@ def try_handle_socket_special_op(
     attach_actor_socket: Callable[[str, str, Any], None],
     load_group: Callable[[str], Any],
     find_actor: Callable[[Any, str], Any],
+    effective_runner_kind: Callable[[str], str],
     supported_stream_kinds: Callable[[], Set[str]],
     start_events_stream: Callable[[Any, str, str, Optional[Set[str]], str, str], bool],
 ) -> bool:
@@ -38,10 +39,30 @@ def try_handle_socket_special_op(
             resp = error("missing_group_id", "missing group_id")
         elif not actor_id:
             resp = error("missing_actor_id", "missing actor_id")
-        elif not actor_running(group_id, actor_id):
-            resp = error("actor_not_running", "actor is not running")
         else:
-            resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
+            group = load_group(group_id)
+            if group is None:
+                resp = error("group_not_found", f"group not found: {group_id}")
+            else:
+                actor = find_actor(group, actor_id)
+                if not isinstance(actor, dict):
+                    resp = error("actor_not_found", f"actor not found: {actor_id}")
+                else:
+                    runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
+                    runner_effective = effective_runner_kind(runner_kind)
+                    if runner_effective != "pty":
+                        resp = error(
+                            "not_pty_actor",
+                            "terminal attach is only available for PTY actors",
+                            details={
+                                "runner": runner_kind,
+                                "runner_effective": runner_effective,
+                            },
+                        )
+                    elif not actor_running(group_id, actor_id):
+                        resp = error("actor_not_running", "actor is not running")
+                    else:
+                        resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
         try:
             send_json(conn, dump_response(resp))
             if resp.ok:

@@ -42,7 +42,7 @@ Then install the new version. Note that 0.4.x has a completely different command
 ### What are the system requirements?
 
 - Python 3.9+
-- macOS, Linux, or Windows (WSL recommended for PTY on Windows)
+- macOS, Linux, or Windows
 - At least one supported agent runtime CLI
 
 ### How do I check if CCCC is working?

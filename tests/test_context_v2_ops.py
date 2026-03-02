@@ -254,7 +254,7 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_task_status_autosyncs_assignee_presence(self) -> None:
+    def test_task_status_autosyncs_assignee_agent_state(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -273,7 +273,7 @@ class TestContextV2Ops(unittest.TestCase):
 
             get_active, _ = self._call("context_get", {"group_id": gid})
             self.assertTrue(get_active.ok, getattr(get_active, "error", None))
-            agents = get_active.result.get("presence", {}).get("agents", [])
+            agents = get_active.result.get("agents", [])
             peer = [a for a in agents if a["id"] == "peer1"][0]
             self.assertEqual(peer.get("active_task_id"), tid)
             self.assertEqual(peer.get("focus"), "Stabilize sync")
@@ -287,7 +287,7 @@ class TestContextV2Ops(unittest.TestCase):
 
             get_done, _ = self._call("context_get", {"group_id": gid})
             self.assertTrue(get_done.ok, getattr(get_done, "error", None))
-            agents_done = get_done.result.get("presence", {}).get("agents", [])
+            agents_done = get_done.result.get("agents", [])
             peer_done = [a for a in agents_done if a["id"] == "peer1"][0]
             self.assertIsNone(peer_done.get("active_task_id"))
             self.assertEqual(peer_done.get("focus"), "")
@@ -363,8 +363,8 @@ class TestContextV2Ops(unittest.TestCase):
             self.assertIn("foreman", mermaid)
             self.assertIn(tid, mermaid)
 
-            # Check flat agent state in presence section
-            agents = result.get("presence", {}).get("agents", [])
+            # Check flat agent state in agents section
+            agents = result.get("agents", [])
             foreman_agent = [a for a in agents if a["id"] == "foreman"]
             self.assertEqual(len(foreman_agent), 1)
             self.assertEqual(foreman_agent[0]["focus"], "auth")
@@ -390,7 +390,7 @@ class TestContextV2Ops(unittest.TestCase):
 
             # Verify state exists
             get1, _ = self._call("context_get", {"group_id": gid})
-            agents = get1.result.get("presence", {}).get("agents", [])
+            agents = get1.result.get("agents", [])
             peer = [a for a in agents if a["id"] == "peer1"][0]
             self.assertEqual(peer.get("focus"), "coding")
             self.assertEqual(peer.get("blockers"), ["dep waiting"])
@@ -403,7 +403,7 @@ class TestContextV2Ops(unittest.TestCase):
 
             # Verify fields are cleared
             get2, _ = self._call("context_get", {"group_id": gid})
-            agents2 = get2.result.get("presence", {}).get("agents", [])
+            agents2 = get2.result.get("agents", [])
             peer2 = [a for a in agents2 if a["id"] == "peer1"][0]
             self.assertEqual(peer2.get("focus"), "")
             self.assertEqual(peer2.get("blockers"), [])

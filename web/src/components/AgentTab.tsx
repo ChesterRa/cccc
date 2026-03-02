@@ -4,7 +4,7 @@ import { Terminal, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
-import { Actor, PresenceAgent, getRuntimeColor, RUNTIME_INFO } from "../types";
+import { Actor, AgentState, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
@@ -26,7 +26,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 interface AgentTabProps {
   actor: Actor;
   groupId: string;
-  presenceAgent: PresenceAgent | null;
+  agentState: AgentState | null;
   isVisible: boolean;
   readOnly?: boolean;
   onQuit: () => void;
@@ -45,7 +45,7 @@ interface AgentTabProps {
 export function AgentTab({
   actor,
   groupId,
-  presenceAgent,
+  agentState,
   isVisible,
   readOnly,
   onQuit,
@@ -641,10 +641,10 @@ export function AgentTab({
   }, [canControl, isVisible, isSmallScreen, terminalReady]);
 
   const isBusy = busy.includes(actor.id);
-  const stateHeadline = String(presenceAgent?.focus || presenceAgent?.next_action || "").trim() || t('noAgentStateYet');
-  const stateTask = String(presenceAgent?.active_task_id || "").trim();
-  const blockerCount = Array.isArray(presenceAgent?.blockers) ? presenceAgent.blockers.length : 0;
-  const stateNext = String(presenceAgent?.next_action || "").trim();
+  const stateHeadline = String(agentState?.focus || agentState?.next_action || "").trim() || t('noAgentStateYet');
+  const stateTask = String(agentState?.active_task_id || "").trim();
+  const blockerCount = Array.isArray(agentState?.blockers) ? agentState.blockers.length : 0;
+  const stateNext = String(agentState?.next_action || "").trim();
 
   return (
     <div className="flex flex-col h-full">
@@ -673,7 +673,7 @@ export function AgentTab({
               {rtInfo?.label || t('custom')} • {isRunning ? t('running') : t('stopped')}
               {isHeadless && ` • ${t('headless')}`}
             </div>
-            {/* Mobile-only: condensed single-line presence */}
+            {/* Mobile-only: condensed single-line agent state */}
             <div
               className={classNames(
                 "sm:hidden mt-1 text-[11px] truncate leading-tight",
@@ -705,15 +705,15 @@ export function AgentTab({
               )}
               style={statusClamp2Style}
               title={
-                presenceAgent?.updated_at
-                  ? `${stateHeadline}\nUpdated: ${formatFullTime(presenceAgent.updated_at)}`
+                agentState?.updated_at
+                  ? `${stateHeadline}\nUpdated: ${formatFullTime(agentState.updated_at)}`
                   : stateHeadline
               }
             >
               <span>{stateHeadline}</span>
-              {presenceAgent?.updated_at ? (
+              {agentState?.updated_at ? (
                 <span className={classNames("ml-2 text-[11px] tabular-nums font-normal", isDark ? "text-slate-400" : "text-gray-600")}>
-                  · {formatTime(presenceAgent.updated_at)}
+                  · {formatTime(agentState.updated_at)}
                 </span>
               ) : null}
             </div>

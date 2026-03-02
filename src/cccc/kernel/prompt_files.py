@@ -15,30 +15,26 @@ PROMPTS_DIRNAME = "prompts"
 
 _MAX_FILE_BYTES = 512 * 1024  # Safety limit for prompt markdown files.
 
-DEFAULT_PREAMBLE_BODY = """Quick start (recommended):
-- Call `cccc_bootstrap` to load PROJECT.md (if present) + Context + inbox + the CCCC help playbook.
-- If PROJECT.md is missing, ask the user for goals/constraints/DoD and write a short DoD into Context.
-- Read the returned help playbook (or call `cccc_help` anytime to refresh).
+DEFAULT_PREAMBLE_BODY = """Quick start:
+- Call `cccc_bootstrap` to load PROJECT.md (if present), Context, inbox, and the help entrypoint.
+- If PROJECT.md is missing, ask for goals/constraints/DoD and write a short DoD into Context.
+- Call `cccc_help` when detailed workflow or edge-case guidance is needed.
 
-Execution loop:
+Execution checklist:
 - Keep visible coordination in MCP chat (`cccc_message_send` / `cccc_message_reply`).
-- Keep Context current at key transitions (start/milestone/blocker/unblock/done):
-  - tasks/overview via context tools
-  - agent short-term state via `cccc_context_agent(action=update, agent_id=<self>, ...)`
-  - minimum payload each update: `focus` + `next_action` + `what_changed` (and `active_task_id` when applicable)
+- Update Context at key transitions (start/milestone/blocker/resume/done).
+- Update your short-term state via `cccc_context_agent(action=update, agent_id=<self>, ...)`.
+- Minimum agent-state payload each update: `focus` + `next_action` + `what_changed` (+ `active_task_id` when applicable).
+- Keep runtime todo current before implementation and before each status reply.
 
-Gap handling (default policy):
-- If information is insufficient, investigate first (Context/PROJECT.md/inbox/memory; then web if allowed) before escalating.
-- If capability is insufficient, use capability control plane before declaring blocked:
-  - fast path: `cccc_capability_use(...)`
-  - discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)` -> `cccc_capability_use(capability_id=...)`
-  - if `refresh_required=true`, relist/reconnect then retry.
+Gap routing:
+- Info gap: investigate Context / PROJECT.md / inbox / memory first; then web if allowed.
+- Capability gap: prefer `cccc_capability_use(...)`; if needed, run `cccc_capability_search(...)` then `cccc_capability_use(...)`.
+- If capability setup returns retry guidance (relist/reconnect/diagnostics), follow it before escalating.
+- Ask the user only for real env/permission blockers.
 
-Memory handoff:
-- Context = short-term execution memory; memory.db = long-term reusable memory.
-- Promotion rule: milestone/done -> `cccc_memory_admin(action="ingest", mode="signal")` -> `cccc_memory(action="store", ...)`.
-
-Message modes: choose intentionally (normal / attention / task[reply_required]); avoid both overuse and underuse.
+Memory boundary:
+- Context agent state is short-term execution memory; memory.db is long-term reusable memory.
 """
 
 def load_builtin_help_markdown() -> str:

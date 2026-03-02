@@ -12,7 +12,7 @@ import {
     useDismiss,
     FloatingPortal,
 } from "@floating-ui/react";
-import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
+import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -87,7 +87,7 @@ export interface MessageBubbleProps {
     event: LedgerEvent;
     actors: Actor[];
     displayNameMap: Map<string, string>;
-    presenceAgent: PresenceAgent | null;
+    agentState: AgentState | null;
     isDark: boolean;
     readOnly?: boolean;
     groupId: string;
@@ -105,7 +105,7 @@ export const MessageBubble = memo(function MessageBubble({
     event: ev,
     actors,
     displayNameMap,
-    presenceAgent,
+    agentState,
     isDark,
     readOnly,
     groupId,
@@ -121,10 +121,10 @@ export const MessageBubble = memo(function MessageBubble({
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
 
-    // Floating UI for Presence Tooltip - replaces manual coordinate calculation
-    const [isPresenceOpen, setIsPresenceOpen] = useState(false);
+    // Floating UI for agent-state tooltip
+    const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
 
-    const canShowPresence = useMemo(() => {
+    const canShowAgentState = useMemo(() => {
         if (isUserMessage) return false;
         const id = String(ev.by || "");
         if (!id) return false;
@@ -132,8 +132,8 @@ export const MessageBubble = memo(function MessageBubble({
     }, [ev.by, isUserMessage]);
 
     const { refs, floatingStyles, context } = useFloating({
-        open: isPresenceOpen && canShowPresence,
-        onOpenChange: setIsPresenceOpen,
+        open: isAgentStateOpen && canShowAgentState,
+        onOpenChange: setIsAgentStateOpen,
         placement: "bottom-start",
         middleware: [
             offset(10),
@@ -143,14 +143,14 @@ export const MessageBubble = memo(function MessageBubble({
         whileElementsMounted: autoUpdate,
     });
 
-    const setPresenceReference = useCallback(
+    const setAgentStateReference = useCallback(
         (node: HTMLElement | null) => {
             refs.setReference(node);
         },
         [refs]
     );
 
-    const setPresenceFloating = useCallback(
+    const setAgentStateFloating = useCallback(
         (node: HTMLElement | null) => {
             refs.setFloating(node);
         },
@@ -159,17 +159,17 @@ export const MessageBubble = memo(function MessageBubble({
 
     const hover = useHover(context, {
         delay: { open: 100, close: 150 },
-        enabled: canShowPresence,
+        enabled: canShowAgentState,
     });
     const dismiss = useDismiss(context);
     const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
     const { t } = useTranslation('chat');
-    const presenceText = String(presenceAgent?.focus || "").trim();
-    const presenceDisplay = presenceText || t('noAgentStateYet');
-    const stateTask = String(presenceAgent?.active_task_id || "").trim();
-    const stateNext = String(presenceAgent?.next_action || "").trim();
-    const stateChanged = String(presenceAgent?.what_changed || "").trim();
-    const blockerCount = Array.isArray(presenceAgent?.blockers) ? presenceAgent.blockers.length : 0;
+    const agentStateText = String(agentState?.focus || "").trim();
+    const agentStateDisplay = agentStateText || t('noAgentStateYet');
+    const stateTask = String(agentState?.active_task_id || "").trim();
+    const stateNext = String(agentState?.next_action || "").trim();
+    const stateChanged = String(agentState?.what_changed || "").trim();
+    const blockerCount = Array.isArray(agentState?.blockers) ? agentState.blockers.length : 0;
 
 
     // Treat data as ChatMessageData.
@@ -281,7 +281,7 @@ export const MessageBubble = memo(function MessageBubble({
                             : "bg-white border border-gray-200 text-gray-700",
                     !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                 )}
-                ref={setPresenceReference}
+                ref={setAgentStateReference}
                 {...getReferenceProps()}
             >
                 {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
@@ -767,10 +767,10 @@ export const MessageBubble = memo(function MessageBubble({
                 </div>
             </div>
 
-            {isPresenceOpen && canShowPresence && (
+            {isAgentStateOpen && canShowAgentState && (
                 <FloatingPortal>
                     <div
-                        ref={setPresenceFloating}
+                        ref={setAgentStateFloating}
                         style={floatingStyles}
                         {...getFloatingProps()}
                         className={classNames(
@@ -787,22 +787,22 @@ export const MessageBubble = memo(function MessageBubble({
                             >
                                 {senderDisplayName}
                             </div>
-                            {presenceAgent?.updated_at ? (
+                            {agentState?.updated_at ? (
                                 <div
                                     className={classNames(
                                         "ml-auto text-xs tabular-nums",
                                         isDark ? "text-slate-400" : "text-gray-500"
                                     )}
-                                    title={formatFullTime(presenceAgent.updated_at)}
+                                    title={formatFullTime(agentState.updated_at)}
                                 >
-                                    {t('updated', { time: formatTime(presenceAgent.updated_at) })}
+                                    {t('updated', { time: formatTime(agentState.updated_at) })}
                                 </div>
                             ) : null}
                         </div>
                         <div
                             className={classNames("mt-1 text-xs whitespace-pre-wrap", isDark ? "text-slate-300" : "text-gray-700")}
                         >
-                            {presenceDisplay}
+                            {agentStateDisplay}
                         </div>
                         {(stateTask || blockerCount > 0 || stateNext || stateChanged) ? (
                             <div className="mt-2 space-y-1">
@@ -840,7 +840,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.event === nextProps.event &&
         prevProps.actors === nextProps.actors &&
         prevProps.displayNameMap === nextProps.displayNameMap &&
-        prevProps.presenceAgent === nextProps.presenceAgent &&
+        prevProps.agentState === nextProps.agentState &&
         prevProps.isDark === nextProps.isDark &&
         prevProps.groupId === nextProps.groupId &&
         prevProps.groupLabelById === nextProps.groupLabelById &&

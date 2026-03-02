@@ -67,6 +67,16 @@ interface GroupState {
 
 const MAX_UI_EVENTS = 800;
 
+/** Normalize API response: promote presence.agents to top-level agents */
+function normalizeGroupContext(ctx: GroupContext | null): GroupContext | null {
+  if (!ctx) return null;
+  const raw = ctx as Record<string, unknown>;
+  if (!ctx.agents && (raw.presence as Record<string, unknown>)?.agents) {
+    return { ...ctx, agents: (raw.presence as { agents: typeof ctx.agents }).agents };
+  }
+  return ctx;
+}
+
 // localStorage key for group order
 const GROUP_ORDER_KEY = "cccc-group-order";
 
@@ -182,7 +192,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       };
     }),
   setActors: (actors) => set({ actors }),
-  setGroupContext: (ctx) => set({ groupContext: ctx }),
+  setGroupContext: (ctx) => set({ groupContext: normalizeGroupContext(ctx) }),
   setGroupSettings: (settings) => set({ groupSettings: settings }),
   setRuntimes: (runtimes) => set({ runtimes }),
 
@@ -533,7 +543,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         ? (tail.result.events || []).filter((ev) => ev && ev.kind !== "context.sync")
         : [],
       actors: a.ok ? a.result.actors || [] : [],
-      groupContext: ctx.ok ? (ctx.result as GroupContext) : null,
+      groupContext: normalizeGroupContext(ctx.ok ? (ctx.result as GroupContext) : null),
       groupSettings: settings.ok && settings.result.settings ? settings.result.settings : null,
       hasMoreHistory: tail.ok ? !!tail.result.has_more : true,
     });

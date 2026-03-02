@@ -94,13 +94,13 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_load_presence_tolerates_bad_shape(self) -> None:
+    def test_load_agents_tolerates_bad_shape(self) -> None:
         _, cleanup = self._with_home()
         try:
             group, storage = self._new_storage()
             storage._ensure_dirs()  # noqa: SLF001
-            presence_path = group.path / "context" / "presence.yaml"
-            presence_path.write_text(
+            agents_path = group.path / "context" / "agents.yaml"
+            agents_path.write_text(
                 yaml.safe_dump(
                     {
                         "agents": [{"id": "peer1", "focus": "busy"}, "bad"],
@@ -111,10 +111,10 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            presence = storage.load_presence()
-            self.assertEqual(len(presence.agents), 1)
-            self.assertEqual(presence.agents[0].id, "peer1")
-            self.assertEqual(presence.agents[0].focus, "busy")
+            agents_state = storage.load_agents()
+            self.assertEqual(len(agents_state.agents), 1)
+            self.assertEqual(agents_state.agents[0].id, "peer1")
+            self.assertEqual(agents_state.agents[0].focus, "busy")
         finally:
             cleanup()
 

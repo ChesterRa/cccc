@@ -246,8 +246,8 @@ class ContextStorage:
     def _task_path(self, task_id: str) -> Path:
         return self.tasks_dir / f"{task_id}.yaml"
 
-    def _presence_path(self) -> Path:
-        return self.context_dir / "presence.yaml"
+    def _agents_path(self) -> Path:
+        return self.context_dir / "agents.yaml"
 
     # =========================================================================
     # Version Computation
@@ -309,7 +309,7 @@ class ContextStorage:
                 "vision": "One-sentence north star; update rarely.",
                 "overview": "Structured project view. manual=human-maintained, mermaid=daemon-computed.",
                 "tasks": "Multi-level task tree. Root tasks = phases/stages. Child tasks = execution.",
-                "presence": "Flat per-agent short-term working memory.",
+                "agents": "Flat per-agent short-term working memory.",
             }
         }
 
@@ -530,11 +530,11 @@ class ContextStorage:
         return False
 
     # =========================================================================
-    # Presence Operations
+    # Agent-State Operations
     # =========================================================================
 
-    def load_presence(self) -> AgentsData:
-        path = self._presence_path()
+    def load_agents(self) -> AgentsData:
+        path = self._agents_path()
         if not path.exists():
             return AgentsData()
 
@@ -573,11 +573,11 @@ class ContextStorage:
         except Exception:
             return AgentsData()
 
-    def save_presence(self, presence: AgentsData) -> None:
+    def save_agents(self, agents_state: AgentsData) -> None:
         self._ensure_dirs()
 
         agents_data = []
-        for a in presence.agents:
+        for a in agents_state.agents:
             entry: Dict[str, Any] = {"id": a.id}
             if a.active_task_id:
                 entry["active_task_id"] = a.active_task_id
@@ -603,7 +603,7 @@ class ContextStorage:
 
         data: Dict[str, Any] = {"agents": agents_data}
 
-        path = self._presence_path()
+        path = self._agents_path()
         path.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False),
             encoding="utf-8",
@@ -619,15 +619,15 @@ class ContextStorage:
         s = s.strip("-")
         return s.lower()
 
-    def _get_or_create_agent(self, presence: AgentsData, agent_id: str) -> AgentState:
+    def _get_or_create_agent(self, agents_state: AgentsData, agent_id: str) -> AgentState:
         canonical_id = self._canonicalize_agent_id(agent_id)
         if not canonical_id:
             raise ValueError("agent_id must be a non-empty string")
-        for a in presence.agents:
+        for a in agents_state.agents:
             if a.id == canonical_id:
                 return a
         agent = AgentState(id=canonical_id)
-        presence.agents.append(agent)
+        agents_state.agents.append(agent)
         return agent
 
     def update_agent_state(
@@ -636,20 +636,20 @@ class ContextStorage:
         canonical_id = self._canonicalize_agent_id(agent_id)
         if not canonical_id:
             raise ValueError("agent_id must be a non-empty string")
-        presence = self.load_presence()
-        agent = self._get_or_create_agent(presence, canonical_id)
+        agents_state = self.load_agents()
+        agent = self._get_or_create_agent(agents_state, canonical_id)
         agent.focus = re.sub(r"\s+", " ", str(status or "")).strip()
         agent.active_task_id = str(active_task_id or "").strip() or None
         agent.updated_at = _utc_now_iso()
-        self.save_presence(presence)
+        self.save_agents(agents_state)
         return agent
 
     def clear_agent_state(self, agent_id: str) -> AgentState:
         canonical_id = self._canonicalize_agent_id(agent_id)
         if not canonical_id:
             raise ValueError("agent_id must be a non-empty string")
-        presence = self.load_presence()
-        agent = self._get_or_create_agent(presence, canonical_id)
+        agents_state = self.load_agents()
+        agent = self._get_or_create_agent(agents_state, canonical_id)
         agent.active_task_id = None
         agent.focus = ""
         agent.blockers = []
@@ -660,7 +660,7 @@ class ContextStorage:
         agent.user_profile = ""
         agent.notes = ""
         agent.updated_at = _utc_now_iso()
-        self.save_presence(presence)
+        self.save_agents(agents_state)
         return agent
 
     def clear_agent_status(self, agent_id: str) -> AgentState:
@@ -672,9 +672,9 @@ class ContextStorage:
         if not canonical_id:
             return False
 
-        presence = self.load_presence()
+        agents_state = self.load_agents()
         agent = None
-        for a in presence.agents:
+        for a in agents_state.agents:
             if a.id == canonical_id:
                 agent = a
                 break
@@ -682,25 +682,25 @@ class ContextStorage:
             return False
         agent.focus = ""
         agent.updated_at = _utc_now_iso()
-        self.save_presence(presence)
+        self.save_agents(agents_state)
         return True
 
-    def delete_agent_presence(self, agent_id: str) -> bool:
-        """Delete an agent presence entry entirely.
+    def delete_agent_state(self, agent_id: str) -> bool:
+        """Delete an agent state entry entirely.
 
         Use this when an actor is removed from the group and should no longer be
-        visible in presence lists.
+        visible in agent-state lists.
         """
         canonical_id = self._canonicalize_agent_id(agent_id)
         if not canonical_id:
             return False
 
-        presence = self.load_presence()
-        before = len(presence.agents)
-        presence.agents = [a for a in presence.agents if a.id != canonical_id]
-        if len(presence.agents) == before:
+        agents_state = self.load_agents()
+        before = len(agents_state.agents)
+        agents_state.agents = [a for a in agents_state.agents if a.id != canonical_id]
+        if len(agents_state.agents) == before:
             return False
-        self.save_presence(presence)
+        self.save_agents(agents_state)
         return True
 
     # =========================================================================
@@ -710,14 +710,14 @@ class ContextStorage:
     def compute_overview_mermaid(
         self,
         tasks: Optional[List[Task]] = None,
-        presence: Optional[AgentsData] = None,
+        agents_state: Optional[AgentsData] = None,
         overview: Optional[Overview] = None,
     ) -> str:
         """Compute deterministic mermaid project panorama from tasks + agents."""
         if tasks is None:
             tasks = self.list_tasks()
-        if presence is None:
-            presence = self.load_presence()
+        if agents_state is None:
+            agents_state = self.load_agents()
         if overview is None:
             context = self.load_context()
             overview = context.overview
@@ -758,7 +758,7 @@ class ContextStorage:
             else:
                 lines.append(f"OVR --> {task_node}")
 
-        for agent in presence.agents:
+        for agent in agents_state.agents:
             agent_node = _safe_node_id("A", agent.id)
             agent_focus = _safe_label(agent.focus or "")
             agent_label = _safe_label(f"{agent.id}: {agent_focus or 'idle'}")

@@ -29,6 +29,20 @@ _RESERVED_IDS = frozenset({
 })
 
 
+def _normalize_capability_id_list(raw: Any) -> List[str]:
+    out: List[str] = []
+    if not isinstance(raw, list):
+        return out
+    seen: set[str] = set()
+    for item in raw:
+        cap_id = str(item or "").strip()
+        if not cap_id or cap_id in seen:
+            continue
+        seen.add(cap_id)
+        out.append(cap_id)
+    return out
+
+
 def validate_actor_id(actor_id: str) -> str:
     """Validate and normalize actor ID. Returns normalized ID or raises ValueError."""
     aid = actor_id.strip()
@@ -172,6 +186,7 @@ def add_actor(
     env: Optional[Dict[str, str]] = None,
     default_scope_key: str = "",
     submit: ActorSubmit = "enter",
+    capability_autoload: Optional[List[str]] = None,
     enabled: bool = True,
     runner: RunnerKind = "pty",
     runtime: AgentRuntime = "codex",
@@ -198,6 +213,7 @@ def add_actor(
         env=dict(env or {}),
         default_scope_key=default_scope_key.strip(),
         submit=submit,
+        capability_autoload=_normalize_capability_id_list(capability_autoload or []),
         enabled=coerce_bool(enabled, default=True),
         runner=runner,
         runtime=runtime,
@@ -313,6 +329,9 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             item["submit"] = submit
         else:
             raise ValueError("invalid submit")
+
+    if "capability_autoload" in patch:
+        item["capability_autoload"] = _normalize_capability_id_list(patch.get("capability_autoload"))
 
     if "enabled" in patch:
         item["enabled"] = coerce_bool(patch.get("enabled"), default=False)

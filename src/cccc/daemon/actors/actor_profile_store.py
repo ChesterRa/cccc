@@ -202,16 +202,16 @@ def upsert_actor_profile(
     if capability_defaults_in is not None:
         if not isinstance(capability_defaults_in, dict):
             raise ValueError("capability_defaults must be an object or null")
-        pinned_raw = capability_defaults_in.get("pinned_capabilities")
-        pinned: List[str] = []
+        autoload_raw = capability_defaults_in.get("autoload_capabilities")
+        autoload: List[str] = []
         seen: set[str] = set()
-        if isinstance(pinned_raw, list):
-            for item in pinned_raw:
+        if isinstance(autoload_raw, list):
+            for item in autoload_raw:
                 cap_id = str(item or "").strip()
                 if not cap_id or cap_id in seen:
                     continue
                 seen.add(cap_id)
-                pinned.append(cap_id)
+                autoload.append(cap_id)
         default_scope = str(capability_defaults_in.get("default_scope") or "actor").strip().lower()
         if default_scope not in {"actor", "session"}:
             raise ValueError("capability_defaults.default_scope must be actor or session")
@@ -221,7 +221,7 @@ def upsert_actor_profile(
             ttl_seconds = 3600
         ttl_seconds = max(60, min(ttl_seconds, 24 * 3600))
         capability_defaults = {
-            "pinned_capabilities": pinned,
+            "autoload_capabilities": autoload,
             "default_scope": default_scope,
             "session_ttl_seconds": ttl_seconds,
         }

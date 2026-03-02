@@ -53,7 +53,6 @@
   "openOriginalMessage": "元のメッセージを開く",
   "sentTo": "{{label}} · {{to}} に送信",
   "updated": "更新： {{time}}",
-  "noPresenceYet": "まだオンライン情報がありません",
   "noAgentStateYet": "エージェント状態はまだありません",
   "taskShort": "task {{id}}",
   "blockersShort": "blocked {{count}}",

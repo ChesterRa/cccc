@@ -25,6 +25,8 @@ export default defineConfig({
           xterm: ["@xterm/xterm", "@xterm/addon-fit"],
           // React core
           "react-vendor": ["react", "react-dom"],
+          // Three.js 3D scene: keep separate, loaded on demand.
+          "three-vendor": ["three", "@react-three/fiber", "@react-three/drei"],
         },
       },
     },

@@ -1252,7 +1252,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         if token_env:
             bot_token = os.environ.get(token_env, "").strip()
         if not bot_token:
-            bot_token = str(im_config.get("token") or "").strip()
+            bot_token = str(im_config.get("token") or im_config.get("bot_token") or "").strip()
         if not bot_token and token_env_raw and not token_env:
             # Common misconfig: raw token pasted into *_env field.
             bot_token = token_env_raw

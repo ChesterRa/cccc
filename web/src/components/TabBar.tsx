@@ -170,6 +170,22 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             )}
           </button>
 
+          {/* Panorama Tab */}
+          <button
+            ref={activeTab === "panorama" ? activeTabRef : null}
+            onClick={() => onTabChange("panorama")}
+            className={classNames(
+              "relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all rounded-lg flex-shrink-0 focus:outline-none",
+              activeTab === "panorama"
+                ? isDark ? "bg-white/10 text-white" : "bg-black/5 text-gray-900"
+                : isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
+            )}
+            role="tab"
+            aria-selected={activeTab === "panorama"}
+          >
+            <span>{t("panorama")}</span>
+          </button>
+
           {/* Separator */}
           {actors.length > 0 && (
             <div className={`w-px h-4 flex-shrink-0 ${isDark ? "bg-white/10" : "bg-black/8"}`} />

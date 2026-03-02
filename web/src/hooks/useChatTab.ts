@@ -231,9 +231,9 @@ export function useChatTab({
     return undefined;
   }, [inChatWindow, chatWindow]);
 
-  // Presence agents
-  const presenceAgents = useMemo(
-    () => groupContext?.presence?.agents || [],
+  // Agent state snapshot
+  const agentStates = useMemo(
+    () => groupContext?.agents || [],
     [groupContext]
   );
 
@@ -575,8 +575,8 @@ export function useChatTab({
     setDestGroupId,
     mentionSuggestions,
 
-    // Presence
-    presenceAgents,
+    // Agent state
+    agentStates,
 
     // Actions
     sendMessage,

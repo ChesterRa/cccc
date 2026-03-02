@@ -9,6 +9,8 @@ import { useTranslation } from "react-i18next";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { CapabilityPicker } from "../CapabilityPicker";
+import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
 
 export interface AddActorModalProps {
   isOpen: boolean;
@@ -41,6 +43,8 @@ export interface AddActorModalProps {
 
   newActorSecretsSetText: string;
   setNewActorSecretsSetText: (v: string) => void;
+  newActorCapabilityAutoloadText: string;
+  setNewActorCapabilityAutoloadText: (v: string) => void;
 
   showAdvancedActor: boolean;
   setShowAdvancedActor: (show: boolean) => void;
@@ -82,6 +86,8 @@ export function AddActorModal({
   setNewActorUseDefaultCommand,
   newActorSecretsSetText,
   setNewActorSecretsSetText,
+  newActorCapabilityAutoloadText,
+  setNewActorCapabilityAutoloadText,
   showAdvancedActor,
   setShowAdvancedActor,
   addActorError,
@@ -395,6 +401,15 @@ export function AddActorModal({
 
           {!newActorUseProfile && showAdvancedActor && (
             <div className={`space-y-4 pl-4 border-l-2 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+              <CapabilityPicker
+                isDark={isDark}
+                value={parseCapabilityIdInput(newActorCapabilityAutoloadText)}
+                onChange={(next) => setNewActorCapabilityAutoloadText(formatCapabilityIdInput(next))}
+                disabled={busy === "actor-add"}
+                label={t("autoloadCapabilities")}
+                hint={t("autoloadCapabilitiesHint")}
+              />
+
               <div>
                 <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('commandOverrideOptional')}</label>
                 {newActorRuntime !== "custom" ? (

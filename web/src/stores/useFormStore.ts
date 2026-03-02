@@ -11,6 +11,7 @@ interface FormState {
   editActorRuntime: SupportedRuntime;
   editActorCommand: string;
   editActorTitle: string;
+  editActorCapabilityAutoloadText: string;
 
   // Add Actor
   newActorId: string;
@@ -19,6 +20,7 @@ interface FormState {
   newActorCommand: string;
   newActorUseDefaultCommand: boolean;
   newActorSecretsSetText: string;
+  newActorCapabilityAutoloadText: string;
   newActorUseProfile: boolean;
   newActorProfileId: string;
   showAdvancedActor: boolean;
@@ -42,6 +44,7 @@ interface FormState {
   setEditActorRuntime: (v: SupportedRuntime) => void;
   setEditActorCommand: (v: string) => void;
   setEditActorTitle: (v: string) => void;
+  setEditActorCapabilityAutoloadText: (v: string) => void;
 
   // Actions - Add Actor
   setNewActorId: (v: string) => void;
@@ -50,6 +53,7 @@ interface FormState {
   setNewActorCommand: (v: string) => void;
   setNewActorUseDefaultCommand: (v: boolean) => void;
   setNewActorSecretsSetText: (v: string) => void;
+  setNewActorCapabilityAutoloadText: (v: string) => void;
   setNewActorUseProfile: (v: boolean) => void;
   setNewActorProfileId: (v: string) => void;
   setShowAdvancedActor: (v: boolean) => void;
@@ -77,6 +81,7 @@ export const useFormStore = create<FormState>((set) => ({
   editActorRuntime: "codex",
   editActorCommand: "",
   editActorTitle: "",
+  editActorCapabilityAutoloadText: "",
 
   // Initial state - Add Actor
   newActorId: "",
@@ -85,6 +90,7 @@ export const useFormStore = create<FormState>((set) => ({
   newActorCommand: "",
   newActorUseDefaultCommand: true,
   newActorSecretsSetText: "",
+  newActorCapabilityAutoloadText: "",
   newActorUseProfile: false,
   newActorProfileId: "",
   showAdvancedActor: false,
@@ -108,6 +114,7 @@ export const useFormStore = create<FormState>((set) => ({
   setEditActorRuntime: (v) => set({ editActorRuntime: v }),
   setEditActorCommand: (v) => set({ editActorCommand: v }),
   setEditActorTitle: (v) => set({ editActorTitle: v }),
+  setEditActorCapabilityAutoloadText: (v) => set({ editActorCapabilityAutoloadText: v }),
 
   // Actions - Add Actor
   setNewActorId: (v) => set({ newActorId: v }),
@@ -116,6 +123,7 @@ export const useFormStore = create<FormState>((set) => ({
   setNewActorCommand: (v) => set({ newActorCommand: v }),
   setNewActorUseDefaultCommand: (v) => set({ newActorUseDefaultCommand: v }),
   setNewActorSecretsSetText: (v) => set({ newActorSecretsSetText: v }),
+  setNewActorCapabilityAutoloadText: (v) => set({ newActorCapabilityAutoloadText: v }),
   setNewActorUseProfile: (v) => set({ newActorUseProfile: v }),
   setNewActorProfileId: (v) => set({ newActorProfileId: v }),
   setShowAdvancedActor: (v) => set({ showAdvancedActor: v }),
@@ -126,6 +134,7 @@ export const useFormStore = create<FormState>((set) => ({
       newActorCommand: "",
       newActorUseDefaultCommand: true,
       newActorSecretsSetText: "",
+      newActorCapabilityAutoloadText: "",
       newActorUseProfile: false,
       newActorProfileId: "",
       newActorRole: "peer",

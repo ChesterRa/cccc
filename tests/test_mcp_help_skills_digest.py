@@ -22,7 +22,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
                         "description_short": "Issue triage checklist",
                     }
                 ],
-                "pinned_skills": [
+                "autoload_skills": [
                     {
                         "capability_id": "skill:anthropic:review",
                         "name": "review",
@@ -39,6 +39,20 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("## Gap routing (high ROI)", markdown)
         self.assertIn("cccc_capability_search(kind=\"mcp_toolpack\")", markdown)
         self.assertIn("cccc_capability_use", markdown)
+        self.assertIn("capability-skill is runtime capsule activation", markdown)
+        self.assertIn("$CODEX_HOME/skills", markdown)
+        self.assertIn("### Todo (runtime-first)", markdown)
+        self.assertIn("Every concrete user ask/question (even simple) = one runtime todo item", markdown)
+        self.assertIn("Capture implicit asks too", markdown)
+        self.assertIn("If new evidence overturns prior assumptions, refactor todo immediately", markdown)
+        self.assertIn("Anti-drip delivery: once implementation is approved, finish the agreed scope in one pass", markdown)
+        self.assertIn('In-scope polish rule: include obvious low-risk in-scope polish in the same pass', markdown)
+        self.assertIn("Scope boundary: do not use polish to expand scope; ask first if a change is beyond agreed scope", markdown)
+        self.assertIn("For status replies, map current approved scope items explicitly to `done` / `pending` / `blocked(owner)`", markdown)
+        self.assertIn("### Intent & scope alignment", markdown)
+        self.assertIn("do not implement until explicit action intent", markdown)
+        self.assertIn("### Planning balance (6D)", markdown)
+        self.assertIn("value/ROI, complexity load, feasibility, verifiability, risk/side-effects, reversibility", markdown)
         self.assertIn("triage", markdown)
         self.assertIn("review", markdown)
 
@@ -54,16 +68,14 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         ), patch(
             "cccc.ports.mcp.server._call_daemon_or_raise",
             return_value={
-                "presence": {
-                    "agents": [
-                        {
-                            "id": "peer-1",
-                            "focus": "test focus",
-                            "next_action": "do next",
-                            "what_changed": "updated",
-                        }
-                    ]
-                }
+                "agents": [
+                    {
+                        "id": "peer-1",
+                        "focus": "test focus",
+                        "next_action": "do next",
+                        "what_changed": "updated",
+                    }
+                ]
             },
         ):
             out = handle_tool_call("cccc_help", {})

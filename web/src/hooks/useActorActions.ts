@@ -3,13 +3,15 @@ import { useCallback, useState } from "react";
 import { useGroupStore, useUIStore, useModalStore, useInboxStore, useFormStore } from "../stores";
 import * as api from "../services/api";
 import type { Actor, SupportedRuntime } from "../types";
+import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
 
 export function useActorActions(groupId: string) {
   const { refreshActors, loadGroup } = useGroupStore();
   const { setBusy, setActiveTab, showError } = useUIStore();
   const { openModal, setEditingActor } = useModalStore();
   const { setInboxActorId, setInboxMessages } = useInboxStore();
-  const { setEditActorRuntime, setEditActorCommand, setEditActorTitle } = useFormStore();
+  const { setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText } =
+    useFormStore();
 
   // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
@@ -67,9 +69,10 @@ export function useActorActions(groupId: string) {
       setEditActorRuntime((runtime || "codex") as SupportedRuntime);
       setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
       setEditActorTitle(actor.title || "");
+      setEditActorCapabilityAutoloadText(formatCapabilityIdInput(actor.capability_autoload));
       setEditingActor(actor);
     },
-    [setEditingActor, setEditActorRuntime, setEditActorCommand, setEditActorTitle]
+    [setEditingActor, setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText]
   );
 
   // Remove actor

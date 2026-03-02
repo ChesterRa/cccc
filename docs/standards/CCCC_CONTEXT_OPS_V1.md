@@ -13,7 +13,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** in
 
 ## 1. Overview
 
-`context_sync` applies a batch of small "context ops" to a group's shared context storage (vision/overview/tasks/presence).
+`context_sync` applies a batch of small "context ops" to a group's shared context storage (vision/overview/tasks/agents).
 
 All operations are applied in order. If any op is invalid, the daemon rejects the entire batch.
 

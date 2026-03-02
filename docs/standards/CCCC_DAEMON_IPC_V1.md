@@ -220,7 +220,7 @@ The error envelope shape in §5.2 is **normative**: daemons MUST return errors u
 Common codes used by CCCC v0.4.x include (non-exhaustive):
 - `invalid_request`, `unknown_op`
 - `missing_group_id`, `group_not_found`
-- `missing_actor_id`, `actor_not_found`, `actor_not_running`
+- `missing_actor_id`, `actor_not_found`, `actor_not_running`, `not_pty_actor`
 - `permission_denied`
 - `invalid_patch`, `invalid_template`, `confirmation_required`
 
@@ -375,6 +375,80 @@ Result:
 }
 ```
 
+#### `capability_overview`
+
+Return a global capability library snapshot for Settings/Policy views (no actor scope required).
+
+Args:
+```ts
+{
+  query?: string
+  limit?: number          // default 400, max 2000
+  include_indexed?: boolean // default true
+}
+```
+
+Result:
+```ts
+{
+  items: Array<{
+    capability_id: string
+    kind: "mcp_toolpack" | "skill" | ""
+    name: string
+    description_short?: string
+    source_id?: string
+    source_uri?: string
+    source_tier?: string
+    trust_tier?: string
+    license?: string
+    sync_state?: string
+    policy_level: "indexed" | "mounted" | "enabled" | "pinned"
+    policy_visible: boolean
+    blocked_global: boolean
+    blocked_reason?: string
+    enable_supported: boolean
+    qualification_status: "qualified" | "unavailable" | "blocked"
+    install_mode?: string
+    autoload_candidate: boolean
+    tags?: string[]
+    tool_count?: number
+    tool_names?: string[]
+    cached_install_state?: string
+    cached_install_error_code?: string
+    cached_install_error?: string
+    recent_success?: {
+      success_count: number
+      last_success_at?: string
+      last_group_id?: string
+      last_actor_id?: string
+      last_action?: string
+    }
+  }>
+  count: number
+  query: string
+  sources: Record<string, {
+    source_id: string
+    enabled: boolean
+    source_level: "indexed" | "mounted" | "enabled" | "pinned"
+    rationale?: string
+    sync_state: string
+    last_synced_at?: string
+    staleness_seconds: number
+    record_count: number
+    error?: string
+  }>
+  blocked_capabilities: Array<{
+    capability_id: string
+    scope: "global"
+    reason?: string
+    by?: string
+    blocked_at?: string
+    expires_at?: string
+  }>
+  allowlist_revision: string
+}
+```
+
 #### `capability_search`
 
 Search capability registry records (built-in packs + local curated catalog + cached remote records).
@@ -447,9 +521,9 @@ Enable or disable a capability by scope.
 Notes:
 
 1. Built-in capability packs (`pack:*`) are directly enable-able and can change MCP exposure.
-2. Skills (`kind=skill`) use the same `capability_enable` op for pin/unpin and can auto-apply
+2. Skills (`kind=skill`) use the same `capability_enable` op for activate/deactivate and can auto-apply
    declared dependencies.
-3. External MCP execution path is constrained to supported installers (`remote_only` and npm package via `npx`);
+3. External MCP execution path is constrained to supported installers (`remote_only`, npm via `npx`, pypi via `uvx/pipx`, OCI via `docker/podman`);
    unsupported install metadata returns `state=failed`.
 
 Args:
@@ -481,7 +555,22 @@ Result:
   refresh_mode?: "relist_or_reconnect"
   wait?: "relist_or_reconnect"
   reason?: string
+  error?: string
+  retryable?: boolean
+  install_error_code?: string
+  required_env?: string[]
   policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+  install_state?: "installed" | "installed_degraded" | "install_failed"
+  degraded?: boolean
+  degraded_reason?: string
+  degraded_call_hint?: string
+  diagnostics?: Array<{
+    code: string
+    message: string
+    retryable?: boolean
+    required_env?: string[]
+    action_hints?: string[]
+  }>
   removed_binding_count?: number
   removed_installation?: boolean
   cleanup_skipped_reason?: string
@@ -590,24 +679,31 @@ Result:
     source_uri?: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
   }>
-  pinned_skills?: Array<{
+  autoload_skills?: Array<{
     capability_id: string
     name: string
     description_short?: string
     source_id?: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
   }>
+  autoload_capabilities?: string[]
+  actor_autoload_capabilities?: string[]
+  profile_autoload_capabilities?: string[]
   hidden_capabilities: Array<{
     capability_id: string
     reason: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
     state?: string
+    install_error_code?: string
+    install_error?: string
   }>
   external_binding_states?: Record<string, {
     mode: "mcp" | "skill"
     state: string
+    install_state?: string
     artifact_id?: string
     last_error?: string
+    last_error_code?: string
   }>
   precedence_chain: ["session", "actor", "group"]
   session_bindings: Array<{
@@ -635,12 +731,11 @@ Operational notes:
 3. Source gates:
    - `CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SOURCE_AGENTSKILLS_VALIDATOR_ENABLED` (default `1`)
    - `github_skills_curated` is allowlist-curated (no periodic source crawler).
-   - `github_skills_remote` is on-demand remote search (GitHub `SKILL.md` candidates).
-   - `agentskills_remote` is on-demand AgentSkills-aligned remote search.
-   - `skillsmp_remote` is on-demand SkillsMP remote search.
-   - `clawhub_remote` is on-demand ClawHub remote search.
+   - `skillsmp_remote` is on-demand SkillsMP remote search (API key mode + proxy fallback).
+   - `clawhub_remote` is on-demand ClawHub remote search (official API).
+   - `openclaw_skills_remote` is on-demand OpenClaw GitHub corpus search.
+   - `clawskills_remote` is on-demand clawskills.co index search.
 4. Dynamic tool exposure is capped by `CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE`
    (default `32`).
 5. Catalog snapshot size is capped by `CCCC_CAPABILITY_CATALOG_MAX_RECORDS`
@@ -648,16 +743,20 @@ Operational notes:
 6. Search may perform remote augmentation (MCP + skill) when local hits are insufficient:
    - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK` (default `1`)
    - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK_LIMIT` (default `40`, max `100`)
-   - `CCCC_CAPABILITY_SOURCE_GITHUB_SKILLS_REMOTE_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED` (default `1`)
+   - `CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SEARCH_REMOTE_SKILL_LIMIT` (default follows remote fallback limit)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_AGENTSKILLS_LIMIT` (default follows remote fallback limit)
    - `CCCC_CAPABILITY_SEARCH_REMOTE_SKILLSMP_LIMIT` (default follows remote fallback limit)
    - `CCCC_CAPABILITY_SEARCH_REMOTE_CLAWHUB_LIMIT` (default follows remote fallback limit)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_OPENCLAW_LIMIT` (default follows remote fallback limit)
+   - `CCCC_CAPABILITY_SEARCH_REMOTE_CLAWSKILLS_LIMIT` (default follows remote fallback limit)
    - `CCCC_CAPABILITY_SKILLSMP_PROXY_BASE` (default `https://r.jina.ai/http://skillsmp.com/search`)
-   - `CCCC_CAPABILITY_CLAWHUB_PROXY_BASE` (default `https://r.jina.ai/http://clawhub.ai/skills?focus=search`)
+   - `CCCC_CAPABILITY_SKILLSMP_API_BASE` (default `https://skillsmp.com/api/v1/skills/search`)
+   - `CCCC_CAPABILITY_SKILLSMP_API_KEY` (optional; enables direct SkillsMP API)
+   - `CCCC_CAPABILITY_CLAWHUB_API_BASE` (default `https://clawhub.ai/api/v1/skills`)
+   - `CCCC_CAPABILITY_CLAWSKILLS_DATA_URL` (default `https://clawskills.co/skills-data.js`)
 7. Allowlist override env/path compatibility (`CCCC_CAPABILITY_ALLOWLIST_PATH` and
    `CCCC_HOME/config/capability-allowlist.yaml`) is removed. Policy now always uses:
    - packaged default: `cccc.resources/capability-allowlist.default.yaml`
@@ -773,7 +872,7 @@ Result:
 
 #### `capability_uninstall`
 
-Remove capability installation cache and revoke all bindings for a group.
+Revoke capability bindings for the target group. Installation cache is removed only when no other group/actor bindings remain.
 
 Args:
 ```ts
@@ -797,6 +896,7 @@ Result:
   removed_bindings: number
   removed_installation: boolean
   removed_runtime_bindings?: number
+  cleanup_skipped_reason?: "cleanup_skipped_capability_still_bound"
   refresh_required: boolean
   refresh_mode?: "relist_or_reconnect"
   wait?: "relist_or_reconnect"
@@ -1122,6 +1222,7 @@ Args:
   runner?: "pty" | "headless"
   command?: string[]
   env?: Record<string, string>
+  capability_autoload?: string[] // actor startup autoload capability ids
   env_private?: Record<string, string> // write-only secrets (stored under CCCC_HOME/state; never persisted into ledger)
   profile_id?: string            // optional Actor Profile link (runtime/runner/command/submit/env + secrets)
   default_scope_key?: string
@@ -1161,6 +1262,7 @@ Patch keys used by CCCC v0.4.x include:
 - Scope: `default_scope_key`
 - Enable/disable: `enabled`
 - Environment (use with care): `env`
+- Capability startup baseline: `capability_autoload`
 
 Result:
 ```ts
@@ -1290,7 +1392,7 @@ Args:
     submit?: "enter" | "newline" | "none"
     env?: Record<string, string> // deprecated legacy input; values are migrated into profile secrets
     capability_defaults?: {
-      pinned_capabilities?: string[]
+      autoload_capabilities?: string[]
       default_scope?: "actor" | "session" // default actor
       session_ttl_seconds?: number         // clamped to 60..86400
     } | null
@@ -1559,21 +1661,19 @@ Result:
     root_count: number
   }
   active_tasks: Array<Record<string, unknown>>
-  presence: {
-    agents: Array<{
-      id: string
-      active_task_id?: string | null
-      focus: string
-      blockers: string[]
-      next_action: string
-      what_changed: string
-      decision_delta: string
-      environment: string
-      user_profile: string
-      notes: string
-      updated_at: string
-    }>
-  }
+  agents: Array<{
+    id: string
+    active_task_id?: string | null
+    focus: string
+    blockers: string[]
+    next_action: string
+    what_changed: string
+    decision_delta: string
+    environment: string
+    user_profile: string
+    notes: string
+    updated_at: string
+  }>
 }
 ```
 
@@ -1783,7 +1883,25 @@ Result:
 { tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
 ```
 
-`presence_get` has been removed in v2. Presence/agent state is returned in `context_get.result.presence.agents`.
+`presence_get` has been removed in v2. Agent state is returned in `context_get.result.agents`.
+
+#### `blueprint_generate`
+
+Generate a blueprint for a task (currently returns a predefined blueprint ID; LLM integration planned).
+
+Args:
+```ts
+{ task_id: string; task_name?: string; task_goal?: string; theme_hint?: string }
+```
+
+Result:
+```ts
+{ source: "predefined" | "llm"; blueprint_id: string; variant?: number }
+```
+
+Notes:
+- Current implementation uses deterministic FNV-1a hashing on `task_id` to select from predefined blueprints (`shield`, `house`, `rocket`).
+- Returns error code `missing_task_id` if `task_id` is empty.
 
 ### 8.9 Headless Runner
 
@@ -1941,6 +2059,7 @@ After a successful handshake, the connection becomes a raw PTY stream (see §4.4
 
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
+- `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner.
 
 ### 8.12 Ledger Maintenance
 

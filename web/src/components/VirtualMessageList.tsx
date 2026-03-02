@@ -1,14 +1,14 @@
 import { memo, useRef, useEffect, useCallback, useMemo } from "react";
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { LedgerEvent, Actor, PresenceAgent } from "../types";
+import { LedgerEvent, Actor, AgentState } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 
 export interface VirtualMessageListProps {
   messages: LedgerEvent[];
   actors: Actor[];
-  presenceAgents: PresenceAgent[];
+  agentStates: AgentState[];
   isDark: boolean;
   readOnly?: boolean;
   groupId: string;
@@ -39,7 +39,7 @@ export interface VirtualMessageListProps {
 export const VirtualMessageList = memo(function VirtualMessageList({
   messages,
   actors,
-  presenceAgents,
+  agentStates,
   isDark,
   readOnly,
   groupId,
@@ -67,11 +67,11 @@ export const VirtualMessageList = memo(function VirtualMessageList({
 }: VirtualMessageListProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
 
-  const presenceById = useMemo(() => {
-    const m = new Map<string, PresenceAgent>();
-    for (const p of presenceAgents || []) m.set(String(p.id || ""), p);
+  const agentStateById = useMemo(() => {
+    const m = new Map<string, AgentState>();
+    for (const p of agentStates || []) m.set(String(p.id || ""), p);
     return m;
-  }, [presenceAgents]);
+  }, [agentStates]);
 
   // Create display name map once at the list level (not per-message)
   const displayNameMap = useActorDisplayNameMap(actors);
@@ -526,7 +526,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                     event={message}
                     actors={actors}
                     displayNameMap={displayNameMap}
-                    presenceAgent={presenceById.get(String(message.by || "")) || null}
+                    agentState={agentStateById.get(String(message.by || "")) || null}
                     isDark={isDark}
                     readOnly={readOnly}
                     groupId={groupId}

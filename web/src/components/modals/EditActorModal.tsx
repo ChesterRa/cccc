@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../utils/privateEnvInput";
+import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
+import { CapabilityPicker } from "../CapabilityPicker";
 
 type EditMode = "custom" | "profile";
 
@@ -13,6 +15,7 @@ export interface EditActorSavePayload {
   setVars: Record<string, string>;
   unsetKeys: string[];
   clear: boolean;
+  capabilityAutoload: string[];
   profileId?: string;
   convertToCustom?: boolean;
 }
@@ -39,6 +42,8 @@ export interface EditActorModalProps {
   onChangeCommand: (command: string) => void;
   title: string;
   onChangeTitle: (title: string) => void;
+  capabilityAutoloadText: string;
+  onChangeCapabilityAutoloadText: (value: string) => void;
   onSave: (payload: EditActorSavePayload) => Promise<void>;
   onSaveAndRestart: (payload: EditActorSavePayload) => Promise<void>;
   linkedProfileId?: string;
@@ -102,6 +107,8 @@ export function EditActorModal({
   onChangeCommand,
   title,
   onChangeTitle,
+  capabilityAutoloadText,
+  onChangeCapabilityAutoloadText,
   onSave,
   onSaveAndRestart,
   linkedProfileId,
@@ -360,6 +367,7 @@ export function EditActorModal({
           setVars: {},
           unsetKeys: [],
           clear: false,
+          capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
           profileId,
         });
       } catch (e) {
@@ -402,6 +410,7 @@ export function EditActorModal({
         setVars: setParsed.setVars,
         unsetKeys: unsetParsed.unsetKeys,
         clear: secretsClearAll,
+        capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
         convertToCustom: linked && pendingConvertToCustom,
       });
     } catch (e) {
@@ -720,6 +729,15 @@ export function EditActorModal({
               </div>
             </>
           )}
+
+          <CapabilityPicker
+            isDark={isDark}
+            value={parseCapabilityIdInput(capabilityAutoloadText)}
+            onChange={(next) => onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))}
+            disabled={busy === "actor-update"}
+            label={t("autoloadCapabilities")}
+            hint={t("autoloadCapabilitiesHint")}
+          />
 
           {secretsError ? (
             <div

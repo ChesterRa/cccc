@@ -227,7 +227,7 @@ class TestActorProfilesOps(unittest.TestCase):
                         "command": [],
                         "submit": "enter",
                         "capability_defaults": {
-                            "pinned_capabilities": ["pack:space"],
+                            "autoload_capabilities": ["pack:space"],
                             "default_scope": "actor",
                         },
                     },
@@ -264,6 +264,43 @@ class TestActorProfilesOps(unittest.TestCase):
             result = state.result if isinstance(state.result, dict) else {}
             enabled = result.get("enabled_capabilities") if isinstance(result.get("enabled_capabilities"), list) else []
             self.assertIn("pack:space", enabled)
+        finally:
+            cleanup()
+
+    def test_actor_autoload_applies_on_actor_start(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group("ap-actor-autoload")
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "headless",
+                    "capability_autoload": ["pack:space"],
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            start, _ = self._call("actor_start", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
+            self.assertTrue(start.ok, getattr(start, "error", None))
+
+            state, _ = self._call("capability_state", {"group_id": group_id, "actor_id": "peer1", "by": "peer1"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            result = state.result if isinstance(state.result, dict) else {}
+            enabled = result.get("enabled_capabilities") if isinstance(result.get("enabled_capabilities"), list) else []
+            self.assertIn("pack:space", enabled)
+            actor_autoload = (
+                result.get("actor_autoload_capabilities")
+                if isinstance(result.get("actor_autoload_capabilities"), list)
+                else []
+            )
+            self.assertIn("pack:space", actor_autoload)
         finally:
             cleanup()
 

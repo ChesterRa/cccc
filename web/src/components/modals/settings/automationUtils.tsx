@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- utility + component mixed file */
 import React from "react";
 
 import type { AutomationRule, AutomationRuleAction } from "../../../types";

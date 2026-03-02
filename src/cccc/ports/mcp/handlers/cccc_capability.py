@@ -2,12 +2,154 @@
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any, Dict, Optional
 
 from ....kernel.capabilities import BUILTIN_CAPABILITY_PACKS, CORE_TOOL_NAMES
 from ..common import MCPError, _call_daemon_or_raise
 
 _CORE_TOOL_NAME_SET = set(CORE_TOOL_NAMES)
+_EXT_TOOL_NAME_RE = re.compile(r"^cccc_ext_[a-f0-9]{8}_(.+)$")
+
+
+def _skill_runtime_contract_fields(capability_id: str) -> Dict[str, Any]:
+    cid = str(capability_id or "").strip()
+    if not cid.startswith("skill:"):
+        return {}
+    return {
+        "skill_mode": "capsule_runtime",
+        "full_local_skill_equivalent": False,
+        "next_step_hint": (
+            "capability-skill provides runtime capsule activation. "
+            "If the task needs full local skill scripts/assets, install a full skill package "
+            "into $CODEX_HOME/skills."
+        ),
+    }
+
+
+def _tool_name_aliases(name: str) -> set[str]:
+    raw = str(name or "").strip()
+    if not raw:
+        return set()
+    out = {
+        raw,
+        raw.lower(),
+        raw.replace("-", "_"),
+        raw.replace("_", "-"),
+        raw.lower().replace("-", "_"),
+        raw.lower().replace("_", "-"),
+    }
+    m = _EXT_TOOL_NAME_RE.match(raw.lower())
+    if m:
+        tail = str(m.group(1) or "").strip()
+        if tail:
+            out.add(tail)
+            out.add(tail.replace("-", "_"))
+            out.add(tail.replace("_", "-"))
+    return {s for s in out if s}
+
+
+def _normalize_diagnostics(enable_result: Dict[str, Any]) -> list[Dict[str, Any]]:
+    raw = enable_result.get("diagnostics") if isinstance(enable_result, dict) else None
+    if not isinstance(raw, list):
+        return []
+    out: list[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+        row: Dict[str, Any] = {"code": code}
+        message = str(item.get("message") or "").strip()
+        if message:
+            row["message"] = message
+        if "retryable" in item:
+            row["retryable"] = bool(item.get("retryable"))
+        required_env = item.get("required_env")
+        if isinstance(required_env, list):
+            names = [str(x).strip() for x in required_env if str(x).strip()]
+            if names:
+                row["required_env"] = names
+        action_hints = item.get("action_hints")
+        if isinstance(action_hints, list):
+            hints = [str(x).strip() for x in action_hints if str(x).strip()]
+            if hints:
+                row["action_hints"] = hints
+        out.append(row)
+    return out
+
+
+def _build_resolution_plan(*, capability_id: str, diagnostics: list[Dict[str, Any]]) -> Dict[str, Any]:
+    codes = {str(item.get("code") or "").strip() for item in diagnostics if isinstance(item, dict)}
+    requires_user = set()
+    user_requests: list[Dict[str, Any]] = []
+    agent_actions: list[str] = []
+
+    for item in diagnostics:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        if code == "missing_required_env":
+            requires_user.add(code)
+            required_env = item.get("required_env") if isinstance(item.get("required_env"), list) else []
+            names = [str(x).strip() for x in required_env if str(x).strip()]
+            user_requests.append(
+                {
+                    "kind": "provide_env",
+                    "required_env": names,
+                    "message": "please provide required environment variables for this capability",
+                }
+            )
+            continue
+        if code == "runtime_permission_denied":
+            requires_user.add(code)
+            user_requests.append(
+                {
+                    "kind": "grant_runtime_permission",
+                    "message": "please grant runtime permission (e.g., docker socket access) and retry",
+                }
+            )
+            continue
+        if code in {"runtime_binary_missing"}:
+            agent_actions.append("install_or_expose_runtime_binary_then_retry")
+            continue
+        if code in {"runtime_dependency_missing", "runtime_start_failed"}:
+            agent_actions.append("retry_with_safe_runtime_flags_or_different_version")
+            continue
+        if code in {"probe_timeout", "network_dns_failure", "network_unreachable"}:
+            agent_actions.append("retry_then_check_network")
+            continue
+
+    plan: Dict[str, Any] = {
+        "status": "needs_agent_action",
+        "capability_id": str(capability_id or ""),
+        "codes": sorted(code for code in codes if code),
+        "agent_actions": sorted(set(agent_actions)),
+        "user_requests": user_requests,
+    }
+    if requires_user:
+        plan["status"] = "needs_user_input"
+    if not diagnostics:
+        plan["status"] = "insufficient_diagnostics"
+    return plan
+
+
+def _should_retry_enable(*, diagnostics: list[Dict[str, Any]]) -> bool:
+    if not diagnostics:
+        return False
+    blocking_codes = {"missing_required_env", "runtime_permission_denied"}
+    retryable = False
+    for item in diagnostics:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        if code in blocking_codes:
+            return False
+        if bool(item.get("retryable")):
+            retryable = True
+    return retryable
 
 
 def capability_search(
@@ -178,16 +320,20 @@ def capability_use(
             except Exception:
                 state = {}
             dynamic = state.get("dynamic_tools") if isinstance(state.get("dynamic_tools"), list) else []
-            matched_cap_ids = {
-                str(item.get("capability_id") or "").strip()
-                for item in dynamic
-                if isinstance(item, dict)
-                and str(item.get("capability_id") or "").strip()
-                and (
-                    str(item.get("name") or "").strip() == call_tool
-                    or str(item.get("real_tool_name") or "").strip() == call_tool
-                )
-            }
+            call_aliases = _tool_name_aliases(call_tool)
+            matched_cap_ids: set[str] = set()
+            for item in dynamic:
+                if not isinstance(item, dict):
+                    continue
+                dyn_cap_id = str(item.get("capability_id") or "").strip()
+                if not dyn_cap_id:
+                    continue
+                dyn_name = str(item.get("name") or "").strip()
+                dyn_real = str(item.get("real_tool_name") or "").strip()
+                if call_aliases.intersection(_tool_name_aliases(dyn_name)) or call_aliases.intersection(
+                    _tool_name_aliases(dyn_real)
+                ):
+                    matched_cap_ids.add(dyn_cap_id)
             if len(matched_cap_ids) == 1:
                 cap_id = next(iter(matched_cap_ids))
             elif len(matched_cap_ids) > 1:
@@ -207,6 +353,7 @@ def capability_use(
         )
 
     enable_result: Dict[str, Any]
+    reused_existing_binding = False
     if cap_id == "core":
         enable_result = {
             "state": "ready",
@@ -215,25 +362,95 @@ def capability_use(
             "scope": "core",
         }
     else:
-        enable_result = capability_enable(
-            group_id=group_id,
-            by=by,
-            actor_id=target_actor,
-            capability_id=cap_id,
-            scope=scope,
-            enabled=True,
-            ttl_seconds=ttl_seconds,
-            reason=reason,
-        )
+        state_probe: Dict[str, Any] = {}
+        if call_tool:
+            try:
+                state_probe = capability_state(group_id=group_id, actor_id=target_actor)
+            except Exception:
+                state_probe = {}
+        enabled_caps = {
+            str(x).strip()
+            for x in (
+                state_probe.get("enabled_capabilities")
+                if isinstance(state_probe.get("enabled_capabilities"), list)
+                else []
+            )
+            if str(x).strip()
+        }
+        if call_tool and cap_id in enabled_caps:
+            reused_existing_binding = True
+            enable_result = {
+                "state": "ready",
+                "enabled": True,
+                "refresh_required": False,
+                "reused_existing_binding": True,
+                "scope": str(scope or "session"),
+            }
+        else:
+            enable_result = capability_enable(
+                group_id=group_id,
+                by=by,
+                actor_id=target_actor,
+                capability_id=cap_id,
+                scope=scope,
+                enabled=True,
+                ttl_seconds=ttl_seconds,
+                reason=reason,
+            )
+        retry_trace: list[Dict[str, Any]] = []
         state = str(enable_result.get("state") or "").strip().lower()
+        diagnostics = _normalize_diagnostics(enable_result)
+        max_retries = 0 if reused_existing_binding else max(
+            0, min(int(os.environ.get("CCCC_CAPABILITY_USE_AUTO_RETRY_MAX") or "1"), 3)
+        )
+        if state != "ready" and _should_retry_enable(diagnostics=diagnostics) and max_retries > 0:
+            for idx in range(max_retries):
+                retry_reason = str(reason or "").strip()
+                if retry_reason:
+                    retry_reason = f"{retry_reason};auto_retry_{idx + 1}"
+                else:
+                    retry_reason = f"auto_retry_{idx + 1}"
+                retry_result = capability_enable(
+                    group_id=group_id,
+                    by=by,
+                    actor_id=target_actor,
+                    capability_id=cap_id,
+                    scope=scope,
+                    enabled=True,
+                    ttl_seconds=ttl_seconds,
+                    reason=retry_reason,
+                )
+                retry_state = str(retry_result.get("state") or "").strip().lower()
+                retry_trace.append(
+                    {
+                        "attempt": idx + 1,
+                        "state": retry_state,
+                        "reason": str(retry_result.get("reason") or ""),
+                        "install_error_code": str(retry_result.get("install_error_code") or ""),
+                    }
+                )
+                enable_result = retry_result
+                state = retry_state
+                diagnostics = _normalize_diagnostics(enable_result)
+                if state == "ready":
+                    break
         if state != "ready":
+            resolution_plan = _build_resolution_plan(capability_id=cap_id, diagnostics=diagnostics)
             return {
                 "group_id": group_id,
                 "actor_id": target_actor,
                 "capability_id": cap_id,
                 "enabled": False,
                 "enable_result": enable_result,
+                "diagnostics": diagnostics,
+                "resolution_plan": resolution_plan,
+                "auto_retry": {
+                    "attempted": bool(retry_trace),
+                    "attempts": retry_trace,
+                    "max_retries": max_retries,
+                },
                 "tool_called": False,
+                **_skill_runtime_contract_fields(cap_id),
             }
 
     if not call_tool:
@@ -248,6 +465,7 @@ def capability_use(
         skill_payload = enable_result.get("skill") if isinstance(enable_result, dict) else None
         if isinstance(skill_payload, dict):
             out["skill"] = skill_payload
+        out.update(_skill_runtime_contract_fields(cap_id))
         return out
     if call_tool == "cccc_capability_use":
         raise MCPError(
@@ -297,13 +515,17 @@ def capability_use(
         from ..server import handle_tool_call
 
         tool_result = handle_tool_call(call_tool, tool_args)
-    return {
+    out = {
         "group_id": group_id,
         "actor_id": target_actor,
         "capability_id": cap_id,
         "enabled": True,
+        "refresh_required": False,
+        "reused_existing_binding": bool(reused_existing_binding),
         "enable_result": enable_result,
         "tool_called": True,
         "tool_name": call_tool,
         "tool_result": tool_result,
     }
+    out.update(_skill_runtime_contract_fields(cap_id))
+    return out

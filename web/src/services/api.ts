@@ -25,6 +25,9 @@ import type {
   GroupSpaceJob,
   GroupSpaceProviderCredentialStatus,
   GroupSpaceProviderAuthStatus,
+  CapabilityOverviewItem,
+  CapabilitySourceState,
+  CapabilityBlockEntry,
 } from "../types";
 
 // ============ Token management ============
@@ -400,6 +403,7 @@ export async function addActor(
     profileId?: string;
     runner?: "pty" | "headless";
     title?: string;
+    capabilityAutoload?: string[];
   }
 ) {
   return apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
@@ -413,6 +417,9 @@ export async function addActor(
       env: {},
       env_private: envPrivate && Object.keys(envPrivate).length ? envPrivate : undefined,
       profile_id: options?.profileId || undefined,
+      capability_autoload: Array.isArray(options?.capabilityAutoload)
+        ? options?.capabilityAutoload
+        : [],
       title: options?.title || "",
       default_scope_key: "",
       by: "user",
@@ -430,6 +437,7 @@ export async function updateActor(
     profileId?: string;
     profileAction?: "convert_to_custom";
     enabled?: boolean;
+    capabilityAutoload?: string[];
   }
 ) {
   const body: Record<string, unknown> = { by: "user" };
@@ -439,6 +447,7 @@ export async function updateActor(
   if (opts?.profileId !== undefined) body.profile_id = String(opts.profileId || "");
   if (opts?.profileAction) body.profile_action = opts.profileAction;
   if (typeof opts?.enabled === "boolean") body.enabled = opts.enabled;
+  if (Array.isArray(opts?.capabilityAutoload)) body.capability_autoload = opts.capabilityAutoload;
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
     {
@@ -624,6 +633,75 @@ export async function fetchSettings(groupId: string) {
   return apiJson<{ settings: GroupSettings }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/settings`
   );
+}
+
+export async function fetchCapabilityOverview(opts?: { query?: string; limit?: number; includeIndexed?: boolean }) {
+  const params = new URLSearchParams();
+  if (String(opts?.query || "").trim()) params.set("query", String(opts?.query || "").trim());
+  if (typeof opts?.limit === "number" && Number.isFinite(opts.limit)) params.set("limit", String(Math.max(1, Math.trunc(opts.limit))));
+  if (typeof opts?.includeIndexed === "boolean") params.set("include_indexed", opts.includeIndexed ? "true" : "false");
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiJson<{
+    items: CapabilityOverviewItem[];
+    count: number;
+    query?: string;
+    sources?: Record<string, CapabilitySourceState>;
+    blocked_capabilities?: CapabilityBlockEntry[];
+    allowlist_revision?: string;
+  }>(`/api/v1/capabilities/overview${suffix}`);
+}
+
+export async function fetchCapabilityAllowlist() {
+  return apiJson<{
+    revision: string;
+    default: Record<string, unknown>;
+    overlay: Record<string, unknown>;
+    effective: Record<string, unknown>;
+    default_source?: string;
+    overlay_source?: string;
+    overlay_error?: string;
+    policy_source?: string;
+    policy_error?: string;
+  }>(`/api/v1/capabilities/allowlist?by=user`);
+}
+
+export async function updateCapabilityAllowlist(args: {
+  patch?: Record<string, unknown>;
+  overlay?: Record<string, unknown>;
+  mode?: "patch" | "replace";
+  expectedRevision?: string;
+}) {
+  const body: Record<string, unknown> = { by: "user", mode: args.mode || "patch" };
+  if (args.patch) body.patch = args.patch;
+  if (args.overlay) body.overlay = args.overlay;
+  if (String(args.expectedRevision || "").trim()) body.expected_revision = String(args.expectedRevision || "").trim();
+  return apiJson<{
+    updated: boolean;
+    revision: string;
+    default: Record<string, unknown>;
+    overlay: Record<string, unknown>;
+    effective: Record<string, unknown>;
+    policy_source?: string;
+    policy_error?: string;
+  }>(`/api/v1/capabilities/allowlist`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function blockCapabilityGlobal(groupId: string, capabilityId: string, blocked: boolean, reason: string = "") {
+  return apiJson<Record<string, unknown>>(`/api/v1/capabilities/block`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      actor_id: "user",
+      group_id: groupId,
+      capability_id: capabilityId,
+      blocked,
+      reason,
+      scope: "global",
+    }),
+  });
 }
 
 export async function updateSettings(groupId: string, settings: Partial<GroupSettings>) {

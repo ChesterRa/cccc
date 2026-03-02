@@ -360,6 +360,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         if action == "add":
             cmd_raw = arguments.get("command")
             env_raw = arguments.get("env")
+            autoload_raw = arguments.get("capability_autoload")
             return actor_add(
                 group_id=gid,
                 by=by,
@@ -370,6 +371,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 command=list(cmd_raw) if isinstance(cmd_raw, list) else None,
                 env=dict(env_raw) if isinstance(env_raw, dict) else None,
                 profile_id=str(arguments.get("profile_id") or ""),
+                capability_autoload=list(autoload_raw) if isinstance(autoload_raw, list) else None,
             )
         if action == "remove":
             target = str(arguments.get("actor_id") or "").strip() or by
@@ -418,7 +420,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_capability_enable":
         gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
+        by = _resolve_caller_actor_id(arguments)
         actor_id = str(arguments.get("actor_id") or by).strip()
         return capability_enable(
             group_id=gid,
@@ -434,7 +436,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_capability_block":
         gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
+        by = _resolve_caller_actor_id(arguments)
         actor_id = str(arguments.get("actor_id") or by).strip()
         return capability_block(
             group_id=gid,
@@ -454,7 +456,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_capability_uninstall":
         gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
+        by = _resolve_caller_actor_id(arguments)
         return capability_uninstall(
             group_id=gid,
             by=by,
@@ -464,7 +466,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_capability_use":
         gid = _resolve_group_id(arguments)
-        by = _resolve_caller_from_by(arguments)
+        by = _resolve_caller_actor_id(arguments)
         actor_id = str(arguments.get("actor_id") or by).strip()
         raw_tool_args = arguments.get("tool_arguments")
         tool_args = dict(raw_tool_args) if isinstance(raw_tool_args, dict) else {}

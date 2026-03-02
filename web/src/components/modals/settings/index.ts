@@ -9,5 +9,6 @@ export { GroupSpaceTab } from "./GroupSpaceTab";
 export { BlueprintTab } from "./BlueprintTab";
 export { RemoteAccessTab } from "./RemoteAccessTab";
 export { DeveloperTab } from "./DeveloperTab";
+export { CapabilitiesTab } from "./CapabilitiesTab";
 export { ActorProfilesTab } from "./ActorProfilesTab";
 export * from "./types";

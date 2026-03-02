@@ -10,24 +10,25 @@ level_semantics:
   indexed: "Synced in local catalog only; not shown in normal search results."
   mounted: "Visible/discoverable; can be enabled on demand."
   enabled: "Mounted + preferred baseline intent; requires explicit enable or profile default application."
-  pinned: "Enabled + long-lived baseline intent; should be applied via actor-profile/role pinned defaults."
+  pinned: "Enabled + long-lived baseline intent; typically mapped into actor/profile autoload defaults."
 
 defaults:
   source_level:
     cccc_builtin: enabled
     anthropic_skills: mounted
     github_skills_curated: mounted
-    github_skills_remote: mounted
-    agentskills_remote: mounted
     skillsmp_remote: mounted
     clawhub_remote: mounted
+    openclaw_skills_remote: mounted
+    clawskills_remote: mounted
     mcp_registry_official: mounted
-    agentskills_validator: indexed
 
   # Matches current CCCC implementation boundary.
   install_mode_allowlist:
     - remote_only
     - package:npm
+    - package:pypi
+    - package:oci
 
   # High-impact tags are informational only in runtime.
   # Enforcement is operational block/unblock via cccc_capability_block.
@@ -50,24 +51,21 @@ sources:
   - source_id: github_skills_curated
     enabled: true
     rationale: "Curated third-party skill entries (manual curation, no periodic crawling)."
-  - source_id: github_skills_remote
-    enabled: true
-    rationale: "On-demand GitHub remote search for SKILL.md candidates."
-  - source_id: agentskills_remote
-    enabled: true
-    rationale: "On-demand AgentSkills-aligned remote search (GitHub ecosystem)."
   - source_id: skillsmp_remote
     enabled: true
-    rationale: "On-demand SkillsMP remote search via text proxy."
+    rationale: "On-demand SkillsMP search (API key if configured; proxy fallback otherwise)."
   - source_id: clawhub_remote
     enabled: true
-    rationale: "On-demand ClawHub remote search via text proxy."
+    rationale: "On-demand ClawHub remote search via official JSON API."
+  - source_id: openclaw_skills_remote
+    enabled: true
+    rationale: "On-demand OpenClaw skills search from GitHub SKILL.md corpus."
+  - source_id: clawskills_remote
+    enabled: true
+    rationale: "On-demand clawskills.co skills index search."
   - source_id: mcp_registry_official
     enabled: true
     rationale: "Primary MCP discovery source (local snapshot + on-demand fallback)."
-  - source_id: agentskills_validator
-    enabled: true
-    rationale: "Schema/validator baseline, not treated as market source."
 
 mcp_overrides:
   # --------------------------------------------------------------------------
@@ -204,7 +202,7 @@ mcp_overrides:
     risk_tags:
       - computer_use
       - desktop_control
-    notes: "Windows computer-use MCP; currently outside default installer support."
+    notes: "Windows computer-use MCP (pypi)."
 
   - capability_id: mcp:io.github.wonderwhy-er/desktop-commander
     level: mounted
@@ -240,7 +238,7 @@ mcp_overrides:
     risk_tags:
       - computer_use
       - browser_automation
-    notes: "Browser-use execution MCP (pypi path currently unavailable in default installer matrix)."
+    notes: "Browser-use execution MCP (pypi)."
 
   - capability_id: mcp:io.github.hummingbot/mcp
     level: mounted
@@ -365,6 +363,6 @@ operations:
   suggested_promotions:
     - "Promote indexed -> mounted only after smoke test + auth check + tool schema sanity."
     - "Promote mounted -> enabled only when call success rate is stable and context budget allows."
-    - "Use pinned sparingly; keep actor prompt baseline minimal."
+    - "Use autoload baselines sparingly; keep actor startup surface minimal."
   suggested_demotions:
     - "Demote to indexed on repeated auth/install failures, long tail latency, or unsafe behavior."

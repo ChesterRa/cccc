@@ -30,6 +30,7 @@ from ...kernel.context import (
     Step,
     StepStatus,
     AgentState,
+    AgentsData,
     _utc_now_iso,
 )
 from ...kernel.ledger import append_event
@@ -252,7 +253,19 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
 
     context = storage.load_context()
     tasks = storage.list_tasks()
-    presence = storage.load_presence()
+    agents_state = storage.load_agents()
+
+    # Filter agent-state entries to only include current group actors.
+    # agents.yaml may contain stale entries from removed actors.
+    actor_ids = {
+        str(a.get("id") or "").strip()
+        for a in storage.group.doc.get("actors", [])
+        if isinstance(a, dict) and str(a.get("id") or "").strip()
+    }
+    if actor_ids:
+        agents_state = AgentsData(
+            agents=[a for a in agents_state.agents if a.id in actor_ids],
+        )
 
     # Build tasks summary
     non_archived = [t for t in tasks if t.status != TaskStatus.ARCHIVED]
@@ -277,11 +290,11 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     # Compute overview.mermaid (daemon projection)
     overview_mermaid = storage.compute_overview_mermaid(
         tasks=tasks,
-        presence=presence,
+        agents_state=agents_state,
         overview=context.overview,
     )
 
-    # Presence serialization (flat AgentState)
+    # Agent-state serialization (flat AgentState)
     agents_out = [
         {
             "id": a.id,
@@ -296,7 +309,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
             "notes": a.notes,
             "updated_at": a.updated_at,
         }
-        for a in presence.agents
+        for a in agents_state.agents
     ]
 
     result = {
@@ -314,9 +327,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
             "root_count": root_count,
         },
         "active_tasks": active_tasks,
-        "presence": {
-            "agents": agents_out,
-        },
+        "agents": agents_out,
     }
 
     return DaemonResponse(ok=True, result=result)
@@ -355,12 +366,12 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             )
 
     context = storage.load_context()
-    presence = storage.load_presence()
+    agents_state = storage.load_agents()
     tasks_by_id: Dict[str, Task] = {t.id: t for t in storage.list_tasks()}
 
     changes: List[Dict[str, Any]] = []
     context_dirty = False
-    presence_dirty = False
+    agents_dirty = False
     dirty_task_ids: set = set()
 
     def _mark_change(idx: int, op_name: str, detail: str) -> None:
@@ -370,11 +381,11 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
         canonical_id = storage._canonicalize_agent_id(agent_id)  # noqa: SLF001
         if not canonical_id:
             raise ValueError("agent_id must be a non-empty string")
-        for a in presence.agents:
+        for a in agents_state.agents:
             if a.id == canonical_id:
                 return a
         agent = AgentState(id=canonical_id)
-        presence.agents.append(agent)
+        agents_state.agents.append(agent)
         return agent
 
     try:
@@ -525,7 +536,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 _mark_change(idx, op_name, f"Status {task_id} -> {new_status.value}")
 
                 # Auto-refresh short-term agent state from task lifecycle.
-                # This keeps presence usable even when agents forget explicit updates.
+                # This keeps agent state usable even when agents forget explicit updates.
                 assignee_id = str(task.assignee or "").strip()
                 if assignee_id:
                     agent = _get_or_create_agent(assignee_id)
@@ -558,7 +569,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
                     if auto_changed:
                         agent.updated_at = _utc_now_iso()
-                        presence_dirty = True
+                        agents_dirty = True
                         _mark_change(
                             idx,
                             "agent.autosync",
@@ -683,7 +694,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if "notes" in item:
                     agent.notes = str(item.get("notes") or "")
                 agent.updated_at = _utc_now_iso()
-                presence_dirty = True
+                agents_dirty = True
                 _mark_change(idx, op_name, f"Updated agent {agent_id}")
 
             # --- Agent Clear ---
@@ -704,7 +715,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 agent.user_profile = ""
                 agent.notes = ""
                 agent.updated_at = _utc_now_iso()
-                presence_dirty = True
+                agents_dirty = True
                 _mark_change(idx, op_name, f"Cleared agent {agent_id}")
 
             else:
@@ -716,8 +727,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             for task_id in sorted(dirty_task_ids):
                 if task_id in tasks_by_id:
                     storage.save_task(tasks_by_id[task_id])
-            if presence_dirty:
-                storage.save_presence(presence)
+            if agents_dirty:
+                storage.save_agents(agents_state)
 
         version = storage.compute_version()
 
