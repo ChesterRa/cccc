@@ -164,6 +164,7 @@ export function AppModals({
   const [createTemplatePreview, setCreateTemplatePreview] = useState<TemplatePreviewDetailsProps["template"] | null>(null);
   const [createTemplateError, setCreateTemplateError] = useState("");
   const [createTemplateBusy, setCreateTemplateBusy] = useState(false);
+  const [dirBrowseError, setDirBrowseError] = useState("");
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
   const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
 
@@ -633,6 +634,7 @@ export function AppModals({
 
   const handleFetchDirContents = async (path: string) => {
     setShowDirBrowser(true);
+    setDirBrowseError("");
     const resp = await api.fetchDirContents(path);
     if (resp.ok) {
       setDirItems(resp.result.items || []);
@@ -642,9 +644,9 @@ export function AppModals({
       const err = resp.error;
       if (err?.code === "PERMISSION_DENIED") {
         const platform = (err.details as { platform?: string } | null)?.platform;
-        showError(platform === "darwin" ? t('permissionDeniedMacOS', { path }) : t('permissionDenied', { path }));
+        setDirBrowseError(platform === "darwin" ? t('permissionDeniedMacOS', { path }) : t('permissionDenied', { path }));
       } else {
-        showError(err?.message || t('failedToListDir'));
+        setDirBrowseError(err?.message || t('failedToListDir'));
       }
     }
   };
@@ -1120,6 +1122,7 @@ export function AppModals({
         templateError={createTemplateError}
         templateBusy={createTemplateBusy}
         onSelectTemplate={handleSelectCreateGroupTemplate}
+        dirBrowseError={dirBrowseError}
         onFetchDirContents={handleFetchDirContents}
         onCreateGroup={handleCreateGroup}
         onClose={() => closeModal("createGroup")}
@@ -1129,6 +1132,7 @@ export function AppModals({
           setCreateTemplatePreview(null);
           setCreateTemplateError("");
           setCreateTemplateBusy(false);
+          setDirBrowseError("");
         }}
       />
 
