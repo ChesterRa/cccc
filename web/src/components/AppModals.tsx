@@ -643,8 +643,7 @@ export function AppModals({
     } else {
       const err = resp.error;
       if (err?.code === "PERMISSION_DENIED") {
-        const platform = (err.details as { platform?: string } | null)?.platform;
-        setDirBrowseError(platform === "darwin" ? t('permissionDeniedMacOS', { path }) : t('permissionDenied', { path }));
+        setDirBrowseError(t('permissionDenied', { path }));
       } else {
         setDirBrowseError(err?.message || t('failedToListDir'));
       }
