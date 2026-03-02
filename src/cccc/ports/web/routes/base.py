@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -410,7 +411,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                         "is_dir": entry.is_dir(),
                     })
             except PermissionError:
-                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Cannot read: {path}"}}
+                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Cannot read: {path}", "details": {"platform": sys.platform}}}
 
             return {
                 "ok": True,

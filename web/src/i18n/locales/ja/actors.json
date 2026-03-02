@@ -102,6 +102,8 @@
   "destGroupDifferent": "宛先グループは送信元グループとは異なる必要があります。",
   "relayTextEmpty": "リレーメッセージのテキストが空です。",
   "failedToListDir": "ディレクトリの一覧取得に失敗しました",
+  "permissionDenied": "読み取れません：{{path}}",
+  "permissionDeniedMacOS": "読み取れません：{{path}} — macOS では、CCCC を起動したアプリにフルディスクアクセスが必要です。システム設定 → プライバシーとセキュリティ → フルディスクアクセスを開き、ターミナルアプリを有効にしてから CCCC を再起動してください。",
   "invalidTemplate": "無効なテンプレート",
   "failedToLoadTemplate": "テンプレートの読み込みに失敗しました",
   "failedToAddAgent": "エージェントの追加に失敗しました",

@@ -102,6 +102,8 @@
   "destGroupDifferent": "目标工作组必须与源工作组不同。",
   "relayTextEmpty": "转发消息内容为空。",
   "failedToListDir": "列出目录失败",
+  "permissionDenied": "无法读取：{{path}}",
+  "permissionDeniedMacOS": "无法读取：{{path}} — macOS 需要为启动 CCCC 的应用授予完全磁盘访问权限。请前往系统设置 → 隐私与安全性 → 完全磁盘访问权限，启用您的终端应用后重启 CCCC。",
   "invalidTemplate": "无效模板",
   "failedToLoadTemplate": "加载模板失败",
   "failedToAddAgent": "添加智能体失败",

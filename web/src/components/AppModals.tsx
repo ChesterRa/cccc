@@ -639,7 +639,13 @@ export function AppModals({
       setCurrentDir(resp.result.path || path);
       setParentDir(resp.result.parent || null);
     } else {
-      showError(resp.error?.message || t('failedToListDir'));
+      const err = resp.error;
+      if (err?.code === "PERMISSION_DENIED") {
+        const platform = (err.details as { platform?: string } | null)?.platform;
+        showError(platform === "darwin" ? t('permissionDeniedMacOS', { path }) : t('permissionDenied', { path }));
+      } else {
+        showError(err?.message || t('failedToListDir'));
+      }
     }
   };
 

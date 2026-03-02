@@ -102,6 +102,8 @@
   "destGroupDifferent": "Destination group must be different from the source group.",
   "relayTextEmpty": "Relay message text is empty.",
   "failedToListDir": "Failed to list directory",
+  "permissionDenied": "Cannot read: {{path}}",
+  "permissionDeniedMacOS": "Cannot read: {{path}} — macOS requires Full Disk Access for the app that launched CCCC. Open System Settings → Privacy & Security → Full Disk Access and enable your terminal app, then restart CCCC.",
   "invalidTemplate": "Invalid template",
   "failedToLoadTemplate": "Failed to load template",
   "failedToAddAgent": "Failed to add agent",
