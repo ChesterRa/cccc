@@ -25,6 +25,7 @@ export interface CreateGroupModalProps {
   templateBusy: boolean;
   onSelectTemplate: (file: File | null) => void;
 
+  dirBrowseError?: string;
   onFetchDirContents: (path: string) => void;
   onCreateGroup: () => void;
   onClose: () => void;
@@ -48,6 +49,7 @@ export function CreateGroupModal({
   templatePreview,
   templateError,
   templateBusy,
+  dirBrowseError,
   onSelectTemplate,
   onFetchDirContents,
   onCreateGroup,
@@ -140,50 +142,56 @@ export function CreateGroupModal({
             </div>
           </div>
           {showDirBrowser && (
-            <div className={`border rounded-xl max-h-48 overflow-auto ${isDark ? "border-slate-600/50 bg-slate-900/50" : "border-gray-200 bg-gray-50"}`}>
-              {currentDir && (
-                <div
-                  className={`px-3 py-1.5 border-b text-xs font-mono truncate ${
-                    isDark ? "border-slate-700/30 bg-slate-800/30 text-slate-400" : "border-gray-200 bg-gray-100 text-gray-500"
-                  }`}
-                >
-                  {currentDir}
-                </div>
+            <div className={`border rounded-xl max-h-48 overflow-auto ${dirBrowseError ? (isDark ? "border-rose-500/30 bg-slate-900/50" : "border-rose-300 bg-rose-50") : (isDark ? "border-slate-600/50 bg-slate-900/50" : "border-gray-200 bg-gray-50")}`}>
+              {dirBrowseError ? (
+                <div className={`px-3 py-3 text-sm ${isDark ? "text-rose-300" : "text-rose-700"}`}>{dirBrowseError}</div>
+              ) : (
+                <>
+                  {currentDir && (
+                    <div
+                      className={`px-3 py-1.5 border-b text-xs font-mono truncate ${
+                        isDark ? "border-slate-700/30 bg-slate-800/30 text-slate-400" : "border-gray-200 bg-gray-100 text-gray-500"
+                      }`}
+                    >
+                      {currentDir}
+                    </div>
+                  )}
+                  {parentDir && (
+                    <button
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-left border-b min-h-[44px] ${
+                        isDark ? "hover:bg-slate-800/50 border-slate-700/30" : "hover:bg-gray-100 border-gray-200"
+                      }`}
+                      onClick={() => {
+                        onFetchDirContents(parentDir);
+                        setCreateGroupPath(parentDir);
+                        setCreateGroupName(parentDir.split("/").filter(Boolean).pop() || "");
+                      }}
+                    >
+                      <span className={isDark ? "text-slate-400" : "text-gray-400"}>📁</span>
+                      <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>..</span>
+                    </button>
+                  )}
+                  {dirItems.filter((d) => d.is_dir).length === 0 && (
+                    <div className={`px-3 py-4 text-center text-sm ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("createGroup.noSubdirectories")}</div>
+                  )}
+                  {dirItems
+                    .filter((d) => d.is_dir)
+                    .map((item) => (
+                      <button
+                        key={item.path}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-left min-h-[44px] ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`}
+                        onClick={() => {
+                          setCreateGroupPath(item.path);
+                          setCreateGroupName(item.name);
+                          onFetchDirContents(item.path);
+                        }}
+                      >
+                        <span className="text-blue-500">📁</span>
+                        <span className={`text-sm ${isDark ? "text-slate-200" : "text-gray-700"}`}>{item.name}</span>
+                      </button>
+                    ))}
+                </>
               )}
-              {parentDir && (
-                <button
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-left border-b min-h-[44px] ${
-                    isDark ? "hover:bg-slate-800/50 border-slate-700/30" : "hover:bg-gray-100 border-gray-200"
-                  }`}
-                  onClick={() => {
-                    onFetchDirContents(parentDir);
-                    setCreateGroupPath(parentDir);
-                    setCreateGroupName(parentDir.split("/").filter(Boolean).pop() || "");
-                  }}
-                >
-                  <span className={isDark ? "text-slate-400" : "text-gray-400"}>📁</span>
-                  <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>..</span>
-                </button>
-              )}
-              {dirItems.filter((d) => d.is_dir).length === 0 && (
-                <div className={`px-3 py-4 text-center text-sm ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("createGroup.noSubdirectories")}</div>
-              )}
-              {dirItems
-                .filter((d) => d.is_dir)
-                .map((item) => (
-                  <button
-                    key={item.path}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-left min-h-[44px] ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`}
-                    onClick={() => {
-                      setCreateGroupPath(item.path);
-                      setCreateGroupName(item.name);
-                      onFetchDirContents(item.path);
-                    }}
-                  >
-                    <span className="text-blue-500">📁</span>
-                    <span className={`text-sm ${isDark ? "text-slate-200" : "text-gray-700"}`}>{item.name}</span>
-                  </button>
-                ))}
             </div>
           )}
           <div>

@@ -1,3 +1,4 @@
+import React from "react";
 import * as THREE from "three";
 
 // ── MC Grass Block ground (green top, brown sides) ──
@@ -31,5 +32,78 @@ export function MCBed({ position, rotationY }: MCBedProps) {
       <mesh position={[0, 0.145, 0.1]} geometry={BED_BLANKET_GEO} material={BED_RED} />
       <mesh position={[0, 0.155, -0.35]} geometry={BED_PILLOW_GEO} material={BED_WHITE} />
     </group>
+  );
+}
+
+// ── Instanced Beds (single draw call per sub-mesh) ──
+// Replaces N × MCBed with 3 InstancedMesh (frame/blanket/pillow)
+
+const MAX_BED_INSTANCES = 64;
+
+// Scratch objects for world matrix computation (synchronous use only)
+const _parent = new THREE.Object3D();
+const _child = new THREE.Object3D();
+const _mat4 = new THREE.Matrix4();
+
+// Sub-mesh local offsets (matching MCBed's child positions)
+const BED_PARTS = [
+  { geo: BED_FRAME_GEO,   mat: BED_WOOD,  offset: [0, 0.06, 0] as const,    castShadow: true, receiveShadow: true },
+  { geo: BED_BLANKET_GEO, mat: BED_RED,    offset: [0, 0.145, 0.1] as const, castShadow: false, receiveShadow: false },
+  { geo: BED_PILLOW_GEO,  mat: BED_WHITE,  offset: [0, 0.155, -0.35] as const, castShadow: false, receiveShadow: false },
+] as const;
+
+export interface BedInstance {
+  position: [number, number, number];
+  rotationY: number;
+}
+
+interface InstancedBedsProps {
+  beds: BedInstance[];
+}
+
+export function InstancedBeds({ beds }: InstancedBedsProps) {
+  const frameRef = React.useRef<THREE.InstancedMesh>(null);
+  const blanketRef = React.useRef<THREE.InstancedMesh>(null);
+  const pillowRef = React.useRef<THREE.InstancedMesh>(null);
+
+  React.useEffect(() => {
+    const refs = [frameRef.current, blanketRef.current, pillowRef.current];
+    const n = Math.min(beds.length, MAX_BED_INSTANCES);
+
+    for (let i = 0; i < n; i++) {
+      const bed = beds[i];
+      // Parent transform: position + Y rotation
+      _parent.position.set(bed.position[0], bed.position[1], bed.position[2]);
+      _parent.rotation.set(0, bed.rotationY, 0);
+      _parent.updateMatrix();
+
+      for (let p = 0; p < BED_PARTS.length; p++) {
+        const mesh = refs[p];
+        if (!mesh) continue;
+        const part = BED_PARTS[p];
+        // Child local offset
+        _child.position.set(part.offset[0], part.offset[1], part.offset[2]);
+        _child.rotation.set(0, 0, 0);
+        _child.scale.setScalar(1);
+        _child.updateMatrix();
+        // World matrix = parent × child
+        _mat4.multiplyMatrices(_parent.matrix, _child.matrix);
+        mesh.setMatrixAt(i, _mat4);
+      }
+    }
+
+    for (const mesh of refs) {
+      if (!mesh) continue;
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }, [beds]);
+
+  return (
+    <>
+      <instancedMesh ref={frameRef} args={[BED_FRAME_GEO, BED_WOOD, MAX_BED_INSTANCES]} castShadow receiveShadow />
+      <instancedMesh ref={blanketRef} args={[BED_BLANKET_GEO, BED_RED, MAX_BED_INSTANCES]} />
+      <instancedMesh ref={pillowRef} args={[BED_PILLOW_GEO, BED_WHITE, MAX_BED_INSTANCES]} />
+    </>
   );
 }

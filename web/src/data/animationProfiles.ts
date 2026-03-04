@@ -71,10 +71,10 @@ export interface StateTransitionRule {
 export const BASE_Y = {
   torso: 0.55,
   head: 1.0,
-  leftArm: 0.5,
-  rightArm: 0.5,
-  leftLeg: 0.12,
-  rightLeg: 0.12,
+  leftArm: 0.75,   // shoulder height (arm geo pivot translated to top)
+  rightArm: 0.75,
+  leftLeg: 0.30,   // hip height (leg geo pivot translated to top)
+  rightLeg: 0.30,
 } as const;
 
 export const SLEEP = {

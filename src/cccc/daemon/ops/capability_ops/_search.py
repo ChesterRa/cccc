@@ -215,12 +215,12 @@ def _context_search_tokens(*, group_id: str, actor_id: str) -> List[str]:
         storage = ContextStorage(group)
         tasks = storage.list_tasks()
         task_by_id = {str(t.id or "").strip(): t for t in tasks}
-        presence = storage.load_presence()
+        agents_state = storage.load_agents()
 
         actor_norm = _canonicalize_actor_hint(aid)
         actor_states = [
             a
-            for a in presence.agents
+            for a in agents_state.agents
             if str(getattr(a, "id", "") or "").strip() in {aid, actor_norm}
         ]
         task_focus_text: List[str] = []
@@ -971,7 +971,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             dynamic_tools = dynamic_tools[:max_dynamic_tools_visible]
 
         visible_tools = sorted(
-            set(resolve_visible_tool_names(builtin_enabled))
+            set(resolve_visible_tool_names(builtin_enabled, actor_role=actor_role))
             | {str(x.get("name") or "").strip() for x in dynamic_tools if isinstance(x, dict)}
         )
 

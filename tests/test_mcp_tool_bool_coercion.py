@@ -461,62 +461,65 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         self.assertFalse(bool(args.get("wait")))
         self.assertGreaterEqual(float(captured.get("timeout_s") or 0.0), 120.0)
 
-    def test_memory_delete_single_id_routes_to_daemon(self) -> None:
+    def test_memory_write_routes_to_daemon(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
         captured = {}
 
         def _fake_call(req):
             captured["req"] = req
-            return {"ok": True, "deleted": True}
+            return {"ok": True, "status": "written"}
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
             mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
         ):
-            mcp_server.handle_tool_call("cccc_memory_admin", {"action": "delete", "id": "m1"})
+            mcp_server.handle_tool_call(
+                "cccc_memory",
+                {"action": "write", "target": "daily", "date": "2026-03-03", "content": "x"},
+            )
 
         req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
-        self.assertEqual(req.get("op"), "memory_delete")
+        self.assertEqual(req.get("op"), "memory_reme_write")
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("group_id"), "g_test")
-        self.assertEqual(args.get("id"), "m1")
+        self.assertEqual(args.get("target"), "daily")
+        self.assertEqual(args.get("date"), "2026-03-03")
 
-    def test_memory_delete_batch_ids_routes_to_daemon(self) -> None:
-        from cccc.ports.mcp import server as mcp_server
-
-        captured = {}
-
-        def _fake_call(req):
-            captured["req"] = req
-            return {"ok": True, "deleted_count": 2}
-
-        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
-            mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
-        ):
-            mcp_server.handle_tool_call("cccc_memory_admin", {"action": "delete", "ids": ["m1", "m2"]})
-
-        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
-        self.assertEqual(req.get("op"), "memory_delete")
-        args = req.get("args") if isinstance(req.get("args"), dict) else {}
-        self.assertEqual(args.get("group_id"), "g_test")
-        self.assertEqual(args.get("ids"), ["m1", "m2"])
-
-    def test_memory_delete_missing_id_and_ids_raises(self) -> None:
+    def test_memory_get_missing_path_raises_validation_error(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
             with self.assertRaises(mcp_server.MCPError) as cm:
-                mcp_server.handle_tool_call("cccc_memory_admin", {"action": "delete"})
-        self.assertEqual(cm.exception.code, "missing_id")
+                mcp_server.handle_tool_call("cccc_memory", {"action": "get"})
+        self.assertEqual(cm.exception.code, "validation_error")
 
-    def test_memory_decay_routes_to_daemon(self) -> None:
+    def test_memory_index_sync_routes_to_daemon(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
         captured = {}
 
         def _fake_call(req):
             captured["req"] = req
-            return {"ok": True, "count": 0}
+            return {"ok": True, "indexed_files": 2}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
+        ):
+            mcp_server.handle_tool_call("cccc_memory_admin", {"action": "index_sync", "mode": "rebuild"})
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        self.assertEqual(req.get("op"), "memory_reme_index_sync")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_test")
+        self.assertEqual(args.get("mode"), "rebuild")
+
+    def test_memory_context_check_routes_to_daemon(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_call(req):
+            captured["req"] = req
+            return {"ok": True, "needs_compaction": False}
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
             mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
@@ -524,50 +527,38 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             mcp_server.handle_tool_call(
                 "cccc_memory_admin",
                 {
-                    "action": "decay",
-                    "draft_days": 21,
-                    "zero_hit_days": 10,
-                    "solid_review_days": 90,
-                    "solid_max_hit": 2,
-                    "limit": 50,
+                    "action": "context_check",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "keep_recent_tokens": 2048,
                 },
             )
-
         req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
-        self.assertEqual(req.get("op"), "memory_decay")
+        self.assertEqual(req.get("op"), "memory_reme_context_check")
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("group_id"), "g_test")
-        self.assertEqual(args.get("draft_days"), 21)
-        self.assertEqual(args.get("zero_hit_days"), 10)
-        self.assertEqual(args.get("solid_review_days"), 90)
-        self.assertEqual(args.get("solid_max_hit"), 2)
-        self.assertEqual(args.get("limit"), 50)
+        messages = args.get("messages") if isinstance(args.get("messages"), list) else []
+        self.assertEqual(len(messages), 1)
 
-    def test_memory_guide_valid_topics_return_non_empty_markdown(self) -> None:
+    def test_memory_daily_flush_coerces_return_prompt_bool(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
-        for topic in ("store", "search", "consolidation", "lifecycle"):
-            out = mcp_server.handle_tool_call("cccc_memory", {"action": "guide", "topic": topic})
-            self.assertEqual(out.get("topic"), topic)
-            self.assertEqual(out.get("source"), "builtin")
-            self.assertEqual(out.get("version"), "1")
-            markdown = str(out.get("markdown") or "")
-            self.assertTrue(markdown.strip(), msg=f"markdown should not be empty for topic={topic}")
+        captured = {}
 
-    def test_memory_guide_invalid_topic_raises_validation_error(self) -> None:
-        from cccc.ports.mcp import server as mcp_server
+        def _fake_call(req):
+            captured["req"] = req
+            return {"ok": True, "status": "silent"}
 
-        with self.assertRaises(mcp_server.MCPError) as cm:
-            mcp_server.handle_tool_call("cccc_memory", {"action": "guide", "topic": "invalid-topic"})
-        self.assertEqual(cm.exception.code, "validation_error")
-
-    def test_memory_guide_missing_topic_raises_validation_error(self) -> None:
-        from cccc.ports.mcp import server as mcp_server
-
-        with self.assertRaises(mcp_server.MCPError) as cm:
-            mcp_server.handle_tool_call("cccc_memory", {"action": "guide"})
-        self.assertEqual(cm.exception.code, "validation_error")
-
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
+        ):
+            mcp_server.handle_tool_call(
+                "cccc_memory_admin",
+                {"action": "daily_flush", "messages": [{"role": "user", "content": "h"}], "return_prompt": "false"},
+            )
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        self.assertEqual(req.get("op"), "memory_reme_daily_flush")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertFalse(bool(args.get("return_prompt")))
 
 if __name__ == "__main__":
     unittest.main()

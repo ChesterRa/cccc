@@ -1,5 +1,4 @@
 import React, { useMemo, useEffect } from "react";
-import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import type { AgentState } from "../types";
 import { deriveAnimState, deriveStatusLabel, hashCode } from "../utils/actorUtils";
@@ -8,7 +7,9 @@ import { deriveAnimState, deriveStatusLabel, hashCode } from "../utils/actorUtil
 const TORSO_GEO = new THREE.BoxGeometry(0.35, 0.5, 0.25);
 const HEAD_GEO = new THREE.BoxGeometry(0.28, 0.28, 0.25);
 const ARM_GEO = new THREE.BoxGeometry(0.12, 0.4, 0.15);
+ARM_GEO.translate(0, -0.2, 0); // pivot at shoulder (top of arm)
 const LEG_GEO = new THREE.BoxGeometry(0.14, 0.25, 0.18);
+LEG_GEO.translate(0, -0.125, 0); // pivot at hip (top of leg)
 // MC-style blocky crown: band + 3 tooth points
 const CROWN_BAND_GEO = new THREE.BoxGeometry(0.32, 0.05, 0.29);
 const CROWN_POINT_GEO = new THREE.BoxGeometry(0.07, 0.09, 0.07);
@@ -115,6 +116,22 @@ function agentColor(id: string, runtime?: string): string {
   return PALETTE[hashCode(id) % PALETTE.length];
 }
 
+// Module-level body material cache: shared across agents with same color/state
+const BODY_MAT_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const OFFLINE_MAT = new THREE.MeshStandardMaterial({
+  color: "#6b7280", flatShading: true, transparent: true, opacity: 0.55,
+});
+
+function getBodyMaterial(color: string, offline: boolean): THREE.MeshStandardMaterial {
+  if (offline) return OFFLINE_MAT;
+  let mat = BODY_MAT_CACHE.get(color);
+  if (!mat) {
+    mat = new THREE.MeshStandardMaterial({ color, flatShading: true });
+    BODY_MAT_CACHE.set(color, mat);
+  }
+  return mat;
+}
+
 export interface ActorCharacterProps {
   agent: AgentState;
   position: [number, number, number];
@@ -125,27 +142,18 @@ export interface ActorCharacterProps {
   title?: string;
   isRunning?: boolean;
   activeTaskName?: string;
+  focus?: string;
+  blockerText?: string;
 }
 
 export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>(
-  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, activeTaskName }, ref) {
+  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, activeTaskName, focus, blockerText }, ref) {
     const color = agentColor(agent.id, runtime);
     const isForeman = role === "foreman";
     const isOffline = isRunning === false;
 
-    // Shared material per agent (body color; gray + semi-transparent when offline)
-    const mat = useMemo(() => {
-      if (isOffline) {
-        return new THREE.MeshStandardMaterial({
-          color: "#6b7280",
-          flatShading: true,
-          transparent: true,
-          opacity: 0.55,
-        });
-      }
-      return new THREE.MeshStandardMaterial({ color, flatShading: true });
-    }, [color, isOffline]);
-    useEffect(() => () => { mat.dispose(); }, [mat]);
+    // Shared cached material (body color; gray + semi-transparent when offline)
+    const mat = getBodyMaterial(color, isOffline);
 
     // Head face texture: PNG logo if available, else text fallback
     const faceLabel = runtime
@@ -153,14 +161,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       : agent.id.charAt(0).toUpperCase();
     const logoPath = runtime ? RUNTIME_LOGO[runtime] : undefined;
     const faceMat = useMemo(() => {
-      if (isOffline) {
-        return new THREE.MeshStandardMaterial({
-          color: "#6b7280",
-          flatShading: true,
-          transparent: true,
-          opacity: 0.55,
-        });
-      }
+      if (isOffline) return OFFLINE_MAT;
       if (logoPath) {
         const tex = getPngTexture(logoPath, color);
         return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
@@ -168,7 +169,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       const tex = getFaceTexture(faceLabel, color);
       return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
     }, [logoPath, faceLabel, color, isOffline]);
-    useEffect(() => () => { faceMat.dispose(); }, [faceMat]);
+    useEffect(() => () => { if (faceMat !== OFFLINE_MAT) faceMat.dispose(); }, [faceMat]);
     // Material array: all sides = body color, front face (-Z, index 5) = logo
     const headMats = useMemo(
       () => [mat, mat, mat, mat, mat, faceMat],
@@ -178,15 +179,135 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const animState = deriveAnimState(agent, isRunning);
     const statusLabel = deriveStatusLabel(animState, !!agent.active_task_id, isForeman);
 
+    // Pre-truncate long text before bubble key to avoid unnecessary texture rebuilds
+    const MAX_TASK = 35;
+    const MAX_FOCUS = 42;
+    const MAX_BLOCKER = 42;
+    const _taskText = activeTaskName ? (activeTaskName.length > MAX_TASK ? activeTaskName.slice(0, MAX_TASK) + "\u2026" : activeTaskName) : "";
+    const _focusText = focus ? (focus.length > MAX_FOCUS ? focus.slice(0, MAX_FOCUS) + "\u2026" : focus) : "";
+    const _blockerText = blockerText ? (blockerText.length > MAX_BLOCKER ? blockerText.slice(0, MAX_BLOCKER) + "\u2026" : blockerText) : "";
+
+    // Status bubble texture (GPU sprite replaces Html DOM overlay for performance)
+    const _bubbleKey = `${title || agent.id}|${statusLabel.text}|${statusLabel.color}|${_taskText}|${_focusText}|${_blockerText}|${isDark ? 1 : 0}|${color}`;
+    const { bubbleTex, bubbleScale } = useMemo(() => {
+      const DPR = 2;
+      const CW = 220 * DPR;
+      const padX = 10 * DPR;
+      const padY = 7 * DPR;
+      const titleFs = 13 * DPR;
+      const statusFs = 11 * DPR;
+      const taskFs = 9 * DPR;
+      const gap = 4 * DPR;
+
+      const shadowMargin = 10 * DPR; // extra canvas space for drop shadow
+      let h = padY + titleFs * 1.3 + gap + statusFs * 1.3;
+      if (_taskText) h += gap + taskFs * 1.3;
+      if (_focusText) h += gap + taskFs * 1.3;
+      if (_blockerText) h += gap + taskFs * 1.3;
+      h += padY;
+      const boxH = Math.ceil(h);
+      const CH = boxH + shadowMargin;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = CW + shadowMargin;
+      canvas.height = CH;
+      const ctx = canvas.getContext("2d")!;
+
+      const ox = shadowMargin / 2; // offset to center box within padded canvas
+      const bg = isDark ? "rgba(15,23,42,0.96)" : "rgba(255,255,255,0.98)";
+      const border = isDark ? "rgba(100,116,139,0.6)" : "rgba(156,163,175,0.9)";
+      ctx.beginPath();
+      ctx.roundRect(ox, 0, CW, boxH, 8 * DPR);
+      // Drop shadow for depth against green scene
+      ctx.shadowColor = "rgba(0,0,0,0.30)";
+      ctx.shadowBlur = 6 * DPR;
+      ctx.shadowOffsetY = 2 * DPR;
+      ctx.fillStyle = bg;
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+      ctx.strokeStyle = border;
+      ctx.lineWidth = 1.5 * DPR;
+      ctx.stroke();
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const cx = ox + CW / 2; // text center x within padded canvas
+      let y = padY;
+      const maxTW = CW - padX * 2;
+
+      // Title
+      ctx.font = `700 ${titleFs}px sans-serif`;
+      ctx.fillStyle = color;
+      let tText = title || agent.id;
+      if (ctx.measureText(tText).width > maxTW) {
+        while (ctx.measureText(tText + "\u2026").width > maxTW && tText.length > 1) tText = tText.slice(0, -1);
+        tText += "\u2026";
+      }
+      ctx.fillText(tText, cx, y);
+      y += titleFs * 1.3 + gap;
+
+      // Status
+      ctx.font = `600 ${statusFs}px sans-serif`;
+      ctx.fillStyle = statusLabel.color;
+      ctx.fillText(statusLabel.text, cx, y);
+      y += statusFs * 1.3 + gap;
+
+      // Task name (pre-truncated via _taskText)
+      if (_taskText) {
+        ctx.font = `500 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#cbd5e1" : "#4b5563";
+        let tkText = _taskText;
+        if (ctx.measureText(tkText).width > maxTW) {
+          while (ctx.measureText(tkText + "\u2026").width > maxTW && tkText.length > 1) tkText = tkText.slice(0, -1);
+          tkText += "\u2026";
+        }
+        ctx.fillText(tkText, cx, y);
+        y += taskFs * 1.3 + gap;
+      }
+
+      // Focus text (pre-truncated via _focusText)
+      if (_focusText) {
+        ctx.font = `500 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#cbd5e1" : "#4b5563";
+        let fText = _focusText;
+        if (ctx.measureText(fText).width > maxTW) {
+          while (ctx.measureText(fText + "\u2026").width > maxTW && fText.length > 1) fText = fText.slice(0, -1);
+          fText += "\u2026";
+        }
+        ctx.fillText(fText, cx, y);
+        y += taskFs * 1.3 + gap;
+      }
+
+      // Blocker text (red, pre-truncated via _blockerText)
+      if (_blockerText) {
+        ctx.font = `500 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#f87171" : "#dc2626";
+        let bText = _blockerText;
+        if (ctx.measureText(bText).width > maxTW) {
+          while (ctx.measureText(bText + "\u2026").width > maxTW && bText.length > 1) bText = bText.slice(0, -1);
+          bText += "\u2026";
+        }
+        ctx.fillText(bText, cx, y);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const actualCW = CW + shadowMargin;
+      const worldW = 1.15;
+      return { bubbleTex: tex, bubbleScale: [worldW, worldW * (CH / actualCW)] as [number, number] };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [_bubbleKey]);
+    useEffect(() => () => { bubbleTex.dispose(); }, [bubbleTex]);
+
     return (
       <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
         {/* Body parts — named for animation targeting via PART_INDEX */}
         <mesh name="torso" position={[0, 0.55, 0]} castShadow geometry={TORSO_GEO} material={mat} />
         <mesh name="head" position={[0, 1.0, 0]} castShadow geometry={HEAD_GEO} material={headMats} />
-        <mesh name="leftArm" position={[-0.25, 0.5, 0]} castShadow geometry={ARM_GEO} material={mat} />
-        <mesh name="rightArm" position={[0.25, 0.5, 0]} castShadow geometry={ARM_GEO} material={mat} />
-        <mesh name="leftLeg" position={[-0.1, 0.12, 0]} castShadow geometry={LEG_GEO} material={mat} />
-        <mesh name="rightLeg" position={[0.1, 0.12, 0]} castShadow geometry={LEG_GEO} material={mat} />
+        <mesh name="leftArm" position={[-0.25, 0.75, 0]} castShadow geometry={ARM_GEO} material={mat} />
+        <mesh name="rightArm" position={[0.25, 0.75, 0]} castShadow geometry={ARM_GEO} material={mat} />
+        <mesh name="leftLeg" position={[-0.1, 0.30, 0]} castShadow geometry={LEG_GEO} material={mat} />
+        <mesh name="rightLeg" position={[0.1, 0.30, 0]} castShadow geometry={LEG_GEO} material={mat} />
 
         {/* Foreman crown (MC-style blocky gold crown) */}
         {isForeman && (
@@ -198,75 +319,10 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
           </group>
         )}
 
-        {/* Status bubble above head */}
-        <Html
-          position={[0, isForeman ? 1.65 : 1.55, 0]}
-          center
-          distanceFactor={6}
-          style={{ pointerEvents: "none", userSelect: "none" }}
-        >
-          <div
-            style={{
-              background: isDark ? "rgba(15,23,42,0.92)" : "rgba(255,255,255,0.95)",
-              border: `1px solid ${isDark ? "rgba(100,116,139,0.4)" : "rgba(209,213,219,0.8)"}`,
-              borderRadius: 8,
-              padding: "4px 8px",
-              minWidth: 48,
-              maxWidth: 180,
-              textAlign: "center",
-              boxShadow: isDark
-                ? "0 2px 8px rgba(0,0,0,0.4)"
-                : "0 2px 8px rgba(0,0,0,0.1)",
-            }}
-          >
-            {/* Agent title */}
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: color,
-                lineHeight: "14px",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {title || agent.id}
-            </div>
-
-            {/* Short status label */}
-            <div
-              style={{
-                fontSize: 9,
-                color: statusLabel.color,
-                marginTop: 2,
-                fontWeight: 500,
-                lineHeight: "12px",
-              }}
-            >
-              {statusLabel.text}
-            </div>
-
-            {/* Active task name */}
-            {activeTaskName && (
-              <div
-                style={{
-                  fontSize: 8,
-                  color: isDark ? "#94a3b8" : "#9ca3af",
-                  marginTop: 2,
-                  lineHeight: "10px",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {activeTaskName.length > 25
-                  ? activeTaskName.slice(0, 25) + "..."
-                  : activeTaskName}
-              </div>
-            )}
-          </div>
-        </Html>
+        {/* Status bubble above head — GPU-rendered sprite (no DOM overhead) */}
+        <sprite position={[0, isForeman ? 1.75 : 1.65, 0]} scale={[bubbleScale[0], bubbleScale[1], 1]}>
+          <spriteMaterial map={bubbleTex} transparent depthWrite={false} />
+        </sprite>
       </group>
     );
   },

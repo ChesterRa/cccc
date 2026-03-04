@@ -8,19 +8,19 @@ description: >
 
 level_semantics:
   indexed: "Synced in local catalog only; not shown in normal search results."
-  mounted: "Visible/discoverable; can be enabled on demand."
-  enabled: "Mounted + preferred baseline intent; requires explicit enable or profile default application."
-  pinned: "Enabled + long-lived baseline intent; typically mapped into actor/profile autoload defaults."
+  mounted: "Visible/discoverable; can be enabled on demand. (formerly: enabled merged into mounted)"
+  pinned: "Mounted + long-lived baseline intent; typically mapped into actor/profile autoload defaults."
 
 defaults:
   source_level:
-    cccc_builtin: enabled
+    cccc_builtin: mounted
+    manual_import: indexed
     anthropic_skills: mounted
     github_skills_curated: mounted
-    skillsmp_remote: mounted
-    clawhub_remote: mounted
-    openclaw_skills_remote: mounted
-    clawskills_remote: mounted
+    skillsmp_remote: indexed
+    clawhub_remote: indexed
+    openclaw_skills_remote: indexed
+    clawskills_remote: indexed
     mcp_registry_official: mounted
 
   # Matches current CCCC implementation boundary.
@@ -45,6 +45,9 @@ sources:
   - source_id: cccc_builtin
     enabled: true
     rationale: "Core CCCC packs; always available."
+  - source_id: manual_import
+    enabled: true
+    rationale: "Agent/user imported records from arbitrary external references."
   - source_id: anthropic_skills
     enabled: true
     rationale: "Official Anthropic skill source."
@@ -78,7 +81,7 @@ mcp_overrides:
     notes: "Official GitHub MCP; broad repo/issue/PR workflows."
 
   - capability_id: mcp:io.github.ChromeDevTools/chrome-devtools-mcp
-    level: enabled
+    level: mounted
     trust: high
     install_mode_preference: package:npm
     notes: "High-ROI browser debugging/inspection for engineering tasks."
@@ -187,7 +190,7 @@ mcp_overrides:
   # Tier B: mounted (high risk/high privilege; visible, use runtime blocklist as needed)
   # --------------------------------------------------------------------------
   - capability_id: mcp:io.github.domdomegg/computer-use-mcp
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
@@ -196,7 +199,7 @@ mcp_overrides:
     notes: "Powerful desktop control; apply runtime blocklist when task boundary requires."
 
   - capability_id: mcp:io.github.CursorTouch/Windows-MCP
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:pypi
     risk_tags:
@@ -205,7 +208,7 @@ mcp_overrides:
     notes: "Windows computer-use MCP (pypi)."
 
   - capability_id: mcp:io.github.wonderwhy-er/desktop-commander
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
@@ -215,7 +218,7 @@ mcp_overrides:
     notes: "Desktop + file + terminal control; high-power local mutation surface."
 
   - capability_id: mcp:io.github.bytedance/mcp-server-browser
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
@@ -224,7 +227,7 @@ mcp_overrides:
     notes: "UI-TARS browser execution surface; high privilege, monitor and block when needed."
 
   - capability_id: mcp:io.github.bytedance/mcp-server-filesystem
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
@@ -232,7 +235,7 @@ mcp_overrides:
     notes: "Filesystem mutation surface from UI-TARS stack."
 
   - capability_id: mcp:io.github.therealtimex/browser-use
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:pypi
     risk_tags:
@@ -241,7 +244,7 @@ mcp_overrides:
     notes: "Browser-use execution MCP (pypi)."
 
   - capability_id: mcp:io.github.hummingbot/mcp
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:oci
     risk_tags:
@@ -249,7 +252,7 @@ mcp_overrides:
     notes: "Trading execution domain; keep indexed by default."
 
   - capability_id: mcp:agency.lona/trading
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     risk_tags:
@@ -257,7 +260,7 @@ mcp_overrides:
     notes: "Trading analytics/execution domain; explicit promotion only."
 
   - capability_id: mcp:com.stripe/mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: remote_only
     risk_tags:
@@ -265,7 +268,7 @@ mcp_overrides:
     notes: "Financial/payment mutation potential; keep out of default mounted set."
 
   - capability_id: mcp:io.github.amol21p/interactive-terminal
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:npm
     risk_tags:
@@ -279,7 +282,7 @@ skills:
       rationale: "Official high-quality skill corpus."
     - source_id: github_skills_curated
       level: mounted
-      rationale: "Curated third-party skills are discoverable by default."
+      rationale: "Curated third-party skills are cataloged; explicit promotion required."
 
   # Keep all official Anthropic skills discoverable by default.
   official_anthropic:
@@ -314,7 +317,7 @@ skills:
     - capability_id: skill:anthropic:web-artifacts-builder
       level: mounted
     - capability_id: skill:anthropic:webapp-testing
-      level: enabled
+      level: mounted
     - capability_id: skill:anthropic:xlsx
       level: mounted
 

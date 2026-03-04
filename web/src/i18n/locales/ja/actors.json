@@ -137,5 +137,8 @@
   "managedByProfileName": "現在の管理 Profile: {{name}}",
   "managedByProfileCustomHint": "ランタイム・コマンド・シークレットを手動編集するには、先にカスタムへ変換してください。",
   "profileControlsRuntimeFields": "ランタイムとコマンドは Profile 管理です。編集するには先にカスタムへ変換してください。",
-  "linkedSecretsHint": "シークレットはリンクされた Profile で管理されます。Settings > Actor Profiles で編集してください。"
+  "linkedSecretsHint": "シークレットはリンクされた Profile で管理されます。Settings > Actor Profiles で編集してください。",
+  "connectionLost": "接続が切断されました",
+  "connectionLostDescription": "ターミナル接続に失敗しました。エージェントプロセスが停止したか、サーバーに到達できません。",
+  "reconnect": "再接続"
 }

@@ -26,8 +26,109 @@ _PACK_QUICK_USE_EXAMPLES: Dict[str, str] = {
     "pack:group-runtime": 'cccc_capability_use(tool_name="cccc_group", tool_arguments={"action":"info"})',
     "pack:file-im": 'cccc_capability_use(tool_name="cccc_file", tool_arguments={"action":"blob_path","rel_path":"state/blobs/..."})',
     "pack:automation": 'cccc_capability_use(tool_name="cccc_automation", tool_arguments={"action":"state"})',
-    "pack:context-advanced": 'cccc_capability_use(tool_name="cccc_memory_admin", tool_arguments={"action":"ingest","mode":"signal"})',
+    "pack:context-advanced": 'cccc_capability_use(tool_name="cccc_memory_admin", tool_arguments={"action":"index_sync","mode":"scan"})',
 }
+
+
+def _trim_text(value: Any, *, max_chars: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def _memory_recall_query_from_context(*, context: Dict[str, Any], actor_id: str) -> str:
+    tokens: List[str] = []
+    aid = str(actor_id or "").strip()
+
+    if isinstance(context.get("overview"), dict):
+        manual = context.get("overview", {}).get("manual")
+        if isinstance(manual, dict):
+            focus = _trim_text(manual.get("current_focus"), max_chars=120)
+            if focus:
+                tokens.append(focus)
+
+    tasks = context.get("tasks") if isinstance(context.get("tasks"), list) else []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        if str(t.get("status") or "").strip().lower() != "active":
+            continue
+        name = _trim_text(t.get("name"), max_chars=80)
+        if name:
+            tokens.append(name)
+        break
+
+    agents = context.get("agents") if isinstance(context.get("agents"), list) else []
+    for a in agents:
+        if not isinstance(a, dict):
+            continue
+        if str(a.get("id") or "").strip() != aid:
+            continue
+        for key in ("active_task_id", "focus", "next_action", "what_changed"):
+            text = _trim_text(a.get(key), max_chars=80)
+            if text:
+                tokens.append(text)
+        break
+
+    if not tokens:
+        return "recent decisions constraints preferences"
+
+    # Keep deterministic order and compact query size.
+    merged = " | ".join(tokens[:4]).strip()
+    return _trim_text(merged, max_chars=240) or "recent decisions constraints preferences"
+
+
+def _build_memory_recall_gate(*, group_id: str, actor_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    query = _memory_recall_query_from_context(context=context, actor_id=actor_id)
+    gate: Dict[str, Any] = {
+        "required": True,
+        "status": "empty",
+        "query": query,
+        "hits": [],
+        "note": (
+            "Recall gate: read bootstrap.memory_recall_gate before planning/implementation. "
+            "If empty, run cccc_memory(search/get) manually."
+        ),
+    }
+    try:
+        search_result = _call_daemon_or_raise(
+            {
+                "op": "memory_reme_search",
+                "args": {
+                    "group_id": group_id,
+                    "query": query,
+                    "max_results": 3,
+                    "min_score": 0.1,
+                },
+            },
+            timeout_s=4.0,
+        )
+        hits = search_result.get("hits") if isinstance(search_result, dict) else []
+        compact_hits: List[Dict[str, Any]] = []
+        if isinstance(hits, list):
+            for item in hits[:3]:
+                if not isinstance(item, dict):
+                    continue
+                compact_hits.append(
+                    {
+                        "path": str(item.get("path") or ""),
+                        "start_line": int(item.get("start_line") or 1),
+                        "score": float(item.get("score") or 0.0),
+                        "snippet": _trim_text(item.get("snippet"), max_chars=220),
+                    }
+                )
+        if compact_hits:
+            gate["status"] = "ready"
+            gate["hits"] = compact_hits
+        else:
+            gate["status"] = "empty"
+    except Exception as e:
+        gate["status"] = "error"
+        gate["error"] = str(e)
+    return gate
 
 
 def _build_context_hygiene_hint(*, context: Dict[str, Any], actor_id: str) -> Dict[str, Any]:
@@ -237,6 +338,7 @@ def bootstrap(
     - context: group context
     - inbox: unread messages
     - ledger_tail: recent chat.message tail (optional)
+    - memory_recall_gate: mandatory recall pack before planning/execution
     """
     gi = _group_actor_mod.group_info(group_id=group_id)
     group = gi.get("group") if isinstance(gi, dict) else None
@@ -358,6 +460,11 @@ def bootstrap(
         context=context if isinstance(context, dict) else {},
         actor_id=actor_id,
     )
+    memory_recall_gate = _build_memory_recall_gate(
+        group_id=group_id,
+        actor_id=actor_id,
+        context=context if isinstance(context, dict) else {},
+    )
 
     return {
         "group": group,
@@ -370,6 +477,7 @@ def bootstrap(
         "ledger_tail_truncated": ledger_tail_truncated,
         "suggested_mark_read_event_id": last_event_id,
         "context_hygiene": context_hygiene,
+        "memory_recall_gate": memory_recall_gate,
         "memory_guide": memory_guide,
     }
 

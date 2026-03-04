@@ -380,6 +380,93 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             },
         }
 
+    # ---------------------------------------------------------------------
+    # Group-scoped capability management endpoints
+    # ---------------------------------------------------------------------
+
+    @app.get("/api/v1/groups/{group_id}/capabilities/state")
+    async def capability_state(group_id: str, actor_id: str = "user") -> Dict[str, Any]:
+        """Get caller-effective capability state and visible/dynamic tools for a group."""
+        return await ctx.daemon(
+            {
+                "op": "capability_state",
+                "args": {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": str(actor_id or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/capabilities/enable")
+    async def capability_enable(group_id: str, request: Request) -> Dict[str, Any]:
+        """Enable/disable a capability for a group (session/actor/group scope)."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability enable endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        capability_id = str(payload.get("capability_id") or "").strip()
+        if not capability_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_capability_id", "message": "missing capability_id"})
+        return await ctx.daemon(
+            {
+                "op": "capability_enable",
+                "args": {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
+                    "capability_id": capability_id,
+                    "enabled": bool(payload.get("enabled", True)),
+                    "scope": str(payload.get("scope") or "session").strip().lower() or "session",
+                    "ttl_seconds": int(payload.get("ttl_seconds") or 3600),
+                    "reason": str(payload.get("reason") or "").strip(),
+                    "cleanup": bool(payload.get("cleanup", False)),
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/capabilities/import")
+    async def capability_import(group_id: str, request: Request) -> Dict[str, Any]:
+        """Import (install) a capability into a group."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability import endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        args: Dict[str, Any] = {
+            "group_id": group_id,
+            "by": "user",
+            "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
+            "dry_run": bool(payload.get("dry_run", False)),
+            "probe": bool(payload.get("probe", True)),
+            "enable_after_import": bool(payload.get("enable_after_import", False)),
+            "scope": str(payload.get("scope") or "session").strip().lower() or "session",
+            "ttl_seconds": int(payload.get("ttl_seconds") or 3600),
+            "reason": str(payload.get("reason") or "").strip(),
+        }
+        if "record" in payload:
+            args["record"] = payload["record"]
+        return await ctx.daemon({"op": "capability_import", "args": args})
+
     @app.get("/api/v1/fs/list")
     async def fs_list(path: str = "~", show_hidden: bool = False) -> Dict[str, Any]:
         """List directory contents for path picker UI."""
@@ -410,7 +497,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                         "is_dir": entry.is_dir(),
                     })
             except PermissionError:
-                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Cannot read: {path}"}}
+                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Permission denied: {path}"}}
 
             return {
                 "ok": True,

@@ -76,6 +76,8 @@ export function AgentTab({
   const terminalReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const outputFilterTailRef = useRef<string>("");
   const [activated, setActivated] = useState(false);
+  // Bumped to trigger a fresh WebSocket connection from the reconnect button
+  const [reconnectTrigger, setReconnectTrigger] = useState(0);
 
   // Best-effort terminal query responder state (per mounted actor tab).
   // Some runtimes (notably opencode) emit terminal *queries* that xterm.js doesn't answer (e.g. OSC 4 palette).
@@ -490,10 +492,10 @@ export function AgentTab({
         if (disposed) return;
         wsRef.current = null;
 
-        // Only auto-reconnect if not a clean close (code 1000)
-        // Use ref to get latest prop value (avoid stale closure)
-        // Also skip reconnect if server reported actor is not running
-        if (event.code !== 1000 && isRunningRef.current && !isHeadless && !actorNotRunningRef.current) {
+        // Don't retry on clean close (1000), auth error (4401), or actor not running
+        const noRetry = event.code === 1000 || event.code === 4401 || actorNotRunningRef.current;
+
+        if (!noRetry && isRunningRef.current && !isHeadless) {
           const attempt = reconnectAttemptRef.current;
 
           // Check max reconnect attempts
@@ -580,7 +582,7 @@ export function AgentTab({
       setTerminalReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled separately; onStatusChange should not trigger reconnects.
-  }, [activated, isRunning, isHeadless, groupId, actor.id, actor.runtime, canControl]);
+  }, [activated, isRunning, isHeadless, groupId, actor.id, actor.runtime, canControl, reconnectTrigger]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {
@@ -745,7 +747,7 @@ export function AgentTab({
 
       {/* Terminal or Status Area */}
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
-      <div className={classNames("flex-1 min-h-0", isDark ? "bg-slate-950" : "bg-gray-50")} style={{ contain: 'layout', overflow: 'hidden' }}>
+      <div className={classNames("flex-1 min-h-0 relative", isDark ? "bg-slate-950" : "bg-gray-50")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
           // Headless agent - show status
           <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
@@ -764,15 +766,43 @@ export function AgentTab({
           // PTY agent - show terminal
           // contain: layout paint isolates layout/paint calculations to prevent jitter when terminal content updates
           // opacity transition hides initial backlog replay scrolling
-          <div
-            ref={termRef}
-            className="h-full w-full transition-opacity duration-100"
-            style={{
-              contain: 'layout paint',
-              overflow: 'hidden',
-              opacity: terminalReady ? 1 : 0,
-            }}
-          />
+          <>
+            <div
+              ref={termRef}
+              className="h-full w-full transition-opacity duration-100"
+              style={{
+                contain: 'layout paint',
+                overflow: 'hidden',
+                opacity: terminalReady ? 1 : 0,
+              }}
+            />
+            {/* Connection error overlay — shown when all reconnect attempts failed and terminal never became ready */}
+            {connectionStatus === 'disconnected' && !terminalReady && (
+              <div className={classNames(
+                "absolute inset-0 flex flex-col items-center justify-center p-8",
+                isDark ? "text-slate-400 bg-slate-950/80" : "text-slate-500 bg-white/80"
+              )}>
+                <div className="mb-4"><TerminalIcon size={48} /></div>
+                <div className="text-lg font-medium mb-2">{t('connectionLost')}</div>
+                <div className="text-sm text-center max-w-md mb-4">
+                  {t('connectionLostDescription')}
+                </div>
+                {canControl && (
+                  <button
+                    onClick={() => {
+                      reconnectAttemptRef.current = 0;
+                      actorNotRunningRef.current = false;
+                      setReconnectTrigger((n) => n + 1);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium min-h-[44px] transition-colors"
+                  >
+                    <RefreshIcon size={16} />
+                    {t('reconnect')}
+                  </button>
+                )}
+              </div>
+            )}
+          </>
         ) : (
           // Stopped agent
           <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>

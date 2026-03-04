@@ -1,5 +1,5 @@
 """
-Context v2 专项测试: CAS, permissions, cycle detection, overview.mermaid, task tree ops.
+Context v2 专项测试: CAS, permissions, cycle detection, panorama projection, task tree ops.
 """
 
 import os
@@ -254,6 +254,25 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_task_status_rejects_legacy_pending_token(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "task.create", "name": "T", "goal": "g"}],
+            })
+            tid = self._call("task_list", {"group_id": gid})[0].result["tasks"][0]["id"]
+
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "task.status", "task_id": tid, "status": "pending"}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("invalid task status", str(resp.error.message).lower())
+        finally:
+            cleanup()
+
     def test_task_status_autosyncs_assignee_agent_state(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -327,10 +346,10 @@ class TestContextV2Ops(unittest.TestCase):
             cleanup()
 
     # =========================================================================
-    # overview.mermaid projection
+    # panorama projection
     # =========================================================================
 
-    def test_overview_mermaid_includes_agents_and_tasks(self) -> None:
+    def test_panorama_mermaid_includes_agents_and_tasks(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -358,10 +377,11 @@ class TestContextV2Ops(unittest.TestCase):
             self.assertTrue(get_resp.ok)
             result = get_resp.result
 
-            mermaid = str(result.get("overview", {}).get("mermaid") or "")
+            mermaid = str(result.get("panorama", {}).get("mermaid") or "")
             self.assertIn("graph TD", mermaid)
             self.assertIn("foreman", mermaid)
             self.assertIn(tid, mermaid)
+            self.assertNotIn("mermaid", result.get("overview", {}))
 
             # Check flat agent state in agents section
             agents = result.get("agents", [])

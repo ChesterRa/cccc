@@ -17,12 +17,12 @@ def _memory_policy_lines(group_id: str) -> List[str]:
         return []
     return [
         "Memory:",
-        "- Split by horizon: Context agent state is short-term execution memory; memory.db is long-term reusable memory.",
-        "- Keep transient status in Context (focus/task/blockers/next/changed); keep only stable facts/decisions/patterns in memory.db.",
-        "- Before storing, run cccc_memory(action=search) first; avoid duplicates and drift.",
-        '- At milestones, run cccc_memory_admin(action="ingest", mode="signal"), then consolidate deliberately.',
-        '- Promotion path: milestone/done -> cccc_memory_admin(action="ingest", mode="signal") -> cccc_memory(action="store", ...).',
-        "- Use cccc_memory(action=guide, topic=...) when unsure about store/search/consolidation/lifecycle workflows.",
+        "- Split by horizon: Context agent state is short-term execution memory; long-term memory lives in state/memory/MEMORY.md + state/memory/daily/*.md.",
+        "- Keep transient execution status in Context; write only stable, reusable outcomes to memory files.",
+        "- Resume gate: use cccc_bootstrap.memory_recall_gate on start/resume; if empty, run cccc_memory(search/get) manually before implementation.",
+        "- Recall path: cccc_memory(action=search) -> cccc_memory(action=get) before planning or writing.",
+        '- Write path: cccc_memory(action="write", target="daily"|"memory", ...) with dedup intent.',
+        '- Compaction path (when context grows): cccc_memory_admin(action="context_check") -> cccc_memory_admin(action="compact"|"daily_flush").',
     ]
 
 

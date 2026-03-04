@@ -12,16 +12,13 @@ from typing import Dict, Iterable, List, Set, Tuple
 
 
 # Keep the default surface intentionally small.
-CORE_TOOL_NAMES: Tuple[str, ...] = (
+# Basic tools are available to all roles.
+CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_help",
     "cccc_bootstrap",
     "cccc_project_info",
     "cccc_capability_search",
-    "cccc_capability_enable",
-    "cccc_capability_block",
     "cccc_capability_state",
-    "cccc_capability_uninstall",
-    "cccc_capability_use",
     "cccc_inbox_list",
     "cccc_inbox_mark_read",
     "cccc_message_send",
@@ -32,6 +29,18 @@ CORE_TOOL_NAMES: Tuple[str, ...] = (
     "cccc_context_agent",
     "cccc_memory",
 )
+
+# Admin tools are restricted from peer roles.
+CORE_ADMIN_TOOLS: Tuple[str, ...] = (
+    "cccc_capability_enable",
+    "cccc_capability_block",
+    "cccc_capability_import",
+    "cccc_capability_uninstall",
+    "cccc_capability_use",
+)
+
+# Backward-compatible union (original export name preserved).
+CORE_TOOL_NAMES: Tuple[str, ...] = CORE_BASIC_TOOLS + CORE_ADMIN_TOOLS
 
 
 # Built-in packs that can be enabled via cccc_capability_enable.
@@ -117,8 +126,16 @@ def all_pack_tool_name_set() -> Set[str]:
     return names
 
 
-def resolve_visible_tool_names(enabled_capability_ids: Iterable[str]) -> Set[str]:
-    visible: Set[str] = set(CORE_TOOL_NAMES)
+def resolve_visible_tool_names(
+    enabled_capability_ids: Iterable[str],
+    *,
+    actor_role: str = "",
+) -> Set[str]:
+    role = str(actor_role or "").strip().lower()
+    if role == "peer":
+        visible: Set[str] = set(CORE_BASIC_TOOLS)
+    else:
+        visible = set(CORE_TOOL_NAMES)
     for cap_id in enabled_capability_ids:
         cap = BUILTIN_CAPABILITY_PACKS.get(str(cap_id))
         if not isinstance(cap, dict):

@@ -52,6 +52,7 @@ def _new_catalog_doc() -> Dict[str, Any]:
         "created_at": now,
         "updated_at": now,
         "sources": {
+            "manual_import": _source_state_template("never"),
             "mcp_registry_official": _source_state_template("never"),
             "anthropic_skills": _source_state_template("never"),
             "github_skills_curated": _source_state_template("never"),
@@ -476,5 +477,4 @@ def _save_runtime_doc(path: Path, doc: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc["updated_at"] = utc_now_iso()
     atomic_write_json(path, doc, indent=2)
-
 

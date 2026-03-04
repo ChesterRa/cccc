@@ -28,7 +28,7 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 
 ### Context (shared short-horizon memory)
 
-- Keep working state here: DoD, tasks, overview, and per-agent short-term state.
+- Keep working state here: DoD, tasks, overview.manual, panorama, and per-agent short-term state.
 - Minimum agent-state upkeep at key transitions:
   - `focus`
   - `active_task_id` (when applicable)
@@ -42,12 +42,18 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 ### Memory (long-term)
 
 - `Context` is short-term execution memory.
-- `memory.db` is long-term reusable memory for facts/decisions/patterns.
+- Long-term memory is file-based:
+  - `state/memory/MEMORY.md`
+  - `state/memory/daily/YYYY-MM-DD__<group_label>.md`
+- Resume gate:
+  - `cccc_bootstrap` returns `memory_recall_gate`; read it before planning/implementation.
+  - if gate is empty, run `cccc_memory(action=search/get)` manually.
 - Practical loop:
-  - recall first: `cccc_memory(action=search, ...)`
-  - ingest at milestones: `cccc_memory_admin(action=ingest, mode="signal")`
-  - store stable outcomes: `cccc_memory(action=store, ...)`
-  - clean intentionally: `cccc_memory_admin(action=decay|delete, ...)`
+  - recall first: `cccc_memory(action=search, ...)` then `cccc_memory(action=get, ...)`
+  - write stable outcomes: `cccc_memory(action=write, target="daily"|"memory", dedup_intent=...)`
+  - compaction/flush maintenance: `cccc_memory_admin(action=context_check|compact|daily_flush, ...)`
+  - index maintenance: `cccc_memory_admin(action=index_sync, ...)`
+  - daemon conversation lane can auto-run `context_check -> daily_flush` on pressure; keep signal high and avoid duplicate writes.
 
 ### Inbox (unread queue)
 
@@ -81,12 +87,6 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 
 - For non-trivial plans, evaluate all six dimensions:
   - value/ROI, complexity load, feasibility, verifiability, risk/side-effects, reversibility
-  - value/ROI
-  - complexity load
-  - feasibility
-  - verifiability
-  - risk/side-effects
-  - reversibility
 - If one dimension is critically weak, narrow scope or add mitigation before implementation.
 
 ## Gap routing (high ROI)

@@ -1,9 +1,9 @@
-import { Suspense, useMemo, useRef } from "react";
+import { Suspense, useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { ActorCharacter } from "./ActorCharacter";
 import { BuildZone } from "./BuildZone";
-import { MCGround, MCBed } from "./MCFurniture";
+import { MCGround, InstancedBeds, type BedInstance } from "./MCFurniture";
 import { computeGridPosition } from "../utils/buildLayout";
 import { useCharacterAnimation, type LayoutItem } from "../hooks/useCharacterAnimation";
 import type { AgentState, Actor, Task } from "../types";
@@ -192,6 +192,11 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
     staticMode: true,
   });
 
+  const bedInstances: BedInstance[] = useMemo(
+    () => [...layout.values()].map((item) => ({ position: item.bedPos, rotationY: item.bedRotY })),
+    [layout],
+  );
+
   return (
     <>
       <ambientLight intensity={isDark ? 0.35 : 0.6} />
@@ -213,13 +218,7 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
         <BuildZone tasks={visibleTasks} baseZ={0} isDark={isDark} />
       )}
 
-      {[...layout.values()].map((item) => (
-        <MCBed
-          key={`bed-${item.agentId}`}
-          position={item.bedPos}
-          rotationY={item.bedRotY}
-        />
-      ))}
+      <InstancedBeds beds={bedInstances} />
 
       {agents.map((agent) => {
         const actor = actorMap.get(agent.id);
@@ -242,11 +241,15 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
             title={actor?.title}
             isRunning={running}
             activeTaskName={taskEntry?.name.replace(/^T\d+:\s*/, "")}
+            focus={agent.focus || undefined}
+            blockerText={agent.blockers?.length ? agent.blockers[0] : undefined}
           />
         );
       })}
 
       <OrbitControls
+        makeDefault
+        enableDamping={false}
         enablePan={true}
         enableZoom={true}
         enableRotate={true}
@@ -254,10 +257,16 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
         maxDistance={camZ * 3}
         maxPolarAngle={Math.PI / 2.05}
         target={[0, 0.5, 0]}
+        mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }}
+        screenSpacePanning={true}
       />
     </>
   );
 }
+
+// ── WebGPU / WebGL renderer selection ──
+
+type RenderMode = "loading" | "webgpu" | "webgl";
 
 export function ActorScene3D({ agents, actors, tasks, isDark, groupId, className }: ActorScene3DProps) {
   const taskCount = tasks?.length ?? 0;
@@ -268,21 +277,127 @@ export function ActorScene3D({ agents, actors, tasks, isDark, groupId, className
     return Math.max(5, radius + buildDepth + restAreaDepth + 2);
   }, [agents.length, taskCount]);
 
-  return (
-    <div className={className} style={{ minHeight: 280 }}>
-      <Canvas
-        shadows={{ type: THREE.PCFShadowMap }}
-        camera={{
-          position: [camZ * 0.6, camZ * 0.5, camZ],
-          fov: 45,
-          near: 0.1,
-          far: 100,
-        }}
+  // Phase 1: detect WebGPU + dynamically load three/webgpu module
+  const [renderMode, setRenderMode] = useState<RenderMode>("loading");
+  const gpuModRef = useRef<any>(null);
+
+  useEffect(() => {
+    // WebGPU is opt-in via ?webgpu URL param (R3F v8 has limited WebGPU compat)
+    const wantGPU =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("webgpu");
+
+    if (!wantGPU || !navigator.gpu) {
+      setRenderMode("webgl");
+      return;
+    }
+
+    let cancelled = false;
+    import("three/webgpu")
+      .then((mod) => {
+        if (cancelled) return;
+        gpuModRef.current = mod;
+        setRenderMode("webgpu");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRenderMode("webgl");
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Stable gl factory for WebGPU -- avoids re-creation on every render.
+  // Uses a render-guard so R3F can keep frameloop="always" (required for
+  // OrbitControls) while WebGPURenderer.init() resolves asynchronously.
+  const createWebGPURenderer = useCallback((canvas: HTMLCanvasElement) => {
+    const GPU = gpuModRef.current;
+    const renderer = new GPU.WebGPURenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+    });
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+
+    // XR stub -- prevents R3F v8 "xr.addEventListener is not a function" error
+    if (!(renderer as any).xr) {
+      (renderer as any).xr = {
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        getSession: () => null,
+        setSession: () => Promise.resolve(),
+        enabled: false,
+        isPresenting: false,
+        setReferenceSpaceType: () => {},
+        getReferenceSpace: () => null,
+        getCamera: () => new THREE.PerspectiveCamera(),
+        setAnimationLoop: () => {},
+        dispose: () => {},
+      };
+    }
+
+    // Guard: R3F calls gl.render() every frame via its rAF loop.
+    // WebGPURenderer.render() throws if called before init() resolves,
+    // so we patch it with a no-op until the backend is ready.
+    const nativeRender = renderer.render.bind(renderer);
+    let ready = false;
+    renderer.render = (scene: THREE.Scene, camera: THREE.Camera) => {
+      if (ready) nativeRender(scene, camera);
+    };
+
+    renderer.init()
+      .then(() => {
+        console.log("[ActorScene3D] WebGPU renderer initialized");
+        ready = true;
+      })
+      .catch((err: unknown) => {
+        console.warn("[ActorScene3D] WebGPU init failed, reloading with WebGL:", err);
+        setRenderMode("webgl");
+      });
+
+    return renderer;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Placeholder while detecting WebGPU
+  if (renderMode === "loading") {
+    return (
+      <div
+        className={className}
         style={{
+          minHeight: 280,
           borderRadius: 12,
           background: isDark ? "#191970" : "#87CEEB",
         }}
-        gl={{ antialias: true, alpha: false }}
+      />
+    );
+  }
+
+  const cameraConfig = {
+    position: [camZ * 0.6, camZ * 0.5, camZ] as [number, number, number],
+    fov: 45,
+    near: 0.1,
+    far: 100,
+  };
+
+  const canvasStyle = {
+    borderRadius: 12,
+    background: isDark ? "#191970" : "#87CEEB",
+  };
+
+  const glProp = renderMode === "webgpu"
+    ? (createWebGPURenderer as any)
+    : { antialias: true, alpha: false };
+
+  return (
+    <div className={className} style={{ minHeight: 280 }}>
+      <Canvas
+        key={renderMode}
+        frameloop="always"
+        shadows={{ type: THREE.PCFShadowMap }}
+        camera={cameraConfig}
+        style={canvasStyle}
+        gl={glProp}
       >
         <Suspense fallback={null}>
           <Scene agents={agents} actors={actors} tasks={tasks} isDark={isDark} groupId={groupId} camZ={camZ} />

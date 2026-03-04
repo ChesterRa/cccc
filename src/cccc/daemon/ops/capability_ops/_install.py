@@ -6,10 +6,12 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 
@@ -36,6 +38,9 @@ def _install_spec_ready(rec: Dict[str, Any]) -> bool:
         return bool(str(spec.get("url") or "").strip())
     if install_mode == "package":
         return bool(str(spec.get("identifier") or "").strip())
+    if install_mode == "command":
+        commands, _ = _command_stdio_command_candidates(rec)
+        return bool(commands)
     return False
 
 
@@ -298,11 +303,11 @@ def _missing_required_environment_names(rec: Dict[str, Any]) -> List[str]:
 
 def _normalize_registry_type_token(raw: str) -> str:
     token = str(raw or "").strip().lower()
-    if token in {"", "npm", "node", "npmjs"}:
+    if token in {"", "npm", "node", "nodejs", "npmjs", "javascript", "js"}:
         return "npm"
-    if token in {"pypi", "python", "pip", "pipx", "uvx", "uv"}:
+    if token in {"pypi", "python", "python3", "py", "pip", "pip3", "pipx", "uvx", "uv", "poetry"}:
         return "pypi"
-    if token in {"oci", "docker", "container", "podman", "ghcr", "ghcr.io"}:
+    if token in {"oci", "docker", "container", "container_image", "container-image", "podman", "ghcr", "ghcr.io"}:
         return "oci"
     return token
 
@@ -313,12 +318,82 @@ def _effective_registry_type(install_spec: Dict[str, Any]) -> str:
     if declared in {"npm", "pypi", "oci"}:
         return declared
     runtime_hint = _normalize_registry_type_token(str(spec.get("runtime_hint") or ""))
-    if runtime_hint in {"pypi", "oci"}:
+    if runtime_hint in {"npm", "pypi", "oci"}:
         return runtime_hint
     identifier = str(spec.get("identifier") or "").strip().lower()
+    if identifier.startswith(("docker://", "oci://")):
+        return "oci"
     if identifier.startswith(("ghcr.io/", "docker.io/", "quay.io/")):
         return "oci"
+    if identifier.endswith(".whl"):
+        return "pypi"
     return declared or "npm"
+
+
+def _normalize_command_token_list(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        text = str(raw).strip()
+        if not text:
+            return []
+        try:
+            return [str(x).strip() for x in shlex.split(text) if str(x).strip()]
+        except Exception:
+            return [token for token in text.split() if token]
+    return []
+
+
+def _collect_command_candidates(
+    install_spec: Dict[str, Any],
+    *,
+    include_primary: bool,
+    include_fallback: bool,
+) -> List[List[str]]:
+    out: List[List[str]] = []
+
+    def _append(raw: Any) -> None:
+        cmd = _normalize_command_token_list(raw)
+        if cmd and cmd not in out:
+            out.append(cmd)
+
+    if include_primary:
+        primary_list = install_spec.get("command_candidates")
+        if isinstance(primary_list, list):
+            for row in primary_list:
+                _append(row)
+        _append(install_spec.get("command"))
+    if include_fallback:
+        fallback_list = install_spec.get("fallback_command_candidates")
+        if isinstance(fallback_list, list):
+            for row in fallback_list:
+                _append(row)
+        _append(install_spec.get("fallback_command"))
+    return out
+
+
+def _command_stdio_command_candidates(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    commands = _collect_command_candidates(
+        install_spec,
+        include_primary=True,
+        include_fallback=False,
+    )
+    if commands:
+        return commands, ""
+    return [], "missing_command_candidate"
+
+
+def _package_fallback_command_candidates(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    commands = _collect_command_candidates(
+        install_spec,
+        include_primary=True,
+        include_fallback=True,
+    )
+    if commands:
+        return commands, ""
+    return [], "missing_command_candidate"
 
 
 def _tool_name_aliases(raw: str) -> List[str]:
@@ -353,7 +428,7 @@ def _npx_package_command(rec: Dict[str, Any]) -> Tuple[Optional[List[str]], str]
     if package_tokens is None:
         return None, package_reason or "unsupported_package_arguments"
     runtime_hint_raw = str(install_spec.get("runtime_hint") or "").strip().lower()
-    if runtime_hint_raw and runtime_hint_raw not in {"auto", "npx"}:
+    if runtime_hint_raw and runtime_hint_raw not in {"auto", "npx", "npm", "node", "nodejs"}:
         runtime_hint = _normalize_registry_type_token(runtime_hint_raw)
         if runtime_hint != "npm":
             return None, "unsupported_runtime_hint"
@@ -382,14 +457,14 @@ def _pypi_package_commands(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
         return [], package_reason or "unsupported_package_arguments"
 
     runtime_hint = str(install_spec.get("runtime_hint") or "").strip().lower()
-    if runtime_hint and runtime_hint not in {"uvx", "pipx", "python", "auto"}:
+    if runtime_hint and runtime_hint not in {"uvx", "uv", "pipx", "python", "python3", "py", "pip", "pip3", "auto"}:
         return [], "unsupported_runtime_hint"
 
     # Prefer uvx for modern pypi MCP servers; fall back to pipx where needed.
     runners: List[str] = []
-    if runtime_hint in {"", "uvx", "python", "auto"}:
+    if runtime_hint in {"", "uvx", "uv", "python", "python3", "py", "pip", "pip3", "auto"}:
         runners.append("uvx")
-    if runtime_hint in {"", "pipx", "python", "auto"}:
+    if runtime_hint in {"", "pipx", "python", "python3", "py", "auto"}:
         runners.append("pipx")
 
     commands: List[List[str]] = []
@@ -422,7 +497,7 @@ def _oci_package_commands(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
         return [], package_reason or "unsupported_package_arguments"
 
     runtime_hint = str(install_spec.get("runtime_hint") or "").strip().lower()
-    if runtime_hint and runtime_hint not in {"docker", "podman", "container", "oci", "auto"}:
+    if runtime_hint and runtime_hint not in {"docker", "podman", "container", "container-image", "container_image", "oci", "auto"}:
         return [], "unsupported_runtime_hint"
     engines: List[str] = []
     if runtime_hint in {"podman"}:
@@ -499,8 +574,13 @@ def _choose_available_command(commands: List[List[str]]) -> List[List[str]]:
 
 def _installer_label_for_command(rec: Dict[str, Any], command: List[str]) -> str:
     install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    install_mode = str(rec.get("install_mode") or "").strip().lower()
     registry_type = _effective_registry_type(install_spec)
     exe = str((command or [None])[0] or "").strip().lower()
+    if install_mode == "command":
+        if exe in {"npx", "uvx", "pipx", "docker", "podman"}:
+            return f"command_{exe}"
+        return "command_stdio"
     if registry_type == "npm":
         return "npm_npx"
     if registry_type == "pypi":
@@ -641,8 +721,18 @@ def _supported_external_install_record(rec: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"unsupported_remote_transport:{transport or 'unknown'}"
     if install_mode == "package":
         commands, reason = _package_stdio_command_candidates(rec)
+        if commands:
+            return True, ""
+        fallback_commands, _ = _package_fallback_command_candidates(rec)
+        if fallback_commands:
+            return True, ""
+        if str(reason or "").startswith("unsupported_registry_type:"):
+            return False, "unsupported_registry_type"
+        return False, (reason or "unsupported_runtime_hint")
+    if install_mode == "command":
+        commands, reason = _command_stdio_command_candidates(rec)
         if not commands:
-            return False, (reason or "unsupported_runtime_hint")
+            return False, (reason or "missing_command_candidate")
         return True, ""
     return False, f"unsupported_install_mode:{install_mode or 'unknown'}"
 
@@ -693,6 +783,24 @@ def _external_artifact_cache_key(rec: Dict[str, Any], *, capability_id: str) -> 
                 args_digest = ""
         if identifier:
             return f"package::{registry_type}::{identifier}::{version}::{runtime_hint}::{args_digest}"
+    if install_mode == "command":
+        commands = _collect_command_candidates(
+            spec,
+            include_primary=True,
+            include_fallback=True,
+        )
+        env_map = spec.get("env") if isinstance(spec.get("env"), dict) else {}
+        env_names = sorted(str(k).strip() for k in env_map.keys() if str(k).strip())
+        payload = {
+            "commands": commands,
+            "required_env": _required_environment_names(rec),
+            "env_names": env_names,
+        }
+        try:
+            digest = hashlib.sha1(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            digest = hashlib.sha1(str(payload).encode("utf-8")).hexdigest()[:16]
+        return f"command::{digest}"
     return f"capability::{str(capability_id or '').strip()}"
 
 
@@ -738,6 +846,15 @@ def _classify_external_install_error(err: Exception) -> Dict[str, Any]:
     if message.startswith("unsupported_registry_type:"):
         out["code"] = "unsupported_registry_type"
         out["registry_type"] = message.split(":", 1)[1].strip()
+        return out
+    if message == "unsupported_registry_type":
+        out["code"] = "unsupported_registry_type"
+        return out
+    if message.startswith("invalid_remote_url"):
+        out["code"] = "invalid_remote_url"
+        return out
+    if message.startswith("missing_command_candidate"):
+        out["code"] = "missing_command_candidate"
         return out
     if message.startswith("unsupported_install_mode:"):
         out["code"] = "unsupported_install_mode"
@@ -807,17 +924,277 @@ def _diagnostics_from_install_error(err: Exception) -> List[Dict[str, Any]]:
     action_hints: List[str] = []
     if code == "missing_required_env":
         action_hints.append("set_required_env_then_retry")
+        action_hints.append("request_user_secrets_if_unavailable")
     elif code == "runtime_binary_missing":
         action_hints.append("install_or_expose_runtime_binary_then_retry")
+        action_hints.append("fallback_to_install_mode_command_if_available")
     elif code == "runtime_permission_denied":
         action_hints.append("grant_runtime_permission_then_retry")
     elif code in {"runtime_dependency_missing", "runtime_start_failed"}:
         action_hints.append("retry_with_safe_runtime_flags_or_different_version")
+        action_hints.append("fallback_to_install_mode_command_if_available")
     elif code in {"probe_timeout", "network_dns_failure", "network_unreachable"}:
         action_hints.append("retry_or_fix_network_then_retry")
+    elif code in {"unsupported_registry_type", "unsupported_runtime_hint", "missing_package_identifier"}:
+        action_hints.append("fallback_to_install_mode_command_if_available")
+    elif code == "missing_command_candidate":
+        action_hints.append("provide_command_or_command_candidates")
+    elif code == "invalid_remote_url":
+        action_hints.append("provide_valid_remote_http_url")
     if action_hints:
         diag["action_hints"] = action_hints
     return [diag]
+
+
+def _command_base_env_override(rec: Dict[str, Any]) -> Dict[str, str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    raw = install_spec.get("env") if isinstance(install_spec.get("env"), dict) else {}
+    out: Dict[str, str] = {}
+    for key, value in raw.items():
+        name = str(key or "").strip()
+        if not name:
+            continue
+        out[name] = str(value or "")
+    return out
+
+
+def _merge_env_maps(base: Dict[str, str], overlay: Dict[str, str]) -> Dict[str, str]:
+    merged = dict(base)
+    merged.update(overlay)
+    return merged
+
+
+def _missing_command_binaries(commands: List[List[str]]) -> List[str]:
+    missing: List[str] = []
+    for cmd in commands:
+        if not isinstance(cmd, list) or not cmd:
+            continue
+        exe = str(cmd[0] or "").strip()
+        if not exe:
+            continue
+        if shutil.which(exe):
+            continue
+        if exe not in missing:
+            missing.append(exe)
+    return missing
+
+
+def _preflight_external_install(rec: Dict[str, Any], *, capability_id: str) -> Dict[str, Any]:
+    cid = str(capability_id or "").strip()
+    install_mode = str(rec.get("install_mode") or "").strip().lower()
+    supported, reason = _supported_external_install_record(rec)
+    if not supported:
+        code = reason or "unsupported_external_installer"
+        diagnostics = _diagnostics_from_install_error(ValueError(code))
+        return {
+            "ok": False,
+            "code": code,
+            "message": code,
+            "capability_id": cid,
+            "diagnostics": diagnostics,
+        }
+
+    missing_env = _missing_required_environment_names(rec)
+    if missing_env:
+        msg = "missing_required_env:" + ",".join(sorted(set(missing_env)))
+        diagnostics = _diagnostics_from_install_error(ValueError(msg))
+        return {
+            "ok": False,
+            "code": "missing_required_env",
+            "message": msg,
+            "capability_id": cid,
+            "required_env": sorted(set(missing_env)),
+            "diagnostics": diagnostics,
+        }
+
+    if install_mode == "remote_only":
+        spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+        url = str(spec.get("url") or "").strip()
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            msg = "invalid_remote_url"
+            diagnostics = _diagnostics_from_install_error(ValueError(msg))
+            return {
+                "ok": False,
+                "code": "invalid_remote_url",
+                "message": msg,
+                "capability_id": cid,
+                "diagnostics": diagnostics,
+            }
+        return {"ok": True, "code": "", "message": "", "capability_id": cid, "diagnostics": []}
+
+    if install_mode == "package":
+        # Include package-derived commands and explicit fallback command candidates.
+        # Preflight should pass when any viable command path is available.
+        commands, _ = _package_fallback_command_candidates(rec)
+        if not commands:
+            commands, _ = _package_stdio_command_candidates(rec)
+    elif install_mode == "command":
+        commands, _ = _command_stdio_command_candidates(rec)
+    else:
+        commands = []
+
+    commands = _choose_available_command(commands)
+    if commands:
+        has_available = any(
+            bool(shutil.which(str(cmd[0] or "").strip()))
+            for cmd in commands
+            if isinstance(cmd, list) and cmd
+        )
+        if not has_available:
+            missing_bins = _missing_command_binaries(commands)
+            msg = "runtime_binary_missing:" + ",".join(missing_bins)
+            diagnostics = _diagnostics_from_install_error(FileNotFoundError(msg))
+            out: Dict[str, Any] = {
+                "ok": False,
+                "code": "runtime_binary_missing",
+                "message": msg,
+                "capability_id": cid,
+                "diagnostics": diagnostics,
+            }
+            if missing_bins:
+                out["missing_binaries"] = missing_bins
+            return out
+
+    return {"ok": True, "code": "", "message": "", "capability_id": cid, "diagnostics": []}
+
+
+def _install_via_stdio_commands(
+    rec: Dict[str, Any],
+    *,
+    capability_id: str,
+    commands: List[List[str]],
+    install_mode_label: str,
+    base_env_override: Optional[Dict[str, str]] = None,
+    fallback_from_mode: str = "",
+    fallback_reason: str = "",
+) -> Dict[str, Any]:
+    missing_env = _missing_required_environment_names(rec)
+    if missing_env:
+        raise ValueError("missing_required_env:" + ",".join(sorted(set(missing_env))))
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "cccc-capability-runtime", "version": "1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    ]
+    commands = _pkg()._choose_available_command(commands)
+    probe_timeout_s = float(max(5, min(_env_int("CCCC_CAPABILITY_PACKAGE_PROBE_TIMEOUT_SECONDS", 30), 120)))
+    base_env = dict(base_env_override or {})
+    last_error: Optional[Exception] = None
+    preferred_error: Optional[Exception] = None
+    chosen_command: List[str] = []
+    chosen_env: Dict[str, str] = {}
+    tools: List[Dict[str, Any]] = []
+    for command in commands:
+        exe = str((command or [""])[0] or "").strip().lower()
+        attempt_envs: List[Dict[str, str]] = [dict(base_env)]
+        if exe == "npx":
+            safe_env = _merge_env_maps(
+                base_env,
+                {
+                    "PUPPETEER_SKIP_DOWNLOAD": "1",
+                    "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "1",
+                    "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+                },
+            )
+            if safe_env != attempt_envs[0]:
+                attempt_envs.append(safe_env)
+        for env_try in attempt_envs:
+            try:
+                if env_try:
+                    responses = _pkg()._stdio_mcp_roundtrip(
+                        command,
+                        requests,
+                        timeout_s=probe_timeout_s,
+                        env_override=env_try,
+                    )
+                else:
+                    responses = _pkg()._stdio_mcp_roundtrip(
+                        command,
+                        requests,
+                        timeout_s=probe_timeout_s,
+                    )
+                tools_result = _extract_jsonrpc_result(responses, req_id=2, operation="tools/list")
+                tools = _normalize_discovered_tools(capability_id, tools_result.get("tools"))
+                if not tools:
+                    raise RuntimeError("stdio tools/list returned no tools")
+                chosen_command = list(command)
+                chosen_env = dict(env_try)
+                break
+            except FileNotFoundError as e:
+                last_error = e
+                if preferred_error is None:
+                    preferred_error = e
+                continue
+            except Exception as e:
+                last_error = e
+                preferred_error = e
+                continue
+        if chosen_command:
+            break
+    if not chosen_command:
+        effective_error = preferred_error if isinstance(preferred_error, Exception) else last_error
+        if isinstance(effective_error, Exception) and commands and _is_package_probe_degradable_error(effective_error):
+            fallback_command = list(commands[0])
+            classified = _classify_external_install_error(effective_error)
+            result: Dict[str, Any] = {
+                "state": "installed_degraded",
+                "installer": _installer_label_for_command(
+                    {"install_mode": install_mode_label, "install_spec": rec.get("install_spec")},
+                    fallback_command,
+                ),
+                "install_mode": install_mode_label,
+                "invoker": {
+                    "type": "command_stdio" if install_mode_label == "command" else "package_stdio",
+                    "command": fallback_command,
+                },
+                "tools": [],
+                "last_error": str(effective_error),
+                "last_error_code": str(classified.get("code") or "probe_timeout"),
+                "retryable": bool(classified.get("retryable")),
+                "updated_at": utc_now_iso(),
+            }
+            if base_env:
+                result["invoker"]["env"] = dict(base_env)
+            if fallback_from_mode:
+                result["fallback_from"] = fallback_from_mode
+            if fallback_reason:
+                result["fallback_reason"] = fallback_reason
+            return result
+        if isinstance(effective_error, Exception):
+            raise effective_error
+        raise RuntimeError("package install failed: no runnable command candidate")
+    invoker: Dict[str, Any] = {
+        "type": "command_stdio" if install_mode_label == "command" else "package_stdio",
+        "command": chosen_command,
+    }
+    if chosen_env:
+        invoker["env"] = chosen_env
+    result = {
+        "state": "installed",
+        "installer": _installer_label_for_command(
+            {"install_mode": install_mode_label, "install_spec": rec.get("install_spec")},
+            chosen_command,
+        ),
+        "install_mode": install_mode_label,
+        "invoker": invoker,
+        "tools": tools,
+        "last_error": "",
+        "updated_at": utc_now_iso(),
+    }
+    if fallback_from_mode:
+        result["fallback_from"] = fallback_from_mode
+    if fallback_reason:
+        result["fallback_reason"] = fallback_reason
+    return result
 
 
 def _artifact_entry_from_install(
@@ -888,102 +1265,51 @@ def _install_external_capability(rec: Dict[str, Any], *, capability_id: str) -> 
 
     if install_mode == "package":
         commands, reason = _package_stdio_command_candidates(rec)
-        if not commands:
-            raise ValueError(reason or "unsupported_runtime_hint")
-        missing_env = _missing_required_environment_names(rec)
-        if missing_env:
-            raise ValueError("missing_required_env:" + ",".join(sorted(set(missing_env))))
-        requests = [
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "cccc-capability-runtime", "version": "1.0"},
-                },
-            },
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-        ]
-        commands = _pkg()._choose_available_command(commands)
-        probe_timeout_s = float(max(5, min(_env_int("CCCC_CAPABILITY_PACKAGE_PROBE_TIMEOUT_SECONDS", 30), 120)))
-        last_error: Optional[Exception] = None
-        preferred_error: Optional[Exception] = None
-        chosen_command: List[str] = []
-        chosen_env: Dict[str, str] = {}
-        tools: List[Dict[str, Any]] = []
-        for command in commands:
-            attempt_envs: List[Dict[str, str]] = [{}]
-            exe = str((command or [""])[0] or "").strip().lower()
-            if exe == "npx":
-                attempt_envs.append(
-                    {
-                        "PUPPETEER_SKIP_DOWNLOAD": "1",
-                        "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "1",
-                        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
-                    }
+        if commands:
+            try:
+                return _install_via_stdio_commands(
+                    rec,
+                    capability_id=capability_id,
+                    commands=commands,
+                    install_mode_label="package",
                 )
-            for env_try in attempt_envs:
-                try:
-                    if env_try:
-                        responses = _pkg()._stdio_mcp_roundtrip(
-                            command,
-                            requests,
-                            timeout_s=probe_timeout_s,
-                            env_override=env_try,
-                        )
-                    else:
-                        responses = _pkg()._stdio_mcp_roundtrip(command, requests, timeout_s=probe_timeout_s)
-                    tools_result = _extract_jsonrpc_result(responses, req_id=2, operation="tools/list")
-                    tools = _normalize_discovered_tools(capability_id, tools_result.get("tools"))
-                    if not tools:
-                        raise RuntimeError("package tools/list returned no tools")
-                    chosen_command = list(command)
-                    chosen_env = dict(env_try)
-                    break
-                except FileNotFoundError as e:
-                    last_error = e
-                    if preferred_error is None:
-                        preferred_error = e
-                    continue
-                except Exception as e:
-                    last_error = e
-                    preferred_error = e
-                    continue
-            if chosen_command:
-                break
-        if not chosen_command:
-            effective_error = preferred_error if isinstance(preferred_error, Exception) else last_error
-            if isinstance(effective_error, Exception) and commands and _is_package_probe_degradable_error(effective_error):
-                fallback_command = list(commands[0])
-                classified = _classify_external_install_error(effective_error)
-                return {
-                    "state": "installed_degraded",
-                    "installer": _installer_label_for_command(rec, fallback_command),
-                    "install_mode": "package",
-                    "invoker": {"type": "package_stdio", "command": fallback_command},
-                    "tools": [],
-                    "last_error": str(effective_error),
-                    "last_error_code": str(classified.get("code") or "probe_timeout"),
-                    "retryable": bool(classified.get("retryable")),
-                    "updated_at": utc_now_iso(),
-                }
-            if isinstance(effective_error, Exception):
-                raise effective_error
-            raise RuntimeError("package install failed: no runnable command candidate")
-        invoker: Dict[str, Any] = {"type": "package_stdio", "command": chosen_command}
-        if chosen_env:
-            invoker["env"] = chosen_env
-        return {
-            "state": "installed",
-            "installer": _installer_label_for_command(rec, chosen_command),
-            "install_mode": "package",
-            "invoker": invoker,
-            "tools": tools,
-            "last_error": "",
-            "updated_at": utc_now_iso(),
-        }
+            except Exception as e:
+                fallback_commands, fallback_reason = _package_fallback_command_candidates(rec)
+                if fallback_commands:
+                    return _install_via_stdio_commands(
+                        rec,
+                        capability_id=capability_id,
+                        commands=fallback_commands,
+                        install_mode_label="command",
+                        base_env_override=_command_base_env_override(rec),
+                        fallback_from_mode="package",
+                        fallback_reason=str(e)[:280],
+                    )
+                raise
+        fallback_commands, fallback_reason = _package_fallback_command_candidates(rec)
+        if fallback_commands:
+            return _install_via_stdio_commands(
+                rec,
+                capability_id=capability_id,
+                commands=fallback_commands,
+                install_mode_label="command",
+                base_env_override=_command_base_env_override(rec),
+                fallback_from_mode="package",
+                fallback_reason=reason or fallback_reason,
+            )
+        raise ValueError(reason or "unsupported_runtime_hint")
+
+    if install_mode == "command":
+        commands, reason = _command_stdio_command_candidates(rec)
+        if not commands:
+            raise ValueError(reason or "missing_command_candidate")
+        return _install_via_stdio_commands(
+            rec,
+            capability_id=capability_id,
+            commands=commands,
+            install_mode_label="command",
+            base_env_override=_command_base_env_override(rec),
+        )
 
     raise ValueError(f"unsupported_install_mode:{install_mode or 'unknown'}")
 
@@ -1006,7 +1332,7 @@ def _invoke_installed_external_tool(
             {"name": real_tool_name, "arguments": arguments if isinstance(arguments, dict) else {}},
             timeout_s=30.0,
         )
-    if invoker_type in {"npm_stdio", "package_stdio"}:
+    if invoker_type in {"npm_stdio", "package_stdio", "command_stdio"}:
         command = invoker.get("command")
         cmd = [str(x) for x in command] if isinstance(command, list) else []
         if not cmd:

@@ -700,7 +700,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 },
             )
 
-        # External capability path (M2): supports remote_only + package (npm/pypi/oci).
+        # External capability path (M2): supports remote_only + package + command.
         with _CATALOG_LOCK:
             catalog_path, catalog_doc = _pkg()._load_catalog_doc()
             if _pkg()._ensure_curated_catalog_records(catalog_doc, policy=policy):
@@ -1127,6 +1127,37 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 install = {}
 
         if not reused_cached_install:
+            preflight = _pkg()._preflight_external_install(rec, capability_id=capability_id)
+            if not bool(preflight.get("ok")):
+                preflight_code = str(preflight.get("code") or "preflight_failed").strip() or "preflight_failed"
+                preflight_message = str(preflight.get("message") or preflight_code).strip()
+                diagnostics = preflight.get("diagnostics") if isinstance(preflight.get("diagnostics"), list) else []
+                _audit("failed", state="failed", error_code=preflight_code, details={"stage": "preflight"})
+                result: Dict[str, Any] = {
+                    "action_id": action_id,
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "capability_id": capability_id,
+                    "scope": scope,
+                    "enabled": False,
+                    "state": "failed",
+                    "refresh_required": False,
+                    "reason": f"preflight_failed:{preflight_code}",
+                    "install_error_code": preflight_code,
+                    "retryable": False,
+                    "policy_level": policy_level,
+                    "diagnostics": diagnostics,
+                    "preflight": preflight,
+                }
+                required_env = preflight.get("required_env")
+                if isinstance(required_env, list) and required_env:
+                    result["required_env"] = [str(x).strip() for x in required_env if str(x).strip()]
+                missing_binaries = preflight.get("missing_binaries")
+                if isinstance(missing_binaries, list) and missing_binaries:
+                    result["missing_binaries"] = [str(x).strip() for x in missing_binaries if str(x).strip()]
+                if preflight_message:
+                    result["error"] = preflight_message
+                return DaemonResponse(ok=True, result=result)
             try:
                 install = _pkg()._install_external_capability(rec, capability_id=capability_id)
             except Exception as e:
@@ -1284,6 +1315,12 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
         install_error_code = str(install.get("last_error_code") or "").strip()
         if install_error_code:
             result["install_error_code"] = install_error_code
+        fallback_from = str(install.get("fallback_from") or "").strip()
+        if fallback_from:
+            result["fallback_from"] = fallback_from
+        fallback_reason = str(install.get("fallback_reason") or "").strip()
+        if fallback_reason:
+            result["fallback_reason"] = fallback_reason
         if degraded:
             degraded_reason = str(install.get("last_error") or "").strip()
             if degraded_reason:

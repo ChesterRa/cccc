@@ -1,8 +1,6 @@
-"""MCP tool schemas for CCCC (30-entry consolidated surface)."""
+"""MCP tool schemas for CCCC consolidated surface."""
 
 from __future__ import annotations
-
-from ...kernel.memory import MEMORY_KINDS, MEMORY_SOURCE_TYPES
 
 _CCCC_HELP_DESCRIPTION = (
     "Load the effective collaboration playbook for this group "
@@ -39,7 +37,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_bootstrap",
         "description": (
-            "One-call bootstrap: group + actors + help + PROJECT.md + context + inbox + optional ledger tail."
+            "One-call bootstrap: group + actors + help + PROJECT.md + context + inbox + optional ledger tail + memory_recall_gate."
         ),
         "inputSchema": _obj(
             {
@@ -284,6 +282,100 @@ MCP_TOOLS = [
         "inputSchema": _obj({**_COMMON_GROUP, **_COMMON_ACTOR}),
     },
     {
+        "name": "cccc_capability_import",
+        "description": (
+            "Import an agent-prepared normalized capability record (mcp_toolpack or skill) from any external source. "
+            "Daemon performs validation/probe/persist and can optionally enable after import. "
+            "record.source_id is optional; empty/unknown values are normalized to manual_import. "
+            "Use dry_run=true first when record quality is uncertain."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_BY,
+                "actor_id": {"type": "string"},
+                "record": _obj(
+                    {
+                        "capability_id": {"type": "string", "description": "mcp:* or skill:*"},
+                        "kind": {"type": "string", "enum": ["mcp_toolpack", "skill"]},
+                        "name": {"type": "string"},
+                        "description_short": {"type": "string"},
+                        "source_id": {
+                            "type": "string",
+                            "description": "Optional source id; empty/unknown values are normalized to manual_import.",
+                        },
+                        "source_uri": {"type": "string"},
+                        "source_record_id": {"type": "string"},
+                        "source_record_version": {"type": "string"},
+                        "updated_at_source": {"type": "string"},
+                        "trust_tier": {"type": "string"},
+                        "source_tier": {"type": "string"},
+                        "qualification_status": {"type": "string", "enum": ["qualified", "unavailable", "blocked"]},
+                        "qualification_reasons": {"type": "array", "items": {"type": "string"}},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "license": {"type": "string"},
+                        "install_mode": {
+                            "type": "string",
+                            "enum": ["remote_only", "package", "command"],
+                            "description": "Required for mcp_toolpack imports",
+                        },
+                        "install_spec": {
+                            "type": "object",
+                            "description": "Required for mcp_toolpack imports",
+                        },
+                        "command": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "Command mode shortcut; alternatively provide install_spec.command",
+                        },
+                        "command_candidates": {
+                            "type": "array",
+                            "items": {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {"type": "array", "items": {"type": "string"}},
+                                ]
+                            },
+                            "description": "Optional command candidates for command mode/fallback",
+                        },
+                        "fallback_command": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "Optional package->command fallback command (top-level shortcut or install_spec.fallback_command).",
+                        },
+                        "fallback_command_candidates": {
+                            "type": "array",
+                            "items": {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {"type": "array", "items": {"type": "string"}},
+                                ]
+                            },
+                            "description": "Optional package->command fallback candidates (top-level shortcut or install_spec.fallback_command_candidates).",
+                        },
+                        "capsule_text": {
+                            "type": "string",
+                            "description": "Required for skill imports",
+                        },
+                        "requires_capabilities": {"type": "array", "items": {"type": "string"}},
+                    },
+                    required=["capability_id", "kind"],
+                ),
+                "dry_run": {"type": "boolean", "default": False},
+                "probe": {"type": "boolean", "default": True},
+                "enable_after_import": {"type": "boolean", "default": False},
+                "scope": {"type": "string", "enum": ["session", "actor", "group"], "default": "session"},
+                "ttl_seconds": {"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400},
+                "reason": {"type": "string", "default": ""},
+            },
+            required=["record"],
+        ),
+    },
+    {
         "name": "cccc_capability_uninstall",
         "description": "Uninstall external capability runtime cache and revoke bindings.",
         "inputSchema": _obj(
@@ -403,7 +495,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_get",
-        "description": "Get context snapshot (vision/overview/tasks/agents).",
+        "description": "Get context snapshot (vision/overview/panorama/tasks/agents).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -505,57 +597,62 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_memory",
-        "description": "Memory primary ops: action=guide|store|search|stats.",
+        "description": "ReMe file-memory primary ops: action=layout_get|search|get|write.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
-                "action": {"type": "string", "enum": ["guide", "store", "search", "stats"], "default": "search"},
-                "topic": {"type": "string", "enum": ["store", "search", "consolidation", "lifecycle"]},
-                "id": {"type": "string"},
-                "content": {"type": "string"},
-                "kind": {"type": "string", "enum": list(MEMORY_KINDS)},
-                "status": {"type": "string"},
-                "confidence": {"type": "string"},
-                "source_type": {"type": "string", "enum": list(MEMORY_SOURCE_TYPES)},
-                "source_ref": {"type": "string"},
-                "scope_key": {"type": "string"},
-                "actor_id": {"type": "string"},
-                "task_id": {"type": "string"},
-                "event_ts": {"type": "string"},
-                "strategy": {"type": "string"},
-                "tags": {"type": "array", "items": {"type": "string"}},
-                "solidify": {"type": "boolean", "default": False},
+                "action": {"type": "string", "enum": ["layout_get", "search", "get", "write"], "default": "search"},
                 "query": {"type": "string"},
-                "since": {"type": "string"},
-                "until": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-                "track_hit": {"type": "boolean", "default": False},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
+                "min_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.1},
+                "sources": {"type": "array", "items": {"type": "string"}},
+                "vector_weight": {"type": "number", "minimum": 0, "maximum": 1},
+                "candidate_multiplier": {"type": "number", "minimum": 1, "maximum": 20},
+                "path": {"type": "string"},
+                "offset": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 5000},
+                "target": {"type": "string", "enum": ["memory", "daily"]},
+                "content": {"type": "string"},
+                "date": {"type": "string", "description": "YYYY-MM-DD (required when target=daily)"},
+                "mode": {"type": "string", "enum": ["append", "replace"], "default": "append"},
+                "idempotency_key": {"type": "string"},
+                "actor_id": {"type": "string"},
+                "source_refs": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "supersedes": {"type": "array", "items": {"type": "string"}},
+                "dedup_intent": {"type": "string", "enum": ["new", "update", "supersede", "silent"], "default": "new"},
+                "dedup_query": {"type": "string"},
             }
         ),
     },
     {
         "name": "cccc_memory_admin",
-        "description": "Memory admin ops: action=ingest|export|delete|decay.",
+        "description": "ReMe file-memory admin ops: action=index_sync|context_check|compact|daily_flush.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 "action": {
                     "type": "string",
-                    "enum": ["ingest", "export", "delete", "decay"],
-                    "default": "ingest",
+                    "enum": ["index_sync", "context_check", "compact", "daily_flush"],
+                    "default": "index_sync",
                 },
-                "mode": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 2000},
+                "mode": {"type": "string", "enum": ["scan", "rebuild"], "default": "scan"},
+                "messages": {"type": "array", "items": {"type": "object"}},
+                "messages_to_summarize": {"type": "array", "items": {"type": "object"}},
+                "turn_prefix_messages": {"type": "array", "items": {"type": "object"}},
+                "previous_summary": {"type": "string"},
+                "context_window_tokens": {"type": "integer", "minimum": 1024},
+                "reserve_tokens": {"type": "integer", "minimum": 0},
+                "keep_recent_tokens": {"type": "integer", "minimum": 256},
+                "return_prompt": {"type": "boolean", "default": False},
+                "date": {"type": "string", "description": "YYYY-MM-DD"},
+                "version": {"type": "string", "default": "default"},
+                "language": {"type": "string", "default": "en"},
                 "actor_id": {"type": "string"},
-                "reset_watermark": {"type": "boolean", "default": False},
-                "include_draft": {"type": "boolean", "default": False},
-                "output_dir": {"type": "string"},
-                "id": {"type": "string"},
-                "ids": {"type": "array", "items": {"type": "string"}},
-                "draft_days": {"type": "integer"},
-                "zero_hit_days": {"type": "integer"},
-                "solid_review_days": {"type": "integer"},
-                "solid_max_hit": {"type": "integer"},
+                "signal_pack": {"type": "object"},
+                "signal_pack_token_budget": {"type": "integer", "minimum": 64, "maximum": 4096, "default": 320},
+                "dedup_intent": {"type": "string", "enum": ["new", "update", "supersede", "silent"], "default": "new"},
+                "dedup_query": {"type": "string"},
             }
         ),
     },

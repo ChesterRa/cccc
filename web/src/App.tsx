@@ -112,6 +112,14 @@ export default function App() {
   const chatAtBottomRef = useRef<boolean>(true);
   const chatScrollMemoryRef = useRef<Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>>({});
   const actorsRef = useRef<Actor[]>([]);
+
+  // Hide Panorama tab when browser lacks GPU/3D support
+  const canRender3D = useMemo(() => {
+    try {
+      const canvas = document.createElement("canvas");
+      return !!(navigator.gpu || canvas.getContext("webgl2"));
+    } catch { return false; }
+  }, []);
   const prevGroupIdRef = useRef<string | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
@@ -121,7 +129,7 @@ export default function App() {
   const [ccccHome, setCcccHome] = React.useState("");
 
   // Custom hooks
-  const { connectStream, fetchContext, scheduleActorWarmupRefresh, cleanup: cleanupSSE } = useSSE({
+  const { connectStream, fetchContext, scheduleActorWarmupRefresh, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
     activeTabRef,
     chatAtBottomRef,
     actorsRef,
@@ -208,6 +216,21 @@ export default function App() {
     setShowScrollButton(!atBottom);
     if (atBottom) setChatUnreadCount(0);
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
+
+  // BUG-1 + BUG-3: Refresh context on panorama tab activation + periodic polling fallback
+  useEffect(() => {
+    if (activeTab !== "panorama" || !selectedGroupId) return;
+    // Immediate fetch on tab switch (skip if SSE debounce timer is already pending)
+    if (!contextRefreshTimerRef.current) {
+      void fetchContext(selectedGroupId);
+    }
+    // 12s polling fallback while panorama tab is active
+    const intervalId = window.setInterval(() => {
+      void fetchContext(selectedGroupId);
+    }, 12_000);
+    return () => window.clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedGroupId]);
 
   // Keep visited actor tabs mounted (sticky) so their terminal sessions do not reconnect/replay on tab switches.
   useEffect(() => {
@@ -488,6 +511,7 @@ export default function App() {
                   }
               }
               canAddAgent={!webReadOnly && !!selectedGroupId}
+              showPanorama={canRender3D}
             />
           )}
 

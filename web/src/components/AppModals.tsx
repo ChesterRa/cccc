@@ -164,6 +164,7 @@ export function AppModals({
   const [createTemplatePreview, setCreateTemplatePreview] = useState<TemplatePreviewDetailsProps["template"] | null>(null);
   const [createTemplateError, setCreateTemplateError] = useState("");
   const [createTemplateBusy, setCreateTemplateBusy] = useState(false);
+  const [dirBrowseError, setDirBrowseError] = useState("");
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
   const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
 
@@ -633,13 +634,14 @@ export function AppModals({
 
   const handleFetchDirContents = async (path: string) => {
     setShowDirBrowser(true);
+    setDirBrowseError("");
     const resp = await api.fetchDirContents(path);
     if (resp.ok) {
       setDirItems(resp.result.items || []);
       setCurrentDir(resp.result.path || path);
       setParentDir(resp.result.parent || null);
     } else {
-      showError(resp.error?.message || t('failedToListDir'));
+      setDirBrowseError(resp.error?.message || t('failedToListDir'));
     }
   };
 
@@ -1114,6 +1116,7 @@ export function AppModals({
         templateError={createTemplateError}
         templateBusy={createTemplateBusy}
         onSelectTemplate={handleSelectCreateGroupTemplate}
+        dirBrowseError={dirBrowseError}
         onFetchDirContents={handleFetchDirContents}
         onCreateGroup={handleCreateGroup}
         onClose={() => closeModal("createGroup")}
@@ -1123,6 +1126,7 @@ export function AppModals({
           setCreateTemplatePreview(null);
           setCreateTemplateError("");
           setCreateTemplateBusy(false);
+          setDirBrowseError("");
         }}
       />
 

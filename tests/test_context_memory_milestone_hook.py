@@ -1,4 +1,5 @@
-import json
+from __future__ import annotations
+
 import os
 import tempfile
 import unittest
@@ -34,12 +35,11 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
         self.assertTrue(group_id)
         return group_id
 
-    def test_root_task_complete_triggers_solidify_and_export(self) -> None:
+    def test_root_task_complete_triggers_file_memory_writes(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
 
-            # Create a root task (parent_id=null => phase/root task semantics)
             create_task_resp, _ = self._call(
                 "context_sync",
                 {
@@ -50,26 +50,16 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             )
             self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
 
-            # Find the created task ID
             task_list_resp, _ = self._call("task_list", {"group_id": group_id})
             self.assertTrue(task_list_resp.ok, getattr(task_list_resp, "error", None))
             tasks = (task_list_resp.result or {}).get("tasks") if isinstance(task_list_resp.result, dict) else []
             self.assertIsInstance(tasks, list)
             assert isinstance(tasks, list)
             self.assertGreaterEqual(len(tasks), 1)
-            task_id = str((tasks[0] or {}).get("id") or "")
+            task = tasks[0] if isinstance(tasks[0], dict) else {}
+            task_id = str(task.get("id") or "")
             self.assertTrue(task_id)
 
-            # Store a draft memory associated with this task
-            store_resp, _ = self._call(
-                "memory_store",
-                {"group_id": group_id, "content": "hook-target-memory", "task_id": task_id},
-            )
-            self.assertTrue(store_resp.ok, getattr(store_resp, "error", None))
-            memory_id = str((store_resp.result or {}).get("id") or "")
-            self.assertTrue(memory_id)
-
-            # Complete the root task (triggers memory solidify+export hook)
             complete_resp, _ = self._call(
                 "context_sync",
                 {
@@ -80,33 +70,25 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             )
             self.assertTrue(complete_resp.ok, getattr(complete_resp, "error", None))
 
-            # Verify memory was solidified
-            search_resp, _ = self._call(
-                "memory_search",
-                {"group_id": group_id, "task_id": task_id, "status": "solid"},
-            )
-            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
-            result = search_resp.result if isinstance(search_resp.result, dict) else {}
-            memories = result.get("memories") if isinstance(result.get("memories"), list) else []
-            self.assertTrue(any(str(m.get("id") or "") == memory_id for m in memories))
-
             from cccc.kernel.group import load_group
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
-            md_path = Path(group.path) / "state" / "memory.md"
-            manifest_path = Path(group.path) / "state" / "manifest.json"
-            self.assertTrue(md_path.exists(), f"missing export file: {md_path}")
-            self.assertTrue(manifest_path.exists(), f"missing manifest file: {manifest_path}")
+            memory_root = Path(group.path) / "state" / "memory"
+            self.assertTrue(memory_root.exists())
 
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(str(manifest.get("group_id") or ""), group_id)
-            self.assertTrue(str(manifest.get("sha256") or ""))
-            self.assertGreaterEqual(int(manifest.get("memory_count") or 0), 1)
+            memory_file = memory_root / "MEMORY.md"
+            self.assertTrue(memory_file.exists())
+            memory_text = memory_file.read_text(encoding="utf-8")
+            self.assertIn("Root task completed", memory_text)
+            self.assertIn(task_id, memory_text)
 
-            exported_md = md_path.read_text(encoding="utf-8")
-            self.assertIn("hook-target-memory", exported_md)
+            daily_files = sorted((memory_root / "daily").glob("*.md"))
+            self.assertGreaterEqual(len(daily_files), 1)
+            daily_text = "\n".join(p.read_text(encoding="utf-8") for p in daily_files)
+            self.assertIn("Task status update", daily_text)
+            self.assertIn(task_id, daily_text)
         finally:
             cleanup()
 
@@ -134,14 +116,6 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             task_id = str((tasks[0] or {}).get("id") or "")
             self.assertTrue(task_id)
 
-            store_resp, _ = self._call(
-                "memory_store",
-                {"group_id": group_id, "content": "dry-run-memory", "task_id": task_id},
-            )
-            self.assertTrue(store_resp.ok, getattr(store_resp, "error", None))
-            memory_id = str((store_resp.result or {}).get("id") or "")
-            self.assertTrue(memory_id)
-
             dry_resp, _ = self._call(
                 "context_sync",
                 {
@@ -155,35 +129,16 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             dry_result = dry_resp.result if isinstance(dry_resp.result, dict) else {}
             self.assertTrue(bool(dry_result.get("dry_run")))
 
-            draft_resp, _ = self._call(
-                "memory_search",
-                {"group_id": group_id, "task_id": task_id, "status": "draft"},
-            )
-            self.assertTrue(draft_resp.ok, getattr(draft_resp, "error", None))
-            draft_result = draft_resp.result if isinstance(draft_resp.result, dict) else {}
-            draft_memories = draft_result.get("memories") if isinstance(draft_result.get("memories"), list) else []
-            self.assertTrue(any(str(m.get("id") or "") == memory_id for m in draft_memories))
-
-            solid_resp, _ = self._call(
-                "memory_search",
-                {"group_id": group_id, "task_id": task_id, "status": "solid"},
-            )
-            self.assertTrue(solid_resp.ok, getattr(solid_resp, "error", None))
-            solid_result = solid_resp.result if isinstance(solid_resp.result, dict) else {}
-            solid_memories = solid_result.get("memories") if isinstance(solid_result.get("memories"), list) else []
-            self.assertFalse(any(str(m.get("id") or "") == memory_id for m in solid_memories))
-
             from cccc.kernel.group import load_group
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
-            md_path = Path(group.path) / "state" / "memory.md"
-            manifest_path = Path(group.path) / "state" / "manifest.json"
-            self.assertFalse(md_path.exists(), f"unexpected export file in dry-run: {md_path}")
-            self.assertFalse(manifest_path.exists(), f"unexpected manifest in dry-run: {manifest_path}")
+            memory_root = Path(group.path) / "state" / "memory"
+            self.assertFalse(memory_root.exists(), f"unexpected memory side effect in dry-run: {memory_root}")
         finally:
             cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

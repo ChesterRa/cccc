@@ -2,8 +2,8 @@
 // Manages solid/ghost split, pop-in animation, and label
 
 import { forwardRef, useMemo, useRef, useEffect, useImperativeHandle } from "react";
-import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
 import { InstancedBlocks, type BlockInstance, type InstancedBlocksHandle } from "./InstancedBlocks";
 import type { Blueprint } from "../data/blueprints";
 
@@ -137,8 +137,53 @@ export const BuildSite = forwardRef<BuildSiteHandle, BuildSiteProps>(
       },
     }), [solidCount, sortedBlocks, position, cx, cz, bs]);
 
-    // Label above tallest block
+    // Label above tallest block — GPU-rendered sprite (no DOM overhead)
     const labelY = blueprint.gridSize[1] * bs + bs;
+    const _labelKey = `${label || ""}|${isDark ? 1 : 0}`;
+    const labelState = useMemo(() => {
+      if (!label) return null;
+      const DPR = 2;
+      const padX = 6 * DPR;
+      const padY = 3 * DPR;
+      const fs = 10 * DPR;
+
+      // Measure text width to fit canvas
+      const measureCanvas = document.createElement("canvas");
+      const mCtx = measureCanvas.getContext("2d")!;
+      mCtx.font = `600 ${fs}px sans-serif`;
+      let displayLabel = label;
+      const maxTextW = 180 * DPR;
+      if (mCtx.measureText(displayLabel).width > maxTextW) {
+        while (mCtx.measureText(displayLabel + "\u2026").width > maxTextW && displayLabel.length > 1) displayLabel = displayLabel.slice(0, -1);
+        displayLabel += "\u2026";
+      }
+      const textW = mCtx.measureText(displayLabel).width;
+      const CW = Math.ceil(textW + padX * 2);
+      const CH = Math.ceil(fs * 1.3 + padY * 2);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = CW;
+      canvas.height = CH;
+      const ctx = canvas.getContext("2d")!;
+
+      ctx.beginPath();
+      ctx.roundRect(0, 0, CW, CH, 6 * DPR);
+      ctx.fillStyle = isDark ? "rgba(15,23,42,0.85)" : "rgba(255,255,255,0.9)";
+      ctx.fill();
+
+      ctx.font = `600 ${fs}px sans-serif`;
+      ctx.fillStyle = isDark ? "#e2e8f0" : "#1e293b";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(displayLabel, CW / 2, CH / 2);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const worldW = 0.7;
+      return { tex, scale: [worldW, worldW * (CH / CW)] as [number, number], label: displayLabel };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [_labelKey]);
+    useEffect(() => { return () => { labelState?.tex.dispose(); }; }, [labelState]);
 
     return (
       <group position={position}>
@@ -148,30 +193,10 @@ export const BuildSite = forwardRef<BuildSiteHandle, BuildSiteProps>(
         {ghostBlocks.length > 0 && (
           <InstancedBlocks blocks={ghostBlocks} opacity={GHOST_OPACITY} transparent />
         )}
-        {label && (
-          <Html
-            position={[0, labelY, 0]}
-            center
-            distanceFactor={8}
-            style={{ pointerEvents: "none", userSelect: "none" }}
-          >
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                color: isDark ? "#e2e8f0" : "#1e293b",
-                background: isDark ? "rgba(15,23,42,0.85)" : "rgba(255,255,255,0.9)",
-                borderRadius: 6,
-                padding: "2px 6px",
-                maxWidth: 180,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {label}
-            </div>
-          </Html>
+        {labelState && (
+          <sprite position={[0, labelY, 0]} scale={[labelState.scale[0], labelState.scale[1], 1]}>
+            <spriteMaterial map={labelState.tex} transparent depthWrite={false} />
+          </sprite>
         )}
       </group>
     );

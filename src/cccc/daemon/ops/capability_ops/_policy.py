@@ -17,7 +17,6 @@ from ....util.fs import atomic_write_text
 from ._common import (
     _LEVEL_INDEXED,
     _LEVEL_MOUNTED,
-    _LEVEL_ENABLED,
     _LEVELS,
     _POLICY_LOCK,
     _POLICY_CACHE,
@@ -28,6 +27,8 @@ from ._common import (
 
 def _normalize_policy_level(raw: Any, *, default: str = _LEVEL_INDEXED) -> str:
     level = str(raw or "").strip().lower()
+    if level == "enabled":
+        return _LEVEL_MOUNTED  # backward compat: enabled → mounted
     if level not in _LEVELS:
         return default
     return level
@@ -40,7 +41,8 @@ def _policy_level_visible(level: str) -> bool:
 def _policy_default_compiled() -> Dict[str, Any]:
     return {
         "source_levels": {
-            "cccc_builtin": _LEVEL_ENABLED,
+            "cccc_builtin": _LEVEL_MOUNTED,
+            "manual_import": _LEVEL_MOUNTED,
             "anthropic_skills": _LEVEL_MOUNTED,
             "github_skills_curated": _LEVEL_MOUNTED,
             "skillsmp_remote": _LEVEL_MOUNTED,

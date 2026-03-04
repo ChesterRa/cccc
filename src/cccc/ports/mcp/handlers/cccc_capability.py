@@ -282,6 +282,40 @@ def capability_uninstall(
     )
 
 
+def capability_import(
+    *,
+    group_id: str,
+    by: str,
+    actor_id: Optional[str] = None,
+    record: Optional[Dict[str, Any]] = None,
+    dry_run: bool = False,
+    probe: bool = True,
+    enable_after_import: bool = False,
+    scope: str = "session",
+    ttl_seconds: int = 3600,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Import a normalized external capability record (agent-prepared), optionally enable after import."""
+    target_actor = str(actor_id or by).strip()
+    return _call_daemon_or_raise(
+        {
+            "op": "capability_import",
+            "args": {
+                "group_id": str(group_id or ""),
+                "by": str(by or ""),
+                "actor_id": target_actor,
+                "record": dict(record) if isinstance(record, dict) else {},
+                "dry_run": bool(dry_run),
+                "probe": bool(probe),
+                "enable_after_import": bool(enable_after_import),
+                "scope": str(scope or "session"),
+                "ttl_seconds": int(ttl_seconds or 3600),
+                "reason": str(reason or ""),
+            },
+        }
+    )
+
+
 def capability_use(
     *,
     group_id: str,
@@ -480,15 +514,15 @@ def capability_use(
         tool_args["by"] = by
 
     # Read-only memory actions should not have actor_id auto-injected,
-    # otherwise search-like operations are unintentionally narrowed to caller scope.
+    # otherwise search/get-like operations are unintentionally narrowed to caller scope.
     skip_actor_injection = False
     if call_tool == "cccc_memory":
         mem_action = str(tool_args.get("action") or "search").strip().lower()
-        if mem_action in {"guide", "search", "stats"}:
+        if mem_action in {"layout_get", "search", "get"}:
             skip_actor_injection = True
     elif call_tool == "cccc_memory_admin":
-        mem_admin_action = str(tool_args.get("action") or "ingest").strip().lower()
-        if mem_admin_action in {"export", "decay"}:
+        mem_admin_action = str(tool_args.get("action") or "index_sync").strip().lower()
+        if mem_admin_action in {"index_sync", "context_check", "compact", "daily_flush"}:
             skip_actor_injection = True
 
     if "actor_id" not in tool_args and not skip_actor_injection:

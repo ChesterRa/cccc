@@ -3,7 +3,8 @@ Context storage for CCCC groups (v2).
 
 Context v2 core fields:
 - Vision: project north star
-- Overview: mermaid project panorama (manual strategic info + auto-generated mermaid)
+- Overview: manual strategic coordination fields only
+- Panorama: daemon-computed read-only projection
 - Tasks: multi-level tree via parent_id (root tasks = phases/stages)
 - Agents: flat per-agent working memory (short-term memory)
 
@@ -195,8 +196,6 @@ def _utc_now_iso() -> str:
 
 def _coerce_task_status(value: Any) -> TaskStatus:
     raw = str(value or "planned").strip().lower()
-    if raw == "pending":
-        raw = "planned"
     try:
         return TaskStatus(raw)
     except Exception:
@@ -205,8 +204,6 @@ def _coerce_task_status(value: Any) -> TaskStatus:
 
 def _coerce_step_status(value: Any) -> StepStatus:
     raw = str(value or "pending").strip().lower()
-    if raw in ("planned",):
-        raw = "pending"
     try:
         return StepStatus(raw)
     except Exception:
@@ -307,7 +304,8 @@ class ContextStorage:
         return {
             "contract": {
                 "vision": "One-sentence north star; update rarely.",
-                "overview": "Structured project view. manual=human-maintained, mermaid=daemon-computed.",
+                "overview": "Structured project view. manual=human-maintained.",
+                "panorama": "Read-only projection computed by daemon from tasks + agents.",
                 "tasks": "Multi-level task tree. Root tasks = phases/stages. Child tasks = execution.",
                 "agents": "Flat per-agent short-term working memory.",
             }
@@ -704,16 +702,16 @@ class ContextStorage:
         return True
 
     # =========================================================================
-    # Overview Mermaid Projection
+    # Panorama Projection
     # =========================================================================
 
-    def compute_overview_mermaid(
+    def compute_panorama_mermaid(
         self,
         tasks: Optional[List[Task]] = None,
         agents_state: Optional[AgentsData] = None,
         overview: Optional[Overview] = None,
     ) -> str:
-        """Compute deterministic mermaid project panorama from tasks + agents."""
+        """Compute deterministic panorama mermaid projection from tasks + agents."""
         if tasks is None:
             tasks = self.list_tasks()
         if agents_state is None:

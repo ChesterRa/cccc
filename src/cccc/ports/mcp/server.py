@@ -1,12 +1,12 @@
 """
 CCCC MCP Server - IM-style Agent Collaboration Tools
 
-Static MCP surface (31 entries):
+Static MCP surface:
 - cccc_help / cccc_bootstrap / cccc_project_info
 - cccc_inbox_list / cccc_inbox_mark_read
 - cccc_message_send / cccc_message_reply
 - cccc_file / cccc_group / cccc_actor / cccc_runtime_list
-- cccc_capability_search / cccc_capability_enable / cccc_capability_block / cccc_capability_state / cccc_capability_uninstall / cccc_capability_use
+- cccc_capability_search / cccc_capability_enable / cccc_capability_block / cccc_capability_state / cccc_capability_import / cccc_capability_uninstall / cccc_capability_use
 - cccc_space / cccc_automation
 - cccc_context_get / cccc_context_sync / cccc_context_admin / cccc_task / cccc_context_agent
 - cccc_memory / cccc_memory_admin
@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from ...kernel.actors import get_effective_role
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
-from ...kernel.capabilities import CORE_TOOL_NAMES
+from ...kernel.capabilities import CORE_ADMIN_TOOLS, CORE_TOOL_NAMES
 from ...kernel.memory_guide import build_memory_guide
 from ...kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
 from ...util.conv import coerce_bool
@@ -79,6 +79,7 @@ from .handlers.cccc_group_actor import (  # noqa: F401
 from .handlers.cccc_capability import (  # noqa: F401
     capability_block,
     capability_enable,
+    capability_import,
     capability_search,
     capability_state,
     capability_uninstall,
@@ -464,6 +465,25 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             reason=str(arguments.get("reason") or ""),
         )
 
+    if name == "cccc_capability_import":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_actor_id(arguments)
+        actor_id = str(arguments.get("actor_id") or by).strip()
+        raw_record = arguments.get("record")
+        record = dict(raw_record) if isinstance(raw_record, dict) else {}
+        return capability_import(
+            group_id=gid,
+            by=by,
+            actor_id=actor_id,
+            record=record,
+            dry_run=coerce_bool(arguments.get("dry_run"), default=False),
+            probe=coerce_bool(arguments.get("probe"), default=True),
+            enable_after_import=coerce_bool(arguments.get("enable_after_import"), default=False),
+            scope=str(arguments.get("scope") or "session"),
+            ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
+            reason=str(arguments.get("reason") or ""),
+        )
+
     if name == "cccc_capability_use":
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_actor_id(arguments)
@@ -803,15 +823,26 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
         except Exception:
             state = {}
 
+    # Determine actor role for admin tool gating.
+    actor_role = ""
+    if gid and aid and aid != "user":
+        try:
+            group = load_group(gid)
+            actor_role = str(get_effective_role(group, aid) or "").strip().lower()
+        except Exception:
+            pass
+    admin_excluded = set(CORE_ADMIN_TOOLS) if actor_role == "peer" else set()
+
     if profile == "full":
         visible = {str(spec.get("name") or "").strip() for spec in MCP_TOOLS if isinstance(spec, dict)}
+        visible -= admin_excluded
     else:
         tools_raw = state.get("visible_tools") if isinstance(state, dict) else []
         if not isinstance(tools_raw, list):
             tools_raw = []
         visible = {str(x).strip() for x in tools_raw if str(x).strip()}
         if not visible:
-            visible = set(CORE_TOOL_NAMES)
+            visible = set(CORE_TOOL_NAMES) - admin_excluded
 
     dynamic_raw = state.get("dynamic_tools") if isinstance(state, dict) else []
     dynamic_specs: List[Dict[str, Any]] = []

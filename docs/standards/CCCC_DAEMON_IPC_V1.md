@@ -523,8 +523,11 @@ Notes:
 1. Built-in capability packs (`pack:*`) are directly enable-able and can change MCP exposure.
 2. Skills (`kind=skill`) use the same `capability_enable` op for activate/deactivate and can auto-apply
    declared dependencies.
-3. External MCP execution path is constrained to supported installers (`remote_only`, npm via `npx`, pypi via `uvx/pipx`, OCI via `docker/podman`);
-   unsupported install metadata returns `state=failed`.
+3. External MCP execution path supports `remote_only`, `package`, and `command`.
+4. `package` mode supports npm (`npx`), pypi (`uvx`/`pipx`), OCI (`docker`/`podman`) and can fall back to
+   command candidates when package metadata is incomplete.
+5. External enable runs preflight first (required env, runtime binary availability, remote URL sanity) and returns
+   `reason=preflight_failed:<code>` on deterministic blockers.
 
 Args:
 ```ts
@@ -559,11 +562,21 @@ Result:
   retryable?: boolean
   install_error_code?: string
   required_env?: string[]
+  missing_binaries?: string[]
   policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
   install_state?: "installed" | "installed_degraded" | "install_failed"
   degraded?: boolean
   degraded_reason?: string
   degraded_call_hint?: string
+  fallback_from?: "package"
+  fallback_reason?: string
+  preflight?: {
+    ok: boolean
+    code: string
+    message: string
+    required_env?: string[]
+    missing_binaries?: string[]
+  }
   diagnostics?: Array<{
     code: string
     message: string
@@ -762,6 +775,99 @@ Operational notes:
    - packaged default: `cccc.resources/capability-allowlist.default.yaml`
    - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
    - effective policy: deterministic merge (`default <- overlay`).
+
+#### `capability_import`
+
+Import one normalized capability record prepared by the caller (agent-driven parsing), then optionally enable it.
+
+Notes:
+
+1. This op does not parse arbitrary web/forum text; caller must provide structured `record`.
+2. `kind=mcp_toolpack` requires `install_mode` + `install_spec`.
+3. `kind=skill` requires `capsule_text`.
+4. `dry_run=true` validates/probes only (no catalog persistence).
+5. `command*` and `fallback_command*` may be provided as top-level shortcuts; daemon copies them into
+   `install_spec` when missing.
+6. `record.source_id` is optional; empty or unknown source ids are normalized to `manual_import`.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  actor_id?: string
+  record: {
+    capability_id: string                 // mcp:* or skill:*
+    kind: "mcp_toolpack" | "skill"
+    name?: string
+    description_short?: string
+    source_id?: string // optional; unknown/empty -> manual_import
+    source_uri?: string
+    source_record_id?: string
+    source_record_version?: string
+    updated_at_source?: string
+    source_tier?: string
+    trust_tier?: string
+    qualification_status?: "qualified" | "unavailable" | "blocked"
+    qualification_reasons?: string[]
+    tags?: string[]
+    license?: string
+    install_mode?: "remote_only" | "package" | "command" // mcp_toolpack only
+    install_spec?: Record<string, unknown>    // mcp_toolpack only
+    command?: string | string[]               // command mode shortcut
+    command_candidates?: Array<string | string[]> // command mode/fallback candidates
+    fallback_command?: string | string[]      // optional package->command fallback
+    fallback_command_candidates?: Array<string | string[]> // optional package->command fallback candidates
+    capsule_text?: string                     // skill only
+    requires_capabilities?: string[]          // skill only
+  }
+  dry_run?: boolean                // default false
+  probe?: boolean                  // default true
+  enable_after_import?: boolean    // default false
+  scope?: "group" | "actor" | "session"
+  ttl_seconds?: number
+  reason?: string
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  capability_id: string
+  kind: "mcp_toolpack" | "skill"
+  dry_run: boolean
+  imported: boolean
+  deduped?: boolean
+  record: Record<string, unknown>
+  probe: {
+    state: "ready" | "failed" | "skipped"
+    kind?: "mcp_toolpack" | "skill"
+    reason?: string
+    tool_count?: number
+    tool_names?: string[]
+    install_error_code?: string
+    install_error?: string
+  }
+  diagnostics: Array<{
+    code: string
+    message: string
+    retryable?: boolean
+    required_env?: string[]
+    action_hints?: string[]
+  }>
+  effective_policy_level: "indexed" | "mounted" | "enabled" | "pinned"
+  enableable_now: boolean
+  enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable"
+  enable_after_import: boolean
+  enable_result?: Record<string, unknown> // same shape family as capability_enable
+  refresh_required: boolean
+  state: "ready" | "failed"
+  reason?: string
+}
+```
 
 #### `capability_allowlist_get`
 
@@ -1651,6 +1757,8 @@ Result:
       updated_by: string
       updated_at: string
     }
+  }
+  panorama: {
     mermaid: string
   }
   tasks_summary: {
@@ -1713,160 +1821,233 @@ Result:
 }
 ```
 
-#### `memory_store`
-
-Args:
-```ts
-{
-  group_id: string
-  id?: string           // memory ID for update mode (omit for create)
-  content?: string      // required for create, optional for update
-  kind?: string
-  status?: string
-  confidence?: string
-  source_type?: string
-  source_ref?: string
-  scope_key?: string
-  actor_id?: string
-  task_id?: string
-  event_ts?: string
-  tags?: string[]
-  strategy?: string     // "aggressive" | "conservative" | "task-completion"
-  solidify?: boolean    // immediately solidify after store/update
-}
-```
-
-Result (create): `{ id, content_hash, created_at, status, deduplicated }`
-Result (update): `{ memory: Record<string, unknown>, updated: true }`
-
-#### `memory_search`
-
-Args:
-```ts
-{
-  group_id: string
-  query?: string        // FTS5 full-text query
-  status?: string
-  kind?: string
-  actor_id?: string
-  task_id?: string
-  confidence?: string
-  tags?: string[]
-  since?: string        // ISO 8601
-  until?: string        // ISO 8601
-  track_hit?: boolean   // default false; when true increments hit_count and may auto-solidify
-  limit?: number        // 1-100, default 20
-}
-```
-
-Result: `{ memories: Array<Record<string, unknown>>, count: number }`
-
-#### `memory_stats`
+#### `memory_reme_layout_get`
 
 Args:
 ```ts
 { group_id: string }
 ```
 
-Result: `{ total, by_status, by_kind, tag_count, relation_count }`
-
-#### `memory_ingest`
-
-Args:
+Result:
 ```ts
 {
-  group_id: string
-  mode?: "signal" | "raw"    // default "signal"
-  limit?: number             // ledger lines to read (1-200, default 50)
-  actor_id?: string          // filter by actor (raw mode only)
-  reset_watermark?: boolean  // re-process previously ingested events
+  group_label: string
+  memory_root: string
+  memory_file: string
+  daily_dir: string
+  today_daily_file: string
+  backend: { name: "local"; vector_enabled: false; fts_enabled: true }
 }
 ```
 
-Result (signal mode): `{ signals: Array<{actor_id, messages_count, suggested_kind, key_phrases, time_range, topic}>, events_processed, watermark, mode }`
-Result (raw mode): `{ imported, skipped, watermark, mode }`
-
-#### `memory_solidify_batch`
+#### `memory_reme_index_sync`
 
 Args:
 ```ts
 {
   group_id: string
-  task_id?: string       // filter by task
-  kind?: string          // filter by kind
-}
-```
-
-Result: `{ solidified: number, ids: string[] }`
-
-#### `memory_export`
-
-Args:
-```ts
-{
-  group_id: string
-  include_draft?: boolean  // include draft memories (default: false)
-  output_dir?: string      // output directory override
-}
-```
-
-Result: `{ manifest: { group_id, sha256, memory_count, exported_at, format }, md_path: string, manifest_path: string }`
-
-#### `memory_delete`
-
-Args:
-```ts
-{
-  group_id: string
-  id?: string     // single memory ID
-  ids?: string[]  // batch memory IDs
-}
-```
-
-Result: `{ deleted: boolean, deleted_count: number, ids: string[] }`
-
-#### `memory_decay`
-
-Find stale memory candidates for cleanup/decay (safe: read-only, no auto-delete).
-
-Args:
-```ts
-{
-  group_id: string
-  draft_days?: number        // default 30
-  zero_hit_days?: number     // default 14
-  solid_review_days?: number // default 120
-  solid_max_hit?: number     // default 1
-  limit?: number             // default 100
+  mode?: "scan" | "rebuild"   // default "scan"
 }
 ```
 
 Result:
 ```ts
 {
-  candidates: Array<{
-    id: string
-    content_preview: string
-    kind: string
-    status: "draft" | "solid"
-    hit_count: number
-    created_at: string
-    last_recalled_at: string
-    age_days: number
-    reasons: string[]
-    recommended_action: "delete_candidate" | "review_candidate"
-    priority: "low" | "medium" | "high"
+  indexed_files: number
+  indexed_chunks: number
+  watched_paths: string[]
+  last_sync_at: string
+}
+```
+
+#### `memory_reme_search`
+
+Args:
+```ts
+{
+  group_id: string
+  query: string
+  max_results?: number           // 1..50, default 5
+  min_score?: number             // 0..1, default 0.1
+  sources?: string[]             // default ["memory"]
+  vector_weight?: number         // 0..1 (optional)
+  candidate_multiplier?: number  // 1..20 (optional)
+}
+```
+
+Result:
+```ts
+{
+  hits: Array<{
+    path: string
+    start_line: number
+    end_line: number
     score: number
+    snippet: string
+    source: string
+    raw_metric?: number
+    metadata: Record<string, unknown>
   }>
   count: number
-  delete_candidate_count: number
-  review_candidate_count: number
-  config: {
-    draft_days: number
-    zero_hit_days: number
-    solid_review_days: number
-    solid_max_hit: number
-    limit: number
+  took_ms: number
+}
+```
+
+#### `memory_reme_get`
+
+Args:
+```ts
+{
+  group_id: string
+  path: string
+  offset?: number   // 1-indexed, default 1
+  limit?: number    // default 200
+}
+```
+
+Result:
+```ts
+{
+  path: string
+  offset: number
+  limit: number
+  total_lines: number
+  content: string
+}
+```
+
+#### `memory_reme_context_check`
+
+Args:
+```ts
+{
+  group_id: string
+  messages: Array<{ role: string; name?: string; content: string }>
+  context_window_tokens?: number
+  reserve_tokens?: number
+  keep_recent_tokens?: number
+}
+```
+
+Result:
+```ts
+{
+  needs_compaction: boolean
+  token_count: number
+  threshold: number
+  messages_to_summarize: Array<Record<string, unknown>>
+  turn_prefix_messages: Array<Record<string, unknown>>
+  left_messages: Array<Record<string, unknown>>
+  is_split_turn: boolean
+  cut_index: number
+}
+```
+
+#### `memory_reme_compact`
+
+Args:
+```ts
+{
+  group_id: string
+  messages_to_summarize: Array<{ role: string; name?: string; content: string }>
+  turn_prefix_messages?: Array<{ role: string; name?: string; content: string }>
+  previous_summary?: string
+  language?: string
+  return_prompt?: boolean
+}
+```
+
+Result:
+```ts
+{ summary: string } | { prompt: Record<string, string> }
+```
+
+#### `memory_reme_daily_flush`
+
+Args:
+```ts
+{
+  group_id: string
+  messages: Array<{ role: string; name?: string; content: string }>
+  date?: string               // YYYY-MM-DD
+  version?: string            // default "default"
+  language?: string           // default "en"
+  return_prompt?: boolean
+  signal_pack?: Record<string, unknown>
+  signal_pack_token_budget?: number // default 320
+  dedup_intent?: "new" | "update" | "supersede" | "silent" // default "new"
+  dedup_query?: string
+}
+```
+
+Result:
+```ts
+{
+  status: "written" | "silent"
+  reason?: "empty_summary" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+  target_file: string
+  content_hash: string
+  bytes_written: number
+  signal_pack?: {
+    schema: string
+    token_budget: number
+    token_estimate: number
+    truncated: boolean
+  }
+  dedup?: {
+    intent: "new" | "update" | "supersede" | "silent"
+    query: string
+    candidate_count: number
+    top_score: number
+    precheck_decision: "new" | "update" | "supersede" | "silent"
+    final_decision: "new" | "update" | "supersede" | "silent"
+    final_reason: "accepted" | "empty_summary" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+    decision: "new" | "update" | "supersede" | "silent" // alias of final_decision
+    hits: Array<{ path: string; start_line: number; score: number }>
+    error?: string
+  }
+}
+```
+
+#### `memory_reme_write`
+
+Args:
+```ts
+{
+  group_id: string
+  target: "memory" | "daily"
+  content: string
+  date?: string               // required when target="daily"
+  mode?: "append" | "replace" // default "append"
+  idempotency_key?: string
+  actor_id?: string
+  source_refs?: string[]
+  tags?: string[]
+  supersedes?: string[]
+  dedup_intent?: "new" | "update" | "supersede" | "silent" // default "new"
+  dedup_query?: string
+}
+```
+
+Result:
+```ts
+{
+  file_path: string
+  line_count: number
+  content_hash: string
+  status: "written" | "silent"
+  reason?: "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+  dedup?: {
+    intent: "new" | "update" | "supersede" | "silent"
+    query: string
+    candidate_count: number
+    top_score: number
+    precheck_decision: "new" | "update" | "supersede" | "silent"
+    final_decision: "new" | "update" | "supersede" | "silent"
+    final_reason: "accepted" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+    decision: "new" | "update" | "supersede" | "silent" // alias of final_decision
+    hits: Array<{ path: string; start_line: number; score: number }>
+    error?: string
   }
 }
 ```

@@ -30,7 +30,7 @@ function taskProgress(task: Task): { progress: number; status: BuildStatus } {
     return { progress, status: progress > 0 ? "building" : "ghost" };
   }
 
-  if (task.status === "in_progress") {
+  if (task.status === "active") {
     return { progress: 0.3, status: "building" };
   }
 

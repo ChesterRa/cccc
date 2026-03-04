@@ -34,7 +34,8 @@ Gap routing:
 - Ask the user only for real env/permission blockers.
 
 Memory boundary:
-- Context agent state is short-term execution memory; memory.db is long-term reusable memory.
+- Context agent state is short-term execution memory; long-term memory lives in `state/memory/MEMORY.md` + `state/memory/daily/*.md`.
+- On start/resume, use `cccc_bootstrap`'s `memory_recall_gate` before planning or implementation.
 """
 
 def load_builtin_help_markdown() -> str:

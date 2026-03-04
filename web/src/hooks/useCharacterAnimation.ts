@@ -48,6 +48,8 @@ export function useCharacterAnimation({
   agents, actorMap, layout, buildTargetMap, characterRefs, staticMode = true,
 }: UseCharacterAnimationParams): void {
   const locomotionRefs = useRef<Map<string, LocomotionState>>(new Map());
+  // Pulse animation state per agent (for status bubble sprite)
+  const pulseRefs = useRef<Map<string, { prevState: string; pulse: number; baseW: number; baseH: number }>>(new Map());
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
@@ -195,6 +197,15 @@ export function useCharacterAnimation({
         ) + Math.PI;
       }
 
+      // Compensate arm/leg rotation for pivot shift from geometry center to joint:
+      // joint-to-tip distance doubled → halve and negate rotation (translate flips visual direction).
+      pose.laRx *= -0.5;
+      pose.raRx *= -0.5;
+      pose.laRz *= -0.5;
+      pose.raRz *= -0.5;
+      pose.llRx *= -0.5;
+      pose.rlRx *= -0.5;
+
       // ── Apply lerp to all body parts ──
       const torso = group.children[PART_INDEX.torso];
       const head = group.children[PART_INDEX.head];
@@ -233,6 +244,31 @@ export function useCharacterAnimation({
       lLeg.position.y = L(lLeg.position.y, pose.llPy, lf);
       rLeg.rotation.x = L(rLeg.rotation.x, pose.rlRx, lf);
       rLeg.position.y = L(rLeg.position.y, pose.rlPy, lf);
+
+      // Sprite pulse animation (status bubble is always last child)
+      const lastChild = group.children[group.children.length - 1];
+      if (lastChild && (lastChild as THREE.Sprite).isSprite) {
+        let ps = pulseRefs.current.get(agent.id);
+        if (!ps) {
+          // Capture base scale from declarative JSX on first encounter
+          ps = { prevState: derived, pulse: 0, baseW: lastChild.scale.x, baseH: lastChild.scale.y };
+          pulseRefs.current.set(agent.id, ps);
+        }
+        // Detect base scale change (texture rebuild changes dimensions)
+        if (ps.pulse <= 0) {
+          ps.baseW = lastChild.scale.x;
+          ps.baseH = lastChild.scale.y;
+        }
+        if (ps.prevState !== derived) {
+          ps.prevState = derived;
+          ps.pulse = 1.0;
+        }
+        if (ps.pulse > 0) {
+          ps.pulse = Math.max(0, ps.pulse - delta * 3.3);
+          const boost = Math.sin(ps.pulse * Math.PI) * 0.15;
+          lastChild.scale.set(ps.baseW * (1 + boost), ps.baseH * (1 + boost), 1);
+        }
+      }
     }
   });
 }

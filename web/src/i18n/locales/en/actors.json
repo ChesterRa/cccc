@@ -137,5 +137,8 @@
   "managedByProfileName": "Managed by profile: {{name}}",
   "managedByProfileCustomHint": "Convert to Custom to unlock manual runtime, command, and secret editing.",
   "profileControlsRuntimeFields": "Runtime and command are profile-controlled. Convert to custom to edit them.",
-  "linkedSecretsHint": "Secrets are managed by the linked profile. Edit them in Settings > Actor Profiles."
+  "linkedSecretsHint": "Secrets are managed by the linked profile. Edit them in Settings > Actor Profiles.",
+  "connectionLost": "Connection Lost",
+  "connectionLostDescription": "Terminal connection failed. The agent process may have stopped or the server is unreachable.",
+  "reconnect": "Reconnect"
 }

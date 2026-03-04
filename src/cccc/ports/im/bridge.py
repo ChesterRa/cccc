@@ -745,13 +745,14 @@ class IMBridge:
         self._log(f"[subscribe] chat={chat_id} thread={thread_id} title={chat_title}")
 
     def _handle_unsubscribe(self, chat_id: str, thread_id: int = 0) -> None:
-        """Handle /unsubscribe command."""
+        """Handle /unsubscribe command — also revokes authorization so re-subscribe requires key."""
         was_subscribed = self.subscribers.unsubscribe(chat_id, thread_id=thread_id)
+        self.key_manager.revoke(chat_id, thread_id)
         if was_subscribed:
-            self.adapter.send_message(chat_id, "👋 Unsubscribed. You will no longer receive messages.", thread_id=thread_id)
+            self.adapter.send_message(chat_id, "👋 Unsubscribed and authorization revoked. Use /subscribe to re-authenticate.", thread_id=thread_id)
         else:
-            self.adapter.send_message(chat_id, "ℹ️ You were not subscribed.", thread_id=thread_id)
-        self._log(f"[unsubscribe] chat={chat_id} thread={thread_id}")
+            self.adapter.send_message(chat_id, "ℹ️ You were not subscribed. Authorization revoked.", thread_id=thread_id)
+        self._log(f"[unsubscribe] chat={chat_id} thread={thread_id} (auth revoked)")
 
     def _handle_verbose(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /verbose command (toggle)."""

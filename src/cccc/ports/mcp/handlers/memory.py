@@ -13,112 +13,120 @@ def _handle_memory_namespace(
     mcp_error_cls: Type[Exception],
     build_memory_guide: Callable[[str], Dict[str, str]],
 ) -> Optional[Dict[str, Any]]:
+    # Keep build_memory_guide injectable for bootstrap/help payloads, but cccc_memory
+    # no longer exposes guide action in hard-cut ReMe mode.
+    _ = build_memory_guide
     if name == "cccc_memory":
         action = str(arguments.get("action") or "search").strip().lower()
-        if action == "guide":
-            topic = str(arguments.get("topic") or "").strip()
-            if not topic:
-                raise mcp_error_cls("validation_error", "missing topic")
-            try:
-                return build_memory_guide(topic)
-            except ValueError as e:
-                raise mcp_error_cls("validation_error", str(e))
         gid = resolve_group_id(arguments)
 
-        if action == "store":
-            args: Dict[str, Any] = {"group_id": gid}
-            for field in (
-                "id",
-                "content",
-                "kind",
-                "status",
-                "confidence",
-                "source_type",
-                "source_ref",
-                "scope_key",
-                "actor_id",
-                "task_id",
-                "event_ts",
-                "strategy",
-            ):
-                val = arguments.get(field)
-                if val is not None:
-                    args[field] = val
-            if "tags" in arguments:
-                args["tags"] = arguments["tags"]
-            if arguments.get("solidify"):
-                args["solidify"] = True
-            return call_daemon_or_raise({"op": "memory_store", "args": args})
+        if action == "layout_get":
+            return call_daemon_or_raise({"op": "memory_reme_layout_get", "args": {"group_id": gid}})
 
         if action == "search":
-            args = {"group_id": gid}
-            for field in ("query", "status", "kind", "actor_id", "task_id", "confidence", "since", "until"):
+            args: Dict[str, Any] = {"group_id": gid}
+            for field in ("query", "max_results", "min_score", "vector_weight", "candidate_multiplier"):
                 val = arguments.get(field)
                 if val is not None:
                     args[field] = val
-            if "tags" in arguments:
-                args["tags"] = arguments["tags"]
+            if "sources" in arguments:
+                args["sources"] = arguments["sources"]
+            return call_daemon_or_raise({"op": "memory_reme_search", "args": args})
+
+        if action == "get":
+            path = str(arguments.get("path") or "").strip()
+            if not path:
+                raise mcp_error_cls("validation_error", "missing path")
+            args = {"group_id": gid, "path": path}
+            if "offset" in arguments:
+                args["offset"] = arguments["offset"]
             if "limit" in arguments:
                 args["limit"] = arguments["limit"]
-            if "track_hit" in arguments:
-                args["track_hit"] = coerce_bool(arguments.get("track_hit"), default=False)
-            return call_daemon_or_raise({"op": "memory_search", "args": args})
+            return call_daemon_or_raise({"op": "memory_reme_get", "args": args})
 
-        if action == "stats":
-            return call_daemon_or_raise({"op": "memory_stats", "args": {"group_id": gid}})
+        if action == "write":
+            target = str(arguments.get("target") or "").strip().lower()
+            content = str(arguments.get("content") or "")
+            if target not in {"memory", "daily"}:
+                raise mcp_error_cls("validation_error", "target must be one of: memory, daily")
+            if not content.strip():
+                raise mcp_error_cls("validation_error", "missing content")
+            args = {"group_id": gid, "target": target, "content": content}
+            for field in ("date", "mode", "idempotency_key", "actor_id", "dedup_intent", "dedup_query"):
+                val = arguments.get(field)
+                if val is not None:
+                    args[field] = val
+            for field in ("source_refs", "tags", "supersedes"):
+                val = arguments.get(field)
+                if isinstance(val, list):
+                    args[field] = val
+            return call_daemon_or_raise({"op": "memory_reme_write", "args": args})
 
         raise mcp_error_cls(
             "invalid_request",
-            "cccc_memory action must be one of: guide/store/search/stats",
+            "cccc_memory action must be one of: layout_get/search/get/write",
         )
 
     if name == "cccc_memory_admin":
         gid = resolve_group_id(arguments)
-        action = str(arguments.get("action") or "ingest").strip().lower()
-        if action == "ingest":
-            args = {"group_id": gid}
-            for field in ("mode", "limit", "actor_id"):
+        action = str(arguments.get("action") or "index_sync").strip().lower()
+
+        if action == "index_sync":
+            args = {"group_id": gid, "mode": str(arguments.get("mode") or "scan")}
+            return call_daemon_or_raise({"op": "memory_reme_index_sync", "args": args})
+
+        if action == "context_check":
+            raw_messages = arguments.get("messages")
+            if not isinstance(raw_messages, list):
+                raise mcp_error_cls("validation_error", "messages must be an array")
+            args: Dict[str, Any] = {"group_id": gid, "messages": raw_messages}
+            for field in ("context_window_tokens", "reserve_tokens", "keep_recent_tokens"):
                 val = arguments.get(field)
                 if val is not None:
                     args[field] = val
-            if arguments.get("reset_watermark"):
-                args["reset_watermark"] = True
-            return call_daemon_or_raise({"op": "memory_ingest", "args": args})
+            return call_daemon_or_raise({"op": "memory_reme_context_check", "args": args})
 
-        if action == "export":
-            args = {"group_id": gid}
-            if arguments.get("include_draft"):
-                args["include_draft"] = True
-            output_dir = arguments.get("output_dir")
-            if output_dir:
-                args["output_dir"] = str(output_dir)
-            return call_daemon_or_raise({"op": "memory_export", "args": args})
+        if action == "compact":
+            msgs = arguments.get("messages_to_summarize")
+            if not isinstance(msgs, list):
+                raise mcp_error_cls("validation_error", "messages_to_summarize must be an array")
+            args = {
+                "group_id": gid,
+                "messages_to_summarize": msgs,
+                "return_prompt": coerce_bool(arguments.get("return_prompt"), default=False),
+            }
+            turn_prefix = arguments.get("turn_prefix_messages")
+            if isinstance(turn_prefix, list):
+                args["turn_prefix_messages"] = turn_prefix
+            previous_summary = arguments.get("previous_summary")
+            if previous_summary is not None:
+                args["previous_summary"] = previous_summary
+            language = arguments.get("language")
+            if language is not None:
+                args["language"] = language
+            return call_daemon_or_raise({"op": "memory_reme_compact", "args": args})
 
-        if action == "delete":
-            args: Dict[str, Any] = {"group_id": gid}
-            memory_id = str(arguments.get("id") or "").strip()
-            if memory_id:
-                args["id"] = memory_id
-            raw_ids = arguments.get("ids")
-            if raw_ids is not None:
-                if not isinstance(raw_ids, list):
-                    raise mcp_error_cls("validation_error", "ids must be an array of strings")
-                args["ids"] = [str(x) for x in raw_ids]
-            if "id" not in args and "ids" not in args:
-                raise mcp_error_cls("missing_id", "missing memory id or ids")
-            return call_daemon_or_raise({"op": "memory_delete", "args": args})
-
-        if action == "decay":
-            args: Dict[str, Any] = {"group_id": gid}
-            for field in ("draft_days", "zero_hit_days", "solid_review_days", "solid_max_hit", "limit"):
+        if action == "daily_flush":
+            msgs = arguments.get("messages")
+            if not isinstance(msgs, list):
+                raise mcp_error_cls("validation_error", "messages must be an array")
+            args: Dict[str, Any] = {
+                "group_id": gid,
+                "messages": msgs,
+                "return_prompt": coerce_bool(arguments.get("return_prompt"), default=False),
+            }
+            for field in ("date", "version", "language", "actor_id", "signal_pack_token_budget", "dedup_intent", "dedup_query"):
                 val = arguments.get(field)
                 if val is not None:
                     args[field] = val
-            return call_daemon_or_raise({"op": "memory_decay", "args": args})
+            signal_pack = arguments.get("signal_pack")
+            if isinstance(signal_pack, dict):
+                args["signal_pack"] = signal_pack
+            return call_daemon_or_raise({"op": "memory_reme_daily_flush", "args": args})
 
         raise mcp_error_cls(
             "invalid_request",
-            "cccc_memory_admin action must be one of: ingest/export/delete/decay",
+            "cccc_memory_admin action must be one of: index_sync/context_check/compact/daily_flush",
         )
 
     return None

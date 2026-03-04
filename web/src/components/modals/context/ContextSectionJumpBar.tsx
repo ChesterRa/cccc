@@ -6,12 +6,10 @@ interface ContextSectionJumpBarProps {
   onScrollToSection: (id: string) => void;
 }
 
-const SECTION_KEYS: Array<{ id: string; key: string }> = [
-  { id: "context-tasks", key: "jumpBar.tasks" },
-  { id: "context-agents", key: "jumpBar.agents" },
-  { id: "context-overview", key: "jumpBar.overview" },
-  { id: "context-vision", key: "jumpBar.vision" },
-  { id: "context-project", key: "jumpBar.project" },
+const SECTION_KEYS: Array<{ id: string; key: string; fallback: string }> = [
+  { id: "context-agents", key: "jumpBar.agents", fallback: "Agents" },
+  { id: "context-tasks", key: "jumpBar.tasks", fallback: "Tasks" },
+  { id: "context-direction", key: "jumpBar.direction", fallback: "Direction" },
 ];
 
 export function ContextSectionJumpBar({ isDark, onScrollToSection }: ContextSectionJumpBarProps) {
@@ -35,7 +33,7 @@ export function ContextSectionJumpBar({ isDark, onScrollToSection }: ContextSect
           )}
           onClick={() => onScrollToSection(item.id)}
         >
-          {t(item.key)}
+          {String(t(item.key as never, { defaultValue: item.fallback } as never))}
         </button>
       ))}
     </div>

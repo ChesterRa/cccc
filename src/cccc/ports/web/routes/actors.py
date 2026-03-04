@@ -357,6 +357,10 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.websocket("/api/v1/groups/{group_id}/actors/{actor_id}/term")
     async def actor_terminal(websocket: WebSocket, group_id: str, actor_id: str) -> None:
+        # Accept WebSocket first — closing before accept violates the protocol
+        # and causes the browser to see code 1006 instead of our intended close code.
+        await websocket.accept()
+
         token = ctx.configured_web_token()
         if token:
             provided = str(websocket.query_params.get("token") or "").strip()
@@ -367,10 +371,12 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             except Exception:
                 cookie = ""
             if provided != token and cookie != token:
+                try:
+                    await websocket.send_json({"ok": False, "error": {"code": "auth_required", "message": "Invalid or missing authentication token"}})
+                except Exception:
+                    pass
                 await websocket.close(code=4401)
                 return
-
-        await websocket.accept()
 
         if ctx.read_only and not ctx.exhibit_allow_terminal:
             try:

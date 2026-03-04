@@ -236,9 +236,10 @@ class TestMcpCapabilityUse(unittest.TestCase):
 
         read_only_tools = [
             ("cccc_memory", {"action": "search", "query": "test"}),
-            ("cccc_memory", {"action": "stats"}),
-            ("cccc_memory_admin", {"action": "decay"}),
-            ("cccc_memory_admin", {"action": "export"}),
+            ("cccc_memory", {"action": "layout_get"}),
+            ("cccc_memory", {"action": "get", "path": "/tmp/memory.md"}),
+            ("cccc_memory_admin", {"action": "index_sync"}),
+            ("cccc_memory_admin", {"action": "context_check", "messages": [{"role": "user", "content": "x"}]}),
         ]
         for tool_name, tool_arguments in read_only_tools:
             with self.subTest(tool=tool_name):
@@ -269,9 +270,8 @@ class TestMcpCapabilityUse(unittest.TestCase):
         from cccc.ports.mcp.server import capability_use
 
         write_tools = [
-            ("cccc_memory", {"action": "store", "content": "test"}),
-            ("cccc_memory_admin", {"action": "delete", "id": "m1"}),
-            ("cccc_memory_admin", {"action": "ingest"}),
+            ("cccc_memory", {"action": "write", "target": "memory", "content": "test"}),
+            ("cccc_memory", {"action": "write", "target": "daily", "date": "2026-03-03", "content": "test"}),
         ]
         for tool_name, tool_arguments in write_tools:
             with self.subTest(tool=tool_name):

@@ -67,12 +67,13 @@ class TestSystemPromptMemory(unittest.TestCase):
 
             # Memory vs short-term Context boundary
             self.assertIn("Context agent state is short-term execution memory", prompt)
-            self.assertIn("memory.db is long-term reusable memory", prompt)
+            self.assertIn("state/memory/MEMORY.md + state/memory/daily/*.md", prompt)
 
             # Core memory workflow mentioned
             self.assertIn("cccc_memory(action=search)", prompt)
-            self.assertIn('cccc_memory_admin(action="ingest", mode="signal")', prompt)
-            self.assertIn("cccc_memory(action=guide, topic=...)", prompt)
+            self.assertIn("cccc_memory(action=get)", prompt)
+            self.assertIn('cccc_memory(action="write", target="daily"|"memory", ...)', prompt)
+            self.assertIn('cccc_memory_admin(action="context_check")', prompt)
             self.assertIn("Fact-Goal gate: strategy/scope discussion first; implement only after explicit action intent", prompt)
             self.assertIn("Planning gate (6D) for non-trivial changes: value/ROI", prompt)
             self.assertIn("Todo discipline: track every concrete or implicit user ask as a runtime todo", prompt)
@@ -107,15 +108,15 @@ class TestSystemPromptMemory(unittest.TestCase):
 
         # Memory vs short-term Context boundary
         self.assertIn("Context agent state is short-term execution memory", text)
-        self.assertIn("memory.db is long-term reusable memory", text)
+        self.assertIn("state/memory/MEMORY.md + state/memory/daily/*.md", text)
 
         # Tool guidance
         self.assertIn("cccc_memory(action=search)", text)
-        self.assertIn('cccc_memory_admin(action="ingest", mode="signal")', text)
-        self.assertIn("cccc_memory(action=guide, topic=...)", text)
+        self.assertIn("cccc_memory(action=get)", text)
+        self.assertIn('cccc_memory(action="write", target="daily"|"memory", ...)', text)
 
         # Lifecycle guidance
-        self.assertIn("Before storing, run cccc_memory(action=search) first", text)
+        self.assertIn("Compaction path", text)
 
 
 if __name__ == "__main__":

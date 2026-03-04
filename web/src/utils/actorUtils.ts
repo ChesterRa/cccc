@@ -12,7 +12,7 @@ const FRESHNESS_MS = 30 * 60_000; // 30 minutes
 
 /** Derive animation state from agent state data. Priority: offline > blocked > working > thinking > idle.
  *  When lastActivityAt (epoch ms from WS heartbeat) is provided, it takes priority
- *  over presence-based heuristics for recent activity windows. */
+ *  over agent-state recency heuristics for recent activity windows. */
 export function deriveAnimState(
   agent: AgentState,
   isRunning?: boolean,
@@ -27,7 +27,7 @@ export function deriveAnimState(
     if (gap < 10_000) return "working";        // < 10s → actively working
     if (gap < 60_000) return "thinking";        // < 60s → thinking
     if (gap >= 300_000) return "idle";           // ≥ 5min → idle
-    // 60s–300s: fall through to presence-based logic below
+    // 60s–300s: fall through to agent-state recency logic below
   }
 
   const age = agent.updated_at

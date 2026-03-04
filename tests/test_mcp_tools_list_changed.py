@@ -110,6 +110,34 @@ class TestMcpToolsListChanged(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertEqual(notes[0].get("method"), "notifications/tools/list_changed")
 
+    def test_capability_import_enqueues_list_changed_notification_when_supported(self) -> None:
+        from cccc.ports.mcp.main import _drain_pending_notifications, handle_request
+
+        handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "initialize",
+                "params": {"capabilities": {"tools": {"listChanged": True}}},
+            }
+        )
+
+        with patch(
+            "cccc.ports.mcp.main.handle_tool_call",
+            return_value={"refresh_required": True, "state": "ready"},
+        ):
+            handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 16,
+                    "method": "tools/call",
+                    "params": {"name": "cccc_capability_import", "arguments": {}},
+                }
+            )
+        notes = _drain_pending_notifications()
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0].get("method"), "notifications/tools/list_changed")
+
     def test_capability_use_enqueues_list_changed_notification_when_supported(self) -> None:
         from cccc.ports.mcp.main import _drain_pending_notifications, handle_request
 

@@ -3,6 +3,9 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { CapabilityBlockEntry, CapabilityOverviewItem, CapabilitySourceState } from "../../../types";
 import { cardClass } from "./types";
+import { validateCapabilityToggleResult } from "./capabilityMutation";
+import { EnabledCapabilitiesDashboard } from "./EnabledCapabilitiesDashboard";
+import { ImportCapabilityForm } from "./ImportCapabilityForm";
 
 interface CapabilitiesTabProps {
   isDark: boolean;
@@ -46,21 +49,25 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
   const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
   const [blocked, setBlocked] = useState<CapabilityBlockEntry[]>([]);
   const [allowlistSources, setAllowlistSources] = useState<Array<{ source_id: string; enabled: boolean; rationale?: string }>>([]);
+  const [groupEnabledIds, setGroupEnabledIds] = useState<string[]>([]);
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
   const load = async () => {
     if (!isActive) return;
     setLoading(true);
     setErr("");
     try {
-      const [overviewResp, allowlistResp] = await Promise.all([
+      const [overviewResp, allowlistResp, stateResp] = await Promise.all([
         api.fetchCapabilityOverview({ includeIndexed: true, limit: 1200 }),
         api.fetchCapabilityAllowlist(),
+        groupId ? api.fetchGroupCapabilityState(groupId) : Promise.resolve(null),
       ]);
       if (!overviewResp.ok) {
         setErr(overviewResp.error?.message || t("capabilities.failedLoad"));
         setItems([]);
         setSources({});
         setBlocked([]);
+        setGroupEnabledIds([]);
       } else {
         setItems(Array.isArray(overviewResp.result?.items) ? overviewResp.result.items : []);
         setSources(
@@ -74,6 +81,14 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
             : []
         );
         setRevision(String(overviewResp.result?.allowlist_revision || ""));
+      }
+      if (stateResp && stateResp.ok) {
+        const nextEnabled = (Array.isArray(stateResp.result?.enabled) ? stateResp.result.enabled : [])
+          .map((entry) => String(entry.capability_id || "").trim())
+          .filter(Boolean);
+        setGroupEnabledIds(Array.from(new Set(nextEnabled)));
+      } else {
+        setGroupEnabledIds([]);
       }
       if (allowlistResp.ok) {
         const allowRevision = String(allowlistResp.result?.revision || revision);
@@ -102,6 +117,7 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
       setItems([]);
       setSources({});
       setBlocked([]);
+      setGroupEnabledIds([]);
     } finally {
       setLoading(false);
     }
@@ -146,6 +162,16 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
       enabled,
       disabled: Math.max(0, total - enabled),
     };
+  }, [sourceRows]);
+
+  const levelDistribution = useMemo(() => {
+    const counts: Record<string, number> = { indexed: 0, mounted: 0, pinned: 0 };
+    for (const row of sourceRows) {
+      const level = String(row.source_level || "indexed").toLowerCase();
+      if (level in counts) counts[level]++;
+      else counts["indexed"]++;
+    }
+    return counts;
   }, [sourceRows]);
 
   const filteredSources = useMemo(() => {
@@ -290,6 +316,42 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
     }
   };
 
+  const setGroupCapabilityEnabled = async (row: CapabilityOverviewItem, enabled: boolean) => {
+    const capabilityId = String(row.capability_id || "").trim();
+    if (!capabilityId || !groupId) return;
+    setBusyCapId(capabilityId);
+    setErr("");
+    try {
+      const scopes: Array<"group" | "actor" | "session"> = enabled ? ["group"] : ["group", "actor", "session"];
+      for (const scope of scopes) {
+        const resp = await api.enableGroupCapability(groupId, capabilityId, {
+          enabled,
+          scope,
+          cleanup: !enabled,
+        });
+        if (!resp.ok) {
+          setErr(resp.error?.message || (enabled ? t("capabilities.failedEnable") : t("capabilities.enabledDashboard.failedDisable")));
+          return;
+        }
+        const validation = validateCapabilityToggleResult(resp.result, enabled);
+        if (!validation.ok) {
+          setErr(
+            validation.reason
+              ? t("capabilities.operationFailedReason", { reason: validation.reason })
+              : (enabled ? t("capabilities.failedEnable") : t("capabilities.enabledDashboard.failedDisable"))
+          );
+          return;
+        }
+      }
+      await load();
+      setDashboardRefreshKey((k) => k + 1);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : (enabled ? t("capabilities.failedEnable") : t("capabilities.enabledDashboard.failedDisable")));
+    } finally {
+      setBusyCapId("");
+    }
+  };
+
   const toggleSource = async (sourceId: string, nextEnabled: boolean) => {
     const sid = String(sourceId || "").trim();
     if (!sid) return;
@@ -351,6 +413,19 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
 
   return (
     <div className="space-y-4">
+      <div
+        className={`rounded-lg border px-3 py-2 text-xs ${
+          isDark ? "border-slate-800 bg-slate-900/40 text-slate-300" : "border-gray-200 bg-gray-50 text-gray-600"
+        }`}
+      >
+        {t("capabilities.pageGuide")}
+      </div>
+      <EnabledCapabilitiesDashboard isDark={isDark} groupId={groupId} refreshKey={dashboardRefreshKey} />
+      <ImportCapabilityForm
+        isDark={isDark}
+        groupId={groupId}
+        onImported={() => { setDashboardRefreshKey((k) => k + 1); void load(); }}
+      />
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -381,6 +456,9 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
         <div className={`text-xs mt-1 mb-2 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.sourcesHint")}</div>
         <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
           {t("capabilities.sourcesSummary", sourceSummary)}
+        </div>
+        <div className={`text-[11px] mt-0.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+          {t("capabilities.levelDistribution", levelDistribution)}
         </div>
         <div className="mt-2 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
           <input
@@ -579,6 +657,7 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
           {pagedLibrary.map((row) => {
             const capId = String(row.capability_id || "");
             const blockedNow = Boolean(row.blocked_global);
+            const groupEnabledNow = groupEnabledIds.includes(capId);
             return (
               <div
                 key={capId}
@@ -607,23 +686,44 @@ export function CapabilitiesTab({ isDark, isActive, groupId }: CapabilitiesTabPr
                       ) : null}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${
-                      blockedNow
-                        ? isDark
-                          ? "bg-emerald-900/40 text-emerald-300"
-                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                        : isDark
-                          ? "bg-rose-900/40 text-rose-300"
-                          : "bg-rose-50 text-rose-700 border border-rose-200"
-                    } ${busyCapId === capId ? "opacity-60 cursor-not-allowed" : ""}`}
-                    disabled={busyCapId === capId || !groupId}
-                    onClick={() => void toggleBlock(row, !blockedNow)}
-                    title={!groupId ? t("capabilities.requireGroup") : ""}
-                  >
-                    {blockedNow ? t("capabilities.unblock") : t("capabilities.block")}
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {(row.enable_supported !== false) && (!blockedNow || groupEnabledNow) ? (
+                      <button
+                        type="button"
+                        className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${
+                          groupEnabledNow
+                            ? isDark
+                              ? "bg-rose-900/40 text-rose-300"
+                              : "bg-rose-50 text-rose-700 border border-rose-200"
+                            : isDark
+                              ? "bg-emerald-900/40 text-emerald-300"
+                              : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        } ${busyCapId === capId ? "opacity-60 cursor-not-allowed" : ""}`}
+                        disabled={busyCapId === capId || !groupId}
+                        onClick={() => void setGroupCapabilityEnabled(row, !groupEnabledNow)}
+                        title={!groupId ? t("capabilities.requireGroup") : ""}
+                      >
+                        {groupEnabledNow ? t("capabilities.disableForGroup") : t("capabilities.enableForGroup")}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${
+                        blockedNow
+                          ? isDark
+                            ? "bg-emerald-900/40 text-emerald-300"
+                            : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : isDark
+                            ? "bg-rose-900/40 text-rose-300"
+                            : "bg-rose-50 text-rose-700 border border-rose-200"
+                      } ${busyCapId === capId ? "opacity-60 cursor-not-allowed" : ""}`}
+                      disabled={busyCapId === capId || !groupId}
+                      onClick={() => void toggleBlock(row, !blockedNow)}
+                      title={!groupId ? t("capabilities.requireGroup") : ""}
+                    >
+                      {blockedNow ? t("capabilities.unblock") : t("capabilities.block")}
+                    </button>
+                  </div>
                 </div>
               </div>
             );

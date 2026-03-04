@@ -25,6 +25,7 @@ from ._common import (
     _error,
     _ensure_group,
     _is_foreman,
+    _normalize_scope,
     _env_bool,
     _quota_limit,
 )
@@ -574,6 +575,485 @@ def apply_actor_capability_autoload(
         "scope": eff_scope,
         "ttl_seconds": eff_ttl,
     }
+
+
+# ---------------------------------------------------------------------------
+# handle_capability_import
+# ---------------------------------------------------------------------------
+
+def _normalize_import_kind(raw_kind: Any) -> str:
+    kind = str(raw_kind or "").strip().lower()
+    if kind in {"mcp", "mcp_tool", "mcp_toolpack"}:
+        return "mcp_toolpack"
+    if kind == "skill":
+        return "skill"
+    return ""
+
+
+def _coerce_import_source_id(kind: str, raw_source_id: Any) -> str:
+    source_id = str(raw_source_id or "").strip()
+    if source_id:
+        return source_id if source_id in _SOURCE_IDS else "manual_import"
+    return "manual_import"
+
+
+def _normalize_import_tags(raw: Any, *, kind: str) -> List[str]:
+    out: List[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            token = str(item or "").strip()
+            if token and token not in out:
+                out.append(token)
+    for token in ("external", "imported", "skill" if kind == "skill" else "mcp"):
+        if token not in out:
+            out.append(token)
+    return out[:64]
+
+
+def _normalize_import_reasons(raw: Any) -> List[str]:
+    out: List[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            token = str(item or "").strip()
+            if token and token not in out:
+                out.append(token)
+    return out[:32]
+
+
+def _normalize_import_requires(raw: Any) -> List[str]:
+    out: List[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            token = str(item or "").strip()
+            if token and token not in out:
+                out.append(token)
+    return out[:32]
+
+
+def _has_import_command_tokens(raw: Any) -> bool:
+    if isinstance(raw, str):
+        return bool(raw.strip())
+    if isinstance(raw, list):
+        return any(bool(str(item or "").strip()) for item in raw)
+    return False
+
+
+def _normalize_import_record(raw_record: Any) -> Dict[str, Any]:
+    if not isinstance(raw_record, dict):
+        raise ValueError("record must be an object")
+
+    now_iso = utc_now_iso()
+    cap_id = str(raw_record.get("capability_id") or "").strip()
+    if not cap_id:
+        raise ValueError("record.capability_id is required")
+    kind = _normalize_import_kind(raw_record.get("kind"))
+    if not kind:
+        raise ValueError("record.kind must be mcp_toolpack or skill")
+
+    if kind == "mcp_toolpack" and not cap_id.startswith("mcp:"):
+        raise ValueError("mcp capability_id must start with mcp:")
+    if kind == "skill" and not cap_id.startswith("skill:"):
+        raise ValueError("skill capability_id must start with skill:")
+
+    source_id = _coerce_import_source_id(kind, raw_record.get("source_id"))
+    source_uri = str(raw_record.get("source_uri") or "").strip()
+    source_tier = str(raw_record.get("source_tier") or "").strip() or "tier2"
+    trust_tier = str(raw_record.get("trust_tier") or "").strip() or "tier2"
+    source_record_id = str(raw_record.get("source_record_id") or "").strip() or cap_id
+    source_record_version = str(raw_record.get("source_record_version") or "").strip()
+    updated_at_source = str(raw_record.get("updated_at_source") or "").strip() or now_iso
+    name = str(raw_record.get("name") or "").strip() or _display_name_from_capability_id(cap_id)
+    description_short = str(raw_record.get("description_short") or "").strip()
+    if not description_short:
+        description_short = f"Imported capability {cap_id}"
+    license_text = str(raw_record.get("license") or "").strip()
+    qualification = str(raw_record.get("qualification_status") or "").strip().lower()
+    if qualification not in _QUAL_STATES:
+        qualification = ""
+    qualification_reasons = _normalize_import_reasons(raw_record.get("qualification_reasons"))
+    tags = _normalize_import_tags(raw_record.get("tags"), kind=kind)
+
+    if kind == "mcp_toolpack":
+        install_mode = str(raw_record.get("install_mode") or "").strip().lower()
+        if install_mode not in {"remote_only", "package", "command"}:
+            raise ValueError("mcp import requires record.install_mode in {remote_only, package, command}")
+        install_spec = raw_record.get("install_spec")
+        if not isinstance(install_spec, dict):
+            raise ValueError("mcp import requires record.install_spec object")
+        install_spec = dict(install_spec)
+        if "command" not in install_spec and raw_record.get("command") is not None:
+            install_spec["command"] = raw_record.get("command")
+        if "command_candidates" not in install_spec and raw_record.get("command_candidates") is not None:
+            install_spec["command_candidates"] = raw_record.get("command_candidates")
+        if "fallback_command" not in install_spec and raw_record.get("fallback_command") is not None:
+            install_spec["fallback_command"] = raw_record.get("fallback_command")
+        if (
+            "fallback_command_candidates" not in install_spec
+            and raw_record.get("fallback_command_candidates") is not None
+        ):
+            install_spec["fallback_command_candidates"] = raw_record.get("fallback_command_candidates")
+        if install_mode == "command":
+            command = install_spec.get("command")
+            command_candidates = install_spec.get("command_candidates")
+            has_command = _has_import_command_tokens(command)
+            has_command_candidates = False
+            if isinstance(command_candidates, list):
+                for row in command_candidates:
+                    if _has_import_command_tokens(row):
+                        has_command_candidates = True
+                        break
+            if not (has_command or has_command_candidates):
+                raise ValueError("command install_mode requires install_spec.command or install_spec.command_candidates")
+        rec: Dict[str, Any] = {
+            "capability_id": cap_id,
+            "kind": "mcp_toolpack",
+            "name": name,
+            "description_short": description_short,
+            "tags": tags,
+            "source_id": source_id,
+            "source_tier": source_tier,
+            "source_uri": source_uri,
+            "source_record_id": source_record_id,
+            "source_record_version": source_record_version,
+            "updated_at_source": updated_at_source,
+            "last_synced_at": now_iso,
+            "sync_state": "imported",
+            "install_mode": install_mode,
+            "install_spec": install_spec,
+            "requirements": {},
+            "license": license_text,
+            "trust_tier": trust_tier,
+            "health_status": "imported",
+        }
+        supported, unsupported_reason = _supported_external_install_record(rec)
+        if not qualification:
+            qualification = _QUAL_QUALIFIED if supported else _QUAL_UNAVAILABLE
+        if unsupported_reason and unsupported_reason not in qualification_reasons:
+            qualification_reasons.append(unsupported_reason)
+        rec["qualification_status"] = qualification
+        rec["qualification_reasons"] = qualification_reasons
+        rec["enable_supported"] = bool(
+            qualification != _QUAL_BLOCKED and supported
+        )
+        return rec
+
+    capsule_text = str(raw_record.get("capsule_text") or "").strip()
+    if not capsule_text:
+        raise ValueError("skill import requires record.capsule_text")
+    requires_capabilities = _normalize_import_requires(raw_record.get("requires_capabilities"))
+    if not qualification:
+        qualification = _QUAL_QUALIFIED
+    rec = {
+        "capability_id": cap_id,
+        "kind": "skill",
+        "name": name,
+        "description_short": description_short,
+        "tags": tags,
+        "source_id": source_id,
+        "source_tier": source_tier,
+        "source_uri": source_uri,
+        "source_record_id": source_record_id,
+        "source_record_version": source_record_version,
+        "updated_at_source": updated_at_source,
+        "last_synced_at": now_iso,
+        "sync_state": "imported",
+        "install_mode": "builtin",
+        "install_spec": {},
+        "requirements": {},
+        "license": license_text,
+        "trust_tier": trust_tier,
+        "qualification_status": qualification,
+        "qualification_reasons": qualification_reasons,
+        "health_status": "imported",
+        "enable_supported": qualification != _QUAL_BLOCKED,
+        "capsule_text": capsule_text[:2400],
+        "requires_capabilities": requires_capabilities,
+    }
+    return rec
+
+
+def _probe_import_record(rec: Dict[str, Any], *, capability_id: str, enabled: bool) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    if not enabled:
+        return ({"state": "skipped"}, [])
+    kind = str(rec.get("kind") or "").strip().lower()
+    if kind == "skill":
+        return (
+            {
+                "state": "ready",
+                "kind": "skill",
+                "capsule_present": bool(str(rec.get("capsule_text") or "").strip()),
+            },
+            [],
+        )
+    try:
+        install = _pkg()._install_external_capability(rec, capability_id=capability_id)
+        tools = install.get("tools") if isinstance(install.get("tools"), list) else []
+        names = [
+            str(item.get("real_tool_name") or item.get("name") or "").strip()
+            for item in tools
+            if isinstance(item, dict)
+        ]
+        names = [name for name in names if name]
+        install_state = str(install.get("state") or "").strip() or "installed"
+        probe = {
+            "state": "ready",
+            "kind": "mcp_toolpack",
+            "install_state": install_state,
+            "installer": str(install.get("installer") or ""),
+            "tool_count": len(names),
+            "tool_names": names[:64],
+            "degraded": install_state == "installed_degraded",
+            "install_error_code": str(install.get("last_error_code") or ""),
+            "install_error": str(install.get("last_error") or ""),
+        }
+        return probe, []
+    except Exception as e:
+        diagnostics = _pkg()._diagnostics_from_install_error(e)
+        info = _pkg()._classify_external_install_error(e)
+        code = str(info.get("code") or "probe_failed")
+        probe = {
+            "state": "failed",
+            "kind": "mcp_toolpack",
+            "reason": f"probe_failed:{code}",
+            "install_error_code": code,
+            "install_error": str(e),
+            "retryable": bool(info.get("retryable")),
+        }
+        return probe, diagnostics
+
+
+def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or args.get("actor_id") or "").strip()
+    actor_id = str(args.get("actor_id") or by).strip()
+    dry_run = bool(args.get("dry_run", False))
+    probe = bool(args.get("probe", True))
+    enable_after_import = bool(args.get("enable_after_import", False))
+    scope = _normalize_scope(args.get("scope"))
+    ttl_seconds_raw = args.get("ttl_seconds")
+    try:
+        ttl_seconds = int(ttl_seconds_raw if ttl_seconds_raw is not None else 3600)
+    except Exception:
+        raise ValueError("invalid ttl_seconds")
+    reason = str(args.get("reason") or "").strip()
+    action_id = f"cact_{uuid.uuid4().hex[:16]}"
+
+    def _audit(
+        outcome: str,
+        *,
+        state: str = "",
+        error_code: str = "",
+        details: Optional[Dict[str, Any]] = None,
+        capability_id: str = "",
+    ) -> None:
+        payload = dict(details) if isinstance(details, dict) else {}
+        if state:
+            payload["state"] = state
+        if error_code:
+            payload["error_code"] = error_code
+        if reason:
+            payload["reason"] = reason
+        try:
+            _append_audit_event(
+                action_id=action_id,
+                op="capability_import",
+                group_id=group_id,
+                actor_id=actor_id,
+                by=by,
+                capability_id=str(capability_id or ""),
+                scope=scope,
+                enabled=bool(enable_after_import),
+                outcome=outcome,
+                details=payload,
+            )
+        except Exception:
+            pass
+
+    try:
+        group = _ensure_group(group_id)
+        if by != "user":
+            if not by:
+                _audit("denied", state="denied", error_code="missing_actor_id")
+                return _error("missing_actor_id", "missing actor identity (by)", details={"action_id": action_id})
+            actors = group.doc.get("actors") if isinstance(group.doc.get("actors"), list) else []
+            known = {str(item.get("id") or "").strip() for item in actors if isinstance(item, dict)}
+            if by not in known:
+                _audit("denied", state="denied", error_code="actor_not_found")
+                return _error("actor_not_found", f"actor not found in group: {by}", details={"action_id": action_id})
+            if actor_id and actor_id != by:
+                _audit("denied", state="denied", error_code="permission_denied")
+                return _error(
+                    "permission_denied",
+                    "actor can only import capabilities as self",
+                    details={"action_id": action_id},
+                )
+        rec = _normalize_import_record(args.get("record"))
+        cap_id = str(rec.get("capability_id") or "").strip()
+        policy = _pkg()._allowlist_policy()
+        actor_role = _pkg()._resolve_actor_role(group, actor_id)
+        effective_policy_level = _pkg()._effective_policy_level(
+            policy,
+            capability_id=cap_id,
+            kind=str(rec.get("kind") or ""),
+            source_id=str(rec.get("source_id") or ""),
+            actor_role=actor_role,
+        )
+        qualification = str(rec.get("qualification_status") or _QUAL_QUALIFIED).strip().lower()
+        policy_visible = bool(_pkg()._policy_level_visible(effective_policy_level))
+        supported_now = bool(_pkg()._record_enable_supported(rec, capability_id=cap_id))
+        enable_block_reason = ""
+        if not policy_visible:
+            enable_block_reason = "policy_level_indexed"
+        elif qualification == _QUAL_BLOCKED:
+            enable_block_reason = "qualification_blocked"
+        elif not supported_now:
+            enable_block_reason = "capability_unavailable"
+        enableable_now = not bool(enable_block_reason)
+        probe_result, diagnostics = _probe_import_record(rec, capability_id=cap_id, enabled=probe)
+
+        if dry_run:
+            _audit(
+                "ready",
+                state=str(probe_result.get("state") or "ready"),
+                details={
+                    "dry_run": True,
+                    "probe_state": str(probe_result.get("state") or ""),
+                    "effective_policy_level": effective_policy_level,
+                    "enableable_now": bool(enableable_now),
+                    "enable_block_reason": enable_block_reason,
+                },
+                capability_id=cap_id,
+            )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "action_id": action_id,
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "capability_id": cap_id,
+                    "kind": str(rec.get("kind") or ""),
+                    "dry_run": True,
+                    "imported": False,
+                    "record": rec,
+                    "probe": probe_result,
+                    "diagnostics": diagnostics,
+                    "would_enable": bool(enable_after_import),
+                    "effective_policy_level": effective_policy_level,
+                    "enableable_now": bool(enableable_now),
+                    "enable_block_reason": enable_block_reason,
+                    "refresh_required": False,
+                    "state": str(probe_result.get("state") or "ready"),
+                },
+            )
+
+        with _CATALOG_LOCK:
+            catalog_path, catalog_doc = _pkg()._load_catalog_doc()
+            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            existing = rows.get(cap_id) if isinstance(rows.get(cap_id), dict) else None
+            deduped = bool(existing == rec)
+            rows[cap_id] = rec
+            catalog_doc["records"] = rows
+
+            source_id = str(rec.get("source_id") or "").strip()
+            if source_id:
+                sources = catalog_doc.get("sources") if isinstance(catalog_doc.get("sources"), dict) else {}
+                state = (
+                    sources.get(source_id)
+                    if isinstance(sources.get(source_id), dict)
+                    else _source_state_template("never")
+                )
+                state["sync_state"] = "imported"
+                state["last_synced_at"] = utc_now_iso()
+                state["staleness_seconds"] = 0
+                state["error"] = ""
+                sources[source_id] = state
+                catalog_doc["sources"] = sources
+            _refresh_source_record_counts(catalog_doc)
+            _pkg()._save_catalog_doc(catalog_path, catalog_doc)
+
+        enable_result: Dict[str, Any] = {}
+        refresh_required = False
+        state = "ready"
+        result_reason = ""
+        if enable_after_import:
+            enable_resp = handle_capability_enable(
+                {
+                    "group_id": group_id,
+                    "by": by,
+                    "actor_id": actor_id or by,
+                    "capability_id": cap_id,
+                    "scope": scope,
+                    "enabled": True,
+                    "ttl_seconds": ttl_seconds,
+                    "reason": reason or "capability_import_enable",
+                }
+            )
+            if enable_resp.ok and isinstance(enable_resp.result, dict):
+                enable_result = dict(enable_resp.result)
+                refresh_required = bool(enable_result.get("refresh_required"))
+                state = str(enable_result.get("state") or "ready").strip().lower() or "ready"
+                result_reason = str(enable_result.get("reason") or "").strip()
+            else:
+                state = "failed"
+                result_reason = str((enable_resp.error.message if enable_resp.error else "enable_failed") or "enable_failed")
+
+        final_state = "ready"
+        if str(probe_result.get("state") or "").strip().lower() == "failed":
+            final_state = "failed"
+        if state != "ready":
+            final_state = "failed"
+        if final_state == "failed" and not result_reason:
+            result_reason = str(probe_result.get("reason") or "").strip()
+
+        _audit(
+            "ready" if final_state == "ready" else "failed",
+            state=final_state,
+            error_code=result_reason if final_state == "failed" else "",
+            details={
+                "deduped": bool(deduped),
+                "enable_after_import": bool(enable_after_import),
+                "probe_state": str(probe_result.get("state") or ""),
+            },
+            capability_id=cap_id,
+        )
+        out: Dict[str, Any] = {
+            "action_id": action_id,
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "capability_id": cap_id,
+            "kind": str(rec.get("kind") or ""),
+            "dry_run": False,
+            "imported": True,
+            "deduped": bool(deduped),
+            "record": rec,
+            "probe": probe_result,
+            "diagnostics": diagnostics,
+            "effective_policy_level": effective_policy_level,
+            "enableable_now": bool(enableable_now),
+            "enable_block_reason": enable_block_reason,
+            "refresh_required": bool(refresh_required),
+            "enable_after_import": bool(enable_after_import),
+            "state": final_state,
+        }
+        if enable_result:
+            out["enable_result"] = enable_result
+        if result_reason:
+            out["reason"] = result_reason
+        return DaemonResponse(ok=True, result=out)
+    except LookupError as e:
+        _audit("failed", state="failed", error_code="group_not_found", details={"error": str(e)})
+        return _error("group_not_found", str(e), details={"action_id": action_id})
+    except ValueError as e:
+        msg = str(e)
+        code = "capability_import_invalid"
+        if msg == "missing_group_id":
+            code = "missing_group_id"
+            msg = "missing group_id"
+        _audit("failed", state="failed", error_code=code, details={"error": str(e)})
+        return _error(code, msg, details={"action_id": action_id})
+    except Exception as e:
+        _audit("failed", state="failed", error_code="capability_import_failed", details={"error": str(e)})
+        return _error("capability_import_failed", str(e), details={"action_id": action_id})
 
 
 # ---------------------------------------------------------------------------

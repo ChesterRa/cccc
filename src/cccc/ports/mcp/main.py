@@ -176,7 +176,8 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
                 if isinstance(enable_result, dict) and bool(enable_result.get("refresh_required")):
                     refresh_required = True
             if (
-                tool_name in {"cccc_capability_enable", "cccc_capability_uninstall", "cccc_capability_use"}
+                tool_name
+                in {"cccc_capability_enable", "cccc_capability_import", "cccc_capability_uninstall", "cccc_capability_use"}
                 and refresh_required
                 and _SESSION_SUPPORTS_TOOLS_LIST_CHANGED
             ):

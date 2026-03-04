@@ -17,6 +17,7 @@ from ....kernel.group import load_group
 from ....paths import ensure_home
 
 _SOURCE_IDS = (
+    "manual_import",
     "mcp_registry_official",
     "anthropic_skills",
     "github_skills_curated",
@@ -47,15 +48,9 @@ _OPENCLAW_TREE_CACHE: Dict[str, Any] = {"fetched_at": 0.0, "paths": []}
 
 _LEVEL_INDEXED = "indexed"
 _LEVEL_MOUNTED = "mounted"
-_LEVEL_ENABLED = "enabled"
+_LEVEL_ENABLED = "mounted"  # alias: enabled merged into mounted (3→2 level simplification)
 _LEVEL_PINNED = "pinned"
-_LEVELS = {_LEVEL_INDEXED, _LEVEL_MOUNTED, _LEVEL_ENABLED, _LEVEL_PINNED}
-_POLICY_LEVEL_ORDER = {
-    _LEVEL_INDEXED: 0,
-    _LEVEL_MOUNTED: 1,
-    _LEVEL_ENABLED: 2,
-    _LEVEL_PINNED: 3,
-}
+_LEVELS = {_LEVEL_INDEXED, _LEVEL_MOUNTED, _LEVEL_PINNED}
 _POLICY_CACHE: Dict[str, Any] = {
     "key": "",
     "compiled": None,
@@ -162,4 +157,3 @@ def _env_bool(name: str, default: bool) -> bool:
 def _quota_limit(name: str, default: int, *, minimum: int = 1, maximum: int = 10_000) -> int:
     raw = _env_int(name, default)
     return max(minimum, min(int(raw or default), maximum))
-

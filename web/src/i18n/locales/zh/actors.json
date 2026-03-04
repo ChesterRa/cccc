@@ -137,5 +137,8 @@
   "managedByProfileName": "当前由配置管理：{{name}}",
   "managedByProfileCustomHint": "如需手动编辑运行时、命令和密钥，请先转为自定义。",
   "profileControlsRuntimeFields": "运行时和命令由配置控制。如需编辑请先转为自定义。",
-  "linkedSecretsHint": "密钥由已关联的配置管理，请到设置 > Actor 配置库中编辑。"
+  "linkedSecretsHint": "密钥由已关联的配置管理，请到设置 > Actor 配置库中编辑。",
+  "connectionLost": "连接已断开",
+  "connectionLostDescription": "终端连接失败。智能体进程可能已停止或服务器不可达。",
+  "reconnect": "重新连接"
 }

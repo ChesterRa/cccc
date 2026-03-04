@@ -13,7 +13,10 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** in
 
 ## 1. Overview
 
-`context_sync` applies a batch of small "context ops" to a group's shared context storage (vision/overview/tasks/agents).
+`context_sync` applies a batch of small "context ops" to a group's shared context storage
+(`vision` / `overview.manual` / `tasks` / `agents`).
+
+`panorama` is a daemon-computed read-only projection (not directly writable via context ops).
 
 All operations are applied in order. If any op is invalid, the daemon rejects the entire batch.
 
@@ -125,7 +128,9 @@ Rules:
 Permission: assignee or foreman.
 Notes:
 - Changing to `"archived"` records `archived_from` to support restore.
-- Root task completion (`status="done"` on root task) triggers memory solidify+export hook.
+- Task status transitions append a daily memory entry (file-based ReMe lane).
+- Root task completion (`status="done"` on root task) additionally promotes one stable entry into `state/memory/MEMORY.md`.
+- Conversation lane may auto-trigger daemon memory consolidation (`context_check -> daily_flush`) on context pressure; this is independent of task hooks.
 
 #### `task.move`
 
@@ -197,8 +202,8 @@ Notes:
 The following ops are no longer supported in v2:
 - `sketch.update` → use `overview.manual.update`
 - `milestone.create` / `milestone.update` / `milestone.complete` / `milestone.restore` → use `task.*` with `parent_id=null` for root tasks
-- `note.add` / `note.update` / `note.remove` → removed (use memory store)
-- `reference.add` / `reference.update` / `reference.remove` → removed (use memory store)
+- `note.add` / `note.update` / `note.remove` → removed (use file-memory `cccc_memory(action=write, target=...)`)
+- `reference.add` / `reference.update` / `reference.remove` → removed (use file-memory `cccc_memory(action=write, target=...)`)
 
 ## 4. Optimistic Concurrency (CAS)
 

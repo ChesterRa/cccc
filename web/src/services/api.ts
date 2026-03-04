@@ -28,6 +28,8 @@ import type {
   CapabilityOverviewItem,
   CapabilitySourceState,
   CapabilityBlockEntry,
+  CapabilityStateResult,
+  CapabilityImportRecord,
 } from "../types";
 
 // ============ Token management ============
@@ -702,6 +704,73 @@ export async function blockCapabilityGlobal(groupId: string, capabilityId: strin
       scope: "global",
     }),
   });
+}
+
+export async function fetchGroupCapabilityState(groupId: string, actorId: string = "user") {
+  const params = new URLSearchParams();
+  if (actorId) params.set("actor_id", actorId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiJson<CapabilityStateResult>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/state${suffix}`
+  );
+}
+
+export async function enableGroupCapability(
+  groupId: string,
+  capabilityId: string,
+  opts?: {
+    enabled?: boolean;
+    scope?: "session" | "actor" | "group";
+    actorId?: string;
+    ttlSeconds?: number;
+    reason?: string;
+    cleanup?: boolean;
+  }
+) {
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/enable`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        capability_id: capabilityId,
+        enabled: opts?.enabled ?? true,
+        scope: opts?.scope || "session",
+        actor_id: opts?.actorId || "user",
+        ttl_seconds: opts?.ttlSeconds || 3600,
+        reason: opts?.reason || "",
+        cleanup: opts?.cleanup || false,
+      }),
+    }
+  );
+}
+
+export async function importCapability(
+  groupId: string,
+  record: CapabilityImportRecord,
+  opts?: {
+    dryRun?: boolean;
+    enableAfterImport?: boolean;
+    scope?: "session" | "actor" | "group";
+    actorId?: string;
+    ttlSeconds?: number;
+    reason?: string;
+  }
+) {
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/import`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        record,
+        dry_run: opts?.dryRun || false,
+        enable_after_import: opts?.enableAfterImport || false,
+        scope: opts?.scope || "session",
+        actor_id: opts?.actorId || "user",
+        ttl_seconds: opts?.ttlSeconds || 3600,
+        reason: opts?.reason || "",
+      }),
+    }
+  );
 }
 
 export async function updateSettings(groupId: string, settings: Partial<GroupSettings>) {

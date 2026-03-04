@@ -164,7 +164,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.get("/api/v1/groups/{group_id}/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
-        """Get full group context (vision/overview/tasks/agents)."""
+        """Get full group context (vision/overview/panorama/tasks/agents)."""
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:

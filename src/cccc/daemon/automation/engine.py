@@ -1792,4 +1792,87 @@ class AutomationManager:
         Note: Auto-transition from idle -> active is handled by the daemon
         message-ingest path (send/reply) for human-originated messages.
         """
-        pass
+        cfg_raw = group.doc.get("automation")
+        cfg = cfg_raw if isinstance(cfg_raw, dict) else {}
+        enabled = coerce_bool(cfg.get("memory_auto_enabled"), default=True)
+        if not enabled:
+            return
+
+        def _int_cfg(key: str, default: int, *, min_v: int, max_v: int) -> int:
+            try:
+                value = int(cfg.get(key) if key in cfg else default)
+            except Exception:
+                value = int(default)
+            return max(min_v, min(max_v, value))
+
+        min_new_messages = _int_cfg("memory_auto_min_new_messages", 8, min_v=1, max_v=2000)
+        min_interval_seconds = _int_cfg("memory_auto_min_interval_seconds", 90, min_v=0, max_v=86400)
+        max_messages = _int_cfg("memory_auto_max_messages", 400, min_v=20, max_v=4000)
+        cwt = _int_cfg("memory_auto_context_window_tokens", 128000, min_v=1024, max_v=2_000_000)
+        reserve = _int_cfg("memory_auto_reserve_tokens", 36000, min_v=0, max_v=2_000_000)
+        keep_recent = _int_cfg("memory_auto_keep_recent_tokens", 20000, min_v=256, max_v=2_000_000)
+        signal_pack_budget = _int_cfg("memory_auto_signal_pack_token_budget", 320, min_v=64, max_v=4096)
+
+        now = datetime.now(timezone.utc)
+        should_run = False
+        with self._lock:
+            state = _load_state(group)
+            memory_auto = state.get("memory_auto")
+            if not isinstance(memory_auto, dict):
+                memory_auto = {}
+                state["memory_auto"] = memory_auto
+
+            try:
+                pending = int(memory_auto.get("pending_messages") or 0)
+            except Exception:
+                pending = 0
+            pending += 1
+            memory_auto["pending_messages"] = pending
+
+            last_run_dt = parse_utc_iso(str(memory_auto.get("last_run_at") or ""))
+            elapsed_ok = True
+            if min_interval_seconds > 0 and last_run_dt is not None:
+                elapsed_ok = (now - last_run_dt).total_seconds() >= float(min_interval_seconds)
+            should_run = (pending >= int(min_new_messages)) and bool(elapsed_ok)
+            if should_run:
+                memory_auto["pending_messages"] = 0
+                memory_auto["last_run_at"] = utc_now_iso()
+            _save_state(group, state)
+
+        if not should_run:
+            return
+
+        try:
+            from ..memory.memory_ops import run_auto_conversation_memory_cycle
+
+            result = run_auto_conversation_memory_cycle(
+                group_id=group.group_id,
+                actor_id="system",
+                max_messages=max_messages,
+                context_window_tokens=cwt,
+                reserve_tokens=reserve,
+                keep_recent_tokens=keep_recent,
+                signal_pack_token_budget=signal_pack_budget,
+            )
+            status = str(result.get("status") or "")
+            with self._lock:
+                state = _load_state(group)
+                memory_auto = state.get("memory_auto")
+                if not isinstance(memory_auto, dict):
+                    memory_auto = {}
+                    state["memory_auto"] = memory_auto
+                memory_auto["last_result"] = result
+                memory_auto["last_result_at"] = utc_now_iso()
+                if status == "written":
+                    memory_auto["last_written_at"] = utc_now_iso()
+                _save_state(group, state)
+        except Exception as e:
+            with self._lock:
+                state = _load_state(group)
+                memory_auto = state.get("memory_auto")
+                if not isinstance(memory_auto, dict):
+                    memory_auto = {}
+                    state["memory_auto"] = memory_auto
+                memory_auto["last_error_at"] = utc_now_iso()
+                memory_auto["last_error"] = str(e)
+                _save_state(group, state)
