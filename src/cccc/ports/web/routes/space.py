@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..schemas import (
     GroupSpaceArtifactActionRequest,
@@ -15,11 +15,16 @@ from ..schemas import (
     GroupSpaceSourceActionRequest,
     GroupSpaceSyncRequest,
     RouteContext,
+    require_admin,
+    require_group,
 )
 
 
-def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
-    @app.get("/api/v1/groups/{group_id}/space/status")
+def create_routers(ctx: RouteContext) -> list[APIRouter]:
+    group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
+    global_router = APIRouter(prefix="/api/v1")
+
+    @group_router.get("/space/status")
     async def group_space_status(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -31,7 +36,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/groups/{group_id}/space/spaces")
+    @group_router.get("/space/spaces")
     async def group_space_spaces(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -43,7 +48,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/space/bind")
+    @group_router.post("/space/bind")
     async def group_space_bind(group_id: str, req: GroupSpaceBindRequest) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -66,7 +71,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/space/ingest")
+    @group_router.post("/space/ingest")
     async def group_space_ingest(group_id: str, req: GroupSpaceIngestRequest) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -90,7 +95,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/space/query")
+    @group_router.post("/space/query")
     async def group_space_query(group_id: str, req: GroupSpaceQueryRequest) -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -104,7 +109,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/groups/{group_id}/space/sources")
+    @group_router.get("/space/sources")
     async def group_space_sources_list(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -117,7 +122,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/space/sources")
+    @group_router.post("/space/sources")
     async def group_space_sources_action(group_id: str, req: GroupSpaceSourceActionRequest) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -141,7 +146,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/groups/{group_id}/space/artifacts")
+    @group_router.get("/space/artifacts")
     async def group_space_artifacts_list(
         group_id: str,
         provider: str = "notebooklm",
@@ -159,7 +164,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/space/artifacts")
+    @group_router.post("/space/artifacts")
     async def group_space_artifacts_action(group_id: str, req: GroupSpaceArtifactActionRequest) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -191,7 +196,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/groups/{group_id}/space/jobs")
+    @group_router.get("/space/jobs")
     async def group_space_jobs_list(
         group_id: str,
         provider: str = "notebooklm",
@@ -209,7 +214,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             args["state"] = state_value
         return await ctx.daemon({"op": "group_space_jobs", "args": args})
 
-    @app.post("/api/v1/groups/{group_id}/space/jobs")
+    @group_router.post("/space/jobs")
     async def group_space_jobs_action(group_id: str, req: GroupSpaceJobActionRequest) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -232,7 +237,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/space/sync")
+    @group_router.post("/space/sync")
     async def group_space_sync(group_id: str, req: GroupSpaceSyncRequest) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -255,7 +260,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/space/providers/{provider}/credential")
+    @global_router.get("/space/providers/{provider}/credential", dependencies=[Depends(require_admin)])
     async def group_space_provider_credential_status(provider: str, by: str = "user") -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -267,7 +272,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/space/providers/{provider}/credential")
+    @global_router.post("/space/providers/{provider}/credential", dependencies=[Depends(require_admin)])
     async def group_space_provider_credential_update(
         provider: str,
         req: GroupSpaceProviderCredentialUpdateRequest,
@@ -292,7 +297,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/space/providers/{provider}/health")
+    @global_router.post("/space/providers/{provider}/health", dependencies=[Depends(require_admin)])
     async def group_space_provider_health_check(provider: str, by: str = "user") -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
@@ -312,7 +317,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/space/providers/{provider}/auth")
+    @global_router.post("/space/providers/{provider}/auth", dependencies=[Depends(require_admin)])
     async def group_space_provider_auth(provider: str, req: GroupSpaceProviderAuthRequest) -> Dict[str, Any]:
         action = str(req.action or "status").strip() or "status"
         if ctx.read_only and action != "status":
@@ -335,7 +340,7 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/space/providers/{provider}/auth")
+    @global_router.get("/space/providers/{provider}/auth", dependencies=[Depends(require_admin)])
     async def group_space_provider_auth_status(provider: str, by: str = "user") -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -347,3 +352,5 @@ def register_space_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                 },
             }
         )
+
+    return [group_router, global_router]

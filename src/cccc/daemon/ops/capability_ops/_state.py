@@ -67,7 +67,7 @@ def _binding_state_allows_external_tool(state: Any) -> bool:
     token = str(state or "").strip().lower()
     if not token:
         return False
-    return token in {"ready", "ready_cached", "tool_call_failed"}
+    return token in {"activation_pending", "runnable", "verified", "tool_call_failed"}
 
 
 def _install_state_allows_external_tool(state: Any) -> bool:
@@ -591,7 +591,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 "capability_id": capability_id,
                 "scope": scope,
                 "enabled": False,
-                "state": "failed",
+                "state": "blocked",
                 "refresh_required": False,
                 "reason": reason_code,
                 "policy_level": "blocked",
@@ -619,7 +619,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                         "capability_id": capability_id,
                         "scope": scope,
                         "enabled": False,
-                        "state": "failed",
+                        "state": "blocked",
                         "refresh_required": False,
                         "reason": quota_reason,
                     },
@@ -653,7 +653,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                         "capability_id": capability_id,
                         "scope": scope,
                         "enabled": False,
-                        "state": "failed",
+                        "state": "blocked",
                         "refresh_required": False,
                         "reason": reason_code,
                         "policy_level": policy_level,
@@ -682,7 +682,8 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                         action="enable",
                     )
                     _save_runtime_doc(runtime_path, runtime_doc)
-            _audit("ready", state="ready", details={"builtin": True})
+            result_state = "activation_pending" if enabled else "disabled"
+            _audit("ready", state=result_state, details={"builtin": True, "enabled": bool(enabled)})
             return DaemonResponse(
                 ok=True,
                 result={
@@ -692,7 +693,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": capability_id,
                     "scope": scope,
                     "enabled": enabled,
-                    "state": "ready",
+                    "state": result_state,
                     "refresh_required": True,
                     "wait": "relist_or_reconnect",
                     "refresh_mode": "relist_or_reconnect",
@@ -827,7 +828,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": capability_id,
                     "scope": scope,
                     "enabled": False,
-                    "state": "failed",
+                    "state": "blocked",
                     "refresh_required": False,
                     "reason": reason_code,
                     "policy_level": policy_level,
@@ -902,7 +903,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     _save_runtime_doc(runtime_path, runtime_doc)
                 elif cleanup and (removed_installation or cleanup_skipped_reason):
                     _save_runtime_doc(runtime_path, runtime_doc)
-            _audit("ready", state="ready", details={"external": True, "disabled": True})
+            _audit("ready", state="disabled", details={"external": True, "disabled": True})
             result: Dict[str, Any] = {
                 "action_id": action_id,
                 "group_id": group_id,
@@ -910,7 +911,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 "capability_id": capability_id,
                 "scope": scope,
                 "enabled": False,
-                "state": "ready",
+                "state": "disabled",
                 "refresh_required": True,
                 "wait": "relist_or_reconnect",
                 "refresh_mode": "relist_or_reconnect",
@@ -948,7 +949,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": capability_id,
                     "scope": scope,
                     "enabled": False,
-                    "state": "failed",
+                    "state": "blocked",
                     "refresh_required": False,
                     "reason": reason_code,
                     "policy_level": policy_level,
@@ -1000,6 +1001,9 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     applied_dependencies.append(dep_cap_id)
                 _save_state_doc(state_path, state_doc)
 
+            refresh_required = bool(applied_dependencies)
+            result_state = "activation_pending" if refresh_required else "runnable"
+
             with _RUNTIME_LOCK:
                 runtime_path, runtime_doc = _load_runtime_doc()
                 _set_runtime_actor_binding(
@@ -1007,7 +1011,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     group_id=group_id,
                     actor_id=actor_id,
                     capability_id=capability_id,
-                    state="ready_skill",
+                    state=result_state,
                     last_error="",
                 )
                 _record_runtime_recent_success(
@@ -1022,10 +1026,9 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
             capsule = str(rec.get("capsule_text") or "").strip()
             if not capsule:
                 capsule = str(rec.get("description_short") or "").strip()
-            refresh_required = bool(applied_dependencies)
             _audit(
                 "ready",
-                state="ready",
+                state=result_state,
                 details={
                     "skill": True,
                     "applied_dependencies": applied_dependencies,
@@ -1039,7 +1042,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 "capability_id": capability_id,
                 "scope": scope,
                 "enabled": True,
-                "state": "ready",
+                "state": result_state,
                 "refresh_required": refresh_required,
                 "policy_level": policy_level,
                 "skill": {
@@ -1080,7 +1083,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": capability_id,
                     "scope": scope,
                     "enabled": False,
-                    "state": "failed",
+                    "state": "blocked",
                     "refresh_required": False,
                     "reason": reason_code,
                     "policy_level": policy_level,
@@ -1118,7 +1121,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                             "capability_id": capability_id,
                             "scope": scope,
                             "enabled": False,
-                            "state": "failed",
+                            "state": "blocked",
                             "refresh_required": False,
                             "reason": quota_reason,
                             "policy_level": policy_level,
@@ -1140,7 +1143,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": capability_id,
                     "scope": scope,
                     "enabled": False,
-                    "state": "failed",
+                    "state": "blocked",
                     "refresh_required": False,
                     "reason": f"preflight_failed:{preflight_code}",
                     "install_error_code": preflight_code,
@@ -1205,7 +1208,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": capability_id,
                     "scope": scope,
                     "enabled": False,
-                    "state": "failed",
+                    "state": "blocked",
                     "refresh_required": False,
                     "reason": reason,
                     "install_error_code": error_code,
@@ -1243,7 +1246,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     actor_id=actor_id,
                     capability_id=capability_id,
                     artifact_id=artifact_id,
-                    state="ready",
+                    state="activation_pending",
                     last_error="",
                 )
                 _save_runtime_doc(runtime_path, runtime_doc)
@@ -1262,7 +1265,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     actor_id=actor_id,
                     capability_id=capability_id,
                     artifact_id=artifact_id,
-                    state="ready_cached",
+                    state="activation_pending",
                     last_error="",
                 )
                 _save_runtime_doc(runtime_path, runtime_doc)
@@ -1291,7 +1294,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
             _save_runtime_doc(runtime_path, runtime_doc)
 
         tools = install.get("tools") if isinstance(install.get("tools"), list) else []
-        _audit("ready", state="ready", details={"installed_tool_count": len(tools)})
+        _audit("ready", state="activation_pending", details={"installed_tool_count": len(tools)})
         install_state = str(install.get("state") or "").strip() or "installed"
         degraded = install_state == "installed_degraded"
         result: Dict[str, Any] = {
@@ -1301,7 +1304,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
             "capability_id": capability_id,
             "scope": scope,
             "enabled": True,
-            "state": "ready",
+            "state": "activation_pending",
             "refresh_required": True,
             "wait": "relist_or_reconnect",
             "refresh_mode": "relist_or_reconnect",
@@ -1457,9 +1460,10 @@ def handle_capability_block(args: Dict[str, Any]) -> DaemonResponse:
                     _save_runtime_doc(runtime_path, runtime_doc)
 
         refresh_required = bool(removed_bindings > 0 or removed_runtime_bindings > 0)
+        result_state = "blocked" if blocked else "unblocked"
         _audit(
             "ready",
-            state="ready",
+            state=result_state,
             details={
                 "blocked": bool(blocked),
                 "removed_bindings": int(removed_bindings),
@@ -1473,7 +1477,7 @@ def handle_capability_block(args: Dict[str, Any]) -> DaemonResponse:
             "capability_id": capability_id,
             "scope": scope,
             "blocked": bool(blocked),
-            "state": "ready",
+            "state": result_state,
             "removed_bindings": int(removed_bindings),
             "removed_runtime_bindings": int(removed_runtime_bindings),
             "refresh_required": refresh_required,

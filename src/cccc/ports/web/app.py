@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import mimetypes
 import os
@@ -18,13 +19,21 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import __version__
 from ...daemon.server import call_daemon
-from ...kernel.settings import get_remote_access_settings
+from ...kernel.web_tokens import list_tokens, lookup_token
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
-from .schemas import RouteContext
+from .schemas import RouteContext, _configured_web_token
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
+
+
+@dataclass(frozen=True)
+class Principal:
+    kind: Literal["anonymous", "user"]
+    user_id: str = ""
+    allowed_groups: tuple[str, ...] = ()
+    is_admin: bool = False
 
 
 def _apply_web_logging(*, home: Path, level: str) -> None:
@@ -62,46 +71,56 @@ def _web_mode() -> Literal["normal", "exhibit"]:
     return "normal"
 
 
-def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
-    token = _configured_web_token()
-    if not token:
-        return None
-
-    # Skip auth for static UI assets (frontend code is public, only protect API)
+def _is_public_ui_path(request: Request) -> bool:
     path = str(request.url.path or "")
-    if path.startswith("/ui/") or path == "/ui":
-        return None
+    return path.startswith("/ui/") or path == "/ui"
 
+
+def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "cookie", "query"]]:
     auth = str(request.headers.get("authorization") or "").strip()
-    if auth == f"Bearer {token}":
-        return None
+    if auth.lower().startswith("bearer "):
+        return str(auth[7:] or "").strip(), "header"
 
     cookie = str(request.cookies.get("cccc_web_token") or "").strip()
-    if cookie == token:
-        return None
+    if cookie:
+        return cookie, "cookie"
 
     q = str(request.query_params.get("token") or "").strip()
-    if q == token:
-        return None
+    if q:
+        return q, "query"
+    return "", ""
 
-    return JSONResponse(
-        status_code=401,
-        content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
+
+def _request_token(request: Request) -> str:
+    return _request_token_parts(request)[0]
+
+
+def _resolve_principal(request: Request) -> Principal:
+    if _is_public_ui_path(request):
+        return Principal(kind="anonymous")
+    token = _request_token(request)
+    if not token:
+        return Principal(kind="anonymous")
+    entry = lookup_token(token)
+    if not isinstance(entry, dict) and token == _configured_web_token():
+        return Principal(kind="user", user_id="admin", is_admin=True)
+    if not isinstance(entry, dict):
+        return Principal(kind="anonymous")
+    user_id = str(entry.get("user_id") or "").strip()
+    if not user_id:
+        return Principal(kind="anonymous")
+    groups_raw = entry.get("allowed_groups")
+    allowed_groups = tuple(
+        str(group_id or "").strip()
+        for group_id in (groups_raw if isinstance(groups_raw, list) else [])
+        if str(group_id or "").strip()
     )
-
-
-def _configured_web_token() -> str:
-    """Resolve Web auth token from settings first, then env fallback."""
-    try:
-        cfg = get_remote_access_settings()
-        token = str(cfg.get("web_token") or "").strip() if isinstance(cfg, dict) else ""
-        if token:
-            return token
-    except Exception:
-        pass
-    return str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
-
-
+    return Principal(
+        kind="user",
+        user_id=user_id,
+        allowed_groups=allowed_groups,
+        is_admin=bool(entry.get("is_admin", False)),
+    )
 async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
     resp = await run_in_threadpool(call_daemon, req)
     if not resp.get("ok") and isinstance(resp.get("error"), dict) and resp["error"].get("code") == "daemon_unavailable":
@@ -222,19 +241,34 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _auth(request: Request, call_next):  # type: ignore[no-untyped-def]
-        token = _configured_web_token()
-
-        blocked = _require_token_if_configured(request)
-        if blocked is not None:
-            return blocked
+        provided_token, token_source = _request_token_parts(request)
+        principal = _resolve_principal(request)
+        stale_cookie = False
+        tokens_active = bool(list_tokens()) or bool(_configured_web_token())
+        # header/query 是用户显式提供的认证材料，仍然严格按 401 收口；
+        # cookie 在无 token 配置时允许匿名放行，并顺手清掉残留脏 cookie。
+        if not _is_public_ui_path(request) and provided_token and principal.kind != "user":
+            if token_source in ("header", "query") or tokens_active:
+                return JSONResponse(
+                    status_code=401,
+                    content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
+                )
+            if token_source == "cookie":
+                stale_cookie = True
+        # 未提供任何 token 但 token 认证已启用 → 对 API 路径返回 401，让前端显示登录框。
+        if not _is_public_ui_path(request) and not provided_token and tokens_active and principal.kind != "user":
+            path = str(request.url.path or "")
+            if path.startswith("/api/"):
+                return JSONResponse(
+                    status_code=401,
+                    content={"ok": False, "error": {"code": "unauthorized", "message": "authentication required", "details": {}}},
+                )
+        request.state.principal = principal
 
         resp = await call_next(request)
-        # Set cookie only when the token is actually provided (enables WebSocket auth without leaking the secret).
-        if token and str(request.cookies.get("cccc_web_token") or "").strip() != token:
-            auth = str(request.headers.get("authorization") or "").strip()
-            q = str(request.query_params.get("token") or "").strip()
-            if auth != f"Bearer {token}" and q != token:
-                return resp
+        if stale_cookie:
+            resp.delete_cookie(key="cccc_web_token", path="/")
+        if principal.kind == "user" and provided_token and str(request.cookies.get("cccc_web_token") or "").strip() != provided_token:
             # Detect real protocol: env override > proxy header > request scheme
             # Set CCCC_WEB_SECURE=1 when behind HTTPS proxy that doesn't send X-Forwarded-Proto
             force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")
@@ -242,7 +276,7 @@ def create_app() -> FastAPI:
             actual_scheme = "https" if force_secure else (forwarded_proto if forwarded_proto in ("http", "https") else str(getattr(request.url, "scheme", "") or "").lower())
             resp.set_cookie(
                 key="cccc_web_token",
-                value=token,
+                value=provided_token,
                 httponly=True,
                 samesite="none" if actual_scheme == "https" else "lax",
                 secure=actual_scheme == "https",
@@ -323,11 +357,12 @@ def create_app() -> FastAPI:
         return resp
 
     from .routes.base import register_base_routes
-    from .routes.space import register_space_routes
+    from .routes.space import create_routers as create_space_routers
     from .routes.groups import register_group_routes
-    from .routes.messaging import register_messaging_routes
-    from .routes.actors import register_actor_routes
+    from .routes.messaging import create_routers as create_messaging_routers
+    from .routes.actors import create_routers as create_actor_routers
     from .routes.im import register_im_routes
+    from .routes.tokens import create_routers as create_token_routers
 
     route_ctx = RouteContext(
         home=home,
@@ -344,10 +379,15 @@ def create_app() -> FastAPI:
     )
 
     register_base_routes(app, ctx=route_ctx)
-    register_space_routes(app, ctx=route_ctx)
+    for router in create_space_routers(route_ctx):
+        app.include_router(router)
     register_group_routes(app, ctx=route_ctx)
-    register_messaging_routes(app, ctx=route_ctx)
-    register_actor_routes(app, ctx=route_ctx)
+    for router in create_messaging_routers(route_ctx):
+        app.include_router(router)
+    for router in create_actor_routers(route_ctx):
+        app.include_router(router)
     register_im_routes(app, ctx=route_ctx)
+    for router in create_token_routers(route_ctx):
+        app.include_router(router)
 
     return app

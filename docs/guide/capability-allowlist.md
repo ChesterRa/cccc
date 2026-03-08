@@ -31,8 +31,10 @@ Runtime mutation still happens only through explicit enable flows (`capability_e
 Release baseline policy:
 
 1. third-party sources are discoverable by default (`mounted`)
-2. runtime flow has no approval gate; enable path is one-step when `enable_supported=true`
-3. `blocked` is explicit deny state (policy/source/runtime blocklist), reserved for clear deny signals
+2. external capability sources default to usable path (`mounted`) in normal mode
+3. conservative users can switch external capability sources back to `indexed` through `external_capability_safety_mode`
+4. runtime flow has no approval gate; enable path is one-step when `enable_supported=true`
+5. `blocked` is explicit deny state (policy/source/runtime blocklist), reserved for clear deny signals
 
 Runtime blocklist model:
 
@@ -76,12 +78,22 @@ Web routes map to daemon ops:
 3. `PUT /api/v1/capabilities/allowlist`
 4. `DELETE /api/v1/capabilities/allowlist`
 
-## 6. Recommended Workflow
+## 6. External Capability Safety Mode
+
+`capability_allowlist_get` / `validate` / `update` expose `external_capability_safety_mode` as a thin semantic view over the default posture for external capability sources:
+
+1. `normal` => external capability sources default to `mounted`
+2. `conservative` => external capability sources default to `indexed`
+
+Built-in packs are unaffected. Per-source and per-capability overrides can still be stricter.
+
+## 7. Recommended Workflow
 
 1. call `capability_allowlist_get`
-2. prepare patch (or full replacement)
-3. call `capability_allowlist_validate`
-4. apply with `capability_allowlist_update(expected_revision=...)`
-5. if mismatch, refetch and retry
+2. inspect `external_capability_safety_mode` and current revision
+3. prepare patch (or full replacement)
+4. call `capability_allowlist_validate`
+5. apply with `capability_allowlist_update(expected_revision=...)`
+6. if mismatch, refetch and retry
 
 Use `capability_allowlist_reset` to drop overlay and return to packaged default.

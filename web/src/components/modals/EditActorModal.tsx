@@ -510,8 +510,6 @@ export function EditActorModal({
                   <div className="font-medium">{selectedProfile.name || selectedProfile.id}</div>
                   <div className="mt-1">
                     {RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}
-                    {" · "}
-                    {String(selectedProfile.runner || "pty").toUpperCase()}
                   </div>
                   {commandPreview(selectedProfile.command) ? <div className="mt-1 font-mono break-all">{commandPreview(selectedProfile.command)}</div> : null}
                 </div>

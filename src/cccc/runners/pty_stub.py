@@ -41,7 +41,7 @@ class PtySupervisor:
         env: Dict[str, str],
         max_backlog_bytes: int = 2_000_000,
     ) -> PtySession:
-        raise RuntimeError("pty runner is not supported on this platform; use runner='headless' (Windows: install pywinpty for ConPTY)")
+        raise RuntimeError("pty runner is not supported on this platform; install pywinpty for Windows ConPTY")
 
     def stop_actor(self, *, group_id: str, actor_id: str) -> None:
         return None

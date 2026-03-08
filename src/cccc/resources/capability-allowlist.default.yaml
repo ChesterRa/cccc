@@ -14,7 +14,7 @@ level_semantics:
 defaults:
   source_level:
     cccc_builtin: mounted
-    manual_import: indexed
+    manual_import: mounted
     anthropic_skills: mounted
     github_skills_curated: mounted
     skillsmp_remote: indexed

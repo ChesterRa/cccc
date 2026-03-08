@@ -5,7 +5,7 @@ import json
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
 from ....kernel.group import load_group
 from ....ports.im.config_schema import canonicalize_im_config
@@ -17,40 +17,55 @@ from ..schemas import (
     IMSetRequest,
     InboxReadRequest,
     RouteContext,
+    check_group,
+    require_group,
 )
 
 
-def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
-    @app.get("/api/v1/groups/{group_id}/inbox/{actor_id}")
+def create_routers(ctx: RouteContext) -> list[APIRouter]:
+    # Group-scoped routes: /api/v1/groups/{group_id}/...
+    group_router = APIRouter(
+        prefix="/api/v1/groups/{group_id}",
+        dependencies=[Depends(require_group)],
+    )
+    # IM bridge routes: /api/im/... (manual check_group, group_id from query/body)
+    im_router = APIRouter()
+
+    # =========================================================================
+    # Group-scoped endpoints (guard via router dependency)
+    # =========================================================================
+
+    @group_router.get("/inbox/{actor_id}")
     async def inbox_list(group_id: str, actor_id: str, by: str = "user", limit: int = 50) -> Dict[str, Any]:
         return await ctx.daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": int(limit)}})
 
-    @app.post("/api/v1/groups/{group_id}/inbox/{actor_id}/read")
+    @group_router.post("/inbox/{actor_id}/read")
     async def inbox_mark_read(group_id: str, actor_id: str, req: InboxReadRequest) -> Dict[str, Any]:
         return await ctx.daemon(
             {"op": "inbox_mark_read", "args": {"group_id": group_id, "actor_id": actor_id, "event_id": req.event_id, "by": req.by}}
         )
 
-    @app.post("/api/v1/groups/{group_id}/start")
+    @group_router.post("/start")
     async def group_start(group_id: str, by: str = "user") -> Dict[str, Any]:
         return await ctx.daemon({"op": "group_start", "args": {"group_id": group_id, "by": by}})
 
-    @app.post("/api/v1/groups/{group_id}/stop")
+    @group_router.post("/stop")
     async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:
         return await ctx.daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
 
-    @app.post("/api/v1/groups/{group_id}/state")
+    @group_router.post("/state")
     async def group_set_state(group_id: str, state: str, by: str = "user") -> Dict[str, Any]:
         """Set group state (active/idle/paused) to control automation behavior."""
         return await ctx.daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
 
     # =========================================================================
-    # IM Bridge API
+    # IM Bridge API (manual check_group — group_id from query/body)
     # =========================================================================
 
-    @app.get("/api/im/status")
-    async def im_status(group_id: str) -> Dict[str, Any]:
+    @im_router.get("/api/im/status")
+    async def im_status(request: Request, group_id: str) -> Dict[str, Any]:
         """Get IM bridge status for a group."""
+        check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -102,9 +117,10 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         }
 
-    @app.get("/api/im/config")
-    async def im_config(group_id: str) -> Dict[str, Any]:
+    @im_router.get("/api/im/config")
+    async def im_config(request: Request, group_id: str) -> Dict[str, Any]:
         """Get IM bridge configuration for a group."""
+        check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -112,9 +128,10 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         im_cfg = canonicalize_im_config(group.doc.get("im"))
         return {"ok": True, "result": {"group_id": group_id, "im": im_cfg}}
 
-    @app.post("/api/im/set")
-    async def im_set(req: IMSetRequest) -> Dict[str, Any]:
+    @im_router.post("/api/im/set")
+    async def im_set(request: Request, req: IMSetRequest) -> Dict[str, Any]:
         """Set IM bridge configuration for a group."""
+        check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
@@ -175,9 +192,10 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         return {"ok": True, "result": {"group_id": req.group_id, "im": im_cfg}}
 
-    @app.post("/api/im/unset")
-    async def im_unset(req: IMActionRequest) -> Dict[str, Any]:
+    @im_router.post("/api/im/unset")
+    async def im_unset(request: Request, req: IMActionRequest) -> Dict[str, Any]:
         """Remove IM bridge configuration from a group."""
+        check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
@@ -188,11 +206,12 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         return {"ok": True, "result": {"group_id": req.group_id, "im": None}}
 
-    @app.post("/api/im/start")
-    async def im_start(req: IMActionRequest) -> Dict[str, Any]:
+    @im_router.post("/api/im/start")
+    async def im_start(request: Request, req: IMActionRequest) -> Dict[str, Any]:
         """Start IM bridge for a group."""
         import subprocess
 
+        check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
@@ -320,11 +339,12 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         except Exception as e:
             return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
 
-    @app.post("/api/im/stop")
-    async def im_stop(req: IMActionRequest) -> Dict[str, Any]:
+    @im_router.post("/api/im/stop")
+    async def im_stop(request: Request, req: IMActionRequest) -> Dict[str, Any]:
         """Stop IM bridge for a group."""
         import signal as sig
 
+        check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
@@ -365,11 +385,12 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     # ----- IM auth (bind / pending / list / revoke) -----
 
-    @app.post("/api/im/bind")
-    async def im_bind(req: Optional[IMBindRequest] = None, group_id: str = "", key: str = "") -> Dict[str, Any]:
+    @im_router.post("/api/im/bind")
+    async def im_bind(request: Request, req: Optional[IMBindRequest] = None, group_id: str = "", key: str = "") -> Dict[str, Any]:
         """Bind a pending authorization key to authorize an IM chat."""
         gid = str((req.group_id if isinstance(req, IMBindRequest) else group_id) or "").strip()
         k = str((req.key if isinstance(req, IMBindRequest) else key) or "").strip()
+        check_group(request, gid)
         if not gid:
             raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
         if not k:
@@ -382,9 +403,10 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             raise HTTPException(status_code=400, detail={"code": code, "message": msg})
         return resp
 
-    @app.get("/api/im/authorized")
-    async def im_list_authorized(group_id: str) -> Dict[str, Any]:
+    @im_router.get("/api/im/authorized")
+    async def im_list_authorized(request: Request, group_id: str) -> Dict[str, Any]:
         """List authorized chats for a group (enriched with verbose status)."""
+        check_group(request, group_id)
         resp = await ctx.daemon({"op": "im_list_authorized", "args": {"group_id": group_id}})
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
@@ -403,9 +425,10 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                     )
         return resp
 
-    @app.post("/api/im/verbose")
-    async def im_set_verbose(group_id: str, chat_id: str, verbose: bool, thread_id: int = 0) -> Dict[str, Any]:
+    @im_router.post("/api/im/verbose")
+    async def im_set_verbose(request: Request, group_id: str, chat_id: str, verbose: bool, thread_id: int = 0) -> Dict[str, Any]:
         """Set verbose mode for an IM subscriber."""
+        check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -416,17 +439,19 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             raise HTTPException(status_code=404, detail={"code": "subscriber_not_found", "message": "subscriber not found"})
         return {"ok": True, "result": {"chat_id": chat_id, "thread_id": thread_id, "verbose": verbose}}
 
-    @app.get("/api/im/pending")
-    async def im_list_pending(group_id: str) -> Dict[str, Any]:
+    @im_router.get("/api/im/pending")
+    async def im_list_pending(request: Request, group_id: str) -> Dict[str, Any]:
         """List pending bind requests for a group."""
+        check_group(request, group_id)
         resp = await ctx.daemon({"op": "im_list_pending", "args": {"group_id": group_id}})
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)
         return resp
 
-    @app.post("/api/im/pending/reject")
+    @im_router.post("/api/im/pending/reject")
     async def im_reject_pending(
+        request: Request,
         req: Optional[IMPendingRejectRequest] = None,
         group_id: str = "",
         key: str = "",
@@ -434,6 +459,7 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         """Reject a pending bind request key."""
         gid = str((req.group_id if isinstance(req, IMPendingRejectRequest) else group_id) or "").strip()
         k = str((req.key if isinstance(req, IMPendingRejectRequest) else key) or "").strip()
+        check_group(request, gid)
         if not gid:
             raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
         if not k:
@@ -446,11 +472,20 @@ def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             raise HTTPException(status_code=400, detail={"code": code, "message": msg})
         return resp
 
-    @app.post("/api/im/revoke")
-    async def im_revoke(group_id: str, chat_id: str, thread_id: int = 0) -> Dict[str, Any]:
+    @im_router.post("/api/im/revoke")
+    async def im_revoke(request: Request, group_id: str, chat_id: str, thread_id: int = 0) -> Dict[str, Any]:
         """Revoke authorization for a chat."""
+        check_group(request, group_id)
         resp = await ctx.daemon({"op": "im_revoke_chat", "args": {"group_id": group_id, "chat_id": chat_id, "thread_id": thread_id}})
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)
         return resp
+
+    return [group_router, im_router]
+
+
+def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
+    """Backward-compatible wrapper — delegates to create_routers."""
+    for router in create_routers(ctx):
+        app.include_router(router)

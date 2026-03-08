@@ -132,7 +132,6 @@ export function ChatTab({
 
     // Actions
     sendMessage,
-    acknowledgeMessage,
     copyMessageLink,
     startReply,
     showRecipients,
@@ -151,6 +150,7 @@ export function ChatTab({
     fileInputRef,
     chatAtBottomRef,
     chatScrollMemoryRef,
+    scrollRef,
   });
 
   const { t } = useTranslation('chat');
@@ -421,7 +421,6 @@ export function ChatTab({
           scrollRef={scrollRef}
           onReply={startReply}
           onShowRecipients={showRecipients}
-          onAck={acknowledgeMessage}
           onCopyLink={copyMessageLink}
           onRelay={relayMessage}
           onOpenSource={openSourceMessage}

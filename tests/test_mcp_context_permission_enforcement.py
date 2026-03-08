@@ -30,7 +30,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
-    def test_peer_cannot_update_vision_via_mcp(self) -> None:
+    def test_peer_cannot_update_coordination_brief_via_mcp(self) -> None:
         from cccc.ports.mcp import common as mcp_common
         from cccc.ports.mcp import server as mcp_server
 
@@ -90,8 +90,8 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
             ):
                 with self.assertRaises(MCPError) as err:
                     mcp_server.handle_tool_call(
-                        "cccc_context_admin",
-                        {"action": "vision_update", "vision": "hijacked"},
+                        "cccc_coordination",
+                        {"action": "update_brief", "objective": "hijacked"},
                     )
                 self.assertEqual(err.exception.code, "context_sync_error")
                 self.assertIn("Permission denied", str(err.exception.message))
@@ -99,7 +99,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
             read_resp, _ = self._call("context_get", {"group_id": group_id})
             self.assertTrue(read_resp.ok, getattr(read_resp, "error", None))
             result = read_resp.result if isinstance(read_resp.result, dict) else {}
-            self.assertEqual(str(result.get("vision") or ""), "")
+            self.assertEqual(str((((result.get("coordination") or {}).get("brief") or {}).get("objective") or "")), "")
         finally:
             cleanup()
 

@@ -1,15 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "react-i18next";
-import { apiJson, contextSync, fetchTasks } from "../services/api";
-import { GroupContext, ProjectMdInfo, Task } from "../types";
+import { addCoordinationNote, apiJson, contextSync, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
+import type {
+  AgentState,
+  CoordinationBrief,
+  CoordinationNote,
+  GroupContext,
+  ProjectMdInfo,
+  Task,
+  TaskBoardEntry,
+  TaskChecklistItem,
+  TaskWaitingOn,
+} from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { ModalFrame } from "./modals/ModalFrame";
-import { ProjectSavedNotifyModal } from "./modals/context/ProjectSavedNotifyModal";
-import { ContextSectionJumpBar } from "./modals/context/ContextSectionJumpBar";
-import { useUIStore } from "../stores/useUIStore";
 
 interface ContextModalProps {
   isOpen: boolean;
@@ -17,13 +26,335 @@ interface ContextModalProps {
   groupId: string;
   context: GroupContext | null;
   onRefreshContext: () => Promise<void>;
-  onUpdateVision: (vision: string) => Promise<void>;
-  busy: boolean;
   isDark: boolean;
 }
 
-type ContextOp = { op: string } & Record<string, unknown>;
-type AgentState = NonNullable<GroupContext["agents"]>[number];
+interface BriefDraft {
+  objective: string;
+  currentFocus: string;
+  constraints: string;
+  projectBrief: string;
+  projectBriefStale: boolean;
+}
+
+interface TaskDraft {
+  title: string;
+  outcome: string;
+  status: string;
+  assignee: string;
+  priority: string;
+  parentId: string;
+  blockedBy: string;
+  waitingOn: TaskWaitingOn;
+  handoffTo: string;
+  notes: string;
+  checklist: string;
+}
+
+interface NoteDraft {
+  summary: string;
+  taskId: string;
+}
+
+interface BoardColumns {
+  planned: Task[];
+  active: Task[];
+  done: Task[];
+  archived: Task[];
+}
+
+type BoardStatus = keyof BoardColumns;
+
+const WAITING_ON_OPTIONS: Array<{ value: TaskWaitingOn; label: string }> = [
+  { value: "none", label: "None" },
+  { value: "user", label: "Waiting on user" },
+  { value: "actor", label: "Waiting on agent" },
+  { value: "external", label: "Waiting on external" },
+];
+
+function taskTitle(task: Task | null | undefined): string {
+  if (!task) return "";
+  return String(task.title || task.id || "").trim();
+}
+
+function taskOutcome(task: Task | null | undefined): string {
+  if (!task) return "";
+  return String(task.outcome || "");
+}
+
+function taskStatus(task: Task | null | undefined): string {
+  return String(task?.status || "planned").toLowerCase();
+}
+
+function listToText(items: string[] | null | undefined): string {
+  return Array.isArray(items) ? items.join("\n") : "";
+}
+
+function parseLineList(text: string): string[] {
+  return text
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function checklistToText(items: TaskChecklistItem[] | null | undefined): string {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  return items
+    .map((item) => {
+      const status = String(item.status || "pending").toLowerCase();
+      const mark = status === "done" ? "[x]" : status === "in_progress" ? "[~]" : "[ ]";
+      return `${mark} ${String(item.text || "").trim()}`.trim();
+    })
+    .join("\n");
+}
+
+function parseChecklist(text: string, previous: TaskChecklistItem[] | null | undefined): TaskChecklistItem[] {
+  const prior = Array.isArray(previous) ? previous : [];
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const match = line.match(/^(?:[-*]\s*)?\[(x|X|~| )\]\s*(.+)$/);
+      const status = match
+        ? match[1].toLowerCase() === "x"
+          ? "done"
+          : match[1] === "~"
+            ? "in_progress"
+            : "pending"
+        : "pending";
+      const textValue = (match ? match[2] : line.replace(/^[-*]\s*/, "")).trim();
+      return {
+        id: String(prior[index]?.id || `item-${index + 1}`),
+        text: textValue,
+        status,
+      };
+    });
+}
+
+function briefToDraft(brief: CoordinationBrief | null | undefined): BriefDraft {
+  return {
+    objective: String(brief?.objective || ""),
+    currentFocus: String(brief?.current_focus || ""),
+    constraints: listToText(brief?.constraints),
+    projectBrief: String(brief?.project_brief || ""),
+    projectBriefStale: !!brief?.project_brief_stale,
+  };
+}
+
+function taskToDraft(task: Task): TaskDraft {
+  return {
+    title: taskTitle(task),
+    outcome: taskOutcome(task),
+    status: taskStatus(task),
+    assignee: String(task.assignee || ""),
+    priority: String(task.priority || ""),
+    parentId: String(task.parent_id || ""),
+    blockedBy: listToText(task.blocked_by),
+    waitingOn: (String(task.waiting_on || "none") || "none") as TaskWaitingOn,
+    handoffTo: String(task.handoff_to || ""),
+    notes: String(task.notes || ""),
+    checklist: checklistToText(task.checklist),
+  };
+}
+
+function emptyTaskDraft(status: BoardStatus = "planned"): TaskDraft {
+  return {
+    title: "",
+    outcome: "",
+    status,
+    assignee: "",
+    priority: "",
+    parentId: "",
+    blockedBy: "",
+    waitingOn: "none",
+    handoffTo: "",
+    notes: "",
+    checklist: "",
+  };
+}
+
+function taskDraftDirty(draft: TaskDraft | null | undefined): boolean {
+  if (!draft) return false;
+  return !!(
+    draft.title.trim()
+    || draft.outcome.trim()
+    || draft.assignee.trim()
+    || draft.priority.trim()
+    || draft.parentId.trim()
+    || draft.blockedBy.trim()
+    || (draft.waitingOn && draft.waitingOn !== "none")
+    || draft.handoffTo.trim()
+    || draft.notes.trim()
+    || draft.checklist.trim()
+    || String(draft.status || "planned") !== "planned"
+  );
+}
+
+function countLike(value: number | TaskBoardEntry[] | undefined, fallback: number): number {
+  if (typeof value === "number") return value;
+  if (Array.isArray(value)) return value.length;
+  return fallback;
+}
+
+function agentHot(agent: AgentState | null | undefined) {
+  return {
+    activeTaskId: String(agent?.hot?.active_task_id || "").trim(),
+    focus: String(agent?.hot?.focus || "").trim(),
+    nextAction: String(agent?.hot?.next_action || "").trim(),
+    blockers: Array.isArray(agent?.hot?.blockers) ? agent.hot.blockers : [],
+  };
+}
+
+function agentWarm(agent: AgentState | null | undefined) {
+  return {
+    whatChanged: String(agent?.warm?.what_changed || "").trim(),
+    openLoops: Array.isArray(agent?.warm?.open_loops) ? agent.warm.open_loops : [],
+    commitments: Array.isArray(agent?.warm?.commitments) ? agent.warm.commitments : [],
+    environmentSummary: String(agent?.warm?.environment_summary || "").trim(),
+    userModel: String(agent?.warm?.user_model || "").trim(),
+    personaNotes: String(agent?.warm?.persona_notes || "").trim(),
+    resumeHint: String(agent?.warm?.resume_hint || "").trim(),
+  };
+}
+
+function hasWarmState(agent: AgentState): boolean {
+  const warm = agentWarm(agent);
+  return !!(
+    warm.whatChanged ||
+    warm.openLoops.length ||
+    warm.commitments.length ||
+    warm.environmentSummary ||
+    warm.userModel ||
+    warm.personaNotes ||
+    warm.resumeHint
+  );
+}
+
+function sortTasks(tasks: Task[], mode: "created" | "updated"): Task[] {
+  const key = mode === "created" ? "created_at" : "updated_at";
+  return [...tasks].sort((left, right) => {
+    const a = String(left[key] || "");
+    const b = String(right[key] || "");
+    return b.localeCompare(a) || String(left.id).localeCompare(String(right.id));
+  });
+}
+
+function boardFallback(tasks: Task[]): BoardColumns {
+  return {
+    planned: sortTasks(tasks.filter((task) => taskStatus(task) === "planned"), "created"),
+    active: sortTasks(tasks.filter((task) => taskStatus(task) === "active"), "updated"),
+    done: sortTasks(tasks.filter((task) => taskStatus(task) === "done"), "updated"),
+    archived: sortTasks(tasks.filter((task) => taskStatus(task) === "archived"), "updated"),
+  };
+}
+
+function coerceBoardTask(entry: TaskBoardEntry, taskMap: Map<string, Task>): Task | null {
+  if (typeof entry === "string") {
+    return taskMap.get(entry) || null;
+  }
+  const id = String(entry.id || "").trim();
+  if (!id) return null;
+  return (
+    taskMap.get(id) || {
+      id,
+      title: String(entry.title || id),
+            outcome: String(entry.outcome || ""),
+            status: String(entry.status || "planned"),
+      assignee: typeof entry.assignee === "string" ? entry.assignee : null,
+      priority: typeof entry.priority === "string" ? entry.priority : null,
+      parent_id: typeof entry.parent_id === "string" ? entry.parent_id : null,
+      blocked_by: Array.isArray(entry.blocked_by) ? entry.blocked_by.map((item) => String(item)) : [],
+      waiting_on: typeof entry.waiting_on === "string" ? entry.waiting_on : undefined,
+      handoff_to: typeof entry.handoff_to === "string" ? entry.handoff_to : null,
+      notes: typeof entry.notes === "string" ? entry.notes : "",
+      checklist: [],
+      created_at: typeof entry.created_at === "string" ? entry.created_at : null,
+      updated_at: typeof entry.updated_at === "string" ? entry.updated_at : null,
+      archived_from: typeof entry.archived_from === "string" ? entry.archived_from : null,
+    }
+  );
+}
+
+function buildBoard(tasks: Task[], board: GroupContext["board"] | null | undefined): BoardColumns {
+  const fallback = boardFallback(tasks);
+  if (!board) return fallback;
+
+  const taskMap = new Map(tasks.map((task) => [task.id, task] as const));
+  const seen = new Set<string>();
+  const resolve = (entries: TaskBoardEntry[] | undefined, statusKey: keyof BoardColumns): Task[] => {
+    const projected = Array.isArray(entries)
+      ? entries
+          .map((entry) => coerceBoardTask(entry, taskMap))
+          .filter((task): task is Task => !!task)
+      : [];
+    for (const task of projected) seen.add(task.id);
+    const remainder = fallback[statusKey].filter((task) => !seen.has(task.id));
+    return [...projected, ...remainder];
+  };
+
+  return {
+    planned: resolve(board.planned, "planned"),
+    active: resolve(board.active, "active"),
+    done: resolve(board.done, "done"),
+    archived: resolve(board.archived, "archived"),
+  };
+}
+
+function statusTone(status: string, isDark: boolean): string {
+  if (status === "active") return isDark ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (status === "done") return isDark ? "bg-blue-500/15 text-blue-200 border-blue-500/30" : "bg-blue-50 text-blue-700 border-blue-200";
+  if (status === "archived") return isDark ? "bg-slate-700/60 text-slate-200 border-slate-600" : "bg-slate-100 text-slate-700 border-slate-200";
+  return isDark ? "bg-amber-500/15 text-amber-200 border-amber-500/30" : "bg-amber-50 text-amber-700 border-amber-200";
+}
+
+function waitingLabel(value: string): string {
+  const match = WAITING_ON_OPTIONS.find((option) => option.value === value);
+  return match ? match.label : value || "None";
+}
+
+function noteTimestamp(note: CoordinationNote): string {
+  const at = String(note.at || "").trim();
+  return at ? formatTime(at) : "";
+}
+
+function emptyNoteDraft(): NoteDraft {
+  return { summary: "", taskId: "" };
+}
+
+function briefDraftMatches(brief: CoordinationBrief | null | undefined, draft: BriefDraft): boolean {
+  const currentConstraints = Array.isArray(brief?.constraints) ? brief.constraints.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  const draftConstraints = parseLineList(draft.constraints);
+  return (
+    String(brief?.objective || "") === draft.objective
+    && String(brief?.current_focus || "") === draft.currentFocus
+    && JSON.stringify(currentConstraints) === JSON.stringify(draftConstraints)
+    && String(brief?.project_brief || "") === draft.projectBrief
+    && !!brief?.project_brief_stale === !!draft.projectBriefStale
+  );
+}
+
+function taskOptionLabel(task: Task): string {
+  const title = taskTitle(task);
+  return title ? `${task.id} · ${title}` : task.id;
+}
+
+function taskDraftMatches(task: Task | null | undefined, draft: TaskDraft | null | undefined): boolean {
+  if (!task || !draft) return false;
+  return (
+    taskTitle(task) === draft.title
+    && taskOutcome(task) === draft.outcome
+    && taskStatus(task) === draft.status
+    && String(task.assignee || "") === draft.assignee
+    && String(task.priority || "") === draft.priority
+    && String(task.parent_id || "") === draft.parentId
+    && listToText(task.blocked_by) === draft.blockedBy
+    && String(task.waiting_on || "none") === draft.waitingOn
+    && String(task.handoff_to || "") === draft.handoffTo
+    && String(task.notes || "") === draft.notes
+    && checklistToText(task.checklist) === draft.checklist
+  );
+}
 
 export function ContextModal({
   isOpen,
@@ -31,316 +362,643 @@ export function ContextModal({
   groupId,
   context,
   onRefreshContext,
-  onUpdateVision,
-  busy,
   isDark,
 }: ContextModalProps) {
   const { t } = useTranslation("modals");
-  const tr = (key: string, defaultValue: string, vars?: Record<string, unknown>): string =>
-    String(t(key as never, { defaultValue, ...(vars || {}) } as never));
-  const { modalRef } = useModalA11y(isOpen, onClose);
-  const [editingVision, setEditingVision] = useState(false);
-  const [visionText, setVisionText] = useState("");
-  const [editingOverview, setEditingOverview] = useState(false);
-  const [overviewFocusText, setOverviewFocusText] = useState("");
-  const [overviewRolesText, setOverviewRolesText] = useState("");
-  const [overviewCollabText, setOverviewCollabText] = useState("");
+  const tr = (key: string, fallback: string, vars?: Record<string, unknown>) =>
+    String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never));
 
-  // PROJECT.md state (project constitution)
+  const [activeView, setActiveView] = useState<"coordination" | "agents">("coordination");
+  const [steeringTab, setSteeringTab] = useState<"summary" | "project" | "log">("summary");
+  const [taskFilter, setTaskFilter] = useState<"all" | "blocked" | "waiting_user" | "handoff" | "unassigned">("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<string>("__all__");
+  const [taskQuery, setTaskQuery] = useState("");
+  const [dragTaskId, setDragTaskId] = useState("");
+  const [editingBrief, setEditingBrief] = useState(false);
+  const [briefDraft, setBriefDraft] = useState<BriefDraft>(briefToDraft(null));
+  const [taskEditorMode, setTaskEditorMode] = useState<"none" | "create" | "edit">("none");
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState("");
+
   const [projectMd, setProjectMd] = useState<ProjectMdInfo | null>(null);
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectError, setProjectError] = useState("");
+  const [projectNotice, setProjectNotice] = useState("");
   const [editingProject, setEditingProject] = useState(false);
   const [projectText, setProjectText] = useState("");
-
-  // Post-save notify modal
-  const [showNotifyModal, setShowNotifyModal] = useState(false);
   const [notifyAgents, setNotifyAgents] = useState(false);
-  const [notifyBusy, setNotifyBusy] = useState(false);
   const [notifyError, setNotifyError] = useState("");
+  const [decisionDraft, setDecisionDraft] = useState<NoteDraft>(emptyNoteDraft());
+  const [handoffDraft, setHandoffDraft] = useState<NoteDraft>(emptyNoteDraft());
+  const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
+  const [activityError, setActivityError] = useState("");
 
-  const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [tasksBusy, setTasksBusy] = useState(false);
-  const [tasksError, setTasksError] = useState("");
+  const brief = context?.coordination?.brief || null;
+  const tasks = useMemo(() => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []), [context]);
+  const agents = useMemo(() => (Array.isArray(context?.agent_states) ? context.agent_states : []), [context]);
+  const board = useMemo(() => buildBoard(tasks, context?.board), [context?.board, tasks]);
 
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncError, setSyncError] = useState("");
-  const [blockingTaskId, setBlockingTaskId] = useState("");
-  const [blockReason, setBlockReason] = useState("");
-  const uiActiveTab = useUIStore((s) => s.activeTab);
+  const allBoardTasks = useMemo(
+    () => [...board.active, ...board.planned, ...board.done, ...board.archived],
+    [board.active, board.archived, board.done, board.planned]
+  );
+
+  const taskMap = useMemo(() => {
+    const map = new Map<string, Task>();
+    for (const task of allBoardTasks) map.set(task.id, task);
+    return map;
+  }, [allBoardTasks]);
+
+  const selectedTask = selectedTaskId ? taskMap.get(selectedTaskId) || null : null;
+
+  const tasksSummary = useMemo(() => {
+    const fallback = {
+      total: tasks.length,
+      planned: board.planned.length,
+      active: board.active.length,
+      done: board.done.length,
+      archived: board.archived.length,
+    };
+    return context?.tasks_summary || fallback;
+  }, [board.active.length, board.archived.length, board.done.length, board.planned.length, context?.tasks_summary, tasks.length]);
+
+  const attentionCounts = useMemo(() => {
+    const blockedFallback = tasks.filter((task) => taskStatus(task) === "active" && Array.isArray(task.blocked_by) && task.blocked_by.length > 0).length;
+    const waitingUserFallback = tasks.filter((task) => String(task.waiting_on || "none") === "user").length;
+    const handoffFallback = tasks.filter((task) => !!String(task.handoff_to || "").trim() && taskStatus(task) !== "archived").length;
+    return {
+      blocked: countLike(context?.attention?.blocked, blockedFallback),
+      waitingUser: countLike(context?.attention?.waiting_user, waitingUserFallback),
+      pendingHandoffs: countLike(context?.attention?.pending_handoffs, handoffFallback),
+    };
+  }, [context?.attention, tasks]);
+
+  const recentDecisions = useMemo(
+    () => (Array.isArray(context?.coordination?.recent_decisions) ? context.coordination.recent_decisions : []),
+    [context]
+  );
+  const recentHandoffs = useMemo(
+    () => (Array.isArray(context?.coordination?.recent_handoffs) ? context.coordination.recent_handoffs : []),
+    [context]
+  );
 
   const projectPathLabel = useMemo(() => {
-    const p = projectMd?.path ? String(projectMd.path) : "";
-    if (p) return p;
-    return "PROJECT.md";
+    const path = String(projectMd?.path || "").trim();
+    return path || "PROJECT.md";
   }, [projectMd?.path]);
 
-  const notifyMessage = useMemo(() => {
-    return t("context.projectUpdatedNotify", { path: projectPathLabel });
-  }, [projectPathLabel, t]);
+  const notifyMessage = useMemo(
+    () => String(t("context.projectUpdatedNotify", { defaultValue: `PROJECT.md updated. Please re-read and realign. (${projectPathLabel})`, path: projectPathLabel })),
+    [projectPathLabel, t]
+  );
 
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!groupId) return;
-    let cancelled = false;
+  const assigneeOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => String(task.assignee || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
 
+  const unassignedCount = useMemo(
+    () => tasks.filter((task) => taskStatus(task) !== "archived" && !String(task.assignee || "").trim()).length,
+    [tasks]
+  );
+
+  const activeTaskOptions = useMemo(
+    () => tasks.filter((task) => taskStatus(task) !== "archived"),
+    [tasks]
+  );
+
+  const hasBriefUnsaved = useMemo(
+    () => editingBrief && !briefDraftMatches(brief, briefDraft),
+    [brief, briefDraft, editingBrief]
+  );
+
+  const hasProjectUnsaved = useMemo(
+    () => editingProject && projectText !== String(projectMd?.content || ""),
+    [editingProject, projectMd?.content, projectText]
+  );
+
+  const hasSteeringUnsaved = hasBriefUnsaved || hasProjectUnsaved;
+  const hasTaskUnsaved = useMemo(() => {
+    if (!taskDraft || taskEditorMode === "none") return false;
+    if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
+    return !!selectedTask && !taskDraftMatches(selectedTask, taskDraft);
+  }, [selectedTask, taskDraft, taskEditorMode]);
+
+  const taskEditorVisible = taskEditorMode !== "none" && !!taskDraft;
+
+  const loadProjectMd = useCallback(async (force: boolean = false): Promise<ProjectMdInfo | null> => {
+    if (!groupId) return null;
+    if (!force && projectMd !== null) return projectMd;
     setProjectBusy(true);
     setProjectError("");
-    setEditingProject(false);
-    setEditingOverview(false);
-    setNotifyError("");
-    setShowNotifyModal(false);
-
-    setTasksBusy(true);
-    setTasksError("");
-
-    setSyncBusy(false);
-    setSyncError("");
-
-    void (async () => {
+    try {
       const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`);
-      if (cancelled) return;
       if (!resp.ok) {
         setProjectMd(null);
-        setProjectError(resp.error?.message || t("context.failedToLoadProject"));
-        setProjectBusy(false);
-      } else {
-        setProjectMd(resp.result);
-        setProjectBusy(false);
+        setProjectError(resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
+        return null;
       }
-    })();
-
-    void (async () => {
-      const resp = await fetchTasks(groupId);
-      if (cancelled) return;
-      if (!resp.ok) {
-        setTasks(null);
-        setTasksError(resp.error?.message || t("context.failedToLoadTasks"));
-        setTasksBusy(false);
-        return;
-      }
-      setTasks(Array.isArray(resp.result?.tasks) ? resp.result.tasks : []);
-      setTasksBusy(false);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [groupId, isOpen, t]);
-
-  const rawAgentStates = context?.agents;
-  const agentStates = useMemo(
-    () => (Array.isArray(rawAgentStates) ? rawAgentStates : []),
-    [rawAgentStates]
-  );
-  const agentById = useMemo(() => {
-    const map = new Map<string, AgentState>();
-    for (const agent of agentStates) {
-      map.set(String(agent.id || "").trim(), agent);
+      setProjectMd(resp.result);
+      return resp.result ?? null;
+    } finally {
+      setProjectBusy(false);
     }
-    return map;
-  }, [agentStates]);
-  const knownAgentIds = useMemo(() => new Set(Array.from(agentById.keys())), [agentById]);
+  }, [groupId, projectMd, tr]);
 
-  const currentActorId = useMemo(() => {
-    const tab = String(uiActiveTab || "").trim();
-    if (!tab || tab === "chat" || tab === "panorama") return "";
-    if (knownAgentIds.has(tab)) return tab;
-    return "";
-  }, [knownAgentIds, uiActiveTab]);
+  useEffect(() => {
+    if (!isOpen || !groupId) return;
 
-  const taskViews = useMemo(() => {
-    const list = Array.isArray(tasks) ? tasks : [];
-    const normalize = (s: unknown) => String(s || "planned").toLowerCase();
+    setActiveView("coordination");
+    setSteeringTab("summary");
+    setTaskFilter("all");
+    setAssigneeFilter("__all__");
+    setTaskQuery("");
+    setDragTaskId("");
+    setTaskEditorMode("none");
+    setSelectedTaskId("");
+    setTaskDraft(null);
+    setSyncError("");
+    setEditingBrief(false);
+    setProjectMd(null);
+    setProjectBusy(false);
+    setProjectError("");
+    setProjectNotice("");
+    setEditingProject(false);
+    setProjectText("");
+    setNotifyError("");
+    setNotifyAgents(false);
+    setDecisionDraft(emptyNoteDraft());
+    setHandoffDraft(emptyNoteDraft());
+    setActivityBusyKind(null);
+    setActivityError("");
+  }, [groupId, isOpen]);
 
-    const active: Task[] = [];
-    const planned: Task[] = [];
-    const done: Task[] = [];
-    const archived: Task[] = [];
-    const blockedActiveTaskIds = new Set<string>();
+  useEffect(() => {
+    if (!isOpen || !groupId) return;
+    if ((steeringTab === "project" || editingProject) && projectMd === null && !projectBusy) {
+      void loadProjectMd();
+    }
+  }, [editingProject, groupId, isOpen, loadProjectMd, projectBusy, projectMd, steeringTab]);
 
-    const isTaskBlocked = (tk: Task): boolean => {
-      const assignee = String(tk.assignee || "").trim();
-      if (!assignee) return false;
-      const agent = agentById.get(assignee);
-      if (!agent) return false;
-      const blockers = Array.isArray(agent.blockers)
-        ? agent.blockers.filter((x: unknown) => String(x || "").trim())
-        : [];
-      if (blockers.length === 0) return false;
-      const activeTask = String(agent.active_task_id || "").trim();
-      if (activeTask) return activeTask === tk.id;
+  const taskMatches = useCallback(
+    (task: Task): boolean => {
+      const assignee = String(task.assignee || "").trim();
+      const status = taskStatus(task);
+      const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+      const waitingUser = String(task.waiting_on || "none") === "user";
+      const handoff = !!String(task.handoff_to || "").trim();
+      const query = taskQuery.trim().toLowerCase();
+
+      if (assigneeFilter === "__unassigned__") {
+        if (assignee) return false;
+      } else if (assigneeFilter !== "__all__" && assignee !== assigneeFilter) {
+        return false;
+      }
+
+      if (taskFilter === "blocked" && !(status !== "archived" && blocked)) return false;
+      if (taskFilter === "waiting_user" && !(status !== "archived" && waitingUser)) return false;
+      if (taskFilter === "handoff" && !(status !== "archived" && handoff)) return false;
+      if (taskFilter === "unassigned" && !(status !== "archived" && !assignee)) return false;
+
+      if (query) {
+        const haystack = [
+          task.id,
+          taskTitle(task),
+          taskOutcome(task),
+          assignee,
+          String(task.priority || ""),
+          String(task.handoff_to || ""),
+        ].join(" ").toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
       return true;
-    };
+    },
+    [assigneeFilter, taskFilter, taskQuery]
+  );
 
-    for (const tk of list) {
-      const st = normalize(tk.status);
-      if (st === "archived") {
-        archived.push(tk);
-        continue;
-      }
-      if (st === "done") {
-        done.push(tk);
-        continue;
-      }
-      if (st === "active") {
-        active.push(tk);
-        if (isTaskBlocked(tk)) blockedActiveTaskIds.add(tk.id);
-        continue;
-      }
-      planned.push(tk);
+  const filteredBoard = useMemo(
+    () => ({
+      planned: board.planned.filter(taskMatches),
+      active: board.active.filter(taskMatches),
+      done: board.done.filter(taskMatches),
+      archived: board.archived.filter(taskMatches),
+    }),
+    [board, taskMatches]
+  );
+
+  const filteredTaskTotal = useMemo(
+    () => filteredBoard.planned.length + filteredBoard.active.length + filteredBoard.done.length + filteredBoard.archived.length,
+    [filteredBoard]
+  );
+
+
+  useEffect(() => {
+    if (taskEditorMode !== "edit") return;
+    if (!selectedTaskId) {
+      setTaskEditorMode("none");
+      if (taskDraft) setTaskDraft(null);
+      return;
     }
+    if (!selectedTask) {
+      setSelectedTaskId("");
+      setTaskDraft(null);
+      setTaskEditorMode("none");
+      return;
+    }
+    if (!taskDraft) {
+      setTaskDraft(taskToDraft(selectedTask));
+    }
+  }, [selectedTaskId, selectedTask, taskDraft, taskEditorMode]);
 
-    return {
-      active,
-      planned,
-      done,
-      archived,
-      blockedActiveTaskIds,
-    };
-  }, [agentById, tasks]);
+  const surfaceClass = classNames(
+    "rounded-2xl border shadow-sm",
+    isDark ? "border-slate-800 bg-slate-900/80" : "border-gray-200 bg-white"
+  );
+  const mutedTextClass = isDark ? "text-slate-400" : "text-gray-500";
+  const subtleTextClass = isDark ? "text-slate-300" : "text-gray-700";
+  const inputClass = classNames(
+    "w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors",
+    isDark
+      ? "border-slate-700 bg-slate-950 text-slate-100 placeholder:text-slate-500 focus:border-blue-500"
+      : "border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-blue-500"
+  );
+  const textareaClass = classNames(inputClass, "min-h-[96px] resize-y");
+  const buttonSecondaryClass = classNames(
+    "rounded-lg px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+    isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+  );
+  const buttonPrimaryClass = "rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50";
+  const chipBaseClass = classNames(
+    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+    isDark ? "border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-600" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+  );
 
-  const runOps = async (ops: ContextOp[]): Promise<boolean> => {
-    if (!groupId) return false;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } })
+  );
+
+  const moveTaskToStatus = async (task: Task, nextStatus: BoardStatus) => {
+    if (!groupId) return;
+    if (taskStatus(task) === nextStatus) return;
     setSyncBusy(true);
     setSyncError("");
     try {
-      const resp = await contextSync(groupId, ops);
+      const resp = await updateCoordinationTask(groupId, {
+        ...task,
+        status: nextStatus,
+      });
       if (!resp.ok) {
-        setSyncError(resp.error?.message || t("context.failedToApplyChanges"));
-        return false;
+        setSyncError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        return;
       }
       await onRefreshContext();
-
-      const needsTaskRefresh = ops.some((o) => String(o.op || "").startsWith("task."));
-      if (needsTaskRefresh) {
-        const tResp = await fetchTasks(groupId);
-        if (tResp.ok) {
-          setTasks(Array.isArray(tResp.result?.tasks) ? tResp.result.tasks : []);
-        } else {
-          setTasksError(tResp.error?.message || t("context.failedToLoadTasks"));
-        }
+      if (selectedTaskId === task.id && taskEditorMode === "edit") {
+        setTaskDraft((prev) => (prev ? { ...prev, status: nextStatus } : prev));
       }
-      return true;
-    } catch (e) {
-      setSyncError(e instanceof Error ? e.message : "Unknown error");
-      return false;
     } finally {
       setSyncBusy(false);
     }
   };
 
-  const handleArchiveTask = async (taskId: string) => {
-    const prevTasks = tasks;
-    setTasks((prev) => (Array.isArray(prev) ? prev.map((tk) => (tk.id === taskId ? { ...tk, status: "archived" } : tk)) : prev));
-    const ok = await runOps([{ op: "task.status", task_id: taskId, status: "archived" }]);
-    if (!ok) {
-      setTasks(prevTasks);
+  const handleDragStart = (event: DragStartEvent) => {
+    const id = String(event.active.id || "");
+    if (id.startsWith("task:")) setDragTaskId(id.slice(5));
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDragTaskId("");
+    const activeId = String(event.active.id || "");
+    if (!activeId.startsWith("task:")) return;
+    const task = taskMap.get(activeId.slice(5));
+    if (!task || !event.over) return;
+    const overId = String(event.over.id || "");
+    let nextStatus: BoardStatus | null = null;
+    if (overId.startsWith("column:")) {
+      nextStatus = overId.slice(7) as BoardStatus;
+    } else if (overId.startsWith("task:")) {
+      const overTask = taskMap.get(overId.slice(5));
+      if (overTask) nextStatus = taskStatus(overTask) as BoardStatus;
+    }
+    if (nextStatus && nextStatus !== taskStatus(task)) {
+      void moveTaskToStatus(task, nextStatus);
     }
   };
 
-  const handleRestoreTask = async (taskId: string) => {
-    await runOps([{ op: "task.restore", task_id: taskId }]);
+  const TaskGhostCard = ({ task }: { task: Task }) => {
+    const status = taskStatus(task);
+    const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+    return (
+      <div className={classNames(
+        "w-[320px] rounded-2xl border p-3 shadow-2xl",
+        isDark ? "border-slate-700 bg-slate-900/95" : "border-gray-200 bg-white"
+      )}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className={classNames("truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{taskTitle(task)}</div>
+            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
+          </div>
+          <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status, isDark))}>{status}</span>
+        </div>
+        {taskOutcome(task) ? <div className={classNames("mt-2 line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</div> : null}
+        <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+          {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{task.assignee}</span> : null}
+          {blocked ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")}</span> : null}
+        </div>
+      </div>
+    );
   };
 
-  const handleClaimTask = async (task: Task) => {
-    if (!currentActorId) {
-      setSyncError(tr("context.claimNeedsActorTab", "Select an agent tab first, then claim."));
-      return;
-    }
-    const status = String(task.status || "").toLowerCase();
-    const ops: ContextOp[] = [{ op: "task.update", task_id: task.id, assignee: currentActorId }];
-    if (status === "planned") {
-      ops.push({ op: "task.status", task_id: task.id, status: "active" });
-    }
-    await runOps(ops);
+  const TaskCard = ({ task }: { task: Task }) => {
+    const status = taskStatus(task);
+    const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+    const waiting = String(task.waiting_on || "none").trim();
+    const handoff = String(task.handoff_to || "").trim();
+    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+      id: `task:${task.id}`,
+      disabled: syncBusy,
+      data: { type: "task", taskId: task.id, status },
+    });
+    const style = { transform: CSS.Translate.toString(transform) };
+    const quickAction = status === "planned" ? { label: tr("context.start", "Start"), next: "active" as BoardStatus }
+      : status === "active" ? { label: tr("context.done", "Done"), next: "done" as BoardStatus }
+      : status === "done" ? { label: tr("context.reopen", "Reopen"), next: "active" as BoardStatus }
+      : { label: tr("context.restore", "Restore"), next: "planned" as BoardStatus };
+
+    return (
+      <div ref={setNodeRef} style={style} className={classNames("group/task", isDragging && "z-20 opacity-80")}>
+        <div
+          {...attributes}
+          onClick={() => selectTask(task)}
+          className={classNames(
+            "w-full cursor-pointer rounded-2xl border p-3 text-left transition-all",
+            blocked
+              ? isDark ? "border-rose-500/30 bg-rose-500/5" : "border-rose-200 bg-rose-50/40"
+              : selectedTaskId === task.id
+                ? isDark
+                  ? "border-blue-500 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
+                  : "border-blue-400 bg-blue-50 shadow-[0_0_0_1px_rgba(96,165,250,0.35)]"
+                : isDark
+                  ? "border-slate-800 bg-slate-950/50 hover:border-slate-700 hover:bg-slate-900"
+                  : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+          )}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 text-left">
+              <div className={classNames("truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{taskTitle(task)}</div>
+              <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status, isDark))}>{status}</span>
+              <button
+                type="button"
+                {...listeners}
+                className={classNames(
+                  "rounded-lg px-2 py-1 text-[11px] md:opacity-0 md:group-hover/task:opacity-100",
+                  isDark ? "bg-slate-800 text-slate-300 hover:bg-slate-700" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                )}
+                onClick={(event) => event.stopPropagation()}
+                aria-label={tr("context.dragTask", "Drag task")}
+                title={tr("context.dragTask", "Drag task")}
+              >
+                ⋮⋮
+              </button>
+            </div>
+          </div>
+
+          {taskOutcome(task) ? (
+            <div className={classNames("mt-2 block w-full text-left line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</div>
+          ) : null}
+
+          <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+            {task.assignee ? (
+              <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{task.assignee}</span>
+            ) : (
+              <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-400" : "bg-gray-100 text-gray-500")}>{tr("context.unassigned", "Unassigned")}</span>
+            )}
+            {task.priority ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{task.priority}</span> : null}
+            {blocked ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")}</span> : null}
+            {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-violet-500/15 text-violet-200" : "bg-violet-50 text-violet-700")}>{waitingLabel(waiting)}</span> : null}
+            {handoff ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-cyan-500/15 text-cyan-200" : "bg-cyan-50 text-cyan-700")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
+          </div>
+
+          <div className="mt-3 flex items-center gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()}>
+            <button type="button" onClick={() => void moveTaskToStatus(task, quickAction.next)} disabled={syncBusy} className={buttonSecondaryClass}>{quickAction.label}</button>
+            <button type="button" onClick={() => selectTask(task)} className={buttonSecondaryClass}>{tr("context.edit", "Edit")}</button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
-  const handleMarkDone = async (taskId: string) => {
-    await runOps([{ op: "task.status", task_id: taskId, status: "done" }]);
+  const ColumnDropZone = ({ columnKey, label, items }: { columnKey: BoardStatus; label: string; items: Task[] }) => {
+    const { setNodeRef, isOver } = useDroppable({ id: `column:${columnKey}`, data: { type: "column", status: columnKey } });
+    return (
+      <section ref={setNodeRef} className={classNames(
+        "rounded-2xl border p-3 transition-all",
+        isOver
+          ? isDark ? "border-blue-500 bg-blue-500/5 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]" : "border-blue-300 bg-blue-50/70 shadow-[0_0_0_1px_rgba(96,165,250,0.2)]"
+          : isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50/70"
+      )}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{label}</div>
+            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{items.length} {tr("context.items", "items")}</div>
+          </div>
+          <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600")}>{items.length}</span>
+        </div>
+        <div className="mt-3">
+          <div className="space-y-2">
+            {items.length > 0 ? items.map((task) => <TaskCard key={task.id} task={task} />) : (
+              <div className={classNames("rounded-lg border border-dashed px-3 py-5 text-xs", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>
+                {tr(`context.empty.${columnKey}`, "No tasks here")}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    );
   };
 
-  const handleStartBlock = (taskId: string) => {
-    setBlockingTaskId(taskId);
-    setBlockReason("");
+  const confirmDiscardTaskChanges = useCallback(() => {
+    if (!hasTaskUnsaved || typeof window === "undefined") return true;
+    return window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
+  }, [hasTaskUnsaved, tr]);
+
+  const selectTask = (task: Task) => {
+    if (selectedTaskId === task.id && taskEditorMode === "edit") return;
+    if (!confirmDiscardTaskChanges()) return;
+    setSelectedTaskId(task.id);
+    setTaskDraft(taskToDraft(task));
+    setTaskEditorMode("edit");
+    setSyncError("");
+    setActiveView("coordination");
+  };
+
+  const closeTaskEditor = () => {
+    if (!confirmDiscardTaskChanges()) return;
+    setTaskEditorMode("none");
+    setSelectedTaskId("");
+    setTaskDraft(null);
     setSyncError("");
   };
 
-  const handleCancelBlock = () => {
-    setBlockingTaskId("");
-    setBlockReason("");
-  };
-
-  const handleMarkBlocked = async (task: Task) => {
-    const reason = String(blockReason || "").trim();
-    if (!reason) {
-      setSyncError(tr("context.blockReasonRequired", "Write a blocker reason first."));
-      return;
-    }
-    const assignee = String(task.assignee || "").trim();
-    const targetActorId = assignee || currentActorId;
-    if (!targetActorId) {
-      setSyncError(tr("context.blockNeedsActor", "Cannot mark blocked: task has no assignee and no active agent tab."));
-      return;
-    }
-
-    const existingAgent = agentById.get(targetActorId);
-    const existingBlockers = Array.isArray(existingAgent?.blockers)
-      ? existingAgent!.blockers.map((x: unknown) => String(x || "").trim()).filter(Boolean)
-      : [];
-    const nextBlockers = existingBlockers.includes(reason) ? existingBlockers : [...existingBlockers, reason];
-    const ok = await runOps([
-      {
-        op: "agent.update",
-        agent_id: targetActorId,
-        active_task_id: task.id,
-        blockers: nextBlockers,
-        what_changed: `${task.id} blocked`,
-      },
-    ]);
-    if (ok) {
-      setBlockingTaskId("");
-      setBlockReason("");
-    }
-  };
-
-  const handleEditVision = () => {
-    setVisionText(context?.vision || "");
-    setEditingVision(true);
-  };
-
-  const handleSaveVision = async () => {
-    await onUpdateVision(visionText);
-    setEditingVision(false);
-  };
-
-  const handleEditOverview = () => {
-    const manual = context?.overview?.manual;
-    setOverviewFocusText(String(manual?.current_focus || ""));
-    setOverviewCollabText(String(manual?.collaboration_mode || ""));
-    setOverviewRolesText(Array.isArray(manual?.roles) ? manual!.roles!.join(", ") : "");
-    setEditingOverview(true);
-  };
-
-  const handleSaveOverview = async () => {
-    const roles = String(overviewRolesText || "")
-      .split(/[\n,]/)
-      .map((x) => x.trim())
-      .filter(Boolean);
-    const ok = await runOps([
-      {
-        op: "overview.manual.update",
-        current_focus: overviewFocusText,
-        collaboration_mode: overviewCollabText,
-        roles,
-      },
-    ]);
-    if (ok) setEditingOverview(false);
-  };
-
-  const handleEditProject = () => {
-    setProjectText(projectMd?.content ? String(projectMd.content) : "");
+  const openSteeringTab = useCallback((tab: "summary" | "project" | "log") => {
+    if (!confirmDiscardTaskChanges()) return;
+    setTaskEditorMode("none");
+    setActiveView("coordination");
+    setSteeringTab(tab);
+    setSelectedTaskId("");
+    setTaskDraft(null);
+    setSyncError("");
+    setProjectNotice("");
     setProjectError("");
+    setNotifyError("");
+    setActivityError("");
+    if (tab === "project") {
+      void loadProjectMd();
+    }
+  }, [confirmDiscardTaskChanges, loadProjectMd]);
+
+  const handleSwitchActiveView = useCallback((next: "coordination" | "agents") => {
+    if (next === "agents") {
+      if (!confirmDiscardTaskChanges()) return;
+      setTaskEditorMode("none");
+      setSelectedTaskId("");
+      setTaskDraft(null);
+    }
+    setActiveView(next);
+  }, [confirmDiscardTaskChanges]);
+
+  const handleModalClose = useCallback(() => {
+    if (typeof window !== "undefined") {
+      if (hasSteeringUnsaved && hasTaskUnsaved) {
+        const ok = window.confirm(tr("context.unsavedCloseConfirm", "You have unsaved project and task changes. Discard them and close?"));
+        if (!ok) return;
+      } else if (hasSteeringUnsaved) {
+        const ok = window.confirm(tr("context.unsavedChangesConfirm", "You have unsaved changes in project steering. Discard them and close?"));
+        if (!ok) return;
+      } else if (hasTaskUnsaved) {
+        const ok = window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
+        if (!ok) return;
+      }
+    }
+    onClose();
+  }, [hasSteeringUnsaved, hasTaskUnsaved, onClose, tr]);
+
+  const { modalRef } = useModalA11y(isOpen, handleModalClose);
+
+  const handleSaveBrief = async () => {
+    if (!groupId) return;
+    setSyncBusy(true);
+    setSyncError("");
+    try {
+      const resp = await updateCoordinationBrief(groupId, {
+        objective: briefDraft.objective,
+        current_focus: briefDraft.currentFocus,
+        constraints: parseLineList(briefDraft.constraints),
+        project_brief: briefDraft.projectBrief,
+        project_brief_stale: briefDraft.projectBriefStale,
+      });
+      if (!resp.ok) {
+        setSyncError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        return;
+      }
+      await onRefreshContext();
+      setEditingBrief(false);
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const handleSaveTask = async () => {
+    if (!groupId || !taskDraft) return;
+    const title = taskDraft.title.trim();
+    if (!title) {
+      setSyncError(tr("context.taskTitleRequired", "Task title is required."));
+      return;
+    }
+
+    setSyncBusy(true);
+    setSyncError("");
+    try {
+      if (taskEditorMode === "create") {
+        const resp = await contextSync(groupId, [{
+          op: "task.create",
+          title,
+          outcome: taskDraft.outcome,
+          status: taskDraft.status || "planned",
+          assignee: taskDraft.assignee.trim() || null,
+          priority: taskDraft.priority.trim() || null,
+          parent_id: taskDraft.parentId.trim() || null,
+          blocked_by: parseLineList(taskDraft.blockedBy),
+          waiting_on: taskDraft.waitingOn,
+          handoff_to: taskDraft.handoffTo.trim() || null,
+          notes: taskDraft.notes,
+          checklist: parseChecklist(taskDraft.checklist, []),
+        }]);
+        if (!resp.ok) {
+          setSyncError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+          return;
+        }
+        await onRefreshContext();
+        setTaskEditorMode("none");
+        setSelectedTaskId("");
+        setTaskDraft(null);
+        return;
+      }
+
+      if (!selectedTask) return;
+      const resp = await updateCoordinationTask(groupId, {
+        ...selectedTask,
+        title,
+        outcome: taskDraft.outcome,
+        status: taskDraft.status,
+        assignee: taskDraft.assignee.trim() || null,
+        priority: taskDraft.priority.trim() || null,
+        parent_id: taskDraft.parentId.trim() || null,
+        blocked_by: parseLineList(taskDraft.blockedBy),
+        waiting_on: taskDraft.waitingOn,
+        handoff_to: taskDraft.handoffTo.trim() || null,
+        notes: taskDraft.notes,
+        checklist: parseChecklist(taskDraft.checklist, selectedTask.checklist),
+      });
+      if (!resp.ok) {
+        setSyncError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        return;
+      }
+      await onRefreshContext();
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const handleResetTask = () => {
+    if (taskEditorMode === "create") {
+      setTaskDraft(emptyTaskDraft("planned"));
+      setSyncError("");
+      return;
+    }
+    if (!selectedTask) return;
+    setTaskDraft(taskToDraft(selectedTask));
+    setSyncError("");
+  };
+
+  const handleOpenCreate = (status: BoardStatus = "planned") => {
+    if (!confirmDiscardTaskChanges()) return;
+    setTaskEditorMode("create");
+    setSelectedTaskId("");
+    setTaskDraft(emptyTaskDraft(status));
+    setSyncError("");
+    setActiveView("coordination");
+  };
+
+  const handleEditProject = async () => {
+    openSteeringTab("project");
+    const loaded = await loadProjectMd(true);
+    setProjectText(String(loaded?.content || ""));
     setEditingProject(true);
   };
 
@@ -348,6 +1006,7 @@ export function ContextModal({
     if (!groupId) return;
     setProjectBusy(true);
     setProjectError("");
+    setProjectNotice("");
     setNotifyError("");
     try {
       const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`, {
@@ -355,624 +1014,588 @@ export function ContextModal({
         body: JSON.stringify({ content: projectText, by: "user" }),
       });
       if (!resp.ok) {
-        setProjectError(resp.error?.message || t("context.failedToSaveProject"));
+        setProjectError(resp.error?.message || tr("context.failedToSaveProject", "Failed to save PROJECT.md"));
         return;
       }
       setProjectMd(resp.result);
       setEditingProject(false);
+      await onRefreshContext();
+
+      let notice = tr("context.projectSaved", "PROJECT.md saved.");
+      if (notifyAgents) {
+        const notifyResp = await apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
+          method: "POST",
+          body: JSON.stringify({ text: notifyMessage, by: "user", to: ["@all"], path: "" }),
+        });
+        if (!notifyResp.ok) {
+          setNotifyError(notifyResp.error?.message || tr("context.failedToNotify", "Failed to notify agents"));
+          notice = tr("context.projectSavedNotifyFailed", "PROJECT.md saved, but chat notification failed.");
+        } else {
+          notice = tr("context.projectSavedAndNotified", "PROJECT.md saved and the team was notified in chat.");
+        }
+      }
+      setProjectNotice(notice);
       setNotifyAgents(false);
-      setShowNotifyModal(true);
     } finally {
       setProjectBusy(false);
     }
   };
 
-  const handleNotifyDone = async () => {
-    if (!groupId) {
-      setShowNotifyModal(false);
+  const handleAddCoordinationNote = async (kind: "decision" | "handoff") => {
+    if (!groupId) return;
+    const draft = kind === "decision" ? decisionDraft : handoffDraft;
+    const summary = String(draft.summary || "").trim();
+    if (!summary) {
+      setActivityError(tr("context.noteSummaryRequired", "Summary is required."));
       return;
     }
-    setNotifyBusy(true);
-    setNotifyError("");
+    setActivityBusyKind(kind);
+    setActivityError("");
     try {
-      if (notifyAgents) {
-        const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
-          method: "POST",
-          body: JSON.stringify({ text: notifyMessage, by: "user", to: ["@all"], path: "" }),
-        });
-        if (!resp.ok) {
-          setNotifyError(resp.error?.message || t("context.failedToNotify"));
-          return;
-        }
+      const resp = await addCoordinationNote(groupId, kind, summary, String(draft.taskId || "").trim() || null);
+      if (!resp.ok) {
+        setActivityError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        return;
       }
-      setShowNotifyModal(false);
+      await onRefreshContext();
+      if (kind === "decision") {
+        setDecisionDraft(emptyNoteDraft());
+      } else {
+        setHandoffDraft(emptyNoteDraft());
+      }
     } finally {
-      setNotifyBusy(false);
+      setActivityBusyKind(null);
     }
   };
 
-  const actionBtnClass = classNames(
-    "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-    isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-  );
-
-  const renderTaskCard = (
-    tk: Task,
-    opts: {
-      allowClaim?: boolean;
-      allowBlock?: boolean;
-      allowDone?: boolean;
-      allowArchive?: boolean;
-      allowRestore?: boolean;
+  const renderTaskEditorPanel = () => {
+    if (!taskEditorVisible || !taskDraft) {
+      return (
+        <section className={classNames(surfaceClass, "hidden xl:flex xl:min-h-[520px] xl:flex-col xl:justify-center xl:p-6") }>
+          <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.taskEditorEmptyTitle", "Select a task")}</div>
+          <div className={classNames("mt-2 text-sm", subtleTextClass)}>{tr("context.taskEditorEmptyHint", "Pick a card to edit, or create a new task from the button above.")}</div>
+        </section>
+      );
     }
-  ) => {
-    const assignee = String(tk.assignee || "").trim();
-    const isBlocked = taskViews.blockedActiveTaskIds.has(tk.id);
-    const isMine = !!currentActorId && assignee === currentActorId;
-    const isUnassigned = !assignee;
+
+    const isCreate = taskEditorMode === "create";
+    return (
+      <section className={classNames(surfaceClass, "p-4 xl:sticky xl:top-0 xl:max-h-[calc(94vh-8rem)] xl:overflow-y-auto")}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{isCreate ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}</div>
+            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.") : (selectedTask?.id || "")}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            {hasTaskUnsaved ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-50 text-amber-700")}>{tr("context.unsaved", "Unsaved")}</span> : null}
+            <button type="button" onClick={handleResetTask} disabled={syncBusy} className={buttonSecondaryClass}>{isCreate ? tr("context.clear", "Clear") : tr("context.reset", "Reset")}</button>
+            <button type="button" onClick={closeTaskEditor} className={buttonSecondaryClass}>{tr("context.close", "Close")}</button>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className={classNames("text-xs", mutedTextClass)}>
+              {isCreate ? tr("context.editorInlineHint", "Editing stays inside the Tasks workspace so you can keep the board in view.") : (selectedTask?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet"))}
+            </div>
+            <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(taskDraft.status, isDark))}>{taskDraft.status}</span>
+          </div>
+
+          <label className="block text-sm">
+            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.titleField", "Title")}</span>
+            <input value={taskDraft.title} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, title: event.target.value } : prev)} className={inputClass} />
+          </label>
+
+          <label className="block text-sm">
+            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.outcome", "Outcome")}</span>
+            <textarea value={taskDraft.outcome} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, outcome: event.target.value } : prev)} className={textareaClass} />
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm">
+              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.status", "Status")}</span>
+              <select value={taskDraft.status} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, status: event.target.value } : prev)} className={inputClass}>
+                <option value="planned">{tr("context.planned", "Planned")}</option>
+                <option value="active">{tr("context.active", "Active")}</option>
+                <option value="done">{tr("context.done", "Done")}</option>
+                <option value="archived">{tr("context.archived", "Archived")}</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.assignee", "Assignee")}</span>
+              <input value={taskDraft.assignee} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, assignee: event.target.value } : prev)} className={inputClass} />
+            </label>
+          </div>
+
+          <label className="block text-sm">
+            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.priority", "Priority")}</span>
+            <input value={taskDraft.priority} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, priority: event.target.value } : prev)} className={inputClass} />
+          </label>
+
+          <details className={classNames("rounded-xl border px-3 py-3", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50") }>
+            <summary className={classNames("cursor-pointer text-sm font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.advancedTaskFields", "Advanced details")}</summary>
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.parentTask", "Parent task")}</span>
+                  <input value={taskDraft.parentId} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, parentId: event.target.value } : prev)} className={inputClass} placeholder={tr("context.rootTask", "Root task")} />
+                </label>
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.handoffTo", "Handoff to")}</span>
+                  <input value={taskDraft.handoffTo} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, handoffTo: event.target.value } : prev)} className={inputClass} />
+                </label>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.blockedBy", "Blocked by")}</span>
+                  <textarea value={taskDraft.blockedBy} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, blockedBy: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[90px]")} placeholder={tr("context.onePerLine", "One per line")} />
+                </label>
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.waitingOn", "Waiting on")}</span>
+                  <select value={taskDraft.waitingOn} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, waitingOn: event.target.value as TaskWaitingOn } : prev)} className={inputClass}>
+                    {WAITING_ON_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <label className="block text-sm">
+                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.notes", "Notes")}</span>
+                <textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, notes: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[100px]")} />
+              </label>
+
+              <label className="block text-sm">
+                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.checklist", "Checklist")}</span>
+                <textarea value={taskDraft.checklist} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, checklist: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[120px]")} placeholder={tr("context.checklistPlaceholder", "Use [ ], [~], [x] prefixes if useful.")} />
+              </label>
+            </div>
+          </details>
+
+          {isCreate ? (
+            <div className={classNames("rounded-xl border px-3 py-3 text-xs", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+              {tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.")}
+            </div>
+          ) : selectedTask ? (
+            <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+              <div>{tr("context.createdAt", "Created")}: {selectedTask.created_at ? formatFullTime(selectedTask.created_at) : "-"}</div>
+              <div>{tr("context.updatedAt", "Updated")}: {selectedTask.updated_at ? formatFullTime(selectedTask.updated_at) : "-"}</div>
+              <div>{tr("context.archivedFrom", "Archived from")}: {selectedTask.archived_from || "-"}</div>
+              <div>{tr("context.checklistItems", "Checklist items")}: {Array.isArray(selectedTask.checklist) ? selectedTask.checklist.length : 0}</div>
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => void handleSaveTask()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : (isCreate ? tr("context.createTask", "Create task") : tr("context.saveTask", "Save task"))}</button>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderSteeringPanel = () => {
+    const tabButtonClass = (active: boolean) => classNames(
+      "rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+      active
+        ? isDark
+          ? "bg-blue-500/15 text-blue-200"
+          : "bg-white text-blue-700 shadow-sm"
+        : isDark
+          ? "text-slate-300 hover:bg-slate-800"
+          : "text-gray-600 hover:bg-white/80"
+    );
+    const notesCardClass = classNames("rounded-xl border p-3 text-sm", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-50");
 
     return (
-      <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-        <div className="flex items-start gap-2">
-          <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-            {tk.id}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{tk.name}</div>
-            {tk.goal ? (
-              <MarkdownRenderer
-                content={String(tk.goal)}
-                isDark={isDark}
-                className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
-              />
-            ) : null}
-            {(tk.parent_id || tk.assignee) ? (
-              <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                {tk.parent_id ? `↑ ${tk.parent_id}` : ""}
-                {tk.parent_id && tk.assignee ? " · " : ""}
-                {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
+      <section className={classNames(surfaceClass, "p-4")}>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className={classNames("text-lg font-semibold", isDark ? "text-slate-50" : "text-gray-900")}>{brief?.objective || tr("context.noObjective", "No objective set")}</div>
+              <div className={classNames("mt-1 text-sm", subtleTextClass)}>{brief?.current_focus || tr("context.noCurrentFocus", "No current focus set")}</div>
+              {(brief?.project_brief_stale || (Array.isArray(brief?.constraints) && brief.constraints.length > 0)) ? (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {brief?.project_brief_stale ? <button type="button" onClick={() => { openSteeringTab("summary"); setEditingBrief(true); }} className={classNames("rounded-full px-2 py-1 text-[11px] transition-colors", isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25" : "bg-amber-50 text-amber-700 hover:bg-amber-100")}>{tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}</button> : null}
+                  {(brief?.constraints || []).slice(0, 6).map((constraint, index) => <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{constraint}</span>)}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 xl:max-w-[18rem] xl:justify-end">
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{tr("context.active", "Active")} · {Number(tasksSummary.active || 0)}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")} · {attentionCounts.blocked}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-violet-500/15 text-violet-200" : "bg-violet-50 text-violet-700")}>{tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}>{tr("context.unassigned", "Unassigned")} · {unassignedCount}</span>
+            </div>
+          </div>
+
+          <div className={classNames("flex flex-col gap-3 border-t pt-4", isDark ? "border-slate-800" : "border-gray-200")}>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.steering", "Project steering")}</div>
+                <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.projectSteeringHint", "Steer the project here. Keep PROJECT.md as the full repository reference, and keep the working summary hot and short.")}</div>
               </div>
-            ) : null}
-            {(isBlocked || isMine || isUnassigned) ? (
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {isBlocked ? (
-                  <span className={classNames(
-                    "text-[10px] px-1.5 py-0.5 rounded border",
-                    isDark ? "border-rose-400/50 bg-rose-500/15 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
-                  )}>
-                    {tr("context.badgeBlocked", "blocked")}
-                  </span>
-                ) : null}
-                {isMine ? (
-                  <span className={classNames(
-                    "text-[10px] px-1.5 py-0.5 rounded border",
-                    isDark ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "border-emerald-300 bg-emerald-50 text-emerald-700"
-                  )}>
-                    {tr("context.badgeMine", "mine")}
-                  </span>
-                ) : null}
-                {isUnassigned ? (
-                  <span className={classNames(
-                    "text-[10px] px-1.5 py-0.5 rounded border",
-                    isDark ? "border-amber-400/40 bg-amber-500/15 text-amber-300" : "border-amber-300 bg-amber-50 text-amber-700"
-                  )}>
-                    {tr("context.badgeUnassigned", "unassigned")}
-                  </span>
-                ) : null}
-              </div>
+            </div>
+
+            <div className={classNames("inline-flex w-fit rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
+              <button type="button" onClick={() => openSteeringTab("summary")} className={tabButtonClass(steeringTab === "summary")}>{tr("context.brief", "Summary")}</button>
+              <button type="button" onClick={() => openSteeringTab("project")} className={tabButtonClass(steeringTab === "project")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</button>
+              <button type="button" onClick={() => openSteeringTab("log")} className={tabButtonClass(steeringTab === "log")}>{tr("context.activityLog", "Activity")}</button>
+            </div>
+
+            {steeringTab === "summary" ? (
+              <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.brief", "Summary")}</div>
+                    <div className={classNames("mt-1 text-xs", mutedTextClass)}>{brief?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(brief.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {editingBrief ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-50 text-amber-700")}>{tr("context.unsaved", "Unsaved")}</span> : null}
+                    {editingBrief ? (
+                      <>
+                        <button type="button" onClick={() => { setEditingBrief(false); setBriefDraft(briefToDraft(brief)); }} disabled={syncBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button>
+                        <button type="button" onClick={() => void handleSaveBrief()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : tr("context.saveBrief", "Save summary")}</button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => { openSteeringTab("summary"); setEditingBrief(true); }} className={buttonPrimaryClass}>{t("context.editButton", { defaultValue: "Edit" })}</button>
+                    )}
+                  </div>
+                </div>
+
+                {editingBrief ? (
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    <label className="block text-sm lg:col-span-1">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.objective", "Objective")}</span>
+                      <input value={briefDraft.objective} onChange={(event) => setBriefDraft((prev) => ({ ...prev, objective: event.target.value }))} className={inputClass} />
+                    </label>
+                    <label className="block text-sm lg:col-span-1">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.currentFocus", "Current focus")}</span>
+                      <input value={briefDraft.currentFocus} onChange={(event) => setBriefDraft((prev) => ({ ...prev, currentFocus: event.target.value }))} className={inputClass} />
+                    </label>
+                    <label className="block text-sm lg:col-span-2">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</span>
+                      <textarea value={briefDraft.constraints} onChange={(event) => setBriefDraft((prev) => ({ ...prev, constraints: event.target.value }))} className={classNames(textareaClass, "min-h-[110px]")} placeholder={tr("context.constraintsPlaceholder", "One per line")} />
+                    </label>
+                    <label className="block text-sm lg:col-span-2">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Working summary")}</span>
+                      <textarea value={briefDraft.projectBrief} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBrief: event.target.value }))} className={classNames(textareaClass, "min-h-[180px]")} />
+                    </label>
+                    <label className={classNames("flex items-center gap-2 rounded-lg border px-3 py-2 text-sm lg:col-span-2", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
+                      <input type="checkbox" checked={briefDraft.projectBriefStale} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBriefStale: event.target.checked }))} />
+                      {tr("context.projectBriefStale", "Mark working summary as stale")}
+                    </label>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Working summary")}</div>
+                      <div className={classNames("mt-1 whitespace-pre-wrap text-sm", subtleTextClass)}>{brief?.project_brief || tr("context.noProjectBrief", "No working summary set")}</div>
+                    </div>
+                    <div>
+                      <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {Array.isArray(brief?.constraints) && brief.constraints.length > 0 ? brief.constraints.map((constraint, index) => (
+                          <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-white text-gray-700")}>{constraint}</span>
+                        )) : <span className={mutedTextClass}>{tr("context.noConstraints", "No constraints set")}</span>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </section>
             ) : null}
 
-            {opts.allowBlock && blockingTaskId === tk.id ? (
-              <div className="mt-2 space-y-2">
-                <textarea
-                  value={blockReason}
-                  onChange={(e) => setBlockReason(e.target.value)}
-                  placeholder={tr("context.blockReasonPlaceholder", "What is blocking this task?")}
-                  className={classNames(
-                    "w-full h-20 px-2 py-1.5 border rounded text-xs resize-none",
-                    isDark
-                      ? "bg-slate-900/70 border-slate-700 text-slate-200 focus:border-slate-500"
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+            {steeringTab === "project" ? (
+              <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</div>
+                    <div className={classNames("mt-1 text-xs", mutedTextClass)}>{projectBusy ? t("common:loading", { defaultValue: "Loading…" }) : projectPathLabel}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {editingProject ? <button type="button" onClick={() => { setEditingProject(false); setProjectText(String(projectMd?.content || "")); setNotifyAgents(false); }} disabled={projectBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button> : null}
+                    <button type="button" onClick={() => void handleEditProject()} className={buttonPrimaryClass}>{editingProject ? tr("context.editing", "Editing") : (projectMd?.found ? t("context.editButton", { defaultValue: "Edit" }) : t("context.createButton", { defaultValue: "Create" }))}</button>
+                  </div>
+                </div>
+                {projectError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{projectError}</div> : null}
+                {notifyError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{notifyError}</div> : null}
+                {projectNotice ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>{projectNotice}</div> : null}
+                <div className="mt-4">
+                  {editingProject ? (
+                    <>
+                      <textarea value={projectText} onChange={(event) => setProjectText(event.target.value)} className={classNames(textareaClass, "min-h-[320px]")} />
+                      <label className={classNames("mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
+                        <input type="checkbox" checked={notifyAgents} onChange={(event) => setNotifyAgents(event.target.checked)} />
+                        {tr("context.notifyAgents", "Notify the team in chat (@all) after save")}
+                      </label>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button type="button" onClick={() => void handleSaveProject()} disabled={projectBusy} className={buttonPrimaryClass}>{projectBusy ? tr("context.saving", "Saving…") : tr("context.saveProject", "Save PROJECT.md")}</button>
+                      </div>
+                    </>
+                  ) : projectMd?.found && projectMd.content ? (
+                    <div className={classNames("max-h-[36rem] overflow-y-auto rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-900/70" : "border-gray-200 bg-white")}>
+                      <MarkdownRenderer content={String(projectMd.content)} isDark={isDark} className={classNames("text-sm", subtleTextClass)} />
+                    </div>
+                  ) : (
+                    <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>{t("context.noProjectMd", { defaultValue: "No PROJECT.md found" })}</div>
                   )}
-                />
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={syncBusy}
-                    onClick={() => void handleMarkBlocked(tk)}
-                    className={actionBtnClass}
-                  >
-                    {tr("context.confirmBlock", "Confirm block")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={syncBusy}
-                    onClick={handleCancelBlock}
-                    className={actionBtnClass}
-                  >
-                    {t("common:cancel")}
-                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {steeringTab === "log" ? (
+              <div className="space-y-3">
+                {activityError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{activityError}</div> : null}
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentDecisions", "Recent decisions")}</div>
+                        <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.activityWriteHint", "Capture durable decisions and handoffs here when chat alone is too transient.")}</div>
+                      </div>
+                    </div>
+                    <div className={classNames("mt-3 rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-white")}>
+                      <textarea value={decisionDraft.summary} onChange={(event) => setDecisionDraft((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(textareaClass, "min-h-[96px]")} placeholder={tr("context.decisionPlaceholder", "Record a durable project decision...")} />
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <select value={decisionDraft.taskId} onChange={(event) => setDecisionDraft((prev) => ({ ...prev, taskId: event.target.value }))} className={inputClass}>
+                          <option value="">{tr("context.noRelatedTask", "No related task")}</option>
+                          {activeTaskOptions.map((task) => <option key={task.id} value={task.id}>{taskOptionLabel(task)}</option>)}
+                        </select>
+                        <button type="button" onClick={() => void handleAddCoordinationNote("decision")} disabled={activityBusyKind !== null || !String(decisionDraft.summary || "").trim()} className={buttonPrimaryClass}>{activityBusyKind === "decision" ? tr("context.saving", "Saving…") : tr("context.addDecision", "Add decision")}</button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {recentDecisions.length > 0 ? recentDecisions.map((note, index) => (
+                        <div key={`${note.summary}-${index}`} className={notesCardClass}>
+                          <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
+                          <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
+                        </div>
+                      )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentDecisions", "No recent decisions")}</div>}
+                    </div>
+                  </section>
+                  <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentHandoffs", "Recent handoffs")}</div>
+                    <div className={classNames("mt-3 rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-white")}>
+                      <textarea value={handoffDraft.summary} onChange={(event) => setHandoffDraft((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(textareaClass, "min-h-[96px]")} placeholder={tr("context.handoffPlaceholder", "Record a durable handoff or next-owner note...")} />
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <select value={handoffDraft.taskId} onChange={(event) => setHandoffDraft((prev) => ({ ...prev, taskId: event.target.value }))} className={inputClass}>
+                          <option value="">{tr("context.noRelatedTask", "No related task")}</option>
+                          {activeTaskOptions.map((task) => <option key={task.id} value={task.id}>{taskOptionLabel(task)}</option>)}
+                        </select>
+                        <button type="button" onClick={() => void handleAddCoordinationNote("handoff")} disabled={activityBusyKind !== null || !String(handoffDraft.summary || "").trim()} className={buttonPrimaryClass}>{activityBusyKind === "handoff" ? tr("context.saving", "Saving…") : tr("context.addHandoff", "Add handoff")}</button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {recentHandoffs.length > 0 ? recentHandoffs.map((note, index) => (
+                        <div key={`${note.summary}-${index}`} className={notesCardClass}>
+                          <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
+                          <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
+                        </div>
+                      )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentHandoffs", "No recent handoffs")}</div>}
+                    </div>
+                  </section>
                 </div>
               </div>
             ) : null}
           </div>
-          <div className="flex flex-col items-end gap-1.5">
-            {opts.allowClaim ? (
-              <button
-                type="button"
-                disabled={syncBusy || !currentActorId}
-                onClick={() => void handleClaimTask(tk)}
-                className={actionBtnClass}
-                title={!currentActorId ? tr("context.claimNeedsActorTab", "Select an agent tab first, then claim.") : ""}
-              >
-                {tr("context.claim", "Claim")}
-              </button>
-            ) : null}
-            {opts.allowBlock ? (
-              <button
-                type="button"
-                disabled={syncBusy || blockingTaskId === tk.id}
-                onClick={() => handleStartBlock(tk.id)}
-                className={actionBtnClass}
-              >
-                {tr("context.block", "Block")}
-              </button>
-            ) : null}
-            {opts.allowDone ? (
-                <button
-                  type="button"
-                  disabled={syncBusy}
-                  onClick={() => void handleMarkDone(tk.id)}
-                  className={actionBtnClass}
-                >
-                  {tr("context.done", "Done")}
-                </button>
-            ) : null}
-            {opts.allowArchive ? (
-                <button
-                  type="button"
-                  disabled={syncBusy}
-                  onClick={() => void handleArchiveTask(tk.id)}
-                  className={actionBtnClass}
-                >
-                  {t("context.archive")}
-                </button>
-            ) : null}
-            {opts.allowRestore ? (
-              <button
-                type="button"
-                disabled={syncBusy}
-                onClick={() => void handleRestoreTask(tk.id)}
-                className={actionBtnClass}
-              >
-                {t("context.restore")}
-              </button>
-            ) : null}
+        </div>
+      </section>
+    );
+  };
+
+  const renderAgentsView = () => {
+    const agentsWithBlockers = agents.filter((agent) => agentHot(agent).blockers.length > 0).length;
+    const agentsWithActiveTask = agents.filter((agent) => !!agentHot(agent).activeTaskId).length;
+    return (
+      <section className={classNames(surfaceClass, "p-4")}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className={classNames("text-lg font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.agents", "Agents")}</div>
+            <div className={classNames("mt-1 text-sm", subtleTextClass)}>{tr("context.agentsHint", "Use this view to recover each agent’s current execution state, not to steer the whole project.")}</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}>{tr("context.totalAgents", "{{count}} agents", { count: agents.length })}</span>
+            <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{tr("context.activeTasksCount", "{{count}} with active task", { count: agentsWithActiveTask })}</span>
+            {agentsWithBlockers > 0 ? <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blockersCount", "{{count}} blockers", { count: agentsWithBlockers })}</span> : null}
           </div>
         </div>
+        <div className="mt-4 grid gap-3 xl:grid-cols-2">
+          {agents.length > 0 ? agents.map((agent) => {
+            const hot = agentHot(agent);
+            const warm = agentWarm(agent);
+            return (
+              <div key={agent.id} className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{agent.id}</div>
+                    <div className={classNames("mt-1 text-xs", mutedTextClass)}>{agent.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(agent.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
+                  </div>
+                  {hot.activeTaskId ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{hot.activeTaskId}</span> : null}
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className={classNames("rounded-lg border p-3", isDark ? "border-slate-800 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.focus", "Focus")}</div>
+                    <div className={classNames("mt-1 text-sm line-clamp-3", subtleTextClass)}>{hot.focus || tr("context.none", "None")}</div>
+                  </div>
+                  <div className={classNames("rounded-lg border p-3", isDark ? "border-slate-800 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.nextAction", "Next action")}</div>
+                    <div className={classNames("mt-1 text-sm line-clamp-3", subtleTextClass)}>{hot.nextAction || tr("context.none", "None")}</div>
+                  </div>
+                  <div className={classNames("rounded-lg border p-3 sm:col-span-2", isDark ? "border-slate-800 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.activeTask", "Active task")}</div>
+                    <div className={classNames("mt-1 text-sm", subtleTextClass)}>{hot.activeTaskId || tr("context.none", "None")}</div>
+                  </div>
+                  {hot.blockers.length > 0 ? (
+                    <div className={classNames("rounded-lg border px-3 py-3 text-sm sm:col-span-2", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>
+                      <span className="font-medium">{tr("context.blockers", "Blockers")}: </span>{hot.blockers.join(" · ")}
+                    </div>
+                  ) : null}
+                </div>
+
+                {hasWarmState(agent) ? (
+                  <details className={classNames("mt-3 rounded-lg border px-3 py-2", isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white")} open={false}>
+                    <summary className={classNames("cursor-pointer text-xs font-medium", isDark ? "text-slate-200" : "text-gray-700")}>{tr("context.warmState", "Warm state")}</summary>
+                    <div className="mt-2 space-y-2 text-xs">
+                      {warm.whatChanged ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.whatChanged", "What changed")}: </span>{warm.whatChanged}</div> : null}
+                      {warm.openLoops.length > 0 ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.openLoops", "Open loops")}: </span>{warm.openLoops.join(" · ")}</div> : null}
+                      {warm.commitments.length > 0 ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.commitments", "Commitments")}: </span>{warm.commitments.join(" · ")}</div> : null}
+                      {warm.environmentSummary ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.environmentSummary", "Environment")}: </span>{warm.environmentSummary}</div> : null}
+                      {warm.userModel ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.userModel", "User model")}: </span>{warm.userModel}</div> : null}
+                      {warm.personaNotes ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.personaNotes", "Persona notes")}: </span>{warm.personaNotes}</div> : null}
+                      {warm.resumeHint ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.resumeHint", "Resume hint")}: </span>{warm.resumeHint}</div> : null}
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+            );
+          }) : <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>{tr("context.noAgents", "No agent state")}</div>}
+        </div>
+      </section>
+    );
+  };
+
+  if (!isOpen) return null;
+
+  const viewButtonClass = (active: boolean) => classNames(
+    "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+    active
+      ? isDark
+        ? "bg-blue-500/15 text-blue-200"
+        : "bg-white text-blue-700 shadow-sm"
+      : isDark
+        ? "text-slate-300 hover:bg-slate-800"
+        : "text-gray-600 hover:bg-white/80"
+  );
+
+  const renderCoordinationView = () => {
+    return (
+      <div className="space-y-4">
+        {renderSteeringPanel()}
+
+        <section className={classNames(surfaceClass, "p-4")}>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className={classNames("text-lg font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.tasks", "Tasks")}</div>
+                <div className={classNames("mt-1 text-sm", subtleTextClass)}>{tr("context.taskBoardHint", "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.")}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => handleOpenCreate("planned")} className={buttonPrimaryClass}>{tr("context.newTask", "New task")}</button>
+              </div>
+            </div>
+
+            <div className={classNames("flex flex-col gap-3 border-t pt-4", isDark ? "border-slate-800" : "border-gray-200")}>
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="grid flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+                  <input
+                    value={taskQuery}
+                    onChange={(event) => setTaskQuery(event.target.value)}
+                    className={inputClass}
+                    placeholder={tr("context.searchTasks", "Search tasks by title, id, assignee, or outcome")}
+                  />
+                  <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)} className={classNames(inputClass, "w-full lg:w-[14rem]")}>
+                    <option value="__all__">{tr("context.allAssignees", "All assignees")}</option>
+                    <option value="__unassigned__">{tr("context.unassignedOnly", "Unassigned only")}</option>
+                    {assigneeOptions.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
+                  </select>
+                  <button type="button" onClick={() => { setTaskQuery(""); setTaskFilter("all"); setAssigneeFilter("__all__"); }} className={buttonSecondaryClass}>{tr("context.clearFilters", "Clear filters")}</button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  ["all", tr("context.all", "All"), Number(tasksSummary.total || 0)],
+                  ["blocked", tr("context.blocked", "Blocked"), attentionCounts.blocked],
+                  ["waiting_user", tr("context.waitingUser", "Waiting user"), attentionCounts.waitingUser],
+                  ["handoff", tr("context.pendingHandoffs", "Pending handoffs"), attentionCounts.pendingHandoffs],
+                  ["unassigned", tr("context.unassigned", "Unassigned"), unassignedCount],
+                ].map(([value, label, count]) => (
+                  <button
+                    key={String(value)}
+                    type="button"
+                    onClick={() => setTaskFilter(value as "all" | "blocked" | "waiting_user" | "handoff" | "unassigned")}
+                    className={classNames(chipBaseClass, taskFilter === value ? (isDark ? "border-blue-500 text-blue-200" : "border-blue-300 text-blue-700") : "")}
+                  >
+                    {label} · {count}
+                  </button>
+                ))}
+                <span className={classNames("text-xs", mutedTextClass)}>{tr("context.filteredTasks", "{{count}} visible", { count: filteredTaskTotal })}</span>
+                {syncBusy ? <span className={classNames("text-xs italic", mutedTextClass)}>{tr("context.applyingChanges", "Applying changes…")}</span> : null}
+              </div>
+            </div>
+
+            {filteredTaskTotal === 0 ? (
+              <div className={classNames("rounded-xl border border-dashed px-4 py-6 text-sm", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+                {tr("context.noMatchingTasks", "No tasks match the current filters")}
+              </div>
+            ) : null}
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,420px)]">
+              <div className="min-w-0">
+                <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDragTaskId("")}>
+                  <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                    <ColumnDropZone columnKey="planned" label={tr("context.planned", "Planned")} items={filteredBoard.planned} />
+                    <ColumnDropZone columnKey="active" label={tr("context.active", "Active")} items={filteredBoard.active} />
+                    <ColumnDropZone columnKey="done" label={tr("context.done", "Done")} items={filteredBoard.done} />
+                    <ColumnDropZone columnKey="archived" label={tr("context.archived", "Archived")} items={filteredBoard.archived} />
+                  </div>
+                  <DragOverlay>{dragTaskId && taskMap.get(dragTaskId) ? <TaskGhostCard task={taskMap.get(dragTaskId)!} /> : null}</DragOverlay>
+                </DndContext>
+              </div>
+              <div className="min-w-0">
+                {renderTaskEditorPanel()}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     );
   };
 
-  const renderTaskBucket = (
-    title: string,
-    items: Task[],
-    emptyText: string,
-    opts: {
-      open?: boolean;
-      allowClaim?: boolean;
-      allowBlock?: boolean;
-      allowDone?: boolean;
-      allowArchive?: boolean;
-      allowRestore?: boolean;
-    }
-  ) => (
-    <details open={opts.open ?? false}>
-      <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-        {title} ({items.length})
-      </summary>
-      <div className="mt-2 space-y-2">
-        {items.length === 0 ? (
-          <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-            {emptyText}
-          </div>
-        ) : (
-          items.map((tk) =>
-            renderTaskCard(tk, {
-              allowClaim: opts.allowClaim,
-              allowBlock: opts.allowBlock,
-              allowDone: opts.allowDone,
-              allowArchive: opts.allowArchive,
-              allowRestore: opts.allowRestore,
-            })
-          )
-        )}
-      </div>
-    </details>
-  );
-
-  const agentCount = agentStates.length;
-  const blockedAgentCount = agentStates.filter((a) => Array.isArray(a.blockers) && a.blockers.length > 0).length;
-  const sectionCardClass = classNames(
-    "rounded-2xl border p-4 shadow-sm",
-    isDark ? "border-slate-700/80 bg-slate-900/45" : "border-gray-200 bg-white/85"
-  );
-  const sectionTitleClass = classNames(
-    "text-sm font-semibold tracking-wide",
-    isDark ? "text-slate-200" : "text-gray-800"
-  );
-  const handleScrollToSection = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  const moreMenuTaskId = "";
-
-  if (!isOpen) return null;
-
   return (
-    <>
-      <ModalFrame
-        isDark={isDark}
-        onClose={onClose}
-        titleId="context-modal-title"
-        title={t("context.title")}
-        closeAriaLabel={t("context.closeAria")}
-        panelClassName="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-[96vw] 2xl:max-w-[1460px]"
-        modalRef={modalRef}
-      >
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto px-5 pb-6 pt-4 space-y-5">
-          {/* Sticky section nav */}
-          <div
-            className={classNames(
-              "sticky top-0 z-10 -mx-1 rounded-xl px-1 py-1 backdrop-blur",
-              isDark ? "bg-slate-950/85" : "bg-white/85"
-            )}
-          >
-            <ContextSectionJumpBar isDark={isDark} onScrollToSection={handleScrollToSection} />
+    <ModalFrame
+      isDark={isDark}
+      onClose={handleModalClose}
+      titleId="context-modal-title"
+      title={t("context.title", { defaultValue: "Project Context" })}
+      closeAriaLabel={t("context.closeAria", { defaultValue: "Close context modal" })}
+      panelClassName="h-full w-full overflow-hidden rounded-none sm:h-[94vh] sm:max-w-[96vw]"
+      modalRef={modalRef}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
+          {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{syncError}</div> : null}
+
+          <div className="flex items-center justify-end">
+            <div className={classNames("inline-flex rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
+              <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
+              <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
+            </div>
           </div>
 
-          {/* ─── Section 1: Agents (agents + their active tasks) ─── */}
-          <section id="context-agents" className={sectionCardClass}>
-            <div className={sectionTitleClass}>
-              {tr("context.sectionAgents", "Agents")}
-              <span className={classNames("ml-2 text-[11px] font-normal", isDark ? "text-slate-500" : "text-gray-400")}>
-                {tr("context.agentsSummary", "{{agents}} agent(s) · {{blocked}} blocked", { agents: agentCount, blocked: blockedAgentCount })}
-              </span>
-            </div>
-            <div className="mt-3 space-y-3">
-              {context?.agents && context.agents.length > 0 ? (
-                context.agents.map((a) => {
-                  const isBlocked = Array.isArray(a.blockers) && a.blockers.length > 0;
-                  const hasSecondaryFields = !!(a.what_changed || a.decision_delta || a.environment || a.user_profile || a.notes);
-                  const activeTask = a.active_task_id ? (tasks || []).find((tk) => tk.id === a.active_task_id) || null : null;
-                  return (
-                    <div key={a.id} className={classNames(
-                      "px-3 py-3 rounded-xl transition-colors",
-                      isDark ? "bg-slate-800/50" : "bg-gray-50",
-                      isBlocked ? (isDark ? "border border-rose-500/20" : "border border-rose-200") : "border border-transparent"
-                    )}>
-                      <div className="flex items-center gap-2">
-                        <span className={`status-dot ${isBlocked ? "danger" : a.focus ? "success" : ""}`} />
-                        <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{a.id}</span>
-                        {isBlocked && <span className="badge danger">{a.blockers!.length}</span>}
-                        {a.updated_at ? (
-                          <span className={classNames("ml-auto text-xs tabular-nums", isDark ? "text-slate-400" : "text-gray-500")} title={formatFullTime(a.updated_at || "")}>
-                            {t("context.updated", { time: formatTime(a.updated_at || "") })}
-                          </span>
-                        ) : null}
-                      </div>
-                      {a.focus ? (
-                        <MarkdownRenderer content={String(a.focus)} isDark={isDark} className={classNames("text-xs mt-1", isDark ? "text-slate-300" : "text-gray-700")} />
-                      ) : (
-                        <div className={`text-xs mt-1 italic ${isDark ? "text-slate-500" : "text-gray-500"}`}>{tr("context.noAgentStateYet", "No agent update yet")}</div>
-                      )}
-                      {/* Embedded active task */}
-                      {activeTask ? (
-                        <div className={classNames("mt-2 px-3 py-2 rounded-lg border", isDark ? "border-slate-700/60 bg-slate-900/40" : "border-gray-200 bg-white/60")}>
-                          <div className="flex items-start gap-2">
-                            <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>{activeTask.id}</span>
-                            <div className="min-w-0 flex-1">
-                              <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{activeTask.name}</div>
-                              {activeTask.goal ? <MarkdownRenderer content={String(activeTask.goal)} isDark={isDark} className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")} /> : null}
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button type="button" disabled={syncBusy} onClick={() => void handleMarkDone(activeTask.id)} className={actionBtnClass}>{tr("context.done", "Done")}</button>
-                              <button type="button" disabled={syncBusy || blockingTaskId === activeTask.id} onClick={() => handleStartBlock(activeTask.id)} className={actionBtnClass}>{tr("context.block", "Block")}</button>
-                            </div>
-                          </div>
-                          {blockingTaskId === activeTask.id ? (
-                            <div className="mt-2 space-y-2">
-                              <textarea value={blockReason} onChange={(e) => setBlockReason(e.target.value)} placeholder={tr("context.blockReasonPlaceholder", "What is blocking this task?")} className={classNames("w-full h-20 px-2 py-1.5 border rounded text-xs resize-none", isDark ? "bg-slate-900/70 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500")} />
-                              <div className="flex items-center gap-2">
-                                <button type="button" disabled={syncBusy} onClick={() => void handleMarkBlocked(activeTask)} className={actionBtnClass}>{tr("context.confirmBlock", "Confirm block")}</button>
-                                <button type="button" disabled={syncBusy} onClick={handleCancelBlock} className={actionBtnClass}>{t("common:cancel")}</button>
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {/* Blockers */}
-                      {isBlocked ? (
-                        <div className={`text-xs mt-2 ${isDark ? "text-rose-400/80" : "text-rose-600"}`}>
-                          <span className="font-medium">{tr("context.fieldBlockers", "Blockers")}:</span> {a.blockers!.join(", ")}
-                        </div>
-                      ) : null}
-                      {/* Next action */}
-                      {a.next_action ? (
-                        <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                          <span className="font-medium">{tr("context.fieldNextAction", "Next")}:</span> {a.next_action}
-                        </div>
-                      ) : null}
-                      {/* Secondary telemetry */}
-                      {hasSecondaryFields ? (
-                        <details className="mt-1">
-                          <summary className={classNames("text-[11px] cursor-pointer select-none", isDark ? "text-slate-500 hover:text-slate-400" : "text-gray-400 hover:text-gray-600")}>
-                            {tr("context.showTelemetry", "Details")}
-                          </summary>
-                          <div className={classNames("mt-1 pl-3 border-l-2 space-y-1", isDark ? "border-slate-700" : "border-gray-200")}>
-                            {a.what_changed && <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}><span className="font-medium">{tr("context.fieldWhatChanged", "Changed")}:</span> {a.what_changed}</div>}
-                            {a.decision_delta && <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}><span className="font-medium">{tr("context.fieldDecisionDelta", "Decision")}:</span> {a.decision_delta}</div>}
-                            {a.environment && <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}><span className="font-medium">{tr("context.fieldEnvironment", "Env")}:</span> {a.environment}</div>}
-                            {a.user_profile && <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}><span className="font-medium">{tr("context.fieldUserProfile", "User")}:</span> {a.user_profile}</div>}
-                            {a.notes && <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}><span className="font-medium">{tr("context.fieldNotes", "Notes")}:</span> {a.notes}</div>}
-                          </div>
-                        </details>
-                      ) : null}
-                    </div>
-                  );
-                })
-              ) : (
-                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                  {tr("context.noAgents", "No agent state")}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* ─── Section 2: Tasks ─── */}
-          <section id="context-tasks" className={sectionCardClass}>
-            <div className={sectionTitleClass}>
-              {tr("context.sectionTasks", "Tasks")}
-              {tasks ? (
-                <span className={classNames("ml-2 text-[11px] font-normal", isDark ? "text-slate-500" : "text-gray-400")}>
-                  {tr("context.tasksSummaryLifecycle", "total {{total}} · active {{active}} · planned {{planned}} · done {{done}} · archived {{archived}}", {
-                    total: taskViews.active.length + taskViews.planned.length + taskViews.done.length + taskViews.archived.length,
-                    active: taskViews.active.length,
-                    planned: taskViews.planned.length,
-                    done: taskViews.done.length,
-                    archived: taskViews.archived.length,
-                  })}
-                </span>
-              ) : context?.tasks_summary ? (
-                <span className={classNames("ml-2 text-[11px] font-normal", isDark ? "text-slate-500" : "text-gray-400")}>
-                  {t("context.tasksSummary", {
-                    total: context.tasks_summary.total,
-                    active: context.tasks_summary.active,
-                    planned: context.tasks_summary.planned,
-                    done: context.tasks_summary.done,
-                  })}
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-2">
-              {syncError && (
-                <div className={`text-xs rounded-lg border px-3 py-2 mb-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"}`}>{syncError}</div>
-              )}
-              {tasksError ? (
-                <div className={`px-3 py-2 rounded-lg text-sm ${isDark ? "bg-rose-500/10 text-rose-300 border border-rose-500/30" : "bg-rose-50 text-rose-700 border border-rose-300"}`}>{tasksError}</div>
-              ) : tasksBusy ? (
-                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>{t("context.loadingTasks")}</div>
-              ) : (
-                <div className="space-y-2">
-                  {(taskViews.active.length + taskViews.planned.length + taskViews.done.length + taskViews.archived.length) === 0 ? (
-                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>{t("context.noTasks")}</div>
-                  ) : (
-                    <>
-                      {!currentActorId ? (
-                        <div className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800/60 text-slate-400" : "bg-gray-50 text-gray-600"}`}>
-                          {tr("context.selectAgentForQuickActions", "Select an agent tab to enable quick claim/block actions.")}
-                        </div>
-                      ) : null}
-                      {renderTaskBucket(
-                        tr("context.viewActive", "Active"),
-                        taskViews.active,
-                        t("context.noActiveTasks"),
-                        { open: true, allowClaim: true, allowBlock: true, allowDone: true, allowArchive: true }
-                      )}
-                      {renderTaskBucket(
-                        tr("context.viewPlanned", "Planned"),
-                        taskViews.planned,
-                        t("context.noPlannedTasks"),
-                        { open: true, allowClaim: true, allowArchive: true }
-                      )}
-                      {renderTaskBucket(
-                        tr("context.viewDone", "Done"),
-                        taskViews.done,
-                        t("context.noDoneTasks"),
-                        { open: false, allowArchive: true }
-                      )}
-                      {renderTaskBucket(
-                        tr("context.viewArchived", "Archived"),
-                        taskViews.archived,
-                        t("context.noArchivedTasks"),
-                        { open: false, allowRestore: true }
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* ─── Section 3: Direction (vision + overview + project.md) ─── */}
-          <section id="context-direction" className={sectionCardClass}>
-            <div className={sectionTitleClass}>{tr("context.sectionDirection", "Direction")}</div>
-
-            {/* Vision */}
-            <div className="mt-3">
-              <div className={classNames("text-xs font-semibold tracking-wide mb-1", isDark ? "text-slate-400" : "text-gray-600")}>{t("context.vision")}</div>
-              {!editingVision && (
-                <div className="flex justify-end mb-1">
-                  <button onClick={handleEditVision} className={`text-xs min-h-[36px] px-2 rounded transition-colors ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"}`}>✏️ {t("context.editButton")}</button>
-                </div>
-              )}
-              {editingVision ? (
-                <div className="space-y-2">
-                  <textarea value={visionText} onChange={(e) => setVisionText(e.target.value)} className={`w-full h-32 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"}`} placeholder={t("context.visionPlaceholder")} />
-                  <div className="flex gap-2">
-                    <button onClick={handleSaveVision} disabled={busy} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors">{busy ? t("common:loading") : t("common:save")}</button>
-                    <button onClick={() => setEditingVision(false)} className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>{t("common:cancel")}</button>
-                  </div>
-                </div>
-              ) : (
-                <div className={`px-3 py-2 rounded-lg text-sm min-h-[60px] ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"}`}>
-                  {context?.vision ? <MarkdownRenderer content={context.vision} isDark={isDark} /> : (
-                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noVision")}</span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className={classNames("my-3 border-b", isDark ? "border-slate-700/60" : "border-gray-200")} />
-
-            {/* Overview */}
-            <div>
-              <div className={classNames("text-xs font-semibold tracking-wide mb-1", isDark ? "text-slate-400" : "text-gray-600")}>{tr("context.overview", "Overview")}</div>
-              {!editingOverview && (
-                <div className="flex justify-end mb-1">
-                  <button onClick={handleEditOverview} className={`text-xs min-h-[36px] px-2 rounded transition-colors ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"}`}>✏️ {t("context.editButton")}</button>
-                </div>
-              )}
-              {editingOverview ? (
-                <div className="space-y-2">
-                  <div>
-                    <div className={`text-[11px] mb-1 font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{tr("context.currentFocus", "Current Focus")}</div>
-                    <textarea value={overviewFocusText} onChange={(e) => setOverviewFocusText(e.target.value)} className={`w-full h-24 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"}`} placeholder={tr("context.currentFocusPlaceholder", "What is the team's current focus?")} />
-                  </div>
-                  <div>
-                    <div className={`text-[11px] mb-1 font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{tr("context.roles", "Roles")}</div>
-                    <input value={overviewRolesText} onChange={(e) => setOverviewRolesText(e.target.value)} className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"}`} placeholder={tr("context.rolesPlaceholder", "foreman, reviewer, impl")} />
-                  </div>
-                  <div>
-                    <div className={`text-[11px] mb-1 font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{tr("context.collaborationMode", "Collaboration")}</div>
-                    <input value={overviewCollabText} onChange={(e) => setOverviewCollabText(e.target.value)} className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"}`} placeholder={tr("context.collaborationPlaceholder", "How does the team collaborate?")} />
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => void handleSaveOverview()} disabled={syncBusy} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors">{syncBusy ? t("common:loading") : t("common:save")}</button>
-                    <button onClick={() => setEditingOverview(false)} disabled={syncBusy} className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>{t("common:cancel")}</button>
-                  </div>
-                </div>
-              ) : (
-                <div className={`px-3 py-2 rounded-lg space-y-2 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                  {context?.overview?.manual?.current_focus && (
-                    <div>
-                      <div className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-400"}`}>{tr("context.currentFocus", "Current Focus")}</div>
-                      <MarkdownRenderer content={String(context.overview.manual.current_focus)} isDark={isDark} className={classNames("text-sm mt-0.5", isDark ? "text-slate-300" : "text-gray-700")} />
-                    </div>
-                  )}
-                  {context?.overview?.manual?.roles && context.overview.manual.roles.length > 0 && (
-                    <div>
-                      <div className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-400"}`}>{tr("context.roles", "Roles")}</div>
-                      <div className="flex flex-wrap gap-1 mt-0.5">
-                        {context.overview.manual.roles.map((role, i) => (
-                          <span key={i} className={classNames("text-xs px-2 py-0.5 rounded", isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700")}>{role}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {context?.overview?.manual?.collaboration_mode && (
-                    <div>
-                      <div className={`text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-400"}`}>{tr("context.collaborationMode", "Collaboration")}</div>
-                      <div className={`text-sm mt-0.5 ${isDark ? "text-slate-300" : "text-gray-700"}`}>{context.overview.manual.collaboration_mode}</div>
-                    </div>
-                  )}
-                  {(!context?.overview?.manual?.current_focus && !context?.overview?.manual?.collaboration_mode && (!context?.overview?.manual?.roles || context.overview.manual.roles.length === 0)) && (
-                    <span className={isDark ? "text-slate-500 italic text-sm" : "text-gray-400 italic text-sm"}>{tr("context.noOverview", "No overview set")}</span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className={classNames("my-3 border-b", isDark ? "border-slate-700/60" : "border-gray-200")} />
-
-            {/* PROJECT.md */}
-            <div>
-              <div className={classNames("text-xs font-semibold tracking-wide mb-1", isDark ? "text-slate-400" : "text-gray-600")}>{t("context.projectMd")}</div>
-              <div className="mt-1">
-                <div className="flex items-center justify-between mb-2 gap-2">
-                  <div className="min-w-0">
-                    <div className={`text-[11px] truncate ${isDark ? "text-slate-500" : "text-gray-500"}`} title={projectPathLabel}>
-                      {projectBusy ? t("common:loading") : projectMd?.found ? projectPathLabel : projectMd?.path ? t("context.missingPath", { path: projectMd.path }) : t("context.missingLabel")}
-                    </div>
-                  </div>
-                  {!editingProject && (
-                    <button
-                      onClick={handleEditProject}
-                      disabled={projectBusy || !groupId}
-                      className={`text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50 ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"}`}
-                    >
-                      {projectMd?.found ? `✏️ ${t("context.editButton")}` : `＋ ${t("context.createButton")}`}
-                    </button>
-                  )}
-                </div>
-                {projectError && (
-                  <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"}`}>{projectError}</div>
-                )}
-                {editingProject ? (
-                  <div className="space-y-2">
-                    <textarea
-                      value={projectText}
-                      onChange={(e) => setProjectText(e.target.value)}
-                      className={`w-full h-72 px-3 py-2 border rounded-lg text-sm resize-none font-mono transition-colors ${isDark
-                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
-                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                        }`}
-                      placeholder={t("context.writePlaceholder")}
-                    />
-                    <div className="flex gap-2">
-                      <button onClick={handleSaveProject} disabled={projectBusy || !groupId} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors">{projectBusy ? t("common:loading") : t("common:save")}</button>
-                      <button onClick={() => setEditingProject(false)} disabled={projectBusy} className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>{t("common:cancel")}</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className={`px-3 py-2 rounded-lg text-sm min-h-[80px] max-h-[64vh] overflow-auto ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"}`}>
-                    {projectMd?.found && projectMd.content ? (
-                      <MarkdownRenderer content={String(projectMd.content)} isDark={isDark} />
-                    ) : (
-                      <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noProjectMd")}</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {syncBusy && (
-            <div className={classNames(
-              "text-[11px] italic",
-              isDark ? "text-slate-500" : "text-gray-500"
-            )}>
-              {t("context.applyingChanges")}
-            </div>
-          )}
+          {activeView === "coordination" ? renderCoordinationView() : renderAgentsView()}
         </div>
-      </ModalFrame>
-
-      <ProjectSavedNotifyModal
-        isOpen={showNotifyModal}
-        onClose={() => setShowNotifyModal(false)}
-        onDone={() => {
-          void handleNotifyDone();
-        }}
-        isDark={isDark}
-        projectPathLabel={projectPathLabel}
-        notifyMessage={notifyMessage}
-        notifyAgents={notifyAgents}
-        onChangeNotifyAgents={setNotifyAgents}
-        notifyBusy={notifyBusy}
-        notifyError={notifyError}
-      />
-    </>
+      </div>
+    </ModalFrame>
   );
+
 }

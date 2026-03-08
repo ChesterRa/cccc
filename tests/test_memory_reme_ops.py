@@ -132,26 +132,36 @@ class TestMemoryRemeOps(unittest.TestCase):
             from cccc.kernel.ledger import append_event
             from cccc.daemon.memory.memory_ops import run_auto_conversation_memory_cycle
 
-            # Seed context signals for signal_pack (vision + task + agent state).
+            # Seed context signals for signal_pack (coordination brief + task + agent state).
             seed_resp, _ = self._call(
                 "context_sync",
                 {
                     "group_id": gid,
                     "by": "user",
                     "ops": [
-                        {"op": "vision.update", "vision": "Ship reliable memory lifecycle."},
-                        {"op": "task.create", "name": "Memory Lane", "goal": "Auto flush with low noise"},
-                        {
-                            "op": "agent.update",
-                            "agent_id": "peer1",
-                            "focus": "memory lane",
-                            "next_action": "validate auto flush",
-                            "what_changed": "seeded",
-                        },
+                        {"op": "coordination.brief.update", "objective": "Ship reliable memory lifecycle.", "current_focus": "Memory lane"},
+                        {"op": "task.create", "title": "Memory Lane", "outcome": "Auto flush with low noise"},
                     ],
                 },
             )
             self.assertTrue(seed_resp.ok, getattr(seed_resp, "error", None))
+            agent_seed_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer1",
+                    "ops": [
+                        {
+                            "op": "agent_state.update",
+                            "actor_id": "peer1",
+                            "focus": "memory lane",
+                            "next_action": "validate auto flush",
+                            "what_changed": "seeded",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(agent_seed_resp.ok, getattr(agent_seed_resp, "error", None))
 
             group = load_group(gid)
             self.assertIsNotNone(group)
@@ -201,19 +211,25 @@ class TestMemoryRemeOps(unittest.TestCase):
             gid = self._create_group("reme-signal-pack")
             messages = [{"role": "user", "content": "Need memory compaction summary."}]
             large_signal_pack = {
-                "vision": "A" * 2000,
-                "overview_manual": {
+                "coordination_brief": {
+                    "objective": "A" * 2000,
                     "current_focus": "B" * 1200,
-                    "collaboration_mode": "C" * 1200,
-                    "roles": ["research", "implementation", "review", "ops", "qa", "pm", "design"],
+                    "constraints": ["research", "implementation", "review", "ops", "qa", "pm", "design"],
+                    "project_brief": "C" * 1200,
                 },
                 "tasks": {
                     "active": [f"active-{i} " + ("D" * 120) for i in range(20)],
                     "planned": [f"planned-{i} " + ("E" * 120) for i in range(20)],
                     "done_recent": [f"done-{i} " + ("F" * 120) for i in range(20)],
+                    "blocked": [f"blocked-{i} " + ("J" * 120) for i in range(20)],
+                    "waiting_user": [f"waiting-{i} " + ("K" * 120) for i in range(20)],
                 },
-                "agents": [
-                    {"id": f"a{i}", "focus": "G" * 400, "next_action": "H" * 400, "blockers": ["I" * 300]}
+                "agent_states": [
+                    {
+                        "id": f"a{i}",
+                        "hot": {"focus": "G" * 400, "next_action": "H" * 400, "blockers": ["I" * 300]},
+                        "warm": {"what_changed": "seeded", "resume_hint": "re-open memory lane"},
+                    }
                     for i in range(20)
                 ],
             }
@@ -323,6 +339,142 @@ class TestMemoryRemeOps(unittest.TestCase):
             self.assertEqual(str(dedup.get("final_decision") or ""), "silent")
             self.assertEqual(str(dedup.get("final_reason") or ""), "persistence_content_hash")
             self.assertEqual(str(dedup.get("decision") or ""), "silent")
+        finally:
+            cleanup()
+
+    def test_group_signal_pack_prioritizes_active_actor_and_keeps_rich_warm_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("reme-signal-pack-rich")
+            from cccc.daemon.memory.memory_ops import _build_group_signal_pack
+
+            create_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [
+                        {
+                            "op": "task.create",
+                            "title": "Primary Work",
+                            "outcome": "ship reliable recovery",
+                            "status": "active",
+                            "assignee": "peer1",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+
+            peer1_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer1",
+                    "ops": [
+                        {
+                            "op": "agent_state.update",
+                            "actor_id": "peer1",
+                            "focus": "primary work",
+                            "next_action": "verify bootstrap recovery",
+                            "what_changed": "picked up the active task",
+                            "resume_hint": "re-open the bootstrap tests",
+                            "environment_summary": "workspace has a small dirty tree",
+                            "user_model": "prefers concise evidence",
+                            "persona_notes": "do not overbuild the fix",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(peer1_resp.ok, getattr(peer1_resp, "error", None))
+
+            peer2_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer2",
+                    "ops": [
+                        {
+                            "op": "agent_state.update",
+                            "actor_id": "peer2",
+                            "focus": "secondary",
+                            "next_action": "wait",
+                            "what_changed": "idle",
+                            "resume_hint": "none",
+                            "environment_summary": "cold",
+                            "user_model": "secondary",
+                            "persona_notes": "secondary",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(peer2_resp.ok, getattr(peer2_resp, "error", None))
+
+            pack, meta = _build_group_signal_pack(gid, token_budget=4096)
+            self.assertIsInstance(pack, dict)
+            assert isinstance(pack, dict)
+            self.assertEqual(str(meta.get("schema") or ""), "v1")
+            agent_states = pack.get("agent_states") if isinstance(pack.get("agent_states"), list) else []
+            self.assertGreaterEqual(len(agent_states), 1)
+            first = agent_states[0] if isinstance(agent_states[0], dict) else {}
+            self.assertEqual(str(first.get("id") or ""), "peer1")
+            self.assertEqual(str(first.get("environment_summary") or ""), "workspace has a small dirty tree")
+            self.assertEqual(str(first.get("user_model") or ""), "prefers concise evidence")
+            self.assertEqual(str(first.get("persona_notes") or ""), "do not overbuild the fix")
+        finally:
+            cleanup()
+
+
+    def test_signal_pack_budget_drops_optional_rich_fields_before_core_hot_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.memory.memory_ops import _normalize_signal_pack
+
+            payload = {
+                "coordination_brief": {
+                    "objective": "ship recovery",
+                    "current_focus": "bootstrap",
+                    "constraints": ["keep it lean"],
+                    "project_brief": "x" * 400,
+                },
+                "tasks": {
+                    "active": ["T001: Primary Work"],
+                    "planned": [],
+                    "done_recent": [],
+                    "blocked": [],
+                    "waiting_user": [],
+                },
+                "agent_states": [
+                    {
+                        "id": "peer1",
+                        "hot": {
+                            "active_task_id": "T001",
+                            "focus": "primary work",
+                            "next_action": "verify bootstrap",
+                            "blockers": ["none"],
+                        },
+                        "warm": {
+                            "what_changed": "picked up the task",
+                            "resume_hint": "re-open tests",
+                            "environment_summary": "workspace has a very long environment summary " * 8,
+                            "user_model": "user likes concise evidence " * 8,
+                            "persona_notes": "avoid overbuilding and keep low noise " * 8,
+                        },
+                    }
+                ],
+            }
+            pack, meta = _normalize_signal_pack(payload, token_budget=190)
+            self.assertIsInstance(pack, dict)
+            assert isinstance(pack, dict)
+            self.assertLessEqual(int(meta.get("token_estimate") or 0), int(meta.get("token_budget") or 0))
+            agent_states = pack.get("agent_states") if isinstance(pack.get("agent_states"), list) else []
+            self.assertGreaterEqual(len(agent_states), 1)
+            first = agent_states[0] if isinstance(agent_states[0], dict) else {}
+            self.assertEqual(str(first.get("id") or ""), "peer1")
+            self.assertEqual(str(first.get("active_task_id") or ""), "T001")
+            self.assertEqual(str(first.get("focus") or ""), "primary work")
+            self.assertEqual(str(first.get("next_action") or ""), "verify bootstrap")
+            self.assertNotIn("persona_notes", first)
         finally:
             cleanup()
 

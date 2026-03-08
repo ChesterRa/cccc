@@ -11,8 +11,6 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Set, Tuple
 
 
-# Keep the default surface intentionally small.
-# Basic tools are available to all roles.
 CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_help",
     "cccc_bootstrap",
@@ -24,13 +22,12 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_message_send",
     "cccc_message_reply",
     "cccc_context_get",
-    "cccc_context_sync",
+    "cccc_coordination",
     "cccc_task",
-    "cccc_context_agent",
+    "cccc_agent_state",
     "cccc_memory",
 )
 
-# Admin tools are restricted from peer roles.
 CORE_ADMIN_TOOLS: Tuple[str, ...] = (
     "cccc_capability_enable",
     "cccc_capability_block",
@@ -39,11 +36,9 @@ CORE_ADMIN_TOOLS: Tuple[str, ...] = (
     "cccc_capability_use",
 )
 
-# Backward-compatible union (original export name preserved).
 CORE_TOOL_NAMES: Tuple[str, ...] = CORE_BASIC_TOOLS + CORE_ADMIN_TOOLS
 
 
-# Built-in packs that can be enabled via cccc_capability_enable.
 BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
     "pack:group-runtime": {
         "title": "Group + Runtime Operations",
@@ -82,9 +77,9 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
     },
     "pack:context-advanced": {
         "title": "Context Advanced",
-        "description": "Context/memory admin operations.",
+        "description": "Low-level context batch sync and memory admin operations.",
         "tool_names": (
-            "cccc_context_admin",
+            "cccc_context_sync",
             "cccc_memory_admin",
         ),
         "tags": ("context", "memory", "admin"),
@@ -121,7 +116,7 @@ def core_tool_name_set() -> Set[str]:
 def all_pack_tool_name_set() -> Set[str]:
     names: Set[str] = set()
     for pack in BUILTIN_CAPABILITY_PACKS.values():
-        for tool_name in pack.get("tool_names", ()):
+        for tool_name in pack.get("tool_names", ()):  # type: ignore[arg-type]
             names.add(str(tool_name))
     return names
 
@@ -140,6 +135,6 @@ def resolve_visible_tool_names(
         cap = BUILTIN_CAPABILITY_PACKS.get(str(cap_id))
         if not isinstance(cap, dict):
             continue
-        for tool_name in cap.get("tool_names", ()):
+        for tool_name in cap.get("tool_names", ()):  # type: ignore[arg-type]
             visible.add(str(tool_name))
     return visible

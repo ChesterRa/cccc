@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
@@ -17,12 +17,15 @@ from ..schemas import (
     WEB_MAX_FILE_BYTES,
     WEB_MAX_FILE_MB,
     _normalize_reply_required,
+    check_group,
+    require_group,
 )
 
 
-def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
+def create_routers(ctx: RouteContext) -> list[APIRouter]:
+    group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
 
-    @app.post("/api/v1/groups/{group_id}/send")
+    @group_router.post("/send")
     async def send(group_id: str, req: SendRequest) -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -41,13 +44,14 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/send_cross_group")
-    async def send_cross_group(group_id: str, req: SendCrossGroupRequest) -> Dict[str, Any]:
+    @group_router.post("/send_cross_group")
+    async def send_cross_group(request: Request, group_id: str, req: SendCrossGroupRequest) -> Dict[str, Any]:
         """Send a message to another group with provenance.
 
         This creates a source chat.message in the current group and forwards a copy into the destination group
         with (src_group_id, src_event_id) set.
         """
+        check_group(request, req.dst_group_id)
         return await ctx.daemon(
             {
                 "op": "send_cross_group",
@@ -63,7 +67,7 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/reply")
+    @group_router.post("/reply")
     async def reply(group_id: str, req: ReplyRequest) -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -80,7 +84,7 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/events/{event_id}/ack")
+    @group_router.post("/events/{event_id}/ack")
     async def chat_ack(group_id: str, event_id: str, req: UserAckRequest) -> Dict[str, Any]:
         # Web UI can only ACK as user (no impersonation).
         if str(req.by or "").strip() != "user":
@@ -92,7 +96,7 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/send_upload")
+    @group_router.post("/send_upload")
     async def send_upload(
         group_id: str,
         by: str = Form("user"),
@@ -193,7 +197,7 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/reply_upload")
+    @group_router.post("/reply_upload")
     async def reply_upload(
         group_id: str,
         by: str = Form("user"),
@@ -283,7 +287,7 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/groups/{group_id}/blobs/{blob_name}")
+    @group_router.get("/blobs/{blob_name}")
     async def blob_download(group_id: str, blob_name: str) -> FileResponse:
         group = load_group(group_id)
         if group is None:
@@ -306,3 +310,5 @@ def register_messaging_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             # blob name format: <sha256>_<filename>
             download_name = name.split("_", 1)[1] or name
         return FileResponse(path=abs_path, filename=download_name)
+
+    return [group_router]

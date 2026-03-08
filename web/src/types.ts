@@ -79,10 +79,12 @@ export type Actor = {
   title?: string;
   enabled?: boolean;
   running?: boolean;  // Actual process running status
+  idle_seconds?: number | null;  // Seconds since last PTY output (null if not running/headless)
   command?: string[];
   env?: Record<string, string>;
   capability_autoload?: string[];
   runner?: string;
+  runner_effective?: string;
   runtime?: string;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
@@ -125,6 +127,22 @@ export type CapabilityRecentSuccess = {
   last_action?: string;
 };
 
+export type CapabilityReadinessPreview = {
+  preview_status?: string;
+  next_step?: string;
+  preview_basis?: string[];
+  policy_level?: string;
+  enable_supported?: boolean;
+  install_mode?: string;
+  required_env?: string[];
+  missing_env?: string[];
+  cached_install_state?: string;
+  install_error_code?: string;
+  enable_block_reason?: string;
+  policy_source?: string;
+  policy_mode?: string;
+};
+
 export type CapabilityOverviewItem = {
   capability_id: string;
   kind?: string;
@@ -146,6 +164,7 @@ export type CapabilityOverviewItem = {
   blocked_reason?: string;
   autoload_candidate?: boolean;
   recent_success?: CapabilityRecentSuccess;
+  readiness_preview?: CapabilityReadinessPreview;
   cached_install_state?: string;
   cached_install_error_code?: string;
   cached_install_error?: string;
@@ -204,17 +223,27 @@ export type CapabilityImportRecord = {
   [key: string]: unknown;
 };
 
-export type AgentState = {
-  id: string;
+export type AgentStateHot = {
   active_task_id?: string | null;
   focus?: string | null;
-  blockers?: string[];
   next_action?: string | null;
+  blockers?: string[];
+};
+
+export type AgentStateWarm = {
   what_changed?: string | null;
-  decision_delta?: string | null;
-  environment?: string | null;
-  user_profile?: string | null;
-  notes?: string | null;
+  open_loops?: string[];
+  commitments?: string[];
+  environment_summary?: string | null;
+  user_model?: string | null;
+  persona_notes?: string | null;
+  resume_hint?: string | null;
+};
+
+export type AgentState = {
+  id: string;
+  hot?: AgentStateHot | null;
+  warm?: AgentStateWarm | null;
   updated_at?: string | null;
 };
 
@@ -241,47 +270,100 @@ export type TaskStep = {
   status?: string | null;
 };
 
+export type TaskStatus = "planned" | "active" | "done" | "archived" | string;
+
+export type ChecklistStatus = "pending" | "in_progress" | "done" | string;
+
+export type TaskWaitingOn = "none" | "user" | "actor" | "external" | string;
+
+export type TaskChecklistItem = {
+  id: string;
+  text: string;
+  status?: ChecklistStatus | null;
+};
+
 export type Task = {
   id: string;
-  name: string;
-  goal?: string | null;
+  title?: string | null;
+  outcome?: string | null;
   parent_id?: string | null;
-  status?: string | null;
+  status?: TaskStatus | null;
+  archived_from?: string | null;
   assignee?: string | null;
+  priority?: string | null;
+  blocked_by?: string[];
+  waiting_on?: TaskWaitingOn | null;
+  handoff_to?: string | null;
+  notes?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  checklist?: TaskChecklistItem[];
   steps?: TaskStep[];
   current_step?: string | null;
   progress?: number | null;
   children?: Task[];
 };
 
-export type OverviewManual = {
-  roles?: string[];
-  collaboration_mode?: string | null;
+export type CoordinationBrief = {
+  objective?: string | null;
   current_focus?: string | null;
+  constraints?: string[];
+  project_brief?: string | null;
+  project_brief_stale?: boolean;
   updated_by?: string | null;
   updated_at?: string | null;
 };
 
+export type CoordinationNote = {
+  at?: string | null;
+  by?: string | null;
+  summary?: string | null;
+  task_id?: string | null;
+};
+
+export type GroupTasksSummary = {
+  total: number;
+  done: number;
+  active: number;
+  planned: number;
+  archived?: number;
+  root_count?: number;
+};
+
+export type TaskBoardEntry = string | Partial<Task>;
+
+export type ContextAttention = {
+  blocked?: number | TaskBoardEntry[];
+  waiting_user?: number | TaskBoardEntry[];
+  pending_handoffs?: number | TaskBoardEntry[];
+};
+
+export type ContextBoard = {
+  planned?: TaskBoardEntry[];
+  active?: TaskBoardEntry[];
+  done?: TaskBoardEntry[];
+  archived?: TaskBoardEntry[];
+};
+
 export type GroupContext = {
   version?: string;
-  vision?: string | null;
-  overview?: {
-    manual?: OverviewManual;
+  coordination?: {
+    brief?: CoordinationBrief | null;
+    tasks?: Task[];
+    recent_decisions?: CoordinationNote[];
+    recent_handoffs?: CoordinationNote[];
   };
+  agent_states?: AgentState[];
+  attention?: ContextAttention | null;
+  board?: ContextBoard | null;
+  tasks_summary?: GroupTasksSummary;
   panorama?: {
-    mermaid?: string;
+    mermaid?: string | null;
   };
-  tasks_summary?: {
-    total: number;
-    done: number;
-    active: number;
-    planned: number;
-    root_count?: number;
+  meta?: {
+    project_status?: string | null;
+    [key: string]: unknown;
   };
-  active_tasks?: Task[];
-  agents?: AgentState[];
 };
 
 export type ProjectMdInfo = {
@@ -312,6 +394,8 @@ export type GroupSettings = {
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;
   terminal_transcript_notify_lines: number;
+
+  panorama_enabled: boolean;
 };
 
 export type RemoteAccessState = {

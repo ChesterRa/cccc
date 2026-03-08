@@ -62,7 +62,8 @@ export function AgentTab({
   const { t } = useTranslation('actors');
   // Derived state (must be defined before refs that use them)
   const isRunning = actor.running ?? actor.enabled ?? false;
-  const isHeadless = actor.runner === "headless";
+  const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim() || "pty";
+  const isHeadless = effectiveRunner === "headless";
   const canControl = !readOnly;
   const terminalScrollbackLines = useObservabilityStore((s) => s.terminalScrollbackLines);
 
@@ -643,10 +644,10 @@ export function AgentTab({
   }, [canControl, isVisible, isSmallScreen, terminalReady]);
 
   const isBusy = busy.includes(actor.id);
-  const stateHeadline = String(agentState?.focus || agentState?.next_action || "").trim() || t('noAgentStateYet');
-  const stateTask = String(agentState?.active_task_id || "").trim();
-  const blockerCount = Array.isArray(agentState?.blockers) ? agentState.blockers.length : 0;
-  const stateNext = String(agentState?.next_action || "").trim();
+  const stateHeadline = String(agentState?.hot?.focus || agentState?.hot?.next_action || "").trim() || t('noAgentStateYet');
+  const stateTask = String(agentState?.hot?.active_task_id || "").trim();
+  const blockerCount = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
+  const stateNext = String(agentState?.hot?.next_action || "").trim();
 
   return (
     <div className="flex flex-col h-full">

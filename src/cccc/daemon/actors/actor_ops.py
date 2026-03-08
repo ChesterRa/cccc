@@ -39,8 +39,14 @@ def handle_actor_list(
         effective_runner = effective_runner_kind(runner_kind)
         if effective_runner == "headless":
             actor["running"] = headless_runner.SUPERVISOR.actor_running(group_id, aid)
+            actor["idle_seconds"] = None
         else:
             actor["running"] = pty_runner.SUPERVISOR.actor_running(group_id, aid)
+            actor["idle_seconds"] = (
+                pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=aid)
+                if actor["running"]
+                else None
+            )
         if effective_runner != runner_kind:
             actor["runner_effective"] = effective_runner
     if include_unread:

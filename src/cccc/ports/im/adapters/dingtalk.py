@@ -373,6 +373,19 @@ class DingTalkAdapter(IMAdapter):
                             pass
 
                         # Build event dict for _enqueue_message
+                        # Parse content field: may be JSON string or dict,
+                        # contains downloadCode/fileName for file/picture/video/audio
+                        raw_content = data.get('content', {})
+                        if isinstance(raw_content, str):
+                            try:
+                                parsed_content = json.loads(raw_content)
+                            except (json.JSONDecodeError, ValueError):
+                                parsed_content = {}
+                        elif isinstance(raw_content, dict):
+                            parsed_content = raw_content
+                        else:
+                            parsed_content = {}
+
                         event = {
                             "msgtype": data.get('msgtype', 'text'),
                             "robotCode": data.get('robotCode', ''),
@@ -388,18 +401,45 @@ class DingTalkAdapter(IMAdapter):
                             "sessionWebhook": data.get('sessionWebhook', ''),
                             "sessionWebhookExpiredTime": data.get('sessionWebhookExpiredTime', 0),
                             "createAt": data.get('createAt', 0),
-                            # richText content is inside content.richText (not top-level)
-                            "richText": data.get('content', {}).get('richText', []),
-                            # picture/file fields
-                            "downloadCode": data.get('downloadCode', ''),
-                            "fileName": data.get('fileName', ''),
+                            # richText content is inside content.richText
+                            "richText": parsed_content.get('richText', []),
+                            # picture/file/video/audio fields: check both top-level and content
+                            "downloadCode": data.get('downloadCode', '') or parsed_content.get('downloadCode', ''),
+                            "fileName": data.get('fileName', '') or parsed_content.get('fileName', ''),
+                            # audio fields: check both top-level and content
+                            "recognition": data.get('recognition', '') or parsed_content.get('recognition', ''),
+                            "duration": data.get('duration', 0) or parsed_content.get('duration', 0),
+                            # video fields
+                            "videoType": data.get('videoType', '') or parsed_content.get('videoType', ''),
+                            # file fields (DingTalk drive)
+                            "spaceId": data.get('spaceId', '') or parsed_content.get('spaceId', ''),
+                            "fileId": data.get('fileId', '') or parsed_content.get('fileId', ''),
                         }
 
-                        # Extract text content (text is also a dict)
+                        # Diagnostic logging for non-text message types
+                        msg_type_val = data.get('msgtype', '')
+                        if msg_type_val and msg_type_val != 'text':
+                            fn = event.get('fileName', '')
+                            fn_safe = f"*{fn[fn.rfind('.'):]}({len(fn)})" if fn and '.' in fn else f"({len(fn)}ch)" if fn else "(none)"
+                            adapter._log(
+                                f"[stream] non-text message: msgtype={msg_type_val} "
+                                f"content_keys={list(parsed_content.keys()) if parsed_content else '(empty)'} "
+                                f"downloadCode={'yes' if event.get('downloadCode') else 'no'} "
+                                f"fileName={fn_safe}"
+                            )
+
+                        # Extract text content (text is usually a dict like {"content": "..."})
                         text_data = data.get('text', {})
                         if text_data:
-                            event["text"] = {"content": text_data.get('content', '')}
-                            adapter._log("[stream] text message received")
+                            if isinstance(text_data, dict):
+                                event["text"] = {"content": text_data.get('content', '')}
+                            elif isinstance(text_data, str):
+                                # Defensive: some DingTalk versions may return text as plain string
+                                event["text"] = {"content": text_data}
+                                adapter._log(f"[stream] text_data is str (not dict): {text_data[:100]!r}")
+                            else:
+                                adapter._log(f"[stream] text_data unexpected type: {type(text_data).__name__}")
+                            adapter._log(f"[stream] text message received, msgtype={data.get('msgtype')}, convType={data.get('conversationType')}")
 
                         # Enqueue the message
                         if adapter._enqueue_message(event):
@@ -542,6 +582,12 @@ class DingTalkAdapter(IMAdapter):
                 text = "[image]"
             elif msg_type == "file":
                 text = f"[file: {event.get('fileName', 'unknown')}]"
+            elif msg_type == "audio":
+                # Audio: prefer speech recognition text if available
+                recognition = str(event.get("recognition", "") or "").strip()
+                text = recognition if recognition else "[audio]"
+            elif msg_type == "video":
+                text = "[video]"
             else:
                 text = f"[{msg_type}]"
 
@@ -559,11 +605,33 @@ class DingTalkAdapter(IMAdapter):
                     "file_name": "image.png",
                 })
             elif msg_type == "file":
-                attachments.append({
+                attachment: Dict[str, Any] = {
                     "provider": "dingtalk",
                     "kind": "file",
                     "download_code": event.get("downloadCode", ""),
                     "file_name": event.get("fileName", "file"),
+                }
+                if event.get("spaceId"):
+                    attachment["space_id"] = event["spaceId"]
+                if event.get("fileId"):
+                    attachment["file_id"] = event["fileId"]
+                attachments.append(attachment)
+            elif msg_type == "audio":
+                attachments.append({
+                    "provider": "dingtalk",
+                    "kind": "audio",
+                    "download_code": event.get("downloadCode", ""),
+                    "file_name": "audio.amr",
+                    "duration": event.get("duration", 0),
+                })
+            elif msg_type == "video":
+                attachments.append({
+                    "provider": "dingtalk",
+                    "kind": "video",
+                    "download_code": event.get("downloadCode", ""),
+                    "file_name": "video.mp4",
+                    "duration": event.get("duration", 0),
+                    "video_type": event.get("videoType", ""),
                 })
             elif msg_type == "richText" and rich_text_attachments:
                 # Add attachments extracted from richText content

@@ -61,7 +61,8 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
         "terminal_transcript_notify_tail",
         "terminal_transcript_notify_lines",
     }
-    allowed = messaging_keys | delivery_keys | automation_keys | terminal_transcript_keys
+    feature_keys = {"panorama_enabled"}
+    allowed = messaging_keys | delivery_keys | automation_keys | terminal_transcript_keys | feature_keys
 
     unknown = set(patch.keys()) - allowed
     if unknown:
@@ -112,12 +113,20 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
         if tt_patch:
             apply_terminal_transcript_patch(group.doc, tt_patch)
 
+        features_patch = {k: v for k, v in patch.items() if k in feature_keys}
+        if features_patch:
+            features = group.doc.get("features") if isinstance(group.doc.get("features"), dict) else {}
+            if "panorama_enabled" in features_patch:
+                features["panorama_enabled"] = coerce_bool(features_patch["panorama_enabled"], default=False)
+            group.doc["features"] = features
+
         group.save()
     except Exception as e:
         return _error("group_settings_update_failed", str(e))
 
     automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
     delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+    features = group.doc.get("features") if isinstance(group.doc.get("features"), dict) else {}
     tt = get_terminal_transcript_settings(group.doc)
     settings = {
         "default_send_to": get_default_send_to(group.doc),
@@ -172,6 +181,7 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
             min_value=1,
             max_value=80,
         ),
+        "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
     }
 
     event = append_event(

@@ -27,7 +27,6 @@ def handle_actor_start(
     maybe_reset_automation_on_foreman_change: Callable[..., None],
     start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
-    pty_supported: Callable[[], bool],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
@@ -61,8 +60,6 @@ def handle_actor_start(
     env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
     runner_kind = str(actor.get("runner") or "pty").strip()
     runtime = str(actor.get("runtime") or "codex").strip()
-    forced_headless = effective_runner_kind(runner_kind) == "headless" and runner_kind != "headless" and not pty_supported()
-
     start_result = start_actor_process(
         group,
         actor_id,
@@ -77,8 +74,8 @@ def handle_actor_start(
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     result: Dict[str, Any] = {"actor": actor, "event": start_result["event"]}
-    if forced_headless or start_result.get("effective_runner") != runner_kind:
-        result["runner_effective"] = start_result.get("effective_runner") or "headless"
+    if start_result.get("effective_runner") != runner_kind:
+        result["runner_effective"] = start_result.get("effective_runner")
     return DaemonResponse(ok=True, result=result)
 
 
@@ -293,7 +290,6 @@ def try_handle_actor_lifecycle_op(
     maybe_reset_automation_on_foreman_change: Callable[..., None],
     start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
-    pty_supported: Callable[[], bool],
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
     clear_preamble_sent: Callable[[Any, str], None],
@@ -317,7 +313,6 @@ def try_handle_actor_lifecycle_op(
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
             start_actor_process=start_actor_process,
             effective_runner_kind=effective_runner_kind,
-            pty_supported=pty_supported,
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
             update_actor_private_env=update_actor_private_env,

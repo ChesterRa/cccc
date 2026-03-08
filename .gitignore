@@ -26,6 +26,7 @@ uv.lock
 /web/.vite/
 /web/dist/
 /src/cccc/ports/web/dist/
+/space
 
 # Local/editor/platform noise
 .DS_Store

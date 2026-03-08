@@ -13,6 +13,7 @@ interface GroupDraft {
 }
 
 interface ComposerState {
+  activeGroupId: string;
   // Current active state
   composerText: string;
   composerFiles: File[];
@@ -43,6 +44,7 @@ interface ComposerState {
 }
 
 export const useComposerStore = create<ComposerState>((set, get) => ({
+  activeGroupId: "",
   composerText: "",
   composerFiles: [],
   toText: "",
@@ -118,8 +120,10 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
 
     // Load draft for the new group
     const draft = toGroupId ? newDrafts[toGroupId] : null;
+    const normalizedDestGroupId = String(toGroupId || "").trim();
 
     set({
+      activeGroupId: normalizedDestGroupId,
       drafts: newDrafts,
       composerText: draft?.composerText || "",
       composerFiles: draft?.composerFiles || [],
@@ -127,7 +131,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       replyTarget: draft?.replyTarget || null,
       priority: draft?.priority || "normal",
       replyRequired: draft?.replyRequired || false,
-      destGroupId: draft?.destGroupId || (toGroupId || ""),
+      // 切组后先回到当前组，跨组发送由用户显式重新选择，避免恢复草稿时误触发远端拉取。
+      destGroupId: normalizedDestGroupId,
     });
   },
 

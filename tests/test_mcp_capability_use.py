@@ -20,8 +20,8 @@ class TestMcpCapabilityUse(unittest.TestCase):
                 by="peer-1",
                 actor_id="peer-1",
                 capability_id="",
-                tool_name="cccc_context_agent",
-                tool_arguments={"action": "update", "agent_id": "peer-1", "focus": "work"},
+                tool_name="cccc_agent_state",
+                tool_arguments={"action": "update", "actor_id": "peer-1", "focus": "work"},
             )
 
         self.assertTrue(bool(result.get("enabled")))
@@ -35,7 +35,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+            return_value={"state": "runnable", "refresh_required": True, "enabled": True},
         ) as enable_mock, patch(
             "cccc.ports.mcp.server.handle_tool_call",
             return_value={"ok": True},
@@ -64,7 +64,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-            return_value={"state": "failed", "refresh_required": False, "enabled": False, "reason": "blocked_by_group_policy"},
+            return_value={"state": "blocked", "refresh_required": False, "enabled": False, "reason": "blocked_by_group_policy"},
         ) as enable_mock, patch(
             "cccc.ports.mcp.server.handle_tool_call",
         ) as call_mock:
@@ -89,7 +89,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             side_effect=[
                 {
-                    "state": "failed",
+                    "state": "blocked",
                     "enabled": False,
                     "reason": "install_failed:probe_timeout",
                     "diagnostics": [
@@ -97,7 +97,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
                     ],
                 },
                 {
-                    "state": "ready",
+                    "state": "runnable",
                     "refresh_required": False,
                     "enabled": True,
                 },
@@ -125,7 +125,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             return_value={
-                "state": "failed",
+                "state": "blocked",
                 "enabled": False,
                 "reason": "install_failed:missing_required_env",
                 "diagnostics": [
@@ -169,7 +169,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             return_value={
-                "state": "ready",
+                "state": "runnable",
                 "refresh_required": False,
                 "enabled": True,
                 "skill": {
@@ -195,6 +195,11 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertEqual(str(skill_payload.get("capability_id") or ""), "skill:anthropic:triage")
         self.assertEqual(str(result.get("skill_mode") or ""), "capsule_runtime")
         self.assertFalse(bool(result.get("full_local_skill_equivalent")))
+        self.assertFalse(bool(result.get("dynamic_tools_expected")))
+        runtime_visible_in = result.get("runtime_visible_in") if isinstance(result.get("runtime_visible_in"), list) else []
+        self.assertIn("active_capsule_skills", runtime_visible_in)
+        self.assertIn("active_capsule_skills", str(result.get("runtime_activation_evidence") or ""))
+        self.assertIn("dynamic_tools", str(result.get("next_step_hint") or ""))
         self.assertIn("$CODEX_HOME/skills", str(result.get("next_step_hint") or ""))
         enable_mock.assert_called_once()
         call_mock.assert_not_called()
@@ -205,7 +210,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             return_value={
-                "state": "failed",
+                "state": "blocked",
                 "enabled": False,
                 "reason": "capability_unavailable",
             },
@@ -222,6 +227,10 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertFalse(bool(result.get("enabled")))
         self.assertEqual(str(result.get("skill_mode") or ""), "capsule_runtime")
         self.assertFalse(bool(result.get("full_local_skill_equivalent")))
+        self.assertFalse(bool(result.get("dynamic_tools_expected")))
+        runtime_visible_in = result.get("runtime_visible_in") if isinstance(result.get("runtime_visible_in"), list) else []
+        self.assertIn("active_capsule_skills", runtime_visible_in)
+        self.assertIn("active_capsule_skills", str(result.get("runtime_activation_evidence") or ""))
         self.assertIn("$CODEX_HOME/skills", str(result.get("next_step_hint") or ""))
 
 
@@ -245,7 +254,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
             with self.subTest(tool=tool_name):
                 with patch(
                     "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-                    return_value={"state": "ready", "refresh_required": True, "enabled": True},
+                    return_value={"state": "runnable", "refresh_required": True, "enabled": True},
                 ), patch(
                     "cccc.ports.mcp.server.handle_tool_call",
                     return_value={"ok": True},
@@ -277,7 +286,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
             with self.subTest(tool=tool_name):
                 with patch(
                     "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-                    return_value={"state": "ready", "refresh_required": True, "enabled": True},
+                    return_value={"state": "runnable", "refresh_required": True, "enabled": True},
                 ), patch(
                     "cccc.ports.mcp.server.handle_tool_call",
                     return_value={"ok": True},
@@ -303,7 +312,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+            return_value={"state": "runnable", "refresh_required": True, "enabled": True},
         ), patch(
             "cccc.ports.mcp.server.handle_tool_call",
             return_value={"ok": True},
@@ -327,7 +336,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+            return_value={"state": "runnable", "refresh_required": True, "enabled": True},
         ) as enable_mock, patch(
             "cccc.ports.mcp.handlers.cccc_capability._call_daemon_or_raise",
             return_value={"result": {"ok": True}},
@@ -371,7 +380,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
             },
         ), patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+            return_value={"state": "runnable", "refresh_required": True, "enabled": True},
         ), patch(
             "cccc.ports.mcp.handlers.cccc_capability._call_daemon_or_raise",
             return_value={"result": {"ok": True}},
@@ -404,7 +413,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
             },
         ), patch(
             "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
-            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+            return_value={"state": "runnable", "refresh_required": True, "enabled": True},
         ), patch(
             "cccc.ports.mcp.handlers.cccc_capability._call_daemon_or_raise",
             return_value={"result": {"ok": True}},

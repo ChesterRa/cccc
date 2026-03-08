@@ -22,7 +22,6 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
 def handle_group_start(
     args: Dict[str, Any],
     *,
-    pty_supported: Callable[[], bool],
     effective_runner_kind: Callable[[str], str],
     find_scope_url: Callable[[Any, str], str],
     ensure_mcp_installed: Callable[[str, Path], Any],
@@ -98,7 +97,6 @@ def handle_group_start(
             start_specs.append((aid, cwd, list(cmd or []), dict(env or {}), dict(actor), runner_kind))
 
         started: list[str] = []
-        forced_headless: list[str] = []
         for aid, cwd, cmd, env, actor, runner_kind in start_specs:
             update_actor(group, aid, {"enabled": True})
             actor = resolve_linked_actor_before_start(
@@ -113,9 +111,6 @@ def handle_group_start(
             runner_kind = str(actor.get("runner") or runner_kind).strip() or runner_kind
 
             runner_effective = effective_runner_kind(runner_kind)
-            if runner_effective == "headless" and runner_kind != "headless" and not pty_supported():
-                forced_headless.append(aid)
-
             runtime = str(actor.get("runtime") or "codex").strip()
             if runtime not in supported_runtimes:
                 return _error(
@@ -187,12 +182,8 @@ def handle_group_start(
         reset_automation_timers_if_active(group)
 
     data: Dict[str, Any] = {"started": started}
-    if forced_headless:
-        data["forced_headless"] = forced_headless
     event = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data=data)
     result: Dict[str, Any] = {"group_id": group.group_id, "started": started, "event": event}
-    if forced_headless:
-        result["forced_headless"] = forced_headless
     return DaemonResponse(ok=True, result=result)
 
 
@@ -261,7 +252,6 @@ def try_handle_group_lifecycle_op(
     op: str,
     args: Dict[str, Any],
     *,
-    pty_supported: Callable[[], bool],
     effective_runner_kind: Callable[[str], str],
     find_scope_url: Callable[[Any, str], str],
     ensure_mcp_installed: Callable[[str, Path], Any],
@@ -285,7 +275,6 @@ def try_handle_group_lifecycle_op(
     if op == "group_start":
         return handle_group_start(
             args,
-            pty_supported=pty_supported,
             effective_runner_kind=effective_runner_kind,
             find_scope_url=find_scope_url,
             ensure_mcp_installed=ensure_mcp_installed,

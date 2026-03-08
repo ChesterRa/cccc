@@ -24,7 +24,6 @@ def handle_actor_add(
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
     start_actor_process: Callable[..., Dict[str, Any]],
-    pty_supported: Callable[[], bool],
     effective_runner_kind: Callable[[str], str],
     validate_private_env_key: Callable[[Any], str],
     coerce_private_env_value: Callable[[Any], str],
@@ -34,7 +33,6 @@ def handle_actor_add(
     supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
-    warn_forced_headless: Optional[Callable[[str, str], None]] = None,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
@@ -87,16 +85,11 @@ def handle_actor_add(
             if len(linked_profile_secrets) > private_env_max_keys:
                 raise ValueError("too many profile private env keys configured")
 
-        runner = requested_runner or ("pty" if pty_supported() else "headless")
+        runner = requested_runner or "pty"
         if runner not in ("pty", "headless"):
             raise ValueError("invalid runner (must be 'pty' or 'headless')")
         if runtime not in supported_runtimes:
             raise ValueError("invalid runtime")
-        forced_headless = False
-        if runner == "pty" and not pty_supported():
-            runner = "headless"
-            forced_headless = True
-
         foreman_cfg: Optional[Dict[str, Any]] = None
         if by and by != "user":
             try:
@@ -210,12 +203,6 @@ def handle_actor_add(
     except Exception as e:
         return _error("actor_add_failed", str(e))
 
-    if forced_headless and callable(warn_forced_headless):
-        try:
-            warn_forced_headless(group.group_id, str(actor.get("id") or actor_id))
-        except Exception:
-            pass
-
     event = append_event(
         group.ledger_path,
         kind="actor.add",
@@ -254,8 +241,6 @@ def handle_actor_add(
     else:
         result["start_error"] = start_result.get("error")
         result["running"] = False
-    if forced_headless:
-        result["runner_effective"] = "headless"
     return DaemonResponse(ok=True, result=result)
 
 
@@ -266,7 +251,6 @@ def try_handle_actor_add_op(
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
     start_actor_process: Callable[..., Dict[str, Any]],
-    pty_supported: Callable[[], bool],
     effective_runner_kind: Callable[[str], str],
     validate_private_env_key: Callable[[Any], str],
     coerce_private_env_value: Callable[[Any], str],
@@ -276,7 +260,6 @@ def try_handle_actor_add_op(
     supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
-    warn_forced_headless: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[DaemonResponse]:
     if op == "actor_add":
         return handle_actor_add(
@@ -284,7 +267,6 @@ def try_handle_actor_add_op(
             foreman_id=foreman_id,
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
             start_actor_process=start_actor_process,
-            pty_supported=pty_supported,
             effective_runner_kind=effective_runner_kind,
             validate_private_env_key=validate_private_env_key,
             coerce_private_env_value=coerce_private_env_value,
@@ -294,6 +276,5 @@ def try_handle_actor_add_op(
             supported_runtimes=supported_runtimes,
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
-            warn_forced_headless=warn_forced_headless,
         )
     return None

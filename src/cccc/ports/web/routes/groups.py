@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ....contracts.v1.automation import AutomationRuleSet
@@ -37,23 +37,44 @@ from ..schemas import (
     RouteContext,
     WEB_MAX_TEMPLATE_BYTES,
     _safe_int,
+    filter_groups_for_principal,
+    require_admin,
+    require_group,
 )
 
 
-def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
-    @app.get("/api/v1/groups")
-    async def groups() -> Dict[str, Any]:
+def create_routers(ctx: RouteContext) -> list[APIRouter]:
+    # --- global router (user/admin scope, per-route guard where needed) ---
+    global_router = APIRouter(prefix="/api/v1")
+
+    # --- group-scoped router ---
+    group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
+
+    # ------------------------------------------------------------------ #
+    # Global routes
+    # ------------------------------------------------------------------ #
+
+    @global_router.get("/groups")
+    async def groups(request: Request) -> Dict[str, Any]:
         async def _fetch() -> Dict[str, Any]:
             return await ctx.daemon({"op": "groups"})
 
         ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
-        return await ctx.cached_json("groups", ttl, _fetch)
+        resp = await ctx.cached_json("groups", ttl, _fetch)
+        result = resp.get("result") if isinstance(resp, dict) else None
+        groups_list = result.get("groups") if isinstance(result, dict) else None
+        if isinstance(groups_list, list):
+            resp = dict(resp)
+            out = dict(result)
+            out["groups"] = filter_groups_for_principal(request, groups_list)
+            resp["result"] = out
+        return resp
 
-    @app.post("/api/v1/groups")
+    @global_router.post("/groups", dependencies=[Depends(require_admin)])
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
         return await ctx.daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
 
-    @app.post("/api/v1/groups/from_template")
+    @global_router.post("/groups/from_template", dependencies=[Depends(require_admin)])
     async def group_create_from_template(
         path: str = Form(...),
         title: str = Form("working-group"),
@@ -72,7 +93,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/templates/preview")
+    @global_router.post("/templates/preview", dependencies=[Depends(require_admin)])
     async def template_preview(file: UploadFile = File(...)) -> Dict[str, Any]:
         raw = await file.read()
         if len(raw) > WEB_MAX_TEMPLATE_BYTES:
@@ -130,7 +151,17 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             },
         }
 
-    @app.get("/api/v1/groups/{group_id}")
+    @global_router.get("/events/stream", dependencies=[Depends(require_admin)])
+    async def global_events_stream() -> StreamingResponse:
+        """SSE stream for global events (group created/deleted, etc.)."""
+        from ..streams import sse_global_events_tail, create_sse_response
+        return create_sse_response(sse_global_events_tail(ctx.home))
+
+    # ------------------------------------------------------------------ #
+    # Group-scoped routes
+    # ------------------------------------------------------------------ #
+
+    @group_router.get("")
     async def group_show(group_id: str) -> Dict[str, Any]:
         gid = str(group_id or "").strip()
 
@@ -140,7 +171,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
         return await ctx.cached_json(f"group:{gid}", ttl, _fetch)
 
-    @app.put("/api/v1/groups/{group_id}")
+    @group_router.put("")
     async def group_update(group_id: str, req: GroupUpdateRequest) -> Dict[str, Any]:
         """Update group metadata (title/topic)."""
         patch: Dict[str, Any] = {}
@@ -152,7 +183,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             return {"ok": True, "result": {"message": "no changes"}}
         return await ctx.daemon({"op": "group_update", "args": {"group_id": group_id, "by": req.by, "patch": patch}})
 
-    @app.delete("/api/v1/groups/{group_id}")
+    @group_router.delete("")
     async def group_delete(group_id: str, confirm: str = "", by: str = "user") -> Dict[str, Any]:
         """Delete a group (requires confirm=group_id)."""
         if confirm != group_id:
@@ -162,9 +193,9 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             )
         return await ctx.daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
 
-    @app.get("/api/v1/groups/{group_id}/context")
+    @group_router.get("/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
-        """Get full group context (vision/overview/panorama/tasks/agents)."""
+        """Get full group context (coordination/agent_states/projections)."""
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:
@@ -173,15 +204,15 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
         return await ctx.cached_json(f"context:{gid}", ttl, _fetch)
 
-    @app.get("/api/v1/groups/{group_id}/template/export")
+    @group_router.get("/template/export")
     async def group_template_export(group_id: str) -> Dict[str, Any]:
         return await ctx.daemon({"op": "group_template_export", "args": {"group_id": group_id}})
 
-    @app.post("/api/v1/groups/{group_id}/template/preview")
+    @group_router.post("/template/preview")
     async def group_template_preview(group_id: str, req: GroupTemplatePreviewRequest) -> Dict[str, Any]:
         return await ctx.daemon({"op": "group_template_preview", "args": {"group_id": group_id, "template": req.template, "by": req.by}})
 
-    @app.post("/api/v1/groups/{group_id}/template/preview_upload")
+    @group_router.post("/template/preview_upload")
     async def group_template_preview_upload(
         group_id: str,
         by: str = Form("user"),
@@ -193,7 +224,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         template_text = raw.decode("utf-8", errors="replace")
         return await ctx.daemon({"op": "group_template_preview", "args": {"group_id": group_id, "template": template_text, "by": by}})
 
-    @app.post("/api/v1/groups/{group_id}/template/import_replace")
+    @group_router.post("/template/import_replace")
     async def group_template_import_replace(
         group_id: str,
         confirm: str = Form(""),
@@ -211,7 +242,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/groups/{group_id}/tasks")
+    @group_router.get("/tasks")
     async def group_tasks(group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
         """List tasks (or fetch a single task when task_id is provided)."""
         args: Dict[str, Any] = {"group_id": group_id}
@@ -219,7 +250,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             args["task_id"] = task_id
         return await ctx.daemon({"op": "task_list", "args": args})
 
-    @app.get("/api/v1/groups/{group_id}/project_md")
+    @group_router.get("/project_md")
     async def project_md_get(group_id: str) -> Dict[str, Any]:
         """Get PROJECT.md content for the group's active scope root (repo root)."""
         group = load_group(group_id)
@@ -261,7 +292,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         except Exception as e:
             return {"ok": True, "result": {"found": False, "path": str(project_md_path), "content": None, "error": f"Failed to read PROJECT.md: {e}"}}
 
-    @app.put("/api/v1/groups/{group_id}/project_md")
+    @group_router.put("/project_md")
     async def project_md_put(group_id: str, req: ProjectMdUpdateRequest) -> Dict[str, Any]:
         """Create or update PROJECT.md in the group's active scope root (repo root)."""
         group = load_group(group_id)
@@ -299,6 +330,17 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         try:
             atomic_write_text(project_md_path, str(req.content or ""), encoding="utf-8")
             content = project_md_path.read_text(encoding="utf-8", errors="replace")
+            try:
+                await ctx.daemon({
+                    "op": "context_sync",
+                    "args": {
+                        "group_id": group_id,
+                        "by": "user",
+                        "ops": [{"op": "coordination.brief.update", "project_brief_stale": True}],
+                    },
+                })
+            except Exception:
+                pass
             return {"ok": True, "result": {"found": True, "path": str(project_md_path), "content": content}}
         except Exception as e:
             return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write PROJECT.md: {e}"}}
@@ -319,7 +361,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             return str(load_builtin_help_markdown() or "").strip()
         return ""
 
-    @app.get("/api/v1/groups/{group_id}/prompts")
+    @group_router.get("/prompts")
     async def prompts_get(group_id: str) -> Dict[str, Any]:
         """Get effective group guidance markdown (preamble/help) and override status."""
         group = load_group(group_id)
@@ -347,7 +389,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             },
         }
 
-    @app.put("/api/v1/groups/{group_id}/prompts/{kind}")
+    @group_router.put("/prompts/{kind}")
     async def prompts_put(group_id: str, kind: str, req: RepoPromptUpdateRequest) -> Dict[str, Any]:
         """Create or update a group prompt override file under CCCC_HOME."""
         group = load_group(group_id)
@@ -365,7 +407,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         except Exception as e:
             return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write {filename}: {e}"}}
 
-    @app.delete("/api/v1/groups/{group_id}/prompts/{kind}")
+    @group_router.delete("/prompts/{kind}")
     async def prompts_delete(group_id: str, kind: str, confirm: str = "") -> Dict[str, Any]:
         """Reset a group prompt override by deleting the CCCC_HOME file (requires confirm=kind)."""
         if str(confirm or "").strip().lower() != str(kind or "").strip().lower():
@@ -382,16 +424,17 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         except Exception as e:
             return {"ok": False, "error": {"code": "DELETE_FAILED", "message": f"Failed to delete {filename}: {e}"}}
 
-    @app.post("/api/v1/groups/{group_id}/context")
+    @group_router.post("/context")
     async def group_context_sync(group_id: str, request: Request) -> Dict[str, Any]:
-        """Update group context via batch operations (v2).
+        """Update group context via batch operations (v3).
 
-        Body: {"ops": [{"op": "vision.update", "vision": "..."}, ...], "by": "user"}
+        Body: {"ops": [{"op": "coordination.brief.update", ...}, ...], "by": "user"}
 
         Supported ops:
-        - vision.update, overview.manual.update
-        - task.create/update/status/move/restore
-        - agent.update/clear
+        - coordination.brief.update / coordination.note.add
+        - task.create/update/move/restore
+        - agent_state.update/clear
+        - meta.merge (advanced, restricted keys)
         """
         try:
             body = await request.json()
@@ -407,7 +450,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             "args": {"group_id": group_id, "ops": ops, "by": by, "dry_run": dry_run}
         })
 
-    @app.get("/api/v1/groups/{group_id}/settings")
+    @group_router.get("/settings")
     async def group_settings_get(group_id: str) -> Dict[str, Any]:
         """Get group-scoped automation + delivery settings."""
         group = load_group(group_id)
@@ -416,6 +459,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+        features = group.doc.get("features") if isinstance(group.doc.get("features"), dict) else {}
         from ....kernel.terminal_transcript import get_terminal_transcript_settings
         from ....kernel.messaging import get_default_send_to
 
@@ -443,11 +487,12 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
+                    "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
                 }
             }
         }
 
-    @app.put("/api/v1/groups/{group_id}/settings")
+    @group_router.put("/settings")
     async def group_settings_update(group_id: str, req: GroupSettingsRequest) -> Dict[str, Any]:
         """Update group-scoped automation + delivery settings."""
         patch: Dict[str, Any] = {}
@@ -492,6 +537,9 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         if req.terminal_transcript_notify_lines is not None:
             patch["terminal_transcript_notify_lines"] = max(1, min(80, int(req.terminal_transcript_notify_lines)))
 
+        if req.panorama_enabled is not None:
+            patch["panorama_enabled"] = bool(req.panorama_enabled)
+
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}
 
@@ -500,12 +548,12 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             "args": {"group_id": group_id, "patch": patch, "by": req.by}
         })
 
-    @app.get("/api/v1/groups/{group_id}/automation")
+    @group_router.get("/automation")
     async def group_automation_get(group_id: str) -> Dict[str, Any]:
         """Get group automation rules + snippets + runtime status."""
         return await ctx.daemon({"op": "group_automation_state", "args": {"group_id": group_id, "by": "user"}})
 
-    @app.put("/api/v1/groups/{group_id}/automation")
+    @group_router.put("/automation")
     async def group_automation_update(group_id: str, req: GroupAutomationRequest) -> Dict[str, Any]:
         """Update group automation rules + snippets."""
         ruleset = AutomationRuleSet(rules=req.rules, snippets=req.snippets).model_dump()
@@ -516,7 +564,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/automation/manage")
+    @group_router.post("/automation/manage")
     async def group_automation_manage(group_id: str, req: GroupAutomationManageRequest) -> Dict[str, Any]:
         """Manage group automation incrementally via actions."""
         return await ctx.daemon(
@@ -531,7 +579,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/automation/reset_baseline")
+    @group_router.post("/automation/reset_baseline")
     async def group_automation_reset_baseline(group_id: str, req: GroupAutomationResetBaselineRequest) -> Dict[str, Any]:
         """Reset group automation rules/snippets to baseline defaults."""
         return await ctx.daemon(
@@ -545,16 +593,16 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/groups/{group_id}/attach")
+    @group_router.post("/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
         return await ctx.daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
 
-    @app.delete("/api/v1/groups/{group_id}/scopes/{scope_key}")
+    @group_router.delete("/scopes/{scope_key}")
     async def group_detach_scope(group_id: str, scope_key: str, by: str = "user") -> Dict[str, Any]:
         """Detach a scope from a group."""
         return await ctx.daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
 
-    @app.get("/api/v1/groups/{group_id}/ledger/tail")
+    @group_router.get("/ledger/tail")
     async def ledger_tail(
         group_id: str,
         lines: int = 50,
@@ -601,7 +649,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         return {"ok": True, "result": {"events": events}}
 
-    @app.get("/api/v1/groups/{group_id}/ledger/search")
+    @group_router.get("/ledger/search")
     async def ledger_search(
         group_id: str,
         q: str = "",
@@ -614,17 +662,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         with_ack_status: bool = False,
         with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
-        """Search and paginate messages in the ledger.
-
-        Query params:
-        - q: Text search query (case-insensitive substring match)
-        - kind: Filter by message type (all/chat/notify)
-        - by: Filter by sender (actor_id or "user")
-        - before: Return messages before this event_id (backward pagination)
-        - after: Return messages after this event_id (forward pagination)
-        - limit: Maximum number of messages to return (default 50, max 200)
-        - with_read_status: Include read status for each message
-        """
+        """Search and paginate messages in the ledger."""
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -681,7 +719,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         }
 
-    @app.get("/api/v1/groups/{group_id}/ledger/window")
+    @group_router.get("/ledger/window")
     async def ledger_window(
         group_id: str,
         center: str,
@@ -692,10 +730,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         with_ack_status: bool = False,
         with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
-        """Return a bounded window of events around a center event_id.
-
-        This is used for "jump-to message" deep links and search result navigation.
-        """
+        """Return a bounded window of events around a center event_id."""
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -771,7 +806,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             },
         }
 
-    @app.get("/api/v1/groups/{group_id}/events/{event_id}/read_status")
+    @group_router.get("/events/{event_id}/read_status")
     async def event_read_status(group_id: str, event_id: str) -> Dict[str, Any]:
         """Get read status for a specific event (which actors have read it)."""
         group = load_group(group_id)
@@ -782,7 +817,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         status = get_read_status(group, event_id)
         return {"ok": True, "result": {"event_id": event_id, "read_status": status}}
 
-    @app.get("/api/v1/groups/{group_id}/ledger/stream")
+    @group_router.get("/ledger/stream")
     async def ledger_stream(group_id: str) -> StreamingResponse:
         from ..streams import sse_ledger_tail, create_sse_response
         group = load_group(group_id)
@@ -790,8 +825,10 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         return create_sse_response(sse_ledger_tail(group.ledger_path))
 
-    @app.get("/api/v1/events/stream")
-    async def global_events_stream() -> StreamingResponse:
-        """SSE stream for global events (group created/deleted, etc.)."""
-        from ..streams import sse_global_events_tail, create_sse_response
-        return create_sse_response(sse_global_events_tail(ctx.home))
+    return [global_router, group_router]
+
+
+def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
+    """Backward-compatible wrapper for app.py registration."""
+    for router in create_routers(ctx):
+        app.include_router(router)

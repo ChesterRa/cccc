@@ -47,6 +47,7 @@ export default function App() {
     groupDoc,
     actors,
     groupContext,
+    groupSettings,
     setSelectedGroupId,
     refreshGroups,
     refreshActors,
@@ -84,6 +85,7 @@ export default function App() {
   const { openModal } = useModalStore();
 
   const {
+    activeGroupId,
     destGroupId,
     composerFiles,
     replyTarget,
@@ -113,13 +115,14 @@ export default function App() {
   const chatScrollMemoryRef = useRef<Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>>({});
   const actorsRef = useRef<Actor[]>([]);
 
-  // Hide Panorama tab when browser lacks GPU/3D support
+  // Hide Panorama tab when browser lacks GPU/3D support or feature is disabled
   const canRender3D = useMemo(() => {
     try {
       const canvas = document.createElement("canvas");
       return !!(navigator.gpu || canvas.getContext("webgl2"));
     } catch { return false; }
   }, []);
+  const showPanorama = canRender3D && !!groupSettings?.panorama_enabled;
   const prevGroupIdRef = useRef<string | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
@@ -129,7 +132,7 @@ export default function App() {
   const [ccccHome, setCcccHome] = React.useState("");
 
   // Custom hooks
-  const { connectStream, fetchContext, scheduleActorWarmupRefresh, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
+  const { connectStream, fetchContext, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
     activeTabRef,
     chatAtBottomRef,
     actorsRef,
@@ -153,6 +156,7 @@ export default function App() {
     actors,
     groupDoc,
     selectedGroupId,
+    composerGroupId: activeGroupId,
     sendGroupId: computedSendGroupId,
   });
 
@@ -204,12 +208,24 @@ export default function App() {
     onTabChange: handleTabChange,
   });
 
-  // Keep refs in sync
+  // Keep refs in sync + scroll to bottom when returning to chat tab
   useEffect(() => {
     activeTabRef.current = activeTab;
     if (activeTab !== "chat") return;
     const el = eventContainerRef.current;
     if (!el) return;
+
+    // If user was at bottom before switching away, scroll to bottom on return
+    // (new messages may have arrived while on another tab)
+    if (chatAtBottomRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+      });
+      setShowScrollButton(false);
+      setChatUnreadCount(0);
+      return;
+    }
+
     const threshold = 100;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     chatAtBottomRef.current = atBottom;
@@ -217,9 +233,16 @@ export default function App() {
     if (atBottom) setChatUnreadCount(0);
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
 
+  // Auto-fallback: switch away from panorama tab when feature is disabled
+  useEffect(() => {
+    if (!showPanorama && activeTab === "panorama") {
+      setActiveTab("chat");
+    }
+  }, [showPanorama, activeTab, setActiveTab]);
+
   // BUG-1 + BUG-3: Refresh context on panorama tab activation + periodic polling fallback
   useEffect(() => {
-    if (activeTab !== "panorama" || !selectedGroupId) return;
+    if (!showPanorama || activeTab !== "panorama" || !selectedGroupId) return;
     // Immediate fetch on tab switch (skip if SSE debounce timer is already pending)
     if (!contextRefreshTimerRef.current) {
       void fetchContext(selectedGroupId);
@@ -327,7 +350,6 @@ export default function App() {
 
     loadGroup(selectedGroupId);
     connectStream(selectedGroupId);
-    scheduleActorWarmupRefresh(selectedGroupId);
 
     return () => {
       cleanupSSE();
@@ -511,7 +533,7 @@ export default function App() {
                   }
               }
               canAddAgent={!webReadOnly && !!selectedGroupId}
-              showPanorama={canRender3D}
+              showPanorama={showPanorama}
             />
           )}
 
@@ -558,16 +580,18 @@ export default function App() {
             </div>
             {/* Panorama Tab */}
             <div
-              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "panorama" ? "" : "invisible pointer-events-none"}`}
-              aria-hidden={activeTab !== "panorama"}
+              className={`absolute inset-0 flex min-h-0 flex-col ${showPanorama && activeTab === "panorama" ? "" : "invisible pointer-events-none"}`}
+              aria-hidden={!showPanorama || activeTab !== "panorama"}
             >
               <ErrorBoundary>
                 <PanoramaTab
-                  agents={(groupContext?.agents || []).filter(
+                  agents={(groupContext?.agent_states || []).filter(
                     (a) => actors.some((act) => act.id === a.id)
                   )}
                   actors={actors}
-                  tasks={groupContext?.active_tasks}
+                  tasks={groupContext?.coordination?.tasks || []}
+                  tasksSummary={groupContext?.tasks_summary}
+                  projectStatus={groupContext?.meta?.project_status}
                   isDark={isDark}
                   groupId={selectedGroupId}
                 />
@@ -581,7 +605,7 @@ export default function App() {
                 const actor = actors.find((a) => a.id === actorId) || null;
                 const isVisible = activeTab === actorId && activeTab !== "chat" && activeTab !== "panorama";
                 const agentState =
-                  (groupContext?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
+                  (groupContext?.agent_states || []).find((p) => p.id === (actor?.id || "")) || null;
 
                 return (
                   <div key={actorId} className={isVisible ? "flex min-h-0 flex-col flex-1" : "hidden"}>

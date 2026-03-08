@@ -11,4 +11,5 @@ export { RemoteAccessTab } from "./RemoteAccessTab";
 export { DeveloperTab } from "./DeveloperTab";
 export { CapabilitiesTab } from "./CapabilitiesTab";
 export { ActorProfilesTab } from "./ActorProfilesTab";
+export { TokensTab } from "./TokensTab";
 export * from "./types";

@@ -42,7 +42,7 @@ class TestMcpToolsListChanged(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.main.handle_tool_call",
-            return_value={"refresh_required": True, "state": "ready"},
+            return_value={"refresh_required": True, "state": "runnable"},
         ):
             call_resp = handle_request(
                 {
@@ -69,7 +69,7 @@ class TestMcpToolsListChanged(unittest.TestCase):
         # No initialize => no negotiated support.
         with patch(
             "cccc.ports.mcp.main.handle_tool_call",
-            return_value={"refresh_required": True, "state": "ready"},
+            return_value={"refresh_required": True, "state": "runnable"},
         ):
             handle_request(
                 {
@@ -96,7 +96,7 @@ class TestMcpToolsListChanged(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.main.handle_tool_call",
-            return_value={"refresh_required": True, "state": "ready"},
+            return_value={"refresh_required": True, "state": "runnable"},
         ):
             handle_request(
                 {
@@ -124,7 +124,7 @@ class TestMcpToolsListChanged(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.main.handle_tool_call",
-            return_value={"refresh_required": True, "state": "ready"},
+            return_value={"refresh_required": True, "state": "runnable"},
         ):
             handle_request(
                 {

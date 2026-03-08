@@ -79,10 +79,10 @@ You can show different content to different roles using conditional markers:
 
 Agents access help content through MCP tools:
 
-1. **`cccc_bootstrap`** - Returns help as part of session initialization
+1. **`cccc_bootstrap`** - Returns the lean recovery packet (`session`, `recovery`, `inbox_preview`, `memory_recall_gate`, `next_calls`)
 2. **`cccc_help`** - Returns help content on demand
 
-The help is returned as:
+The on-demand help payload is returned as:
 ```json
 {
   "markdown": "<filtered content based on role/actor>",

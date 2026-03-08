@@ -77,6 +77,48 @@ def _pkg():
     return sys.modules[__name__.rsplit(".", 1)[0]]
 
 
+def _build_import_readiness_preview(
+    *,
+    rec: Dict[str, Any],
+    capability_id: str,
+    policy: Dict[str, Any],
+    policy_level: str,
+    enable_block_reason: str,
+    diagnostics: List[Dict[str, Any]],
+    probe_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    qualification_status = str(rec.get("qualification_status") or _QUAL_QUALIFIED).strip().lower()
+    preview = _pkg()._build_readiness_preview(
+        rec=rec,
+        capability_id=capability_id,
+        policy=policy,
+        policy_level=policy_level,
+        blocked_reason_code=(enable_block_reason if enable_block_reason in {"policy_level_indexed", "qualification_blocked", "capability_unavailable"} else ""),
+        qualification_status=qualification_status,
+        enable_supported=bool(_pkg()._record_enable_supported(rec, capability_id=capability_id)),
+        recent_success=None,
+    )
+    if str(probe_result.get("state") or "").strip().lower() == "failed":
+        code = str(probe_result.get("install_error_code") or "probe_failed").strip() or "probe_failed"
+        retryable = bool(probe_result.get("retryable"))
+        if code in {"missing_required_env", "runtime_permission_denied", "runtime_binary_missing", "unsupported_external_installer"}:
+            preview["preview_status"] = "blocked"
+            preview["enable_block_reason"] = code
+            preview["next_step"] = "fix_known_blocker"
+        elif not retryable:
+            preview["preview_status"] = "needs_inspect"
+            preview["enable_block_reason"] = code
+            preview["next_step"] = "inspect"
+        preview["probe_state"] = "failed"
+    elif str(probe_result.get("state") or "").strip().lower() in {"ready", "runnable"}:
+        preview["probe_state"] = "runnable"
+    elif str(probe_result.get("state") or "").strip().lower() == "skipped":
+        preview["probe_state"] = "skipped"
+    if diagnostics:
+        preview["diagnostics"] = diagnostics
+    return preview
+
+
 # ---------------------------------------------------------------------------
 # Curated / policy-apply helpers
 # ---------------------------------------------------------------------------
@@ -779,7 +821,7 @@ def _probe_import_record(rec: Dict[str, Any], *, capability_id: str, enabled: bo
     if kind == "skill":
         return (
             {
-                "state": "ready",
+                "state": "runnable",
                 "kind": "skill",
                 "capsule_present": bool(str(rec.get("capsule_text") or "").strip()),
             },
@@ -796,7 +838,7 @@ def _probe_import_record(rec: Dict[str, Any], *, capability_id: str, enabled: bo
         names = [name for name in names if name]
         install_state = str(install.get("state") or "").strip() or "installed"
         probe = {
-            "state": "ready",
+            "state": "runnable",
             "kind": "mcp_toolpack",
             "install_state": install_state,
             "installer": str(install.get("installer") or ""),
@@ -911,16 +953,28 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
         enableable_now = not bool(enable_block_reason)
         probe_result, diagnostics = _probe_import_record(rec, capability_id=cap_id, enabled=probe)
 
+        readiness_preview = _build_import_readiness_preview(
+            rec=rec,
+            capability_id=cap_id,
+            policy=policy,
+            policy_level=effective_policy_level,
+            enable_block_reason=enable_block_reason,
+            diagnostics=diagnostics,
+            probe_result=probe_result,
+        )
+
         if dry_run:
+            dry_state = str(readiness_preview.get("preview_status") or "needs_inspect")
             _audit(
                 "ready",
-                state=str(probe_result.get("state") or "ready"),
+                state=dry_state,
                 details={
                     "dry_run": True,
                     "probe_state": str(probe_result.get("state") or ""),
                     "effective_policy_level": effective_policy_level,
                     "enableable_now": bool(enableable_now),
                     "enable_block_reason": enable_block_reason,
+                    "preview_status": dry_state,
                 },
                 capability_id=cap_id,
             )
@@ -942,7 +996,8 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
                     "enableable_now": bool(enableable_now),
                     "enable_block_reason": enable_block_reason,
                     "refresh_required": False,
-                    "state": str(probe_result.get("state") or "ready"),
+                    "state": dry_state,
+                    "readiness_preview": readiness_preview,
                 },
             )
 
@@ -973,7 +1028,7 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
 
         enable_result: Dict[str, Any] = {}
         refresh_required = False
-        state = "ready"
+        state = str(readiness_preview.get("preview_status") or "needs_inspect")
         result_reason = ""
         if enable_after_import:
             enable_resp = handle_capability_enable(
@@ -991,24 +1046,22 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
             if enable_resp.ok and isinstance(enable_resp.result, dict):
                 enable_result = dict(enable_resp.result)
                 refresh_required = bool(enable_result.get("refresh_required"))
-                state = str(enable_result.get("state") or "ready").strip().lower() or "ready"
+                state = str(enable_result.get("state") or "runnable").strip().lower() or "runnable"
                 result_reason = str(enable_result.get("reason") or "").strip()
             else:
-                state = "failed"
+                state = "blocked"
                 result_reason = str((enable_resp.error.message if enable_resp.error else "enable_failed") or "enable_failed")
 
-        final_state = "ready"
-        if str(probe_result.get("state") or "").strip().lower() == "failed":
-            final_state = "failed"
-        if state != "ready":
-            final_state = "failed"
-        if final_state == "failed" and not result_reason:
-            result_reason = str(probe_result.get("reason") or "").strip()
+        final_state = str(state or readiness_preview.get("preview_status") or "needs_inspect").strip().lower() or "needs_inspect"
+        if str(probe_result.get("state") or "").strip().lower() == "failed" and final_state not in {"blocked", "needs_inspect"}:
+            final_state = "needs_inspect"
+        if final_state == "blocked" and not result_reason:
+            result_reason = str(enable_block_reason or probe_result.get("reason") or "").strip()
 
         _audit(
-            "ready" if final_state == "ready" else "failed",
+            "ready" if final_state in {"enableable", "activation_pending", "runnable", "verified"} else "failed",
             state=final_state,
-            error_code=result_reason if final_state == "failed" else "",
+            error_code=result_reason if final_state in {"blocked", "needs_inspect"} else "",
             details={
                 "deduped": bool(deduped),
                 "enable_after_import": bool(enable_after_import),
@@ -1034,6 +1087,7 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
             "refresh_required": bool(refresh_required),
             "enable_after_import": bool(enable_after_import),
             "state": final_state,
+            "readiness_preview": readiness_preview,
         }
         if enable_result:
             out["enable_result"] = enable_result
@@ -1419,7 +1473,7 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
                 actor_id=actor_id,
                 capability_id=target_capability_id,
                 artifact_id=target_artifact_id,
-                state="ready",
+                state="verified",
                 last_error="",
             )
             _record_runtime_recent_success(

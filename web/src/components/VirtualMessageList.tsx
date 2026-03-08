@@ -21,7 +21,6 @@ export interface VirtualMessageListProps {
   scrollRef?: MutableRefObject<HTMLDivElement | null>;
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
-  onAck?: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -52,7 +51,6 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   scrollRef,
   onReply,
   onShowRecipients,
-  onAck,
   onCopyLink,
   onRelay,
   onOpenSource,
@@ -538,7 +536,6 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                         onShowRecipients(String(message.id));
                       }
                     }}
-                    onAck={(eventId) => onAck?.(eventId)}
                     onCopyLink={onCopyLink}
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}

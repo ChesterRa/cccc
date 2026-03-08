@@ -1,5 +1,6 @@
-import React, { useMemo, useEffect } from "react";
+import React, { useMemo, useEffect, useRef } from "react";
 import * as THREE from "three";
+import { useFrame } from "@react-three/fiber";
 import type { AgentState } from "../types";
 import { deriveAnimState, deriveStatusLabel, hashCode } from "../utils/actorUtils";
 
@@ -10,6 +11,12 @@ const ARM_GEO = new THREE.BoxGeometry(0.12, 0.4, 0.15);
 ARM_GEO.translate(0, -0.2, 0); // pivot at shoulder (top of arm)
 const LEG_GEO = new THREE.BoxGeometry(0.14, 0.25, 0.18);
 LEG_GEO.translate(0, -0.125, 0); // pivot at hip (top of leg)
+// Status ring at character's feet
+const RING_GEO = new THREE.RingGeometry(0.35, 0.45, 32);
+RING_GEO.rotateX(-Math.PI / 2); // lay flat on ground
+const RING_MAT_ACTIVE = new THREE.MeshBasicMaterial({ color: "#4ade80", transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false });
+const RING_MAT_IDLE = new THREE.MeshBasicMaterial({ color: "#94a3b8", transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false });
+
 // MC-style blocky crown: band + 3 tooth points
 const CROWN_BAND_GEO = new THREE.BoxGeometry(0.32, 0.05, 0.29);
 const CROWN_POINT_GEO = new THREE.BoxGeometry(0.07, 0.09, 0.07);
@@ -109,6 +116,22 @@ const PALETTE = [
 // Re-exports removed: AgentAnimState, deriveAnimState, deriveStatusLabel, PART_INDEX, hashCode
 // are now in ../utils/actorUtils.ts (react-refresh requires component-only exports)
 
+/** Format idle seconds to a human-readable duration string */
+function formatIdleDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
+/** Darken a hex color by a factor (0–1). E.g. darkenHex("#4ade80", 0.3) → 30% darker. */
+function darkenHex(hex: string, factor: number): string {
+  const h = hex.replace("#", "");
+  const r = Math.round(parseInt(h.substring(0, 2), 16) * (1 - factor));
+  const g = Math.round(parseInt(h.substring(2, 4), 16) * (1 - factor));
+  const b = Math.round(parseInt(h.substring(4, 6), 16) * (1 - factor));
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
+
 function agentColor(id: string, runtime?: string): string {
   if (runtime && RUNTIME_BODY_COLORS[runtime]) {
     return RUNTIME_BODY_COLORS[runtime];
@@ -141,16 +164,26 @@ export interface ActorCharacterProps {
   runtime?: string;
   title?: string;
   isRunning?: boolean;
+  idleSeconds?: number | null;
   activeTaskName?: string;
+  taskStatus?: string;
   focus?: string;
   blockerText?: string;
+  onCharacterClick?: () => void;
 }
 
 export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>(
-  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, activeTaskName, focus, blockerText }, ref) {
+  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, idleSeconds, activeTaskName, taskStatus, focus, blockerText, onCharacterClick }, ref) {
     const color = agentColor(agent.id, runtime);
     const isForeman = role === "foreman";
     const isOffline = isRunning === false;
+
+    // Cache rotation tuple to prevent R3F re-applying on re-render
+    // (which would fight useFrame-driven rotation, e.g. sleeping face-up)
+    const rotationTuple = useMemo(
+      () => [0, rotationY, 0] as [number, number, number],
+      [rotationY],
+    );
 
     // Shared cached material (body color; gray + semi-transparent when offline)
     const mat = getBodyMaterial(color, isOffline);
@@ -176,8 +209,10 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       [mat, faceMat],
     );
 
-    const animState = deriveAnimState(agent, isRunning);
-    const statusLabel = deriveStatusLabel(animState, !!agent.active_task_id, isForeman);
+    // Convert PTY idle_seconds to lastActivityAt (epoch ms) for deriveAnimState
+    const lastActivityAt = idleSeconds != null ? Date.now() - idleSeconds * 1000 : undefined;
+    const animState = deriveAnimState(agent, isRunning, lastActivityAt, taskStatus);
+    const statusLabel = deriveStatusLabel(animState, !!agent.hot?.active_task_id, isForeman);
 
     // Pre-truncate long text before bubble key to avoid unnecessary texture rebuilds
     const MAX_TASK = 35;
@@ -187,8 +222,66 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const _focusText = focus ? (focus.length > MAX_FOCUS ? focus.slice(0, MAX_FOCUS) + "\u2026" : focus) : "";
     const _blockerText = blockerText ? (blockerText.length > MAX_BLOCKER ? blockerText.slice(0, MAX_BLOCKER) + "\u2026" : blockerText) : "";
 
+    // Idle duration text for bubble (quantized to avoid texture churn)
+    const isActive = idleSeconds != null && idleSeconds < 15;
+    const _idleText = (idleSeconds != null && isRunning !== false)
+      ? formatIdleDuration(idleSeconds)
+      : "";
+
+    // Ring state: active (idle<15s), idle (running but idle≥15s), offline (not running)
+    // Debounce via ref to prevent flicker
+    const ringStateRef = useRef<"active" | "idle" | "off">("off");
+    const ringDebounceRef = useRef<number>(0);
+    const ringMeshRef = useRef<THREE.Mesh>(null);
+
+    const targetRingState = isOffline ? "off" : isActive ? "active" : "idle";
+    if (targetRingState !== ringStateRef.current) {
+      // Debounce only active→idle/off direction (prevent flicker on brief output gaps)
+      // Transitions toward active apply immediately for responsiveness
+      const isDowngrade = ringStateRef.current === "active" && targetRingState !== "active";
+      if (isDowngrade) {
+        const now = Date.now();
+        if (now - ringDebounceRef.current > 3000) {
+          ringStateRef.current = targetRingState;
+          ringDebounceRef.current = now;
+        }
+      } else {
+        ringStateRef.current = targetRingState;
+        ringDebounceRef.current = Date.now();
+      }
+    }
+    const ringState = ringStateRef.current;
+
+    // Per-instance ring material for breathing animation (avoids shared state mutation)
+    const ringMatRef = useRef<THREE.MeshBasicMaterial | null>(null);
+    if (!ringMatRef.current) {
+      ringMatRef.current = RING_MAT_ACTIVE.clone();
+    }
+    useEffect(() => () => { ringMatRef.current?.dispose(); }, []);
+    useEffect(() => () => { document.body.style.cursor = "auto"; }, []);
+
+    // Breathing animation for active ring
+    useFrame(({ clock }) => {
+      const mesh = ringMeshRef.current;
+      const ringMat = ringMatRef.current;
+      if (!mesh || !ringMat) return;
+      if (ringState === "active") {
+        mesh.visible = true;
+        ringMat.color.set("#4ade80");
+        mesh.material = ringMat;
+        // Breathing: opacity oscillates 0.3–0.8
+        const t = clock.getElapsedTime() + hashCode(agent.id) * 0.3;
+        ringMat.opacity = 0.3 + 0.25 * (1 + Math.sin(t * 2));
+      } else if (ringState === "idle") {
+        mesh.visible = true;
+        mesh.material = RING_MAT_IDLE;
+      } else {
+        mesh.visible = false;
+      }
+    });
+
     // Status bubble texture (GPU sprite replaces Html DOM overlay for performance)
-    const _bubbleKey = `${title || agent.id}|${statusLabel.text}|${statusLabel.color}|${_taskText}|${_focusText}|${_blockerText}|${isDark ? 1 : 0}|${color}`;
+    const _bubbleKey = `${title || agent.id}|${statusLabel.text}|${statusLabel.color}|${_taskText}|${_focusText}|${_blockerText}|${_idleText}|${isActive ? 1 : 0}|${isDark ? 1 : 0}|${color}`;
     const { bubbleTex, bubbleScale } = useMemo(() => {
       const DPR = 2;
       const CW = 220 * DPR;
@@ -201,6 +294,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
 
       const shadowMargin = 10 * DPR; // extra canvas space for drop shadow
       let h = padY + titleFs * 1.3 + gap + statusFs * 1.3;
+      if (_idleText) h += gap + taskFs * 1.3;
       if (_taskText) h += gap + taskFs * 1.3;
       if (_focusText) h += gap + taskFs * 1.3;
       if (_blockerText) h += gap + taskFs * 1.3;
@@ -235,9 +329,9 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       let y = padY;
       const maxTW = CW - padX * 2;
 
-      // Title
+      // Title — darken agent color in light mode for contrast on white card
       ctx.font = `700 ${titleFs}px sans-serif`;
-      ctx.fillStyle = color;
+      ctx.fillStyle = isDark ? color : darkenHex(color, 0.35);
       let tText = title || agent.id;
       if (ctx.measureText(tText).width > maxTW) {
         while (ctx.measureText(tText + "\u2026").width > maxTW && tText.length > 1) tText = tText.slice(0, -1);
@@ -246,11 +340,40 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       ctx.fillText(tText, cx, y);
       y += titleFs * 1.3 + gap;
 
-      // Status
+      // Status — with active dot prefix for running state
       ctx.font = `600 ${statusFs}px sans-serif`;
-      ctx.fillStyle = statusLabel.color;
-      ctx.fillText(statusLabel.text, cx, y);
+      const statusColor = isDark ? statusLabel.color : darkenHex(statusLabel.color, 0.3);
+      if (isActive) {
+        // Green dot "● 运行中" style
+        const dotRadius = 3 * DPR;
+        const statusText = `${statusLabel.text}`;
+        const textW = ctx.measureText(statusText).width;
+        const dotGap = 4 * DPR;
+        const totalW = dotRadius * 2 + dotGap + textW;
+        const startX = cx - totalW / 2;
+        // Draw green dot
+        ctx.fillStyle = "#4ade80";
+        ctx.beginPath();
+        ctx.arc(startX + dotRadius, y + statusFs * 0.55, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+        // Draw status text
+        ctx.textAlign = "left";
+        ctx.fillStyle = statusColor;
+        ctx.fillText(statusText, startX + dotRadius * 2 + dotGap, y);
+        ctx.textAlign = "center"; // reset
+      } else {
+        ctx.fillStyle = statusColor;
+        ctx.fillText(statusLabel.text, cx, y);
+      }
       y += statusFs * 1.3 + gap;
+
+      // Idle duration (small text line)
+      if (_idleText) {
+        ctx.font = `400 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#94a3b8" : "#9ca3af";
+        ctx.fillText(`idle ${_idleText}`, cx, y);
+        y += taskFs * 1.3 + gap;
+      }
 
       // Task name (pre-truncated via _taskText)
       if (_taskText) {
@@ -300,8 +423,15 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     useEffect(() => () => { bubbleTex.dispose(); }, [bubbleTex]);
 
     return (
-      <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
-        {/* Body parts — named for animation targeting via PART_INDEX */}
+      <group
+        ref={ref}
+        position={position}
+        rotation={rotationTuple}
+        onClick={(e) => { e.stopPropagation(); onCharacterClick?.(); }}
+        onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { document.body.style.cursor = "auto"; }}
+      >
+        {/* Body parts — named for animation targeting via PART_INDEX (indices 0-5 must stay stable) */}
         <mesh name="torso" position={[0, 0.55, 0]} castShadow geometry={TORSO_GEO} material={mat} />
         <mesh name="head" position={[0, 1.0, 0]} castShadow geometry={HEAD_GEO} material={headMats} />
         <mesh name="leftArm" position={[-0.25, 0.75, 0]} castShadow geometry={ARM_GEO} material={mat} />
@@ -309,9 +439,12 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
         <mesh name="leftLeg" position={[-0.1, 0.30, 0]} castShadow geometry={LEG_GEO} material={mat} />
         <mesh name="rightLeg" position={[0.1, 0.30, 0]} castShadow geometry={LEG_GEO} material={mat} />
 
-        {/* Foreman crown (MC-style blocky gold crown) */}
+        {/* Status ring at character's feet (after body parts to preserve PART_INDEX) */}
+        <mesh ref={ringMeshRef} position={[0, 0.02, 0]} geometry={RING_GEO} material={RING_MAT_IDLE} visible={false} />
+
+        {/* Foreman crown (MC-style blocky gold crown) — named for animation lookup */}
         {isForeman && (
-          <group position={[0, 1.165, 0]}>
+          <group name="crown" position={[0, 1.165, 0]}>
             <mesh castShadow geometry={CROWN_BAND_GEO} material={CROWN_MAT} />
             <mesh position={[0, 0.065, -0.1]} castShadow geometry={CROWN_POINT_GEO} material={CROWN_MAT} />
             <mesh position={[-0.11, 0.065, 0.09]} castShadow geometry={CROWN_POINT_GEO} material={CROWN_MAT} />

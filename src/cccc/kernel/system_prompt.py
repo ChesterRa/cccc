@@ -168,7 +168,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- No fabrication: do not invent facts/results/sources. Investigate first; mark hypotheses.",
         "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
-        "- Keep Context fresh at key transitions (start/milestone/blocker/resume/done): update tasks + your agent state.",
+        "- Keep the control plane fresh at key transitions (start/milestone/blocker/resume/done): update shared tasks/coordination + your agent state.",
         '- Agent-state minimum each update: focus + next_action + what_changed (and active_task_id when applicable).',
         "- Fact-Goal gate: strategy/scope discussion first; implement only after explicit action intent.",
         "- Planning gate (6D) for non-trivial changes: value/ROI, complexity load, feasibility, verifiability, risk/side-effects, reversibility.",

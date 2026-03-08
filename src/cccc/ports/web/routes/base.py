@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from ....kernel.scope import detect_scope
@@ -13,11 +13,24 @@ from ..schemas import (
     RegistryReconcileRequest,
     RemoteAccessConfigureRequest,
     RouteContext,
+    check_group,
+    require_admin,
+    require_group,
 )
 
 
-def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
-    @app.get("/", response_class=HTMLResponse)
+def create_routers(ctx: RouteContext) -> list[APIRouter]:
+    # --- global router (user/admin scope, per-route guard where needed) ---
+    global_router = APIRouter()
+
+    # --- group-scoped router ---
+    group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
+
+    # ------------------------------------------------------------------ #
+    # Global routes (public + admin, per-route guard where needed)
+    # ------------------------------------------------------------------ #
+
+    @global_router.get("/", response_class=HTMLResponse)
     async def index() -> str:
         if ctx.dist_dir is not None:
             return '<meta http-equiv="refresh" content="0; url=/ui/">'
@@ -27,19 +40,19 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             "<p>Try <code>/api/v1/ping</code> and <code>/api/v1/groups</code>.</p>"
         )
 
-    @app.get("/favicon.ico")
+    @global_router.get("/favicon.ico")
     async def favicon_ico() -> Any:
         if ctx.dist_dir is not None and (ctx.dist_dir / "favicon.ico").exists():
             return FileResponse(ctx.dist_dir / "favicon.ico")
         raise HTTPException(status_code=404)
 
-    @app.get("/favicon.png")
+    @global_router.get("/favicon.png")
     async def favicon_png() -> Any:
         if ctx.dist_dir is not None and (ctx.dist_dir / "favicon.png").exists():
             return FileResponse(ctx.dist_dir / "favicon.png")
         raise HTTPException(status_code=404)
 
-    @app.get("/api/v1/ping")
+    @global_router.get("/api/v1/ping")
     async def ping() -> Dict[str, Any]:
         resp = await ctx.daemon({"op": "ping"})
         return {
@@ -52,7 +65,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             },
         }
 
-    @app.get("/api/v1/health")
+    @global_router.get("/api/v1/health")
     async def health() -> Dict[str, Any]:
         """Health check endpoint for monitoring."""
         daemon_resp = await ctx.daemon({"op": "ping"})
@@ -67,17 +80,24 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         }
 
-    @app.get("/api/v1/observability")
+    # debug/snapshot uses manual check_group (group_id from query param)
+    @global_router.get("/api/v1/debug/snapshot")
+    async def debug_snapshot(request: Request, group_id: str) -> Dict[str, Any]:
+        """Get a structured debug snapshot for a group (developer mode only)."""
+        check_group(request, group_id)
+        return await ctx.daemon({"op": "debug_snapshot", "args": {"group_id": group_id, "by": "user"}})
+
+    @global_router.get("/api/v1/observability", dependencies=[Depends(require_admin)])
     async def observability_get() -> Dict[str, Any]:
         """Get global observability settings (developer mode, log level)."""
         return await ctx.daemon({"op": "observability_get"})
 
-    @app.get("/api/v1/capabilities/allowlist")
+    @global_router.get("/api/v1/capabilities/allowlist", dependencies=[Depends(require_admin)])
     async def capability_allowlist_get(by: str = "user") -> Dict[str, Any]:
         """Get effective capability allowlist (default + overlay + merge result)."""
         return await ctx.daemon({"op": "capability_allowlist_get", "args": {"by": str(by or "user")}})
 
-    @app.post("/api/v1/capabilities/allowlist/validate")
+    @global_router.post("/api/v1/capabilities/allowlist/validate", dependencies=[Depends(require_admin)])
     async def capability_allowlist_validate(request: Request) -> Dict[str, Any]:
         """Validate a capability allowlist overlay patch/replace request without persisting."""
         try:
@@ -93,7 +113,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             args["overlay"] = payload.get("overlay")
         return await ctx.daemon({"op": "capability_allowlist_validate", "args": args})
 
-    @app.put("/api/v1/capabilities/allowlist")
+    @global_router.put("/api/v1/capabilities/allowlist", dependencies=[Depends(require_admin)])
     async def capability_allowlist_update(request: Request) -> Dict[str, Any]:
         """Update capability allowlist user overlay."""
         if ctx.read_only:
@@ -122,7 +142,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             args["overlay"] = payload.get("overlay")
         return await ctx.daemon({"op": "capability_allowlist_update", "args": args})
 
-    @app.delete("/api/v1/capabilities/allowlist")
+    @global_router.delete("/api/v1/capabilities/allowlist", dependencies=[Depends(require_admin)])
     async def capability_allowlist_reset(by: str = "user") -> Dict[str, Any]:
         """Reset capability allowlist overlay to empty."""
         if ctx.read_only:
@@ -135,7 +155,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             )
         return await ctx.daemon({"op": "capability_allowlist_reset", "args": {"by": str(by or "user")}})
 
-    @app.get("/api/v1/capabilities/overview")
+    @global_router.get("/api/v1/capabilities/overview", dependencies=[Depends(require_admin)])
     async def capability_overview(
         query: str = "",
         limit: int = 400,
@@ -149,7 +169,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         }
         return await ctx.daemon({"op": "capability_overview", "args": args})
 
-    @app.post("/api/v1/capabilities/block")
+    @global_router.post("/api/v1/capabilities/block", dependencies=[Depends(require_admin)])
     async def capability_block_global(request: Request) -> Dict[str, Any]:
         """Global block/unblock capability (user only in Web)."""
         if ctx.read_only:
@@ -184,7 +204,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         }
         return await ctx.daemon({"op": "capability_block", "args": args})
 
-    @app.put("/api/v1/observability")
+    @global_router.put("/api/v1/observability", dependencies=[Depends(require_admin)])
     async def observability_update(req: ObservabilityUpdateRequest) -> Dict[str, Any]:
         """Update global observability settings (daemon-owned persistence)."""
         patch: Dict[str, Any] = {}
@@ -212,12 +232,12 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         return resp
 
-    @app.get("/api/v1/remote_access")
+    @global_router.get("/api/v1/remote_access", dependencies=[Depends(require_admin)])
     async def remote_access_get() -> Dict[str, Any]:
         """Get global remote-access state."""
         return await ctx.daemon({"op": "remote_access_state", "args": {"by": "user"}})
 
-    @app.put("/api/v1/remote_access")
+    @global_router.put("/api/v1/remote_access", dependencies=[Depends(require_admin)])
     async def remote_access_configure(req: RemoteAccessConfigureRequest) -> Dict[str, Any]:
         """Update global remote-access config."""
         args: Dict[str, Any] = {"by": str(req.by or "user")}
@@ -239,22 +259,22 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             args["web_token"] = str(req.web_token or "").strip()
         return await ctx.daemon({"op": "remote_access_configure", "args": args})
 
-    @app.post("/api/v1/remote_access/start")
+    @global_router.post("/api/v1/remote_access/start", dependencies=[Depends(require_admin)])
     async def remote_access_start(by: str = "user") -> Dict[str, Any]:
         """Start remote access service."""
         return await ctx.daemon({"op": "remote_access_start", "args": {"by": str(by or "user")}})
 
-    @app.post("/api/v1/remote_access/stop")
+    @global_router.post("/api/v1/remote_access/stop", dependencies=[Depends(require_admin)])
     async def remote_access_stop(by: str = "user") -> Dict[str, Any]:
         """Stop remote access service."""
         return await ctx.daemon({"op": "remote_access_stop", "args": {"by": str(by or "user")}})
 
-    @app.get("/api/v1/registry/reconcile")
+    @global_router.get("/api/v1/registry/reconcile", dependencies=[Depends(require_admin)])
     async def registry_reconcile_preview() -> Dict[str, Any]:
         """Preview registry health (missing/corrupt groups) without mutating registry."""
         return await ctx.daemon({"op": "registry_reconcile", "args": {"remove_missing": False, "by": "user"}})
 
-    @app.post("/api/v1/registry/reconcile")
+    @global_router.post("/api/v1/registry/reconcile", dependencies=[Depends(require_admin)])
     async def registry_reconcile(req: RegistryReconcileRequest) -> Dict[str, Any]:
         """Explicitly reconcile registry (currently removes only missing entries)."""
         return await ctx.daemon(
@@ -267,57 +287,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    # ---------------------------------------------------------------------
-    # Terminal transcript endpoints (group-scoped)
-    # ---------------------------------------------------------------------
-
-    @app.get("/api/v1/groups/{group_id}/terminal/tail")
-    async def terminal_tail(
-        group_id: str,
-        actor_id: str,
-        max_chars: int = 8000,
-        strip_ansi: bool = True,
-        compact: bool = True,
-    ) -> Dict[str, Any]:
-        """Tail an actor's terminal transcript (subject to group policy)."""
-        return await ctx.daemon(
-            {
-                "op": "terminal_tail",
-                "args": {
-                    "group_id": group_id,
-                    "actor_id": actor_id,
-                    "max_chars": int(max_chars or 8000),
-                    "strip_ansi": bool(strip_ansi),
-                    "compact": bool(compact),
-                    "by": "user",
-                },
-            }
-        )
-
-    @app.post("/api/v1/groups/{group_id}/terminal/clear")
-    async def terminal_clear(group_id: str, actor_id: str) -> Dict[str, Any]:
-        """Clear (truncate) an actor's in-memory terminal transcript ring buffer."""
-        return await ctx.daemon(
-            {
-                "op": "terminal_clear",
-                "args": {
-                    "group_id": group_id,
-                    "actor_id": actor_id,
-                    "by": "user",
-                },
-            }
-        )
-
-    # ---------------------------------------------------------------------
-    # Debug endpoints (developer mode only; gated by daemon)
-    # ---------------------------------------------------------------------
-
-    @app.get("/api/v1/debug/snapshot")
-    async def debug_snapshot(group_id: str) -> Dict[str, Any]:
-        """Get a structured debug snapshot for a group (developer mode only)."""
-        return await ctx.daemon({"op": "debug_snapshot", "args": {"group_id": group_id, "by": "user"}})
-
-    @app.get("/api/v1/debug/tail_logs")
+    @global_router.get("/api/v1/debug/tail_logs", dependencies=[Depends(require_admin)])
     async def debug_tail_logs(component: str, group_id: str = "", lines: int = 200) -> Dict[str, Any]:
         """Tail local CCCC logs (developer mode only)."""
         return await ctx.daemon(
@@ -332,7 +302,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.post("/api/v1/debug/clear_logs")
+    @global_router.post("/api/v1/debug/clear_logs", dependencies=[Depends(require_admin)])
     async def debug_clear_logs(req: DebugClearLogsRequest) -> Dict[str, Any]:
         """Clear (truncate) local CCCC logs (developer mode only)."""
         return await ctx.daemon(
@@ -346,7 +316,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         )
 
-    @app.get("/api/v1/runtimes")
+    @global_router.get("/api/v1/runtimes", dependencies=[Depends(require_admin)])
     async def runtimes() -> Dict[str, Any]:
         """List available agent runtimes on the system."""
         if ctx.read_only:
@@ -380,94 +350,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             },
         }
 
-    # ---------------------------------------------------------------------
-    # Group-scoped capability management endpoints
-    # ---------------------------------------------------------------------
-
-    @app.get("/api/v1/groups/{group_id}/capabilities/state")
-    async def capability_state(group_id: str, actor_id: str = "user") -> Dict[str, Any]:
-        """Get caller-effective capability state and visible/dynamic tools for a group."""
-        return await ctx.daemon(
-            {
-                "op": "capability_state",
-                "args": {
-                    "group_id": group_id,
-                    "by": "user",
-                    "actor_id": str(actor_id or "user").strip() or "user",
-                },
-            }
-        )
-
-    @app.post("/api/v1/groups/{group_id}/capabilities/enable")
-    async def capability_enable(group_id: str, request: Request) -> Dict[str, Any]:
-        """Enable/disable a capability for a group (session/actor/group scope)."""
-        if ctx.read_only:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "read_only",
-                    "message": "Capability enable endpoints are disabled in read-only (exhibit) mode.",
-                },
-            )
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
-        capability_id = str(payload.get("capability_id") or "").strip()
-        if not capability_id:
-            raise HTTPException(status_code=400, detail={"code": "missing_capability_id", "message": "missing capability_id"})
-        return await ctx.daemon(
-            {
-                "op": "capability_enable",
-                "args": {
-                    "group_id": group_id,
-                    "by": "user",
-                    "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
-                    "capability_id": capability_id,
-                    "enabled": bool(payload.get("enabled", True)),
-                    "scope": str(payload.get("scope") or "session").strip().lower() or "session",
-                    "ttl_seconds": int(payload.get("ttl_seconds") or 3600),
-                    "reason": str(payload.get("reason") or "").strip(),
-                    "cleanup": bool(payload.get("cleanup", False)),
-                },
-            }
-        )
-
-    @app.post("/api/v1/groups/{group_id}/capabilities/import")
-    async def capability_import(group_id: str, request: Request) -> Dict[str, Any]:
-        """Import (install) a capability into a group."""
-        if ctx.read_only:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "read_only",
-                    "message": "Capability import endpoints are disabled in read-only (exhibit) mode.",
-                },
-            )
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
-        args: Dict[str, Any] = {
-            "group_id": group_id,
-            "by": "user",
-            "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
-            "dry_run": bool(payload.get("dry_run", False)),
-            "probe": bool(payload.get("probe", True)),
-            "enable_after_import": bool(payload.get("enable_after_import", False)),
-            "scope": str(payload.get("scope") or "session").strip().lower() or "session",
-            "ttl_seconds": int(payload.get("ttl_seconds") or 3600),
-            "reason": str(payload.get("reason") or "").strip(),
-        }
-        if "record" in payload:
-            args["record"] = payload["record"]
-        return await ctx.daemon({"op": "capability_import", "args": args})
-
-    @app.get("/api/v1/fs/list")
+    @global_router.get("/api/v1/fs/list", dependencies=[Depends(require_admin)])
     async def fs_list(path: str = "~", show_hidden: bool = False) -> Dict[str, Any]:
         """List directory contents for path picker UI."""
         if ctx.read_only:
@@ -510,7 +393,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         except Exception as e:
             return {"ok": False, "error": {"code": "ERROR", "message": str(e)}}
 
-    @app.get("/api/v1/fs/recent")
+    @global_router.get("/api/v1/fs/recent", dependencies=[Depends(require_admin)])
     async def fs_recent() -> Dict[str, Any]:
         """Get recent/common directories for quick selection."""
         if ctx.read_only:
@@ -547,7 +430,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         return {"ok": True, "result": {"suggestions": suggestions[:10]}}
 
-    @app.get("/api/v1/fs/scope_root")
+    @global_router.get("/api/v1/fs/scope_root", dependencies=[Depends(require_admin)])
     async def fs_scope_root(path: str = "") -> Dict[str, Any]:
         """Resolve the effective scope root for a path (git root if applicable)."""
         if ctx.read_only:
@@ -577,3 +460,135 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             }
         except Exception as e:
             return {"ok": False, "error": {"code": "resolve_failed", "message": str(e)}}
+
+    # ------------------------------------------------------------------ #
+    # Group-scoped routes
+    # ------------------------------------------------------------------ #
+
+    @group_router.get("/terminal/tail")
+    async def terminal_tail(
+        group_id: str,
+        actor_id: str,
+        max_chars: int = 8000,
+        strip_ansi: bool = True,
+        compact: bool = True,
+    ) -> Dict[str, Any]:
+        """Tail an actor's terminal transcript (subject to group policy)."""
+        return await ctx.daemon(
+            {
+                "op": "terminal_tail",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "max_chars": int(max_chars or 8000),
+                    "strip_ansi": bool(strip_ansi),
+                    "compact": bool(compact),
+                    "by": "user",
+                },
+            }
+        )
+
+    @group_router.post("/terminal/clear")
+    async def terminal_clear(group_id: str, actor_id: str) -> Dict[str, Any]:
+        """Clear (truncate) an actor's in-memory terminal transcript ring buffer."""
+        return await ctx.daemon(
+            {
+                "op": "terminal_clear",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "by": "user",
+                },
+            }
+        )
+
+    @group_router.get("/capabilities/state")
+    async def capability_state(group_id: str, actor_id: str = "user") -> Dict[str, Any]:
+        """Get caller-effective capability state and visible/dynamic tools for a group."""
+        return await ctx.daemon(
+            {
+                "op": "capability_state",
+                "args": {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": str(actor_id or "user").strip() or "user",
+                },
+            }
+        )
+
+    @group_router.post("/capabilities/enable")
+    async def capability_enable(group_id: str, request: Request) -> Dict[str, Any]:
+        """Enable/disable a capability for a group (session/actor/group scope)."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability enable endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        capability_id = str(payload.get("capability_id") or "").strip()
+        if not capability_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_capability_id", "message": "missing capability_id"})
+        return await ctx.daemon(
+            {
+                "op": "capability_enable",
+                "args": {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
+                    "capability_id": capability_id,
+                    "enabled": bool(payload.get("enabled", True)),
+                    "scope": str(payload.get("scope") or "session").strip().lower() or "session",
+                    "ttl_seconds": int(payload.get("ttl_seconds") or 3600),
+                    "reason": str(payload.get("reason") or "").strip(),
+                    "cleanup": bool(payload.get("cleanup", False)),
+                },
+            }
+        )
+
+    @group_router.post("/capabilities/import")
+    async def capability_import(group_id: str, request: Request) -> Dict[str, Any]:
+        """Import (install) a capability into a group."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability import endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        args: Dict[str, Any] = {
+            "group_id": group_id,
+            "by": "user",
+            "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
+            "dry_run": bool(payload.get("dry_run", False)),
+            "probe": bool(payload.get("probe", True)),
+            "enable_after_import": bool(payload.get("enable_after_import", False)),
+            "scope": str(payload.get("scope") or "session").strip().lower() or "session",
+            "ttl_seconds": int(payload.get("ttl_seconds") or 3600),
+            "reason": str(payload.get("reason") or "").strip(),
+        }
+        if "record" in payload:
+            args["record"] = payload["record"]
+        return await ctx.daemon({"op": "capability_import", "args": args})
+
+    return [global_router, group_router]
+
+
+def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
+    """Backward-compatible wrapper for app.py registration."""
+    for router in create_routers(ctx):
+        app.include_router(router)

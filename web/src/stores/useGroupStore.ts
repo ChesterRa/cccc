@@ -46,6 +46,8 @@ interface GroupState {
   prependEvents: (events: LedgerEvent[]) => void;
   setChatWindow: (w: GroupState["chatWindow"]) => void;
   setActors: (actors: Actor[]) => void;
+  incrementActorUnread: (actorIds: string[]) => void;
+  updateActorActivity: (updates: Array<{ id: string; idle_seconds: number; running: boolean }>) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
@@ -182,6 +184,40 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       };
     }),
   setActors: (actors) => set({ actors }),
+  incrementActorUnread: (actorIds) =>
+    set((state) => {
+      if (!state.actors.length || !actorIds.length) return state;
+      const targets = new Set(actorIds.map((id) => String(id || "").trim()).filter(Boolean));
+      if (targets.size === 0) return state;
+
+      let changed = false;
+      const next = state.actors.map((actor) => {
+        const actorId = String(actor.id || "").trim();
+        if (!targets.has(actorId)) return actor;
+        changed = true;
+        return {
+          ...actor,
+          unread_count: Math.max(0, Number(actor.unread_count || 0)) + 1,
+        };
+      });
+
+      return changed ? { actors: next } : state;
+    }),
+  updateActorActivity: (updates) =>
+    set((state) => {
+      if (!state.actors.length || !updates.length) return state;
+      const map = new Map(updates.map((u) => [u.id, u]));
+      let changed = false;
+      const next = state.actors.map((a) => {
+        const u = map.get(a.id);
+        if (u && a.idle_seconds !== u.idle_seconds) {
+          changed = true;
+          return { ...a, idle_seconds: u.idle_seconds };
+        }
+        return a;
+      });
+      return changed ? { actors: next } : state;
+    }),
   setGroupContext: (ctx) => set({ groupContext: ctx }),
   setGroupSettings: (settings) => set({ groupSettings: settings }),
   setRuntimes: (runtimes) => set({ runtimes }),
@@ -516,10 +552,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       return;
     }
 
-    // Fast initial load: skip unread counts for snappy group switching
+    // 单次拉齐 actors（含 unread），避免切组后的二次补刷请求。
     const [tail, a, ctx, settings] = await Promise.all([
       api.fetchLedgerTail(gid),
-      api.fetchActors(gid, false),
+      api.fetchActors(gid),
       api.fetchContext(gid),
       api.fetchSettings(gid),
     ]);
@@ -537,13 +573,6 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       groupSettings: settings.ok && settings.result.settings ? settings.result.settings : null,
       hasMoreHistory: tail.ok ? !!tail.result.has_more : true,
     });
-
-    // Deferred: load unread counts in background (doesn't block UI)
-    setTimeout(() => {
-      if (get().selectedGroupId === gid) {
-        get().refreshActors(gid);
-      }
-    }, 300);
   },
 
   loadMoreHistory: async () => {

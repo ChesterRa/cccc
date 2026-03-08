@@ -24,6 +24,7 @@ STREAMABLE_KINDS_V1: Set[str] = {
     "actor.start",
     "actor.stop",
     "actor.restart",
+    "actor.activity",
 }
 
 

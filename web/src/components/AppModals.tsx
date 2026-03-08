@@ -273,19 +273,6 @@ export function AppModals({
   }, [modals.addActor, editingActor]);
 
   // Handlers
-  const handleUpdateVision = async (vision: string) => {
-    if (!selectedGroupId) return;
-    setBusy("context-update");
-    try {
-      const resp = await api.updateVision(selectedGroupId, vision);
-      if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
-      void fetchContext(selectedGroupId);
-    } finally {
-      setBusy("");
-    }
-  };
-
-
   const handleUpdateSettings = async (settings: Partial<GroupSettings>) => {
     if (!selectedGroupId) return;
     setBusy("settings-update");
@@ -594,7 +581,7 @@ export function AppModals({
       const resp = await api.upsertActorProfile({
         name: name.trim(),
         runtime: editActorRuntime,
-        runner: String(editingActor.runner || "pty"),
+        runner: "pty",
         command: editActorCommand.trim(),
         submit: String(editingActor.submit || "enter"),
         env: editingActor.env && typeof editingActor.env === "object" ? editingActor.env : {},
@@ -757,7 +744,6 @@ export function AppModals({
         newActorUseProfile
           ? {
               profileId: String(selectedProfile?.id || "").trim(),
-              runner: String(selectedProfile?.runner || "pty") === "headless" ? "headless" : "pty",
               capabilityAutoload,
             }
           : {
@@ -1011,8 +997,6 @@ export function AppModals({
         onRefreshContext={async () => {
           if (selectedGroupId) await fetchContext(selectedGroupId);
         }}
-        onUpdateVision={handleUpdateVision}
-        busy={busy === "context-update"}
         isDark={isDark}
       />
 

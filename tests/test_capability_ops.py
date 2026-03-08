@@ -258,8 +258,8 @@ class TestCapabilityOps(unittest.TestCase):
                     "ops": [
                         {
                             "op": "task.create",
-                            "name": "Automation reminder cleanup",
-                            "goal": "stabilize reminder jobs",
+                            "title": "Automation reminder cleanup",
+                            "outcome": "stabilize reminder jobs",
                             "assignee": "peer-1",
                         }
                     ],
@@ -279,8 +279,8 @@ class TestCapabilityOps(unittest.TestCase):
                     "by": "peer-1",
                     "ops": [
                         {
-                            "op": "agent.update",
-                            "agent_id": "peer-1",
+                            "op": "agent_state.update",
+                            "actor_id": "peer-1",
                             "active_task_id": task_id,
                             "focus": "automation schedule hygiene",
                         }
@@ -351,6 +351,7 @@ class TestCapabilityOps(unittest.TestCase):
             before = get_before.result if isinstance(get_before.result, dict) else {}
             revision_before = str(before.get("revision") or "")
             self.assertTrue(revision_before)
+            self.assertEqual(str(before.get("external_capability_safety_mode") or ""), "normal")
 
             validate, _ = self._call(
                 "capability_allowlist_validate",
@@ -389,6 +390,7 @@ class TestCapabilityOps(unittest.TestCase):
             reset, _ = self._call("capability_allowlist_reset", {"by": "user"})
             self.assertTrue(reset.ok, getattr(reset, "error", None))
             reset_result = reset.result if isinstance(reset.result, dict) else {}
+            self.assertEqual(str(reset_result.get("external_capability_safety_mode") or ""), "normal")
             overlay_after_reset = (
                 reset_result.get("overlay") if isinstance(reset_result.get("overlay"), dict) else {}
             )
@@ -616,7 +618,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertEqual(str(result.get("state") or ""), "activation_pending")
             self.assertTrue(bool(result.get("enabled")))
         finally:
             cleanup()
@@ -726,7 +728,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertEqual(str(result.get("state") or ""), "activation_pending")
             self.assertTrue(bool(result.get("degraded")))
             self.assertEqual(str(result.get("install_state") or ""), "installed_degraded")
             self.assertEqual(str(result.get("install_error_code") or ""), "probe_timeout")
@@ -762,7 +764,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -817,7 +819,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -887,7 +889,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server-a",
                 artifact_id=artifact_a,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._set_runtime_actor_binding(
@@ -896,7 +898,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server-b",
                 artifact_id=artifact_b,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -955,7 +957,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -1029,7 +1031,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "failed")
+            self.assertEqual(str(result.get("state") or ""), "blocked")
             self.assertEqual(str(result.get("reason") or ""), "install_failed:probe_failed")
             self.assertEqual(str(result.get("install_error_code") or ""), "probe_failed")
             self.assertTrue(bool(result.get("retryable")))
@@ -1082,7 +1084,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "failed")
+            self.assertEqual(str(result.get("state") or ""), "blocked")
             self.assertEqual(str(result.get("reason") or ""), "install_failed:runtime_dependency_missing")
             self.assertEqual(str(result.get("install_error_code") or ""), "runtime_dependency_missing")
             self.assertFalse(bool(result.get("retryable")))
@@ -1108,7 +1110,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -1203,7 +1205,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -1326,6 +1328,54 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_search_skill_query_multiple_names_returns_union_matches(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: github_skills_curated\n"
+                    "      level: mounted\n"
+                    "  curated:\n"
+                    "    - capability_id: skill:github:demo:quant-analyst\n"
+                    "      level: mounted\n"
+                    "      source_id: github_skills_curated\n"
+                    "      source_uri: https://github.com/demo/quant-analyst\n"
+                    "      qualification_status: qualified\n"
+                    "      description_short: Quant analyst toolkit.\n"
+                    "    - capability_id: skill:github:demo:search-specialist\n"
+                    "      level: mounted\n"
+                    "      source_id: github_skills_curated\n"
+                    "      source_uri: https://github.com/demo/search-specialist\n"
+                    "      qualification_status: qualified\n"
+                    "      description_short: Search specialist toolkit.\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            search_resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "quant-analyst search-specialist",
+                    "kind": "skill",
+                    "include_external": True,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            result = search_resp.result if isinstance(search_resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            ids = {str(item.get("capability_id") or "") for item in items if isinstance(item, dict)}
+            self.assertIn("skill:github:demo:quant-analyst", ids)
+            self.assertIn("skill:github:demo:search-specialist", ids)
+        finally:
+            cleanup()
+
     def test_search_surfaces_curated_third_party_skill_as_enable_now(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1371,6 +1421,8 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertEqual(str(item.get("source_id") or ""), "github_skills_curated")
             self.assertEqual(str(item.get("qualification_status") or ""), "qualified")
             self.assertEqual(str(item.get("enable_hint") or ""), "enable_now")
+            readiness = item.get("readiness_preview") if isinstance(item.get("readiness_preview"), dict) else {}
+            self.assertEqual(str(readiness.get("preview_status") or ""), "enableable")
 
             enable_resp, _ = self._call(
                 "capability_enable",
@@ -1385,7 +1437,7 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
             enable_result = enable_resp.result if isinstance(enable_resp.result, dict) else {}
-            self.assertEqual(str(enable_result.get("state") or ""), "ready")
+            self.assertEqual(str(enable_result.get("state") or ""), "runnable")
         finally:
             cleanup()
 
@@ -1512,7 +1564,7 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "failed")
+            self.assertEqual(str(result.get("state") or ""), "blocked")
             self.assertEqual(str(result.get("reason") or ""), "policy_level_indexed")
             self.assertEqual(str(result.get("policy_level") or ""), "indexed")
         finally:
@@ -1653,7 +1705,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
                 self.assertTrue(first.ok, getattr(first, "error", None))
                 first_result = first.result if isinstance(first.result, dict) else {}
-                self.assertEqual(str(first_result.get("state") or ""), "ready")
+                self.assertEqual(str(first_result.get("state") or ""), "activation_pending")
 
                 second, _ = self._call(
                     "capability_enable",
@@ -1668,7 +1720,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(second.ok, getattr(second, "error", None))
             second_result = second.result if isinstance(second.result, dict) else {}
-            self.assertEqual(str(second_result.get("state") or ""), "failed")
+            self.assertEqual(str(second_result.get("state") or ""), "blocked")
             self.assertIn("quota_enabled_actor_exceeded", str(second_result.get("reason") or ""))
         finally:
             cleanup()
@@ -1710,7 +1762,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -1783,7 +1835,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._set_runtime_actor_binding(
@@ -1792,7 +1844,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -1883,7 +1935,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -1940,7 +1992,7 @@ class TestCapabilityOps(unittest.TestCase):
                 actor_id="peer-1",
                 capability_id="mcp:test-server",
                 artifact_id=artifact_id,
-                state="ready",
+                state="activation_pending",
                 last_error="",
             )
             ops._save_runtime_doc(runtime_path, runtime_doc)
@@ -2221,8 +2273,8 @@ class TestCapabilityOps(unittest.TestCase):
             enabled = state.get("enabled_capabilities") if isinstance(state.get("enabled_capabilities"), list) else []
             self.assertIn("skill:anthropic:write-pr", enabled)
             self.assertIn("pack:space", enabled)
-            active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
-            active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
             self.assertIn("skill:anthropic:write-pr", active_ids)
             autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
             autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
@@ -2282,8 +2334,8 @@ class TestCapabilityOps(unittest.TestCase):
             autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
             # actor-scope enable does not mutate startup autoload config.
             self.assertNotIn("skill:anthropic:triage", autoload_ids)
-            active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
-            active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
             self.assertIn("skill:anthropic:triage", active_ids)
         finally:
             cleanup()
@@ -2908,7 +2960,7 @@ class TestCapabilityOps(unittest.TestCase):
                 )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertEqual(str(result.get("state") or ""), "activation_pending")
         finally:
             cleanup()
 
@@ -3213,7 +3265,7 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "failed")
+            self.assertEqual(str(result.get("state") or ""), "blocked")
             self.assertEqual(str(result.get("reason") or ""), "preflight_failed:runtime_binary_missing")
             missing_binaries = result.get("missing_binaries") if isinstance(result.get("missing_binaries"), list) else []
             self.assertIn("definitely-missing-runtime-binary", missing_binaries)
@@ -3404,8 +3456,8 @@ class TestCapabilityOps(unittest.TestCase):
             state = state_resp.result if isinstance(state_resp.result, dict) else {}
             enabled = set(state.get("enabled_capabilities") or [])
             self.assertNotIn("skill:anthropic:triage", enabled)
-            active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
-            active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
             self.assertNotIn("skill:anthropic:triage", active_ids)
             autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
             autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
@@ -3440,7 +3492,7 @@ class TestCapabilityOps(unittest.TestCase):
             result = resp.result if isinstance(resp.result, dict) else {}
             self.assertTrue(bool(result.get("dry_run")))
             self.assertFalse(bool(result.get("imported")))
-            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertEqual(str(result.get("state") or ""), "enableable")
             self.assertEqual(str(result.get("capability_id") or ""), capability_id)
 
             _, catalog_doc = ops._load_catalog_doc()
@@ -3478,9 +3530,11 @@ class TestCapabilityOps(unittest.TestCase):
             result = resp.result if isinstance(resp.result, dict) else {}
             record = result.get("record") if isinstance(result.get("record"), dict) else {}
             self.assertEqual(str(record.get("source_id") or ""), "manual_import")
-            self.assertEqual(str(result.get("effective_policy_level") or ""), "indexed")
-            self.assertFalse(bool(result.get("enableable_now")))
-            self.assertEqual(str(result.get("enable_block_reason") or ""), "policy_level_indexed")
+            self.assertEqual(str(result.get("effective_policy_level") or ""), "mounted")
+            self.assertTrue(bool(result.get("enableable_now")))
+            self.assertEqual(str(result.get("enable_block_reason") or ""), "")
+            readiness = result.get("readiness_preview") if isinstance(result.get("readiness_preview"), dict) else {}
+            self.assertEqual(str(readiness.get("preview_status") or ""), "enableable")
         finally:
             cleanup()
 
@@ -3495,6 +3549,7 @@ class TestCapabilityOps(unittest.TestCase):
             before = get_before.result if isinstance(get_before.result, dict) else {}
             revision_before = str(before.get("revision") or "")
             self.assertTrue(revision_before)
+            self.assertEqual(str(before.get("external_capability_safety_mode") or ""), "normal")
 
             update, _ = self._call(
                 "capability_allowlist_update",
@@ -3503,11 +3558,22 @@ class TestCapabilityOps(unittest.TestCase):
                     "mode": "patch",
                     "expected_revision": revision_before,
                     "patch": {
-                        "defaults": {"source_level": {"manual_import": "indexed"}},
+                        "defaults": {"source_level": {
+                            "manual_import": "indexed",
+                            "mcp_registry_official": "indexed",
+                            "anthropic_skills": "indexed",
+                            "github_skills_curated": "indexed",
+                            "skillsmp_remote": "indexed",
+                            "clawhub_remote": "indexed",
+                            "openclaw_skills_remote": "indexed",
+                            "clawskills_remote": "indexed",
+                        }},
                     },
                 },
             )
             self.assertTrue(update.ok, getattr(update, "error", None))
+            update_result = update.result if isinstance(update.result, dict) else {}
+            self.assertEqual(str(update_result.get("external_capability_safety_mode") or ""), "conservative")
 
             resp, _ = self._call(
                 "capability_import",
@@ -3532,6 +3598,9 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertEqual(str(result.get("effective_policy_level") or ""), "indexed")
             self.assertFalse(bool(result.get("enableable_now")))
             self.assertEqual(str(result.get("enable_block_reason") or ""), "policy_level_indexed")
+            readiness = result.get("readiness_preview") if isinstance(result.get("readiness_preview"), dict) else {}
+            self.assertEqual(str(readiness.get("policy_source") or ""), "external_capability_safety_mode")
+            self.assertEqual(str(readiness.get("policy_mode") or ""), "conservative")
         finally:
             cleanup()
 
@@ -3628,10 +3697,10 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
             self.assertTrue(bool(result.get("imported")))
-            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertEqual(str(result.get("state") or ""), "activation_pending")
             self.assertEqual(str(result.get("capability_id") or ""), capability_id)
             enable_result = result.get("enable_result") if isinstance(result.get("enable_result"), dict) else {}
-            self.assertEqual(str(enable_result.get("state") or ""), "ready")
+            self.assertEqual(str(enable_result.get("state") or ""), "activation_pending")
             self.assertTrue(bool(enable_result.get("refresh_required")))
 
             state_resp, _ = self._call(
@@ -3679,7 +3748,7 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result if isinstance(resp.result, dict) else {}
-            self.assertEqual(str(result.get("state") or ""), "ready")
+            self.assertEqual(str(result.get("state") or ""), "activation_pending")
             enable_result = result.get("enable_result") if isinstance(result.get("enable_result"), dict) else {}
             skill = enable_result.get("skill") if isinstance(enable_result.get("skill"), dict) else {}
             self.assertEqual(str(skill.get("capability_id") or ""), capability_id)
@@ -3692,8 +3761,8 @@ class TestCapabilityOps(unittest.TestCase):
             state = state_resp.result if isinstance(state_resp.result, dict) else {}
             enabled = set(state.get("enabled_capabilities") or [])
             self.assertIn(capability_id, enabled)
-            active_skills = state.get("active_skills") if isinstance(state.get("active_skills"), list) else []
-            active_ids = {str(item.get("capability_id") or "") for item in active_skills if isinstance(item, dict)}
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
             self.assertIn(capability_id, active_ids)
 
             _, catalog_doc = ops._load_catalog_doc()

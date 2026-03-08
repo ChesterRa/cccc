@@ -1,5 +1,7 @@
 // API service layer (centralized API calls).
 import type {
+  AgentState,
+  CoordinationBrief,
   GroupMeta,
   GroupDoc,
   LedgerEvent,
@@ -30,6 +32,9 @@ import type {
   CapabilityBlockEntry,
   CapabilityStateResult,
   CapabilityImportRecord,
+  GroupTasksSummary,
+  TaskBoardEntry,
+  TaskChecklistItem,
 } from "../types";
 
 // ============ Token management ============
@@ -115,6 +120,216 @@ export type ApiResponse<T> =
 // Helper to create a typed error response.
 function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
   return { ok: false, error: { code, message } };
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as UnknownRecord) : null;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function asOptionalString(value: unknown): string | null {
+  const text = asString(value).trim();
+  return text ? text : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => asString(item).trim()).filter(Boolean);
+}
+
+function normalizeChecklistItem(value: unknown, index: number): TaskChecklistItem | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const text = asString(record.text).trim();
+  if (!text) return null;
+  const id = asString(record.id).trim() || `item-${index + 1}`;
+  const status = asString(record.status).trim() || "pending";
+  return { id, text, status };
+}
+
+function normalizeTask(value: unknown): Task | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = asString(record.id).trim();
+  if (!id) return null;
+
+  const title = asString(record.title).trim() || id;
+  const outcome = asString(record.outcome);
+  const checklist = Array.isArray(record.checklist)
+    ? record.checklist
+        .map((item, index) => normalizeChecklistItem(item, index))
+        .filter((item): item is TaskChecklistItem => !!item)
+    : [];
+
+  return {
+    id,
+    title,
+    outcome,
+    status: asString(record.status).trim() || undefined,
+    assignee: asOptionalString(record.assignee),
+    priority: asOptionalString(record.priority),
+    parent_id: asOptionalString(record.parent_id),
+    blocked_by: asStringArray(record.blocked_by),
+    waiting_on: asString(record.waiting_on).trim() || undefined,
+    handoff_to: asOptionalString(record.handoff_to),
+    notes: asString(record.notes),
+    checklist,
+    created_at: asOptionalString(record.created_at),
+    updated_at: asOptionalString(record.updated_at),
+    archived_from: asOptionalString(record.archived_from),
+    progress: typeof record.progress === "number" ? record.progress : checklist.length > 0
+      ? checklist.filter((item) => item.status === "done").length / checklist.length
+      : undefined,
+  };
+}
+
+function normalizeAgentState(value: unknown): AgentState | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = asString(record.id).trim();
+  if (!id) return null;
+
+  const hotRecord = asRecord(record.hot);
+  const warmRecord = asRecord(record.warm);
+
+  return {
+    id,
+    hot: {
+      active_task_id: asOptionalString(hotRecord?.active_task_id),
+      focus: asOptionalString(hotRecord?.focus),
+      next_action: asOptionalString(hotRecord?.next_action),
+      blockers: asStringArray(hotRecord?.blockers),
+    },
+    warm: {
+      what_changed: asOptionalString(warmRecord?.what_changed),
+      open_loops: asStringArray(warmRecord?.open_loops),
+      commitments: asStringArray(warmRecord?.commitments),
+      environment_summary: asOptionalString(warmRecord?.environment_summary),
+      user_model: asOptionalString(warmRecord?.user_model),
+      persona_notes: asOptionalString(warmRecord?.persona_notes),
+      resume_hint: asOptionalString(warmRecord?.resume_hint),
+    },
+    updated_at: asOptionalString(record.updated_at),
+  };
+}
+
+function normalizeTaskSummary(value: unknown, tasks: Task[]): GroupTasksSummary {
+  const record = asRecord(value);
+  if (record) {
+    return {
+      total: Number(record.total || 0),
+      planned: Number(record.planned || 0),
+      active: Number(record.active || 0),
+      done: Number(record.done || 0),
+      archived: Number(record.archived || 0) || undefined,
+      root_count: Number(record.root_count || 0) || undefined,
+    };
+  }
+
+  const summary: GroupTasksSummary = { total: tasks.length, planned: 0, active: 0, done: 0, archived: 0 };
+  for (const task of tasks) {
+    const status = asString(task.status || "planned").toLowerCase();
+    if (status === "active") summary.active += 1;
+    else if (status === "done") summary.done += 1;
+    else if (status === "archived") summary.archived = Number(summary.archived || 0) + 1;
+    else summary.planned += 1;
+  }
+  return summary;
+}
+
+function normalizeBoardEntries(value: unknown): TaskBoardEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: Array<string | Task | null> = value.map((item) => {
+    if (typeof item === "string") {
+      const id = item.trim();
+      return id ? id : null;
+    }
+    return normalizeTask(item);
+  });
+  return items.filter((item): item is string | Task => item !== null);
+}
+
+function normalizeContext(raw: unknown): GroupContext {
+  const record = asRecord(raw) ?? {};
+  const coordination = asRecord(record.coordination) ?? {};
+  const tasks = Array.isArray(coordination.tasks)
+    ? coordination.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
+    : [];
+  const agentStates = Array.isArray(record.agent_states)
+    ? record.agent_states.map((item) => normalizeAgentState(item)).filter((item): item is AgentState => !!item)
+    : [];
+  const briefRecord = asRecord(coordination.brief);
+  const summary = normalizeTaskSummary(record.tasks_summary, tasks);
+  const boardRecord = asRecord(record.board);
+  const attentionRecord = asRecord(record.attention);
+  const panoramaRecord = asRecord(record.panorama);
+  const metaRecord = asRecord(record.meta);
+
+  return {
+    version: asString(record.version).trim() || undefined,
+    coordination: {
+      brief: briefRecord
+        ? {
+            objective: asString(briefRecord.objective),
+            current_focus: asString(briefRecord.current_focus),
+            constraints: asStringArray(briefRecord.constraints),
+            project_brief: asString(briefRecord.project_brief),
+            project_brief_stale: !!briefRecord.project_brief_stale,
+            updated_by: asOptionalString(briefRecord.updated_by),
+            updated_at: asOptionalString(briefRecord.updated_at),
+          }
+        : null,
+      tasks,
+      recent_decisions: Array.isArray(coordination.recent_decisions)
+        ? coordination.recent_decisions
+            .map((item) => asRecord(item))
+            .filter((item): item is UnknownRecord => !!item)
+            .map((item) => ({
+              at: asOptionalString(item.at),
+              by: asOptionalString(item.by),
+              summary: asString(item.summary),
+              task_id: asOptionalString(item.task_id),
+            }))
+        : [],
+      recent_handoffs: Array.isArray(coordination.recent_handoffs)
+        ? coordination.recent_handoffs
+            .map((item) => asRecord(item))
+            .filter((item): item is UnknownRecord => !!item)
+            .map((item) => ({
+              at: asOptionalString(item.at),
+              by: asOptionalString(item.by),
+              summary: asString(item.summary),
+              task_id: asOptionalString(item.task_id),
+            }))
+        : [],
+    },
+    agent_states: agentStates,
+    attention: attentionRecord
+      ? {
+          blocked: Array.isArray(attentionRecord.blocked) ? normalizeBoardEntries(attentionRecord.blocked) || [] : typeof attentionRecord.blocked === "number" ? attentionRecord.blocked : undefined,
+          waiting_user: Array.isArray(attentionRecord.waiting_user) ? normalizeBoardEntries(attentionRecord.waiting_user) || [] : typeof attentionRecord.waiting_user === "number" ? attentionRecord.waiting_user : undefined,
+          pending_handoffs: Array.isArray(attentionRecord.pending_handoffs) ? normalizeBoardEntries(attentionRecord.pending_handoffs) || [] : typeof attentionRecord.pending_handoffs === "number" ? attentionRecord.pending_handoffs : undefined,
+        }
+      : null,
+    board: boardRecord
+      ? {
+          planned: normalizeBoardEntries(boardRecord.planned),
+          active: normalizeBoardEntries(boardRecord.active),
+          done: normalizeBoardEntries(boardRecord.done),
+          archived: normalizeBoardEntries(boardRecord.archived),
+        }
+      : null,
+    tasks_summary: summary,
+    panorama: {
+      mermaid: asOptionalString(panoramaRecord?.mermaid),
+    },
+    meta: metaRecord ? { ...metaRecord } : {},
+  };
 }
 
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
@@ -403,7 +618,6 @@ export async function addActor(
   envPrivate?: Record<string, string>,
   options?: {
     profileId?: string;
-    runner?: "pty" | "headless";
     title?: string;
     capabilityAutoload?: string[];
   }
@@ -413,7 +627,7 @@ export async function addActor(
     body: JSON.stringify({
       actor_id: actorId,
       role,
-      runner: options?.runner || "pty",
+      runner: "pty",
       runtime,
       command,
       env: {},
@@ -604,11 +818,18 @@ export async function copyActorProfilePrivateEnvFromProfile(profileId: string, s
 // ============ Context & Settings ============
 
 export async function fetchContext(groupId: string) {
-  return apiJson<GroupContext>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
+  const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
+  if (!resp.ok) return resp as ApiResponse<GroupContext>;
+  return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
 }
 
 export async function fetchTasks(groupId: string) {
-  return apiJson<{ tasks: Task[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/tasks`);
+  const resp = await apiJson<{ tasks?: unknown[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/tasks`);
+  if (!resp.ok) return resp as ApiResponse<{ tasks: Task[] }>;
+  const tasks = Array.isArray(resp.result?.tasks)
+    ? resp.result.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
+    : [];
+  return { ok: true, result: { tasks } } as ApiResponse<{ tasks: Task[] }>;
 }
 
 export async function contextSync(
@@ -622,13 +843,54 @@ export async function contextSync(
   });
 }
 
-export async function updateVision(groupId: string, vision: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
-    method: "POST",
-    body: JSON.stringify({ ops: [{ op: "vision.update", vision }], by: "user" }),
-  });
+export async function updateCoordinationBrief(groupId: string, brief: CoordinationBrief) {
+  const op: Record<string, unknown> = { op: "coordination.brief.update" };
+  if (brief.objective !== undefined) op.objective = String(brief.objective || "");
+  if (brief.current_focus !== undefined) op.current_focus = String(brief.current_focus || "");
+  if (brief.constraints !== undefined) op.constraints = Array.isArray(brief.constraints) ? brief.constraints : [];
+  if (brief.project_brief !== undefined) op.project_brief = String(brief.project_brief || "");
+  if (brief.project_brief_stale !== undefined) op.project_brief_stale = !!brief.project_brief_stale;
+  return contextSync(groupId, [op]);
 }
 
+export async function addCoordinationNote(
+  groupId: string,
+  kind: "decision" | "handoff",
+  summary: string,
+  taskId?: string | null
+) {
+  const op: Record<string, unknown> = { op: "coordination.note.add", kind, summary: String(summary || "") };
+  if (taskId) op.task_id = String(taskId || "");
+  return contextSync(groupId, [op]);
+}
+
+export async function updateCoordinationTask(groupId: string, task: Task) {
+  const updateOp: Record<string, unknown> = {
+    op: "task.update",
+    task_id: task.id,
+    title: String(task.title || ""),
+    outcome: String(task.outcome || ""),
+    assignee: task.assignee || null,
+    priority: String(task.priority || ""),
+    parent_id: task.parent_id || null,
+    blocked_by: Array.isArray(task.blocked_by) ? task.blocked_by : [],
+    waiting_on: String(task.waiting_on || "none"),
+    handoff_to: task.handoff_to || null,
+    notes: String(task.notes || ""),
+    checklist: Array.isArray(task.checklist)
+      ? task.checklist.map((item, index) => ({
+          id: String(item.id || `item-${index + 1}`),
+          text: String(item.text || ""),
+          status: String(item.status || "pending"),
+        }))
+      : [],
+  };
+  const ops: Array<Record<string, unknown>> = [updateOp];
+  if (task.status) {
+    ops.push({ op: "task.move", task_id: task.id, status: String(task.status || "planned") });
+  }
+  return contextSync(groupId, ops);
+}
 
 
 export async function fetchSettings(groupId: string) {
@@ -664,6 +926,7 @@ export async function fetchCapabilityAllowlist() {
     overlay_error?: string;
     policy_source?: string;
     policy_error?: string;
+    external_capability_safety_mode?: string;
   }>(`/api/v1/capabilities/allowlist?by=user`);
 }
 
@@ -685,24 +948,26 @@ export async function updateCapabilityAllowlist(args: {
     effective: Record<string, unknown>;
     policy_source?: string;
     policy_error?: string;
+    external_capability_safety_mode?: string;
   }>(`/api/v1/capabilities/allowlist`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
 }
 
-export async function blockCapabilityGlobal(groupId: string, capabilityId: string, blocked: boolean, reason: string = "") {
+export async function blockCapabilityGlobal(capabilityId: string, blocked: boolean, reason: string = "", groupId?: string) {
+  const body: Record<string, unknown> = {
+    by: "user",
+    actor_id: "user",
+    capability_id: capabilityId,
+    blocked,
+    reason,
+    scope: "global",
+  };
+  if (String(groupId || "").trim()) body.group_id = String(groupId || "").trim();
   return apiJson<Record<string, unknown>>(`/api/v1/capabilities/block`, {
     method: "POST",
-    body: JSON.stringify({
-      by: "user",
-      actor_id: "user",
-      group_id: groupId,
-      capability_id: capabilityId,
-      blocked,
-      reason,
-      scope: "global",
-    }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -915,13 +1180,6 @@ export async function sendCrossGroupMessage(
       priority,
       reply_required: replyRequired,
     }),
-  });
-}
-
-export async function ackMessage(groupId: string, eventId: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(eventId)}/ack`, {
-    method: "POST",
-    body: JSON.stringify({ by: "user" }),
   });
 }
 
@@ -1162,6 +1420,52 @@ export async function startRemoteAccess() {
 export async function stopRemoteAccess() {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access/stop?by=user", {
     method: "POST",
+  });
+}
+
+// ============ User Token management ============
+
+export interface UserTokenEntry {
+  token?: string;
+  token_id?: string;
+  token_preview?: string;
+  user_id: string;
+  is_admin: boolean;
+  allowed_groups: string[];
+  created_at: string;
+}
+
+export async function fetchTokens() {
+  return apiJson<{ tokens: UserTokenEntry[] }>("/api/v1/tokens");
+}
+
+export async function createToken(userId: string, isAdmin: boolean, allowedGroups: string[], customToken?: string) {
+  const body: Record<string, unknown> = {
+    user_id: userId,
+    is_admin: isAdmin,
+    allowed_groups: allowedGroups,
+  };
+  if (customToken?.trim()) body.custom_token = customToken.trim();
+  return apiJson<{ token: UserTokenEntry }>("/api/v1/tokens", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateToken(tokenId: string, updates: { allowed_groups?: string[]; is_admin?: boolean }) {
+  return apiJson<{ token: UserTokenEntry }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function revealToken(tokenId: string) {
+  return apiJson<{ token: string }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}/reveal`);
+}
+
+export async function deleteToken(tokenId: string) {
+  return apiJson<{ deleted: boolean }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}`, {
+    method: "DELETE",
   });
 }
 

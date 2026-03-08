@@ -41,7 +41,8 @@ class TestMcpCapabilitySurface(unittest.TestCase):
         self.assertIn("cccc_capability_import", core)
         self.assertIn("cccc_capability_uninstall", core)
         self.assertIn("cccc_capability_use", core)
-        self.assertIn("cccc_context_agent", core)
+        self.assertIn("cccc_agent_state", core)
+        self.assertIn("cccc_coordination", core)
         self.assertIn("cccc_memory", core)
 
 

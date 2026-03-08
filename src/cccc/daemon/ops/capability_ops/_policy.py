@@ -21,6 +21,7 @@ from ._common import (
     _POLICY_LOCK,
     _POLICY_CACHE,
     _QUAL_STATES,
+    _SOURCE_IDS,
     _error,
 )
 
@@ -36,6 +37,26 @@ def _normalize_policy_level(raw: Any, *, default: str = _LEVEL_INDEXED) -> str:
 
 def _policy_level_visible(level: str) -> bool:
     return _normalize_policy_level(level) != _LEVEL_INDEXED
+
+
+def _external_capability_safety_mode_from_source_levels(source_levels: Any) -> str:
+    levels = source_levels if isinstance(source_levels, dict) else {}
+    for source_id in _SOURCE_IDS:
+        level = _normalize_policy_level(levels.get(source_id), default=_LEVEL_MOUNTED)
+        if level != _LEVEL_INDEXED:
+            return "normal"
+    return "conservative"
+
+
+def _external_capability_safety_mode_from_effective_doc(doc: Any) -> str:
+    defaults = doc.get("defaults") if isinstance(doc, dict) and isinstance(doc.get("defaults"), dict) else {}
+    source_levels = defaults.get("source_level") if isinstance(defaults.get("source_level"), dict) else {}
+    return _external_capability_safety_mode_from_source_levels(source_levels)
+
+
+def _external_capability_safety_mode_from_policy(policy: Any) -> str:
+    source_levels = policy.get("source_levels") if isinstance(policy, dict) and isinstance(policy.get("source_levels"), dict) else {}
+    return _external_capability_safety_mode_from_source_levels(source_levels)
 
 
 def _policy_default_compiled() -> Dict[str, Any]:
@@ -352,18 +373,20 @@ def handle_capability_allowlist_get(args: Dict[str, Any]) -> DaemonResponse:
         with _POLICY_LOCK:
             snapshot = _allowlist_effective_snapshot()
             _ = _allowlist_policy()
+        effective_doc = snapshot.get("effective") if isinstance(snapshot.get("effective"), dict) else {}
         return DaemonResponse(
             ok=True,
             result={
                 "default": snapshot.get("default") if isinstance(snapshot.get("default"), dict) else {},
                 "overlay": snapshot.get("overlay") if isinstance(snapshot.get("overlay"), dict) else {},
-                "effective": snapshot.get("effective") if isinstance(snapshot.get("effective"), dict) else {},
+                "effective": effective_doc,
                 "revision": str(snapshot.get("revision") or ""),
                 "default_source": str(snapshot.get("default_source") or ""),
                 "overlay_source": str(snapshot.get("overlay_source") or ""),
                 "overlay_error": str(snapshot.get("overlay_error") or ""),
                 "policy_source": str(_POLICY_CACHE.get("source") or ""),
                 "policy_error": str(_POLICY_CACHE.get("error") or ""),
+                "external_capability_safety_mode": _external_capability_safety_mode_from_effective_doc(effective_doc),
             },
         )
     except Exception as e:
@@ -401,6 +424,7 @@ def handle_capability_allowlist_validate(args: Dict[str, Any]) -> DaemonResponse
             "overlay": overlay_next,
             "effective": effective_doc,
             "revision": str(revision or ""),
+            "external_capability_safety_mode": _external_capability_safety_mode_from_effective_doc(effective_doc),
         },
     )
 
@@ -460,6 +484,7 @@ def handle_capability_allowlist_update(args: Dict[str, Any]) -> DaemonResponse:
             "effective": effective_doc,
             "policy_source": str(_POLICY_CACHE.get("source") or ""),
             "policy_error": str(_POLICY_CACHE.get("error") or ""),
+            "external_capability_safety_mode": _external_capability_safety_mode_from_effective_doc(effective_doc),
         },
     )
 
@@ -497,5 +522,8 @@ def handle_capability_allowlist_reset(args: Dict[str, Any]) -> DaemonResponse:
             "overlay_error": str(snapshot.get("overlay_error") or ""),
             "policy_source": str(_POLICY_CACHE.get("source") or ""),
             "policy_error": str(_POLICY_CACHE.get("error") or ""),
+            "external_capability_safety_mode": _external_capability_safety_mode_from_effective_doc(
+                snapshot.get("effective") if isinstance(snapshot.get("effective"), dict) else {}
+            ),
         },
     )

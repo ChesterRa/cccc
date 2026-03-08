@@ -16,6 +16,7 @@ import {
   CapabilitiesTab,
   ActorProfilesTab,
   RemoteAccessTab,
+  TokensTab,
   DeveloperTab,
   SettingsScope,
   GroupTabId,
@@ -713,6 +714,7 @@ export function SettingsModal({
     { id: "capabilities", label: t("tabs.capabilities") },
     { id: "actorProfiles", label: t("tabs.actorProfiles") },
     { id: "remote", label: t("tabs.remote") },
+    { id: "tokens", label: t("tabs.tokens") },
     { id: "developer", label: t("tabs.developer") },
   ];
   const tabs = scope === "group" ? groupTabs : globalTabs;
@@ -869,7 +871,7 @@ export function SettingsModal({
                 />
               )}
 
-              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
+              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} settings={settings} onUpdateSettings={onUpdateSettings} />}
 
               {activeTab === "space" && (
                 <GroupSpaceTab
@@ -885,7 +887,6 @@ export function SettingsModal({
                 <CapabilitiesTab
                   isDark={isDark}
                   isActive={scope === "global" && activeTab === "capabilities"}
-                  groupId={groupId}
                 />
               )}
 
@@ -897,6 +898,14 @@ export function SettingsModal({
               )}
 
               {activeTab === "remote" && <RemoteAccessTab isDark={isDark} isActive={scope === "global" && activeTab === "remote"} />}
+
+              {activeTab === "tokens" && (
+                <TokensTab
+                  isDark={isDark}
+                  isActive={scope === "global" && activeTab === "tokens"}
+                  onNavigateToRemote={() => setGlobalTab("remote")}
+                />
+              )}
 
               {activeTab === "developer" && (
                 <DeveloperTab

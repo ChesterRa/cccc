@@ -174,7 +174,7 @@ def format_help(platform: str = "telegram") -> str:
 
 📊 Status:
   /status - show group and agents status
-  /context - show project context (vision/overview/tasks)
+  /context - show project coordination (brief/tasks/agents)
 
 🎮 Control:
   /pause - pause message delivery
@@ -246,36 +246,62 @@ def format_status(
 
 def format_context(context: dict) -> str:
     """Format context response."""
-    lines = ["📋 Project Context"]
-    lines.append("")
+    lines = ["📋 Project Coordination", ""]
 
-    vision = context.get("vision")
-    if vision:
-        lines.append(f"🎯 Vision: {vision[:200]}{'...' if len(vision) > 200 else ''}")
+    coordination = context.get("coordination") if isinstance(context.get("coordination"), dict) else {}
+    brief = coordination.get("brief") if isinstance(coordination.get("brief"), dict) else {}
+    objective = brief.get("objective")
+    current_focus = brief.get("current_focus")
+    constraints = brief.get("constraints") if isinstance(brief.get("constraints"), list) else []
+
+    if objective:
+        lines.append(f"🎯 Objective: {str(objective)[:200]}{'...' if len(str(objective)) > 200 else ''}")
+    if current_focus:
+        lines.append(f"📐 Focus: {str(current_focus)[:300]}{'...' if len(str(current_focus)) > 300 else ''}")
+    if constraints:
+        lines.append("⛳ Constraints:")
+        for item in constraints[:4]:
+            lines.append(f"  - {str(item)[:120]}")
+    if objective or current_focus or constraints:
         lines.append("")
 
-    overview = context.get("overview")
-    if isinstance(overview, dict):
-        manual = overview.get("manual")
-        if isinstance(manual, dict):
-            focus = manual.get("current_focus")
-            if focus:
-                lines.append(f"📐 Focus: {focus[:300]}{'...' if len(str(focus)) > 300 else ''}")
-                lines.append("")
-
-    active_tasks = context.get("active_tasks", [])
+    board = context.get("board") if isinstance(context.get("board"), dict) else {}
+    active_tasks = board.get("active") if isinstance(board.get("active"), list) else []
     if active_tasks:
         lines.append("📝 Active Tasks:")
-        for t in active_tasks[:8]:
-            status = t.get("status", "planned")
-            icon = "✅" if status == "done" else "🔄" if status == "active" else "📋"
-            assignee = t.get("assignee", "")
+        for task in active_tasks[:8]:
+            if not isinstance(task, dict):
+                continue
+            assignee = str(task.get("assignee") or "").strip()
             assignee_str = f" → {assignee}" if assignee else ""
-            parent = t.get("parent_id")
+            parent = str(task.get("parent_id") or "").strip()
             parent_str = f" (↑{parent})" if parent else ""
-            lines.append(f"  {icon} {t.get('name', t.get('title', '?'))}{assignee_str}{parent_str}")
+            lines.append(f"  🔄 {task.get('title', '?')}{assignee_str}{parent_str}")
+        lines.append("")
 
-    if not vision and not active_tasks:
-        lines.append("No context set yet")
+    attention = context.get("attention") if isinstance(context.get("attention"), dict) else {}
+    blocked = attention.get("blocked") if isinstance(attention.get("blocked"), list) else []
+    waiting_user = attention.get("waiting_user") if isinstance(attention.get("waiting_user"), list) else []
+    if blocked:
+        lines.append(f"⛔ Blocked: {len(blocked)}")
+    if waiting_user:
+        lines.append(f"🙋 Waiting on user: {len(waiting_user)}")
 
+    agent_states = context.get("agent_states") if isinstance(context.get("agent_states"), list) else []
+    focus_lines = []
+    for item in agent_states[:6]:
+        if not isinstance(item, dict):
+            continue
+        hot = item.get("hot") if isinstance(item.get("hot"), dict) else {}
+        focus = str(hot.get("focus") or "").strip()
+        if focus:
+            focus_lines.append(f"  - {item.get('id')}: {focus}")
+    if focus_lines:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.append("👥 Agent Focus:")
+        lines.extend(focus_lines)
+
+    if len(lines) <= 2:
+        lines.append("No coordination set yet")
     return "\n".join(lines)

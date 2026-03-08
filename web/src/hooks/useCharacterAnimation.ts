@@ -33,6 +33,7 @@ export interface UseCharacterAnimationParams {
   layout: Map<string, LayoutItem>;
   buildTargetMap: Map<string, [number, number, number]>;
   characterRefs: React.MutableRefObject<Map<string, THREE.Group>>;
+  taskStatusMap?: Map<string, string>;
   staticMode?: boolean;
 }
 
@@ -45,7 +46,7 @@ function lerpAngle(current: number, target: number, alpha: number): number {
 }
 
 export function useCharacterAnimation({
-  agents, actorMap, layout, buildTargetMap, characterRefs, staticMode = true,
+  agents, actorMap, layout, buildTargetMap, characterRefs, taskStatusMap, staticMode = true,
 }: UseCharacterAnimationParams): void {
   const locomotionRefs = useRef<Map<string, LocomotionState>>(new Map());
   // Pulse animation state per agent (for status bubble sprite)
@@ -74,7 +75,10 @@ export function useCharacterAnimation({
       const variant = hashCode(agent.id) % 3;
       const actor = actorMap.get(agent.id);
       const running = actor?.running !== false && actor?.enabled !== false;
-      const derived = deriveAnimState(agent, running) as DerivedState;
+      const taskStatus = agent.hot?.active_task_id ? taskStatusMap?.get(agent.hot.active_task_id) : undefined;
+      const idleSec = actor?.idle_seconds;
+      const lastActivity = idleSec != null ? Date.now() - idleSec * 1000 : undefined;
+      const derived = deriveAnimState(agent, running, lastActivity, taskStatus) as DerivedState;
 
       // Bed arrival detection
       const bedDirX = Math.sin(item.bedRotY);
@@ -111,6 +115,11 @@ export function useCharacterAnimation({
         llPy: BASE_Y.leftLeg, rlPy: BASE_Y.rightLeg,
         ...overrides,
       };
+
+      if (!rule.locomotion && derived !== "offline") {
+        pose.gX = ctx.baseX;
+        pose.gZ = ctx.baseZ;
+      }
 
       // ── Locomotion ──
       let loco = locomotionRefs.current.get(agent.id);
@@ -181,8 +190,7 @@ export function useCharacterAnimation({
         loco.speed = THREE.MathUtils.lerp(loco.speed, 0, lfFast);
       }
 
-      // Face build target when arrived (workers only)
-      // Character mesh faces -Z, so add PI to atan2 result
+      // 面向自己的目标区域，而不是硬编码朝场景中心。
       if (!shouldMove && buildTarget && !item.isForeman) {
         pose.gRy = Math.atan2(
           buildTarget[0] - pose.gX,
@@ -227,11 +235,13 @@ export function useCharacterAnimation({
       head.rotation.y = L(head.rotation.y, pose.hRy, lf);
       head.position.y = L(head.position.y, pose.hPy, lf);
 
-      // Crown (child 6, foreman only) follows head bob
-      if (item.isForeman && group.children.length > 6) {
-        const crown = group.children[6];
-        const crownBaseY = 1.165; // matches ActorCharacter crown position
-        crown.position.y = L(crown.position.y, crownBaseY + (pose.hPy - BASE_Y.head), lf);
+      // Crown (foreman only) follows head bob — lookup by name to avoid index fragility
+      if (item.isForeman) {
+        const crown = group.getObjectByName("crown");
+        if (crown) {
+          const crownBaseY = 1.165; // matches ActorCharacter crown position
+          crown.position.y = L(crown.position.y, crownBaseY + (pose.hPy - BASE_Y.head), lf);
+        }
       }
 
       lArm.rotation.x = L(lArm.rotation.x, pose.laRx, lf);

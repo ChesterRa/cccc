@@ -62,7 +62,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     if not command:
         from ..kernel.runtime import get_runtime_command_with_flags
         command = get_runtime_command_with_flags(runtime)
-    if runtime == "custom" and runner != "headless" and not command:
+    if runtime == "custom" and not command:
         _print_json({
             "ok": False,
             "error": {"code": "missing_command", "message": "custom runtime requires a command (PTY runner)"},
@@ -113,11 +113,11 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     try:
         require_actor_permission(group, by=by, action="actor.add")
         # Note: role is auto-determined by position (first enabled = foreman)
-        if runner not in ("pty", "headless"):
-            raise ValueError("invalid runner (must be 'pty' or 'headless')")
+        if runner != "pty":
+            raise ValueError("invalid runner (must be 'pty')")
         if runtime not in ("amp", "auggie", "claude", "codex", "cursor", "droid", "neovate", "gemini", "kilocode", "opencode", "copilot", "custom"):
             raise ValueError("invalid runtime")
-        if runtime == "custom" and runner != "headless" and not command:
+        if runtime == "custom" and not command:
             raise ValueError("custom runtime requires a command (PTY runner)")
         actor = add_actor(
             group,

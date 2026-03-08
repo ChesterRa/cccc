@@ -8,7 +8,8 @@ Static MCP surface:
 - cccc_file / cccc_group / cccc_actor / cccc_runtime_list
 - cccc_capability_search / cccc_capability_enable / cccc_capability_block / cccc_capability_state / cccc_capability_import / cccc_capability_uninstall / cccc_capability_use
 - cccc_space / cccc_automation
-- cccc_context_get / cccc_context_sync / cccc_context_admin / cccc_task / cccc_context_agent
+- cccc_context_get / cccc_coordination / cccc_task / cccc_agent_state
+- cccc_context_sync (advanced batch op)
 - cccc_memory / cccc_memory_admin
 - cccc_headless / cccc_notify / cccc_terminal / cccc_debug
 - cccc_im_bind
@@ -113,18 +114,19 @@ from .handlers.cccc_space import (  # noqa: F401
 # Existing extracted handler namespace dispatchers
 from .handlers.context import (  # noqa: F401
     _handle_context_namespace as _handle_context_namespace_impl,
+    agent_state_clear,
+    agent_state_get,
+    agent_state_update,
     context_get,
-    context_agent_clear,
-    context_agent_update,
     context_sync,
-    overview_manual_update,
+    coordination_add_note,
+    coordination_get,
+    coordination_update_brief,
     task_create,
     task_list,
     task_move,
     task_restore,
-    task_status,
     task_update,
-    vision_update,
 )
 from .handlers.debug import (  # noqa: F401
     _handle_debug_namespace as _handle_debug_namespace_impl,
@@ -228,8 +230,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             actor_id=aid,
             inbox_limit=min(max(int(arguments.get("inbox_limit") or 50), 1), 1000),
             inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
-            ledger_tail_limit=min(max(int(arguments.get("ledger_tail_limit") or 10), 0), 1000),
-            ledger_tail_max_chars=min(max(int(arguments.get("ledger_tail_max_chars") or 8000), 0), 100000),
         )
 
     if name == "cccc_project_info":
@@ -685,16 +685,17 @@ def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[
         coerce_bool=coerce_bool,
         context_get_fn=context_get,
         context_sync_fn=context_sync,
-        vision_update_fn=vision_update,
-        overview_manual_update_fn=overview_manual_update,
+        coordination_get_fn=coordination_get,
+        coordination_update_brief_fn=coordination_update_brief,
+        coordination_add_note_fn=coordination_add_note,
         task_list_fn=task_list,
         task_create_fn=task_create,
         task_update_fn=task_update,
-        task_status_fn=task_status,
         task_move_fn=task_move,
         task_restore_fn=task_restore,
-        context_agent_update_fn=context_agent_update,
-        context_agent_clear_fn=context_agent_clear,
+        agent_state_get_fn=agent_state_get,
+        agent_state_update_fn=agent_state_update,
+        agent_state_clear_fn=agent_state_clear,
     )
 
 

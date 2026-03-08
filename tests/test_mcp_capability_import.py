@@ -48,7 +48,7 @@ class TestMcpCapabilityImport(unittest.TestCase):
 
         with patch(
             "cccc.ports.mcp.server.capability_import",
-            return_value={"ok": True, "state": "ready"},
+            return_value={"ok": True, "state": "runnable"},
         ) as import_mock, patch.dict(
             os.environ,
             {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"},
@@ -67,7 +67,7 @@ class TestMcpCapabilityImport(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(str(result.get("state") or ""), "ready")
+        self.assertEqual(str(result.get("state") or ""), "runnable")
         import_mock.assert_called_once()
         kwargs = import_mock.call_args.kwargs if import_mock.call_args else {}
         self.assertEqual(str(kwargs.get("group_id") or ""), "g1")

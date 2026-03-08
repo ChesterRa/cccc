@@ -32,6 +32,12 @@ export function isChatMessageEvent(ev: unknown): ev is LedgerEvent & { kind: "ch
   return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "chat.message";
 }
 
+export function isActorActivityEvent(
+  ev: unknown,
+): ev is BaseLedgerEvent & { kind: "actor.activity"; data: { actors: Array<{ id: string; idle_seconds: number; running: boolean }> } } {
+  return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "actor.activity";
+}
+
 // ============ Recipient Resolution ============
 
 /**
@@ -241,7 +247,6 @@ export function shouldIncrementUnread(
  * Event kinds that should trigger actor refresh.
  */
 const ACTOR_REFRESH_EVENTS = new Set([
-  "chat.message",
   "chat.read",
   "system.notify",
   "system.notify_ack",

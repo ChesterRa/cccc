@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -17,7 +17,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
-import { ImageIcon, FileIcon } from "./Icons";
+import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
 
 
 function formatEventLine(ev: LedgerEvent): string {
@@ -41,7 +41,24 @@ function ImagePreview({
     isDark: boolean;
 }) {
     const [loadError, setLoadError] = useState(false);
+    const [isLightboxOpen, setIsLightboxOpen] = useState(false);
     const { t } = useTranslation('chat');
+
+    useEffect(() => {
+        if (!isLightboxOpen) {
+            return undefined;
+        }
+
+        // 支持 ESC 关闭，保持图片预览可快速退出。
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setIsLightboxOpen(false);
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [isLightboxOpen]);
 
     if (loadError) {
         // Fallback to file download link on error
@@ -66,20 +83,108 @@ function ImagePreview({
     }
 
     return (
-        <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block rounded-lg overflow-hidden max-w-full"
-        >
-            <img
-                src={href}
-                alt={alt}
-                className="max-w-full max-h-64 sm:max-h-80 object-contain rounded-lg"
-                loading="lazy"
-                onError={() => setLoadError(true)}
-            />
-        </a>
+        <>
+            <button
+                type="button"
+                className="group block max-w-full overflow-hidden rounded-lg"
+                onClick={() => setIsLightboxOpen(true)}
+                aria-label={t('openImagePreview', { name: alt })}
+                title={t('openImagePreview', { name: alt })}
+            >
+                <img
+                    src={href}
+                    alt={alt}
+                    className="max-w-full max-h-64 cursor-zoom-in object-contain rounded-lg transition-opacity group-hover:opacity-95 sm:max-h-80"
+                    loading="lazy"
+                    onError={() => setLoadError(true)}
+                />
+            </button>
+
+            {isLightboxOpen && (
+                <FloatingPortal>
+                    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6 animate-fade-in">
+                        <button
+                            type="button"
+                            className={classNames(
+                                "absolute inset-0",
+                                isDark ? "bg-black/80" : "bg-black/60"
+                            )}
+                            onClick={() => setIsLightboxOpen(false)}
+                            aria-label={t('common:close')}
+                        />
+
+                        <div
+                            className={classNames(
+                                "relative z-[81] flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
+                                isDark ? "border-slate-700 bg-slate-950/95" : "border-gray-200 bg-white/95"
+                            )}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label={t('imagePreviewDialog')}
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <div className={classNames(
+                                "flex items-center justify-between gap-3 border-b px-4 py-3",
+                                isDark ? "border-slate-800" : "border-gray-200"
+                            )}>
+                                <div className="min-w-0">
+                                    <p className={classNames(
+                                        "truncate text-sm font-medium",
+                                        isDark ? "text-slate-100" : "text-gray-900"
+                                    )}>
+                                        {alt}
+                                    </p>
+                                    <p className={classNames(
+                                        "text-xs",
+                                        isDark ? "text-slate-400" : "text-gray-500"
+                                    )}>
+                                        {t('imagePreviewHint')}
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    <a
+                                        href={href}
+                                        download
+                                        className={classNames(
+                                            "inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                                            isDark
+                                                ? "bg-slate-800 text-slate-100 hover:bg-slate-700"
+                                                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                        )}
+                                        title={t('download', { name: alt })}
+                                    >
+                                        {t('download', { name: alt })}
+                                    </a>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsLightboxOpen(false)}
+                                        className={classNames(
+                                            "inline-flex items-center justify-center rounded-lg p-2 transition-colors",
+                                            isDark
+                                                ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                                                : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                        )}
+                                        aria-label={t('common:close')}
+                                    >
+                                        <CloseIcon size={18} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-center overflow-auto p-4 sm:p-6">
+                                <img
+                                    src={href}
+                                    alt={alt}
+                                    className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </FloatingPortal>
+            )}
+        </>
     );
 }
 
@@ -95,7 +200,6 @@ export interface MessageBubbleProps {
     isHighlighted?: boolean;
     onReply: () => void;
     onShowRecipients: () => void;
-    onAck?: (eventId: string) => void;
     onCopyLink?: (eventId: string) => void;
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -113,7 +217,6 @@ export const MessageBubble = memo(function MessageBubble({
     isHighlighted,
     onReply,
     onShowRecipients,
-    onAck,
     onCopyLink,
     onRelay,
     onOpenSource,
@@ -164,12 +267,12 @@ export const MessageBubble = memo(function MessageBubble({
     const dismiss = useDismiss(context);
     const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
     const { t } = useTranslation('chat');
-    const agentStateText = String(agentState?.focus || "").trim();
+    const agentStateText = String(agentState?.hot?.focus || "").trim();
     const agentStateDisplay = agentStateText || t('noAgentStateYet');
-    const stateTask = String(agentState?.active_task_id || "").trim();
-    const stateNext = String(agentState?.next_action || "").trim();
-    const stateChanged = String(agentState?.what_changed || "").trim();
-    const blockerCount = Array.isArray(agentState?.blockers) ? agentState.blockers.length : 0;
+    const stateTask = String(agentState?.hot?.active_task_id || "").trim();
+    const stateNext = String(agentState?.hot?.next_action || "").trim();
+    const stateChanged = String(agentState?.warm?.what_changed || "").trim();
+    const blockerCount = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
 
 
     // Treat data as ChatMessageData.
@@ -214,7 +317,29 @@ export const MessageBubble = memo(function MessageBubble({
             .map((id) => [id, !!readStatus[id]] as const);
     }, [actors, readStatus]);
 
+    const isDirectUserMessage = useMemo(() => {
+        if (isUserMessage) return false;
+        if (!Array.isArray(recipients)) return false;
+        const ids = recipients.map((id) => String(id || "").trim()).filter((id) => id);
+        return ids.length === 1 && ids[0] === "user";
+    }, [isUserMessage, recipients]);
+
+    const hideDirectUserObligationSummary = useMemo(() => {
+        if (isUserMessage) return false;
+        const os = ev._obligation_status;
+        if (os && typeof os === "object") {
+            const ids = Object.keys(os);
+            return ids.length === 1 && ids[0] === "user";
+        }
+        if (ackStatus && typeof ackStatus === "object") {
+            const ids = Object.keys(ackStatus);
+            return ids.length === 1 && ids[0] === "user";
+        }
+        return isDirectUserMessage;
+    }, [ackStatus, ev._obligation_status, isDirectUserMessage, isUserMessage]);
+
     const ackSummary = useMemo(() => {
+        if (hideDirectUserObligationSummary) return null;
         if ((!isAttention && !replyRequired) || !ackStatus || typeof ackStatus !== "object") return null;
         const ids = Object.keys(ackStatus);
         if (ids.length === 0) return null;
@@ -222,9 +347,10 @@ export const MessageBubble = memo(function MessageBubble({
         const needsUserAck =
             Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
         return { done, total: ids.length, needsUserAck };
-    }, [ackStatus, isAttention, isUserMessage, replyRequired]);
+    }, [ackStatus, hideDirectUserObligationSummary, isAttention, isUserMessage, replyRequired]);
 
     const obligationSummary = useMemo(() => {
+        if (hideDirectUserObligationSummary) return null;
         const os = ev._obligation_status;
         if (!os || typeof os !== "object") return null;
         const ids = Object.keys(os);
@@ -237,7 +363,7 @@ export const MessageBubble = memo(function MessageBubble({
         }
         const done = ids.reduce((n, id) => n + (os[id]?.acked ? 1 : 0), 0);
         return { kind: "ack" as const, done, total: ids.length };
-    }, [ev._obligation_status]);
+    }, [ev._obligation_status, hideDirectUserObligationSummary]);
 
     const toLabel = useMemo(() => {
         if (hasDestination) {
@@ -709,23 +835,6 @@ export const MessageBubble = memo(function MessageBubble({
 
                     {!readOnly && (
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && !replyRequired && (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors",
-                                    isDark
-                                        ? "border-amber-700/60 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50"
-                                        : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                                )}
-                                onClick={() => onAck?.(String(ev.id))}
-                                aria-label={t('acknowledgeImportant')}
-                                disabled={!onAck}
-                                title={t('acknowledge')}
-                            >
-                                {t('acknowledge')}
-                            </button>
-                        )}
                         {ev.id && onCopyLink ? (
                             <button
                                 type="button"

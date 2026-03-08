@@ -206,17 +206,17 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             self.assertFalse(bool(kwargs.get("dry_run")))
             self.assertEqual(str(kwargs.get("by") or ""), "peer1")
 
-    def test_context_vision_update_forwards_caller_identity(self) -> None:
+    def test_coordination_update_brief_forwards_caller_identity(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
             mcp_server, "_resolve_self_actor_id", return_value="peer1"
-        ), patch.object(mcp_server, "vision_update", return_value={"ok": True}) as mock_vision_update:
-            mcp_server.handle_tool_call("cccc_context_admin", {"action": "vision_update", "vision": "north-star"})
-            self.assertTrue(mock_vision_update.called)
-            kwargs = mock_vision_update.call_args.kwargs
+        ), patch.object(mcp_server, "coordination_update_brief", return_value={"ok": True}) as mock_update_brief:
+            mcp_server.handle_tool_call("cccc_coordination", {"action": "update_brief", "objective": "north-star"})
+            self.assertTrue(mock_update_brief.called)
+            kwargs = mock_update_brief.call_args.kwargs
             self.assertEqual(kwargs.get("group_id"), "g_test")
-            self.assertEqual(str(kwargs.get("vision") or ""), "north-star")
+            self.assertEqual(str(kwargs.get("objective") or ""), "north-star")
             self.assertEqual(str(kwargs.get("by") or ""), "peer1")
 
     def test_notify_send_requires_ack_string_false(self) -> None:

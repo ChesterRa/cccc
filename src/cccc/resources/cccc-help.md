@@ -1,150 +1,180 @@
 # CCCC Help
 
 This document is on-demand operational guidance.
-Always-on rules are enforced by system/preamble; this file expands details, examples, and edge-case handling.
+Always-on rules live in system/preamble; this file expands details, examples, and edge cases.
 
 Run `cccc_help` anytime to refresh the effective playbook for this group.
 
-## Quick Card (Most Runs)
+Cold start default: `cccc_bootstrap` gives a lean `session + recovery + inbox_preview + memory_recall_gate` packet. Pull `cccc_help`, `cccc_project_info`, or `cccc_context_get` only when you need colder detail.
 
-1. No fabrication. Do not invent facts, steps, results, sources, quotes, or tool outputs.
-2. Investigate first; verify before claiming done.
-3. Use MCP for visible coordination: `cccc_message_send` / `cccc_message_reply`.
-4. Terminal output is not delivered as chat.
-5. Keep Context current at key transitions (start/milestone/blocker/resume/done).
-6. Keep runtime todo current before implementation and before status replies.
-7. For strategy/scope discussion, align first; implement only after explicit action intent.
-8. If information is insufficient, search local context/memory first, then web if allowed.
-9. If capability is insufficient, use capability tools before declaring blocked.
-10. If asks remain unresolved, report pending + next step; do not send a full-done summary.
+## Quick Card
+
+1. No fabrication. Investigate first and verify before claiming done.
+2. Use MCP for visible coordination: `cccc_message_send` / `cccc_message_reply`.
+3. Keep the control plane fresh at key transitions: `cccc_coordination`, `cccc_task`, `cccc_agent_state`.
+4. Keep runtime todo current before implementation and before status replies.
+5. For strategy/scope questions, align first; implement only after explicit action intent.
+6. Search local context/memory before asking the user or browsing the web.
+7. Expand capabilities before declaring blocked.
+8. Do not claim full done while current in-scope asks remain unresolved.
 
 ## Where Things Live
 
-### Chat (visible coordination)
+### Chat
 
-- Use `cccc_message_send` / `cccc_message_reply`.
-- Targets: `@all`, `@foreman`, `@peers`, `user`, or a specific actor id.
-- Use normal/attention/task (`reply_required`) intentionally; avoid both overuse and underuse.
+- Visible coordination belongs in `cccc_message_send` / `cccc_message_reply`.
+- Targets can be `@all`, `@foreman`, `@peers`, `user`, or a specific actor id.
+- Terminal output is not chat delivery.
 
-### Context (shared short-horizon memory)
+### Coordination (shared control plane)
 
-- Keep working state here: DoD, tasks, overview.manual, panorama, and per-agent short-term state.
-- Minimum agent-state upkeep at key transitions:
+- Shared truth lives in:
+  - `coordination.brief`
+  - task cards
+- Read the snapshot with `cccc_context_get`.
+- Edit the brief with `cccc_coordination`:
+  - `cccc_coordination(action="update_brief", ...)`
+  - `cccc_coordination(action="add_decision"|"add_handoff", ...)`
+- Use `cccc_task` for shared work units:
+  - `list`, `create`, `update`, `move`, `restore`
+- Distinction:
+  - runtime todo = private scratchpad
+  - `cccc_task` = shared collaboration truth
+
+### Agent State (personal working memory)
+
+- `cccc_agent_state` is per-actor short-term working memory.
+- Keep hot fields fresh at key transitions:
   - `focus`
   - `active_task_id` (when applicable)
   - `blockers`
   - `next_action`
   - `what_changed`
-- Recommended update command:
-  - `cccc_context_agent(action="update", agent_id="<self>", focus="...", next_action="...", what_changed="...")`
-- Distinction: runtime todo is private execution scratchpad; `cccc_task` is shared collaboration truth.
+- Use warm fields only when they improve recovery:
+  - `open_loops`
+  - `commitments`
+  - `environment_summary`
+  - `user_model`
+  - `persona_notes`
+  - `resume_hint`
+- Recommended update pattern:
+  - `cccc_agent_state(action="update", actor_id="<self>", focus="...", next_action="...", what_changed="...")`
 
 ### Memory (long-term)
 
-- `Context` is short-term execution memory.
 - Long-term memory is file-based:
   - `state/memory/MEMORY.md`
   - `state/memory/daily/YYYY-MM-DD__<group_label>.md`
-- Resume gate:
-  - `cccc_bootstrap` returns `memory_recall_gate`; read it before planning/implementation.
-  - if gate is empty, run `cccc_memory(action=search/get)` manually.
-- Practical loop:
-  - recall first: `cccc_memory(action=search, ...)` then `cccc_memory(action=get, ...)`
-  - write stable outcomes: `cccc_memory(action=write, target="daily"|"memory", dedup_intent=...)`
-  - compaction/flush maintenance: `cccc_memory_admin(action=context_check|compact|daily_flush, ...)`
-  - index maintenance: `cccc_memory_admin(action=index_sync, ...)`
-  - daemon conversation lane can auto-run `context_check -> daily_flush` on pressure; keep signal high and avoid duplicate writes.
+- Cold-start loop:
+  1. read `cccc_bootstrap().memory_recall_gate`
+  2. if needed, run `cccc_memory(action="search", ...)`
+  3. open hits with `cccc_memory(action="get", ...)`
+- Maintenance tools:
+  - `cccc_memory_admin(action="context_check"|"compact"|"daily_flush", ...)`
+  - `cccc_memory_admin(action="index_sync", ...)`
+- Daemon may auto-run `context_check -> daily_flush` when conversation pressure is high. Keep signal high and avoid duplicate writes.
 
-### Inbox (unread queue)
+### PROJECT.md
 
-- Inbox is "messages since cursor", not a full task system.
-- Read via `cccc_inbox_list`.
+- `PROJECT.md` is a cold background artifact, not the hot control plane.
+- Use `cccc_project_info` when you need the full document.
+- Keep only the hot digest inside `coordination.brief.project_brief`.
+
+### Inbox
+
+- Inbox is an unread queue, not a task board.
+- Bootstrap includes only `inbox_preview`; use `cccc_inbox_list` for the full unread queue.
 - Mark read intentionally via `cccc_inbox_mark_read`.
-- For `reply_required=true`, do not stop at mark-read: send a concrete reply.
+- If `reply_required=true`, do not stop at mark-read: send a concrete reply.
 
 ### Todo (runtime-first)
 
-- Every concrete user ask/question (even simple) = one runtime todo item; keep parallel asks separate.
-- Capture implicit asks too (e.g. `first.../next.../also.../by the way...`) as pending todo items.
-- Treat todo as a rolling notebook across turns; do not force-clear each reply.
-- Before implementation, reconcile all plan parts + approved scope; do not execute only the latest discussed part by default.
+- Every concrete user ask/question (even simple) = one runtime todo item.
+- Keep parallel asks separate.
+- Capture implicit asks too (`first...`, `next...`, `also...`, `by the way...`).
+- Treat todo as a rolling notebook across turns; do not force-clear per reply.
+- Before implementation, reconcile all approved parts; do not execute only the latest discussed part by default.
 - If new evidence overturns prior assumptions, refactor todo immediately (split/merge/reorder/defer).
-- Anti-drip delivery: once implementation is approved, finish the agreed scope in one pass; stop early only for real blockers.
-- In-scope polish rule: include obvious low-risk in-scope polish in the same pass; do not defer it behind "if you want, I can...".
-- Scope boundary: do not use polish to expand scope; ask first if a change is beyond agreed scope.
-- Keep todo capacity high when parallel asks are common (recommended soft `>=80`, hard `>=120` if runtime supports).
-- Promote to shared `cccc_task` only for shared/long-horizon/user-requested tracking; do not mirror every runtime todo into `cccc_task`.
-- For status replies, map current approved scope items explicitly to `done` / `pending` / `blocked(owner)`.
-- Completion gate: no full-done summary until every current approved scope ask is `done` / `blocked(owner)` / `deferred(reason)`; out-of-scope pending memo items may remain.
+- Anti-drip delivery: once implementation is approved, finish the agreed scope in one pass unless a real blocker stops progress.
+- Include obvious low-risk in-scope polish in the same pass; do not defer it behind “if you want, I can...”.
+- Promote to shared `cccc_task` only for shared, long-horizon, or user-requested tracking.
+- For status replies, map current approved scope items to `done` / `pending` / `blocked(owner)`.
+- No full-done summary until every current approved-scope ask is `done` / `blocked(owner)` / `deferred(reason)`.
 
-### Intent & scope alignment
+## Intent and Scope Alignment
 
 - For strategy/scope questions, align first; do not implement until explicit action intent.
 - Before implementation, verify facts and restate target + constraints in one line.
 - If objective/facts are unclear, mark `pending_confirm` in todo and ask one concise clarification.
 
-### Planning balance (6D)
+## Planning Balance (6D)
 
-- For non-trivial plans, evaluate all six dimensions:
-  - value/ROI, complexity load, feasibility, verifiability, risk/side-effects, reversibility
-- If one dimension is critically weak, narrow scope or add mitigation before implementation.
+For non-trivial plans, evaluate all six dimensions:
 
-## Gap routing (high ROI)
+1. value / ROI
+2. complexity & cognitive load
+3. feasibility
+4. verifiability
+5. risk & side effects
+6. reversibility
 
-- If information is insufficient, search before asking:
-  1. `cccc_context_get` / `cccc_project_info` / `cccc_inbox_list`
-  2. `cccc_memory(action=search, ...)`
-  3. external web search (if runtime/policy allows)
-- If capability is insufficient, expand tools before declaring blocked:
-  1. fast path: `cccc_capability_use(...)`
-  2. discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`
-  3. then `cccc_capability_use(capability_id=..., scope="session")`
-  4. if response has `refresh_required=true`, relist/reconnect then retry
-  5. if still not ready, read `diagnostics` + `resolution_plan`: fix agent-action items first, ask user only for real env/permission requirements
+If one dimension is critically weak, narrow scope or add mitigation before implementation.
 
-## Capability Hygiene (Keep MCP Surface Lean)
+## Gap Routing
+
+### Information gap
+
+1. `cccc_bootstrap` / `cccc_context_get`
+2. `cccc_project_info`
+3. `cccc_inbox_list`
+4. `cccc_memory(action="search", ...)`
+5. external web search (if policy/runtime allows)
+
+### Capability gap
+
+1. fast path: `cccc_capability_use(...)`
+2. discovery: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`
+3. then `cccc_capability_use(capability_id=..., scope="session")`
+4. if state is `activation_pending` or `refresh_required=true`, relist/reconnect then retry
+5. if still not ready, read `diagnostics` + `resolution_plan`; ask the user only for real env/permission blockers
+
+## Capability Hygiene
 
 - Discover first: `cccc_capability_search`
+- Use `readiness_preview` from search/import dry-run to spot blockers before enable retries
 - Discover built-in packs without guessing keywords: `cccc_capability_search(kind="mcp_toolpack")`
 - Enable only what is needed now: `cccc_capability_enable` (prefer `scope=session`)
-- Fast path for execution: `cccc_capability_use` (auto-enable + optional tool call)
+- Fast path for execution: `cccc_capability_use`
 - Verify current exposure: `cccc_capability_state`
 - Emergency deny for runtime side effects: `cccc_capability_block(scope=group, blocked=true, reason=...)`
 - Recovery after verification: `cccc_capability_block(scope=group, blocked=false)`
 - Temporary stop only: `cccc_capability_enable(enabled=false)`
 - Stop + best-effort cache cleanup: `cccc_capability_enable(enabled=false, cleanup=true)`
-- Cleanup unused external capability cache/bindings after work:
-  - `cccc_capability_uninstall`
+- Cleanup unused external capability cache/bindings after work: `cccc_capability_uninstall`
 - Skill note:
-  - capability-skill is runtime capsule activation (not a full local skill package install)
+  - capsule skill is runtime capsule activation, not a full local skill-package install
+  - skill runtime success is primarily visible via `capability_state.active_capsule_skills`; `dynamic_tools` may stay unchanged
   - if you need full local skill scripts/assets, install a normal skill package into `$CODEX_HOME/skills`
 
-## @role: foreman
+## Role Notes
 
-### Responsibilities
+### Foreman
 
 - Own outcome quality and integration.
-- Keep goals/constraints/DoD coherent, and stop drift early.
-- Review peer outputs with explicit basis ("what was checked" / "what remains unverified").
-- Escalate to user only when decision impact is high or blockers are truly external.
+- Keep objective/focus/constraints coherent and stop drift early.
+- Review peer outputs with explicit basis: what was checked, what remains unverified.
+- Escalate only when the decision impact is high or the blocker is truly external.
 
-### Working with peers
-
-- Delegate with concrete deliverable + acceptance check + short timebox.
-- Keep Context updated so others can continue without re-deriving intent.
-
-## @role: peer
-
-### Responsibilities
+### Peer
 
 - Be proactive: report risks and alternatives early.
 - Deliver small verifiable outputs, not vague status.
 - If direction is wrong, say so and propose a better route.
-- If no longer needed, remove self: `cccc_actor(action=remove, actor_id=<self>)`.
+- If no longer needed, remove self: `cccc_actor(action="remove", actor_id=<self>)`.
 
 ## Appendix
 
-### Group state (delivery + automation)
+### Group State
 
 | State | Meaning | Automation | Delivery to PTY |
 |-------|---------|------------|-----------------|
@@ -166,17 +196,15 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 ### Attachments
 
 - Inbox events may include `data.attachments[]` with `path` like `state/blobs/<sha256>_<name>`.
-- Resolve blob relative path to absolute path:
-  - `cccc_file(action=blob_path, rel_path=...)`
-- Send local file as attachment:
-  - `cccc_file(action=send, path=...)`
+- Resolve blob relative path to absolute path: `cccc_file(action=blob_path, rel_path=...)`
+- Send local file as attachment: `cccc_file(action=send, path=...)`
 
-### Terminal transcript
+### Terminal Transcript
 
 - Tail actor terminal transcript (subject to group policy):
   - `cccc_terminal(action=tail, target_actor_id=...)`
 
-### Automation tools
+### Automation Tools
 
 - Read current automation: `cccc_automation(action=state)`
 - Manage reminders: `cccc_automation(action=manage)`

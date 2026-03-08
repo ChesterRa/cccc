@@ -57,7 +57,6 @@ class RequestDispatchDeps:
     maybe_reset_automation_on_foreman_change: Callable[..., None]
     stop_im_bridges_for_group: Callable[[str], None]
     delete_group_private_env: Callable[[str], None]
-    pty_supported: Callable[[], bool]
     find_scope_url: Callable[[Any, str], str]
     ensure_mcp_installed: Callable[..., bool]
     merge_actor_env_with_private: Callable[..., dict[str, str]]
@@ -83,7 +82,6 @@ class RequestDispatchDeps:
     delete_actor_private_env: Callable[[str, str], None]
     get_actor_profile: Callable[[str], dict[str, Any] | None]
     load_actor_profile_secrets: Callable[[str], dict[str, str]]
-    warn_forced_headless: Callable[[str, str], None]
     remove_headless_state: Callable[[str, str], None]
     remove_pty_state_if_pid: Callable[..., None]
     throttle_clear_actor: Callable[[str, str], None]
@@ -181,7 +179,6 @@ def dispatch_request(
     group_lifecycle_resp = try_handle_group_lifecycle_op(
         op,
         args,
-        pty_supported=deps.pty_supported,
         effective_runner_kind=deps.effective_runner_kind,
         find_scope_url=deps.find_scope_url,
         ensure_mcp_installed=deps.ensure_mcp_installed,
@@ -237,7 +234,6 @@ def dispatch_request(
         foreman_id=deps.foreman_id,
         maybe_reset_automation_on_foreman_change=deps.maybe_reset_automation_on_foreman_change,
         start_actor_process=deps.start_actor_process,
-        pty_supported=deps.pty_supported,
         effective_runner_kind=deps.effective_runner_kind,
         validate_private_env_key=deps.validate_private_env_key,
         coerce_private_env_value=deps.coerce_private_env_value,
@@ -247,7 +243,6 @@ def dispatch_request(
         supported_runtimes=deps.supported_runtimes,
         get_actor_profile=deps.get_actor_profile,
         load_actor_profile_secrets=deps.load_actor_profile_secrets,
-        warn_forced_headless=deps.warn_forced_headless,
     )
     if actor_add_resp is not None:
         return actor_add_resp, False
@@ -299,7 +294,6 @@ def dispatch_request(
         maybe_reset_automation_on_foreman_change=deps.maybe_reset_automation_on_foreman_change,
         start_actor_process=deps.start_actor_process,
         effective_runner_kind=deps.effective_runner_kind,
-        pty_supported=deps.pty_supported,
         get_actor_profile=deps.get_actor_profile,
         load_actor_profile_secrets=deps.load_actor_profile_secrets,
         update_actor_private_env=deps.update_actor_private_env,

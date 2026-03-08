@@ -8,6 +8,7 @@ import {
   isChatReadEvent,
   isChatAckEvent,
   isChatMessageEvent,
+  isActorActivityEvent,
   extractChatReadData,
   extractChatAckData,
   initializeReadStatus,
@@ -36,6 +37,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     updateReadStatus,
     updateAckStatus,
     updateReplyStatus,
+    incrementActorUnread,
+    updateActorActivity,
     setGroupContext,
     refreshActors,
   } = useGroupStore();
@@ -44,7 +47,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
-  const actorWarmupTimersRef = useRef<number[]>([]);
+  const actorRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
   const reconnectDelayRef = useRef<number>(1000);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -59,6 +62,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (resp.ok && resp.result && typeof resp.result === "object") {
       setGroupContext(resp.result as GroupContext);
     }
+  }
+
+  function scheduleActorRefresh(groupId: string, delayMs = 160) {
+    if (actorRefreshTimerRef.current) {
+      window.clearTimeout(actorRefreshTimerRef.current);
+    }
+    actorRefreshTimerRef.current = window.setTimeout(() => {
+      actorRefreshTimerRef.current = null;
+      void refreshActors(groupId);
+    }, delayMs);
   }
 
   function connectStream(groupId: string) {
@@ -121,13 +134,22 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           return;
         }
 
+        // Actor activity - lightweight idle_seconds update (no full refresh)
+        if (isActorActivityEvent(ev)) {
+          const actors = ev.data?.actors;
+          if (Array.isArray(actors) && actors.length > 0) {
+            updateActorActivity(actors);
+          }
+          return;
+        }
+
         // Chat read status update
         if (isChatReadEvent(ev)) {
           const data = extractChatReadData(ev);
           if (data) {
             updateReadStatus(data.eventId, data.actorId);
           }
-          void refreshActors(groupId);
+          scheduleActorRefresh(groupId);
           return;
         }
 
@@ -157,6 +179,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           }
         }
 
+        if (isChatMessageEvent(ev)) {
+          const recipients = getRecipientActorIdsForEvent(ev, actorsRef.current);
+          if (recipients.length > 0) {
+            incrementActorUnread(recipients);
+          }
+        }
+
         // Update unread count
         if (shouldIncrementUnread(ev, activeTabRef.current === "chat", chatAtBottomRef.current)) {
           incrementChatUnread();
@@ -173,25 +202,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     eventSourceRef.current = es;
   }
 
-  function clearActorWarmupTimers() {
-    for (const t of actorWarmupTimersRef.current) window.clearTimeout(t);
-    actorWarmupTimersRef.current = [];
-  }
-
-  function scheduleActorWarmupRefresh(groupId: string) {
-    const gid = String(groupId || "").trim();
-    if (!gid) return;
-    clearActorWarmupTimers();
-    const delaysMs = [3000, 8000, 15000];
-    for (const ms of delaysMs) {
-      const t = window.setTimeout(() => {
-        if (selectedGroupIdRef.current !== gid) return;
-        void refreshActors(gid);
-      }, ms);
-      actorWarmupTimersRef.current.push(t);
-    }
-  }
-
   function cleanup() {
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -205,7 +215,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
     }
-    clearActorWarmupTimers();
+    if (actorRefreshTimerRef.current) {
+      window.clearTimeout(actorRefreshTimerRef.current);
+      actorRefreshTimerRef.current = null;
+    }
     reconnectDelayRef.current = 1000;
     hasConnectedOnceRef.current = false;
     setSSEStatus("disconnected");
@@ -214,8 +227,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   return {
     connectStream,
     fetchContext,
-    scheduleActorWarmupRefresh,
-    clearActorWarmupTimers,
     cleanup,
     contextRefreshTimerRef,
   };

@@ -16,27 +16,28 @@ PROMPTS_DIRNAME = "prompts"
 _MAX_FILE_BYTES = 512 * 1024  # Safety limit for prompt markdown files.
 
 DEFAULT_PREAMBLE_BODY = """Quick start:
-- Call `cccc_bootstrap` to load PROJECT.md (if present), Context, inbox, and the help entrypoint.
-- If PROJECT.md is missing, ask for goals/constraints/DoD and write a short DoD into Context.
-- Call `cccc_help` when detailed workflow or edge-case guidance is needed.
+- Call `cccc_bootstrap` first. It returns `session`, `recovery`, `inbox_preview`, `memory_recall_gate`, and `next_calls` for cold-start recovery.
+- If the coordination brief is missing or stale, align on objective/focus first and update it via `cccc_coordination(action=update_brief, ...)`.
+- Call `cccc_help` only when you need the detailed workflow or edge-case guidance; use `cccc_project_info` / `cccc_context_get` for cold detail on demand.
 
 Execution checklist:
 - Keep visible coordination in MCP chat (`cccc_message_send` / `cccc_message_reply`).
-- Update Context at key transitions (start/milestone/blocker/resume/done).
-- Update your short-term state via `cccc_context_agent(action=update, agent_id=<self>, ...)`.
-- Minimum agent-state payload each update: `focus` + `next_action` + `what_changed` (+ `active_task_id` when applicable).
+- Update shared work through `cccc_task` and `cccc_coordination`, not private runtime todo.
+- Update your personal working memory via `cccc_agent_state(action=update, actor_id=<self>, ...)`.
+- Minimum hot-state payload each update: `focus` + `next_action` + `what_changed` (+ `active_task_id` when applicable).
 - Keep runtime todo current before implementation and before each status reply.
 
 Gap routing:
-- Info gap: investigate Context / PROJECT.md / inbox / memory first; then web if allowed.
+- Info gap: inspect bootstrap / `cccc_context_get` / `cccc_project_info` / inbox / memory first; then web if allowed.
 - Capability gap: prefer `cccc_capability_use(...)`; if needed, run `cccc_capability_search(...)` then `cccc_capability_use(...)`.
 - If capability setup returns retry guidance (relist/reconnect/diagnostics), follow it before escalating.
 - Ask the user only for real env/permission blockers.
 
 Memory boundary:
-- Context agent state is short-term execution memory; long-term memory lives in `state/memory/MEMORY.md` + `state/memory/daily/*.md`.
-- On start/resume, use `cccc_bootstrap`'s `memory_recall_gate` before planning or implementation.
+- `cccc_agent_state` is short-term working memory; long-term memory lives in `state/memory/MEMORY.md` + `state/memory/daily/*.md`.
+- On cold start, use `cccc_bootstrap`'s `memory_recall_gate` before planning or implementation.
 """
+
 
 def load_builtin_help_markdown() -> str:
     """Load the built-in CCCC help markdown bundled in the package."""

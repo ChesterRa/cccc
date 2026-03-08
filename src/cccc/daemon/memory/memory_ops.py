@@ -101,8 +101,8 @@ def _sanitize_task_items(items: Any, *, max_items: int, max_chars: int) -> List[
             break
         if isinstance(raw, dict):
             tid = _trim_text(raw.get("id"), max_chars=24)
-            name = _trim_text(raw.get("name"), max_chars=max_chars - 28)
-            label = f"{tid}: {name}".strip(": ").strip()
+            title = _trim_text(raw.get("title") or raw.get("name"), max_chars=max_chars - 28)
+            label = f"{tid}: {title}".strip(": ").strip()
         else:
             label = _trim_text(raw, max_chars=max_chars)
         if label:
@@ -122,29 +122,43 @@ def _sanitize_agents(items: Any, *, max_items: int) -> List[Dict[str, Any]]:
         aid = _trim_text(raw.get("id"), max_chars=32)
         if not aid:
             continue
+        hot = raw.get("hot") if isinstance(raw.get("hot"), dict) else {}
+        warm = raw.get("warm") if isinstance(raw.get("warm"), dict) else {}
         row: Dict[str, Any] = {"id": aid}
-        active_task_id = _trim_text(raw.get("active_task_id"), max_chars=24)
+        active_task_id = _trim_text(hot.get("active_task_id") if hot else raw.get("active_task_id"), max_chars=24)
         if active_task_id:
             row["active_task_id"] = active_task_id
-        focus = _trim_text(raw.get("focus"), max_chars=120)
+        focus = _trim_text(hot.get("focus") if hot else raw.get("focus"), max_chars=120)
         if focus:
             row["focus"] = focus
-        next_action = _trim_text(raw.get("next_action"), max_chars=120)
+        next_action = _trim_text(hot.get("next_action") if hot else raw.get("next_action"), max_chars=120)
         if next_action:
             row["next_action"] = next_action
-        blockers_raw = raw.get("blockers")
-        if isinstance(blockers_raw, list):
-            blockers = [_trim_text(x, max_chars=80) for x in blockers_raw if str(x or "").strip()]
-            blockers = [x for x in blockers if x][:3]
-            if blockers:
-                row["blockers"] = blockers
+        blockers_raw = hot.get("blockers") if isinstance(hot.get("blockers"), list) else raw.get("blockers") if isinstance(raw.get("blockers"), list) else []
+        blockers = [_trim_text(x, max_chars=80) for x in blockers_raw if str(x or "").strip()][:3]
+        if blockers:
+            row["blockers"] = blockers
+        what_changed = _trim_text(warm.get("what_changed") if warm else raw.get("what_changed"), max_chars=140)
+        if what_changed:
+            row["what_changed"] = what_changed
+        resume_hint = _trim_text(warm.get("resume_hint") if warm else raw.get("resume_hint"), max_chars=140)
+        if resume_hint:
+            row["resume_hint"] = resume_hint
+        environment_summary = _trim_text(warm.get("environment_summary") if warm else raw.get("environment_summary"), max_chars=120)
+        if environment_summary:
+            row["environment_summary"] = environment_summary
+        user_model = _trim_text(warm.get("user_model") if warm else raw.get("user_model"), max_chars=120)
+        if user_model:
+            row["user_model"] = user_model
+        persona_notes = _trim_text(warm.get("persona_notes") if warm else raw.get("persona_notes"), max_chars=120)
+        if persona_notes:
+            row["persona_notes"] = persona_notes
         if len(row) > 1:
             out.append(row)
     return out
 
 
 def _fit_signal_pack_budget(signal_pack: Dict[str, Any], *, token_budget: int) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Enforce deterministic truncation order for signal pack."""
     pack = dict(signal_pack or {})
     truncated = False
     budget = max(64, int(token_budget))
@@ -152,14 +166,39 @@ def _fit_signal_pack_budget(signal_pack: Dict[str, Any], *, token_budget: int) -
     def _tokens() -> int:
         return _estimate_tokens(pack)
 
-    # Deterministic drop order: lower-priority arrays first.
+    def _drop_optional_agent_fields() -> bool:
+        changed = False
+        rows = pack.get("agent_states") if isinstance(pack.get("agent_states"), list) else []
+        for field in ("persona_notes", "user_model", "environment_summary"):
+            field_dropped = False
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if field in row:
+                    row.pop(field, None)
+                    changed = True
+                    field_dropped = True
+                    if _tokens() <= budget:
+                        return True
+            if field_dropped and _tokens() <= budget:
+                return True
+        return changed
+
     for path in (
         ("tasks", "done_recent"),
         ("tasks", "planned"),
-        ("agents",),
+        ("tasks", "blocked"),
+        ("tasks", "waiting_user"),
+        ("agent_states_optional",),
+        ("agent_states",),
         ("tasks", "active"),
     ):
         while _tokens() > budget:
+            if path == ("agent_states_optional",):
+                if not _drop_optional_agent_fields():
+                    break
+                truncated = True
+                continue
             if len(path) == 1:
                 arr = pack.get(path[0])
             else:
@@ -169,66 +208,40 @@ def _fit_signal_pack_budget(signal_pack: Dict[str, Any], *, token_budget: int) -
             arr.pop()
             truncated = True
 
-    # Then trim verbose text fields.
-    trim_ops = [
-        ("vision", 160),
-        ("overview_manual.current_focus", 120),
-        ("overview_manual.collaboration_mode", 80),
-    ]
-    for key, cap in trim_ops:
-        if _tokens() <= budget:
-            break
-        if key == "vision" and isinstance(pack.get("vision"), str) and len(str(pack.get("vision") or "")) > cap:
-            pack["vision"] = _trim_text(pack.get("vision"), max_chars=cap)
-            truncated = True
-        if key == "overview_manual.current_focus":
-            om = pack.get("overview_manual")
-            if isinstance(om, dict) and len(str(om.get("current_focus") or "")) > cap:
-                om["current_focus"] = _trim_text(om.get("current_focus"), max_chars=cap)
-                truncated = True
-        if key == "overview_manual.collaboration_mode":
-            om = pack.get("overview_manual")
-            if isinstance(om, dict) and len(str(om.get("collaboration_mode") or "")) > cap:
-                om["collaboration_mode"] = _trim_text(om.get("collaboration_mode"), max_chars=cap)
-                truncated = True
-
-    # Final hard fallback: keep only high-priority keys.
-    if _tokens() > budget:
-        compact_pack = {
-            "schema": pack.get("schema") or _SIGNAL_PACK_SCHEMA_VERSION,
-            "vision": _trim_text(pack.get("vision"), max_chars=100),
-            "overview_manual": {
-                "current_focus": _trim_text((pack.get("overview_manual") or {}).get("current_focus"), max_chars=80)
-                if isinstance(pack.get("overview_manual"), dict)
-                else "",
-            },
-            "tasks": {"active": ((pack.get("tasks") or {}).get("active") or [])[:2]}
-            if isinstance(pack.get("tasks"), dict)
-            else {"active": []},
-            "agents": (pack.get("agents") or [])[:2] if isinstance(pack.get("agents"), list) else [],
-        }
-        pack = compact_pack
+    brief = pack.get("coordination_brief") if isinstance(pack.get("coordination_brief"), dict) else {}
+    if _tokens() > budget and isinstance(brief.get("project_brief"), str) and len(str(brief.get("project_brief") or "")) > 180:
+        brief["project_brief"] = _trim_text(brief.get("project_brief"), max_chars=180)
         truncated = True
-        while _tokens() > budget and isinstance(pack.get("agents"), list) and pack.get("agents"):
-            cast_agents = pack.get("agents")
-            if isinstance(cast_agents, list):
-                cast_agents.pop()
-        while _tokens() > budget and isinstance((pack.get("tasks") or {}).get("active"), list) and (pack.get("tasks") or {}).get("active"):
-            task_obj = pack.get("tasks")
-            if isinstance(task_obj, dict) and isinstance(task_obj.get("active"), list):
-                task_obj["active"].pop()
-        if _tokens() > budget and isinstance(pack.get("overview_manual"), dict):
-            pack["overview_manual"] = {"current_focus": ""}
-        if _tokens() > budget:
-            pack["vision"] = _trim_text(pack.get("vision"), max_chars=48)
-        if _tokens() > budget:
-            pack = {"schema": pack.get("schema") or _SIGNAL_PACK_SCHEMA_VERSION}
+    if _tokens() > budget and isinstance(brief.get("current_focus"), str) and len(str(brief.get("current_focus") or "")) > 120:
+        brief["current_focus"] = _trim_text(brief.get("current_focus"), max_chars=120)
+        truncated = True
+    if _tokens() > budget and isinstance(brief.get("objective"), str) and len(str(brief.get("objective") or "")) > 120:
+        brief["objective"] = _trim_text(brief.get("objective"), max_chars=120)
+        truncated = True
+    while _tokens() > budget and isinstance(brief.get("constraints"), list) and brief.get("constraints"):
+        brief["constraints"].pop()
+        truncated = True
+    while _tokens() > budget and isinstance(brief.get("project_brief"), str) and brief.get("project_brief"):
+        brief["project_brief"] = _trim_text(brief.get("project_brief"), max_chars=max(0, len(str(brief.get("project_brief") or "")) - 40))
+        truncated = True
+        if not brief["project_brief"]:
+            break
+    while _tokens() > budget and isinstance(brief.get("current_focus"), str) and brief.get("current_focus"):
+        brief["current_focus"] = _trim_text(brief.get("current_focus"), max_chars=max(0, len(str(brief.get("current_focus") or "")) - 20))
+        truncated = True
+        if not brief["current_focus"]:
+            break
+    while _tokens() > budget and isinstance(brief.get("objective"), str) and brief.get("objective"):
+        brief["objective"] = _trim_text(brief.get("objective"), max_chars=max(0, len(str(brief.get("objective") or "")) - 20))
+        truncated = True
+        if not brief["objective"]:
+            break
 
     meta = {
-        "schema": str(pack.get("schema") or _SIGNAL_PACK_SCHEMA_VERSION),
+        "schema": _SIGNAL_PACK_SCHEMA_VERSION,
         "token_budget": budget,
         "token_estimate": _tokens(),
-        "truncated": bool(truncated),
+        "truncated": truncated,
     }
     return pack, meta
 
@@ -243,37 +256,43 @@ def _normalize_signal_pack(signal_pack: Optional[Dict[str, Any]], *, token_budge
             "truncated": False,
         }
 
-    overview_raw = raw.get("overview_manual") if isinstance(raw.get("overview_manual"), dict) else {}
+    brief_raw = raw.get("coordination_brief") if isinstance(raw.get("coordination_brief"), dict) else {}
     tasks_raw = raw.get("tasks") if isinstance(raw.get("tasks"), dict) else {}
     normalized: Dict[str, Any] = {
         "schema": _SIGNAL_PACK_SCHEMA_VERSION,
-        "vision": _trim_text(raw.get("vision"), max_chars=280),
-        "overview_manual": {
-            "current_focus": _trim_text(overview_raw.get("current_focus"), max_chars=180),
-            "collaboration_mode": _trim_text(overview_raw.get("collaboration_mode"), max_chars=120),
-            "roles": [
-                _trim_text(x, max_chars=32)
-                for x in (overview_raw.get("roles") if isinstance(overview_raw.get("roles"), list) else [])
-                if str(x or "").strip()
+        "coordination_brief": {
+            "objective": _trim_text(brief_raw.get("objective"), max_chars=220),
+            "current_focus": _trim_text(brief_raw.get("current_focus"), max_chars=180),
+            "constraints": [
+                _trim_text(item, max_chars=64)
+                for item in (brief_raw.get("constraints") if isinstance(brief_raw.get("constraints"), list) else [])
+                if str(item or "").strip()
             ][:6],
+            "project_brief": _trim_text(brief_raw.get("project_brief"), max_chars=280),
         },
         "tasks": {
             "active": _sanitize_task_items(tasks_raw.get("active"), max_items=8, max_chars=96),
             "planned": _sanitize_task_items(tasks_raw.get("planned"), max_items=8, max_chars=96),
             "done_recent": _sanitize_task_items(tasks_raw.get("done_recent"), max_items=6, max_chars=96),
+            "blocked": _sanitize_task_items(tasks_raw.get("blocked"), max_items=6, max_chars=96),
+            "waiting_user": _sanitize_task_items(tasks_raw.get("waiting_user"), max_items=4, max_chars=96),
         },
-        "agents": _sanitize_agents(raw.get("agents"), max_items=8),
+        "agent_states": _sanitize_agents(raw.get("agent_states"), max_items=8),
     }
 
+    brief = normalized["coordination_brief"]
+    tasks = normalized["tasks"]
     has_payload = bool(
-        normalized.get("vision")
-        or normalized["overview_manual"].get("current_focus")
-        or normalized["overview_manual"].get("collaboration_mode")
-        or normalized["overview_manual"].get("roles")
-        or normalized["tasks"].get("active")
-        or normalized["tasks"].get("planned")
-        or normalized["tasks"].get("done_recent")
-        or normalized.get("agents")
+        brief.get("objective")
+        or brief.get("current_focus")
+        or brief.get("constraints")
+        or brief.get("project_brief")
+        or tasks.get("active")
+        or tasks.get("planned")
+        or tasks.get("done_recent")
+        or tasks.get("blocked")
+        or tasks.get("waiting_user")
+        or normalized.get("agent_states")
     )
     if not has_payload:
         return None, {
@@ -301,44 +320,88 @@ def _build_group_signal_pack(group_id: str, *, token_budget: int) -> tuple[Optio
 
     def _task_line(task: Any) -> str:
         tid = _trim_text(getattr(task, "id", ""), max_chars=24)
-        name = _trim_text(getattr(task, "name", ""), max_chars=64)
-        return f"{tid}: {name}".strip(": ").strip()
+        title = _trim_text(getattr(task, "title", ""), max_chars=64)
+        return f"{tid}: {title}".strip(": ").strip()
 
-    active_tasks = [_task_line(t) for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.ACTIVE]
+    active_task_objs = [t for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.ACTIVE]
+    active_task_objs.sort(key=lambda t: str(getattr(t, "updated_at", "") or getattr(t, "created_at", "") or ""), reverse=True)
+    active_tasks = [_task_line(t) for t in active_task_objs]
     planned_tasks = [_task_line(t) for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.PLANNED]
+    blocked_tasks = [
+        _task_line(t)
+        for t in tasks
+        if getattr(t, "status", TaskStatus.PLANNED) not in {TaskStatus.DONE, TaskStatus.ARCHIVED}
+        and (list(getattr(t, "blocked_by", []) or []) or str(getattr(t, "waiting_on", "none")).strip().lower() in {"actor", "external"})
+    ]
+    waiting_user = [
+        _task_line(t)
+        for t in tasks
+        if getattr(t, "status", TaskStatus.PLANNED) not in {TaskStatus.DONE, TaskStatus.ARCHIVED}
+        and str(getattr(t, "waiting_on", "none")).strip().lower() == "user"
+    ]
     done_tasks = [t for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.DONE]
     done_tasks.sort(key=lambda t: str(getattr(t, "updated_at", "") or ""), reverse=True)
     done_recent = [_task_line(t) for t in done_tasks[:6]]
 
-    agent_rows: List[Dict[str, Any]] = []
-    for a in sorted(agents_state.agents, key=lambda x: str(getattr(x, "id", ""))):
-        row = {
-            "id": str(getattr(a, "id", "") or ""),
-            "active_task_id": str(getattr(a, "active_task_id", "") or ""),
-            "focus": str(getattr(a, "focus", "") or ""),
-            "next_action": str(getattr(a, "next_action", "") or ""),
-            "blockers": list(getattr(a, "blockers", []) or []),
-        }
-        if any(str(v).strip() for k, v in row.items() if k != "id") or row.get("blockers"):
-            agent_rows.append(row)
+    prioritized_actor_ids: List[str] = []
+    seen_actor_ids: set[str] = set()
+
+    def _push_actor(actor_id: Any) -> None:
+        aid = str(actor_id or "").strip()
+        if not aid or aid in seen_actor_ids:
+            return
+        seen_actor_ids.add(aid)
+        prioritized_actor_ids.append(aid)
+
+    for task in active_task_objs:
+        _push_actor(getattr(task, "assignee", None))
+        _push_actor(getattr(task, "handoff_to", None))
+    for agent in sorted(agents_state.agents, key=lambda item: str(getattr(item, "updated_at", "") or ""), reverse=True):
+        hot = getattr(agent, "hot", None)
+        if getattr(hot, "active_task_id", None) or list(getattr(hot, "blockers", []) or []):
+            _push_actor(getattr(agent, "id", ""))
+    for agent in sorted(agents_state.agents, key=lambda item: str(getattr(item, "id", ""))):
+        _push_actor(getattr(agent, "id", ""))
+
+    agent_by_id = {str(getattr(agent, "id", "") or ""): agent for agent in agents_state.agents}
+    ordered_agents = [agent_by_id[aid] for aid in prioritized_actor_ids if aid in agent_by_id]
 
     base = {
         "schema": _SIGNAL_PACK_SCHEMA_VERSION,
-        "vision": str(context.vision or ""),
-        "overview_manual": {
-            "current_focus": str(context.overview.manual.current_focus or "") if context.overview else "",
-            "collaboration_mode": str(context.overview.manual.collaboration_mode or "") if context.overview else "",
-            "roles": list(context.overview.manual.roles or []) if context.overview else [],
+        "coordination_brief": {
+            "objective": str(context.coordination.brief.objective or ""),
+            "current_focus": str(context.coordination.brief.current_focus or ""),
+            "constraints": list(context.coordination.brief.constraints or []),
+            "project_brief": str(context.coordination.brief.project_brief or ""),
         },
         "tasks": {
             "active": active_tasks,
             "planned": planned_tasks,
             "done_recent": done_recent,
+            "blocked": blocked_tasks,
+            "waiting_user": waiting_user,
         },
-        "agents": agent_rows,
+        "agent_states": [
+            {
+                "id": getattr(agent, "id", ""),
+                "hot": {
+                    "active_task_id": getattr(getattr(agent, "hot", None), "active_task_id", None),
+                    "focus": getattr(getattr(agent, "hot", None), "focus", ""),
+                    "next_action": getattr(getattr(agent, "hot", None), "next_action", ""),
+                    "blockers": list(getattr(getattr(agent, "hot", None), "blockers", []) or []),
+                },
+                "warm": {
+                    "what_changed": getattr(getattr(agent, "warm", None), "what_changed", ""),
+                    "resume_hint": getattr(getattr(agent, "warm", None), "resume_hint", ""),
+                    "environment_summary": getattr(getattr(agent, "warm", None), "environment_summary", ""),
+                    "user_model": getattr(getattr(agent, "warm", None), "user_model", ""),
+                    "persona_notes": getattr(getattr(agent, "warm", None), "persona_notes", ""),
+                },
+            }
+            for agent in ordered_agents
+        ],
     }
     return _normalize_signal_pack(base, token_budget=token_budget)
-
 
 def _normalize_dedup_intent(value: Any, *, default: str) -> str:
     intent = str(value or default).strip().lower()

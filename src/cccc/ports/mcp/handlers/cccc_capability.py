@@ -20,10 +20,13 @@ def _skill_runtime_contract_fields(capability_id: str) -> Dict[str, Any]:
     return {
         "skill_mode": "capsule_runtime",
         "full_local_skill_equivalent": False,
+        "dynamic_tools_expected": False,
+        "runtime_visible_in": ["active_capsule_skills"],
+        "runtime_activation_evidence": "state:runnable_or_verified + capability_state.active_capsule_skills",
         "next_step_hint": (
-            "capability-skill provides runtime capsule activation. "
-            "If the task needs full local skill scripts/assets, install a full skill package "
-            "into $CODEX_HOME/skills."
+            "capsule-runtime skill activation is visible in capability_state.active_capsule_skills. "
+            "Do not expect new dynamic_tools for skill capsules. If the task needs full local skill scripts/assets, "
+            "install a full skill package into $CODEX_HOME/skills."
         ),
     }
 
@@ -390,7 +393,7 @@ def capability_use(
     reused_existing_binding = False
     if cap_id == "core":
         enable_result = {
-            "state": "ready",
+            "state": "runnable",
             "enabled": True,
             "refresh_required": False,
             "scope": "core",
@@ -414,7 +417,7 @@ def capability_use(
         if call_tool and cap_id in enabled_caps:
             reused_existing_binding = True
             enable_result = {
-                "state": "ready",
+                "state": "runnable",
                 "enabled": True,
                 "refresh_required": False,
                 "reused_existing_binding": True,
@@ -437,7 +440,8 @@ def capability_use(
         max_retries = 0 if reused_existing_binding else max(
             0, min(int(os.environ.get("CCCC_CAPABILITY_USE_AUTO_RETRY_MAX") or "1"), 3)
         )
-        if state != "ready" and _should_retry_enable(diagnostics=diagnostics) and max_retries > 0:
+        success_states = {"activation_pending", "runnable", "verified"}
+        if state not in success_states and _should_retry_enable(diagnostics=diagnostics) and max_retries > 0:
             for idx in range(max_retries):
                 retry_reason = str(reason or "").strip()
                 if retry_reason:
@@ -466,9 +470,9 @@ def capability_use(
                 enable_result = retry_result
                 state = retry_state
                 diagnostics = _normalize_diagnostics(enable_result)
-                if state == "ready":
+                if state in success_states:
                     break
-        if state != "ready":
+        if state not in success_states:
             resolution_plan = _build_resolution_plan(capability_id=cap_id, diagnostics=diagnostics)
             return {
                 "group_id": group_id,
@@ -483,9 +487,12 @@ def capability_use(
                     "attempts": retry_trace,
                     "max_retries": max_retries,
                 },
+                "state": state,
                 "tool_called": False,
                 **_skill_runtime_contract_fields(cap_id),
             }
+
+    state = str(enable_result.get("state") or "runnable").strip().lower() or "runnable"
 
     if not call_tool:
         out = {
@@ -493,6 +500,8 @@ def capability_use(
             "actor_id": target_actor,
             "capability_id": cap_id,
             "enabled": True,
+            "state": state,
+            "refresh_required": bool(enable_result.get("refresh_required")),
             "enable_result": enable_result,
             "tool_called": False,
         }
@@ -554,7 +563,9 @@ def capability_use(
         "actor_id": target_actor,
         "capability_id": cap_id,
         "enabled": True,
+        "state": "verified",
         "refresh_required": False,
+        "verification_source": "tool_call",
         "reused_existing_binding": bool(reused_existing_binding),
         "enable_result": enable_result,
         "tool_called": True,

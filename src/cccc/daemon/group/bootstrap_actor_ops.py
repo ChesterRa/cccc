@@ -23,7 +23,7 @@ def autostart_running_groups(
     supported_runtimes: tuple[str, ...],
     ensure_mcp_installed: Callable[[str, Path], bool],
     auto_mcp_runtimes: tuple[str, ...],
-    pty_supported: Callable[[], bool],
+    pty_supported: Optional[Callable[[], bool]] = None,
     merge_actor_env_with_private: Callable[[str, str, dict[str, Any]], dict[str, Any]],
     inject_actor_context_env: Callable[[dict[str, Any], str, str], dict[str, Any]],
     prepare_pty_env: Callable[[dict[str, Any]], dict[str, str]],
@@ -109,12 +109,6 @@ def autostart_running_groups(
 
             try:
                 if effective_runner == "headless":
-                    if runner_kind != "headless" and not pty_supported():
-                        logger.warning(
-                            "pty runner is not supported on this platform; autostarting %s/%s as headless",
-                            group_id,
-                            actor_id,
-                        )
                     effective_env = merge_actor_env_with_private(group.group_id, actor_id, env)
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,

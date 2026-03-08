@@ -42,7 +42,7 @@ class TestContextSyncAtomicity(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "dry_run": "false",
-                    "ops": [{"op": "task.create", "name": "applied", "goal": "test"}],
+                    "ops": [{"op": "task.create", "title": "applied", "outcome": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -54,7 +54,7 @@ class TestContextSyncAtomicity(unittest.TestCase):
             tasks = (tasks_resp.result or {}).get("tasks") if isinstance(tasks_resp.result, dict) else []
             self.assertIsInstance(tasks, list)
             assert isinstance(tasks, list)
-            self.assertTrue(any(isinstance(t, dict) and t.get("name") == "applied" for t in tasks))
+            self.assertTrue(any(isinstance(t, dict) and t.get("title") == "applied" for t in tasks))
         finally:
             cleanup()
 
@@ -68,7 +68,7 @@ class TestContextSyncAtomicity(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "ops": [
-                        {"op": "agent.update", "agent_id": "peer1", "focus": "working"},
+                        {"op": "agent_state.update", "actor_id": "peer1", "focus": "working"},
                         {"op": "unknown.op"},
                     ],
                 },
@@ -78,7 +78,7 @@ class TestContextSyncAtomicity(unittest.TestCase):
             ctx_resp, _ = self._call("context_get", {"group_id": group_id})
             self.assertTrue(ctx_resp.ok, getattr(ctx_resp, "error", None))
             agents = (
-                (ctx_resp.result or {}).get("agents")
+                (ctx_resp.result or {}).get("agent_states")
                 if isinstance(ctx_resp.result, dict)
                 else []
             )

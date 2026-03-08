@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.events import publish_event
 from ...kernel.settings import get_remote_access_settings, update_remote_access_settings
+from ...kernel.web_tokens import list_tokens
 from ...util.conv import coerce_bool
 from ...util.time import utc_now_iso
 
@@ -179,9 +180,14 @@ def _web_binding_diagnostics(*, provider: str, enforce_web_token: bool, mode: st
     web_bind_loopback = _is_loopback_host(host)
     web_bind_reachable = bool(public_url) or (not web_bind_loopback)
     token = str(binding.get("web_token") or "").strip()
+    has_user_tokens = bool(list_tokens())
+    token_present = bool(token) or has_user_tokens
+    token_source = str(binding.get("web_token_source") or "none")
+    if not token and has_user_tokens:
+        token_source = "user_tokens"
     return {
-        "web_token_present": bool(token) if enforce_web_token else True,
-        "web_token_source": str(binding.get("web_token_source") or "none"),
+        "web_token_present": token_present if enforce_web_token else True,
+        "web_token_source": token_source,
         "web_host": host,
         "web_host_source": str(binding.get("web_host_source") or "default"),
         "web_port": int(port),
@@ -208,7 +214,7 @@ def _remote_next_steps(
     if not bool(diagnostics.get("mode_supported")):
         out.append("Set remote access mode to tailnet_only.")
     if not bool(diagnostics.get("web_token_present")):
-        out.append("Set Web token in Settings > Remote Access (or set CCCC_WEB_TOKEN).")
+        out.append("Create a User Token in Settings > Tokens, or set CCCC_WEB_TOKEN.")
     if not bool(diagnostics.get("web_bind_reachable")):
         out.append("Set Web host/public URL in Settings > Remote Access (or set CCCC_WEB_HOST/CCCC_WEB_PUBLIC_URL).")
     if provider == "tailscale":

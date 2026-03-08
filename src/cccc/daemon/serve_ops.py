@@ -204,6 +204,66 @@ def write_daemon_addr(
         pass
 
 
+def start_actor_activity_thread(
+    *,
+    stop_event: threading.Event,
+    home: Path,
+    pty_supervisor: Any,
+    event_broadcaster: Any,
+    load_group: Callable[[str], Any],
+    interval_seconds: float = 10.0,
+) -> threading.Thread:
+    """Periodically publish actor.activity SSE events with idle_seconds for running PTY actors."""
+    import uuid
+
+    def _actor_activity_loop() -> None:
+        interval = max(5.0, float(interval_seconds or 10.0))
+        while not stop_event.is_set():
+            try:
+                groups_base = home / "groups"
+                if groups_base.exists():
+                    for gp in groups_base.glob("*/group.yaml"):
+                        gid = gp.parent.name
+                        group = load_group(gid)
+                        if group is None:
+                            continue
+                        # Collect idle_seconds for all running PTY actors in this group
+                        actors_data = []
+                        actor_list = group.doc.get("actors")
+                        if not isinstance(actor_list, list):
+                            continue
+                        for actor in actor_list:
+                            if not isinstance(actor, dict):
+                                continue
+                            aid = str(actor.get("id") or "").strip()
+                            if not aid:
+                                continue
+                            idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid)
+                            if idle is None:
+                                continue  # not running or headless
+                            actors_data.append({
+                                "id": aid,
+                                "idle_seconds": round(idle, 1),
+                                "running": True,
+                            })
+                        if actors_data:
+                            event_broadcaster.publish({
+                                "id": uuid.uuid4().hex,
+                                "kind": "actor.activity",
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "group_id": gid,
+                                "by": "system",
+                                "data": {"actors": actors_data},
+                            })
+            except Exception as e:
+                _log_loop_error("actor_activity_tick failed", e)
+            stop_event.wait(interval)
+
+    t = threading.Thread(target=_actor_activity_loop, name="cccc-actor-activity", daemon=True)
+    t.start()
+    return t
+
+
 def start_bootstrap_thread(
     *,
     maybe_autostart_running_groups: Callable[[], Any],

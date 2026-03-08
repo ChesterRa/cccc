@@ -56,7 +56,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "ship this", "goal": "deliver"}],
+                    "ops": [{"op": "task.create", "title": "ship this", "outcome": "deliver"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -80,7 +80,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
             tasks = summary.get("tasks") if isinstance(summary.get("tasks"), list) else []
-            self.assertTrue(any(isinstance(t, dict) and t.get("name") == "ship this" for t in tasks))
+            self.assertTrue(any(isinstance(t, dict) and t.get("title") == "ship this" for t in tasks))
         finally:
             cleanup()
 
@@ -94,8 +94,8 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 "context_sync",
                 {
                     "group_id": gid,
-                    "by": "user",
-                    "ops": [{"op": "agent.update", "agent_id": "peer1", "focus": "working"}],
+                    "by": "peer1",
+                    "ops": [{"op": "agent_state.update", "actor_id": "peer1", "focus": "working"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -121,7 +121,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "not bound yet", "goal": "test"}],
+                    "ops": [{"op": "task.create", "title": "not bound yet", "outcome": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -143,7 +143,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "vision.update", "vision": "north star"}],
+                    "ops": [{"op": "coordination.brief.update", "objective": "north star"}],
                 },
             )
             self.assertTrue(first.ok, getattr(first, "error", None))
@@ -157,18 +157,13 @@ class TestContextGroupSpaceSync(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "vision.update", "vision": "north star"}],
+                    "ops": [{"op": "coordination.brief.update", "objective": "north star"}],
                 },
             )
             self.assertTrue(second.ok, getattr(second, "error", None))
             second_result = second.result if isinstance(second.result, dict) else {}
             second_space = second_result.get("space_sync") if isinstance(second_result.get("space_sync"), dict) else {}
-            self.assertEqual(bool(second_space.get("queued")), True)
-            self.assertEqual(bool(second_space.get("deduped")), True)
-            self.assertEqual(
-                str(first_space.get("idempotency_key") or ""),
-                str(second_space.get("idempotency_key") or ""),
-            )
+            self.assertEqual(bool(second_space.get("queued")), False)
         finally:
             cleanup()
 

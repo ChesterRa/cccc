@@ -111,14 +111,14 @@ export const STATE_TRANSITIONS: StateTransitionRule[] = [
   { role: "worker", derived: "working", hasTarget: false, visual: "hammering_orbit", goalType: "base", locomotion: true },
   // #8-11: thinking (static mode → standing)
   { role: "foreman", derived: "thinking", staticMode: false, visual: "thinking_scan", goalType: "base", locomotion: true },
-  { role: "foreman", derived: "thinking", staticMode: true, visual: "standing", goalType: "none", locomotion: false },
+  { role: "foreman", derived: "thinking", staticMode: true, visual: "thinking_scan", goalType: "base", locomotion: false },
   { role: "worker", derived: "thinking", staticMode: false, visual: "thinking_sway", goalType: "base", locomotion: true },
-  { role: "worker", derived: "thinking", staticMode: true, visual: "standing", goalType: "none", locomotion: false },
+  { role: "worker", derived: "thinking", staticMode: true, visual: "thinking_sway", goalType: "base", locomotion: false },
   // #12-15: blocked (static mode → standing)
   { role: "foreman", derived: "blocked", staticMode: false, visual: "panic_pace", goalType: "base", locomotion: true },
-  { role: "foreman", derived: "blocked", staticMode: true, visual: "standing", goalType: "none", locomotion: false },
+  { role: "foreman", derived: "blocked", staticMode: true, visual: "panic_pace", goalType: "base", locomotion: false },
   { role: "worker", derived: "blocked", staticMode: false, visual: "blocked_pace", goalType: "base", locomotion: true },
-  { role: "worker", derived: "blocked", staticMode: true, visual: "standing", goalType: "none", locomotion: false },
+  { role: "worker", derived: "blocked", staticMode: true, visual: "blocked_pace", goalType: "base", locomotion: false },
 ];
 
 const FALLBACK_RULE: StateTransitionRule = {
@@ -221,15 +221,9 @@ export const POSE_COMPUTERS: Record<VisualState, PoseComputer> = {
   }),
 
   commanding: (ctx) => {
-    const { t, phase, baseY, patrolRadius: pr } = ctx;
-    const pts: [number, number][] = [];
-    for (let p = 0; p < PATROL.HEX_POINTS; p++) {
-      const a = (p / PATROL.HEX_POINTS) * Math.PI * 2 + PATROL.ANGLE_OFFSET;
-      pts.push([Math.sin(a) * pr, Math.cos(a) * pr]);
-    }
-    const idx = Math.floor((t + phase * 5) / PATROL.SWITCH_INTERVAL) % PATROL.HEX_POINTS;
+    const { t, phase, baseX, baseY, baseZ } = ctx;
     return {
-      gX: pts[idx][0], gZ: pts[idx][1], gY: baseY,
+      gX: baseX, gZ: baseZ, gY: baseY,
       laRx: -0.78 + Math.sin(t * 2.0 + phase) * 0.32,
       laRz: 0.26, laPy: BASE_Y.leftArm + 0.15,
       raRx: -0.45 + Math.sin(t * 1.45 + phase + 1.1) * 0.38,
@@ -242,11 +236,9 @@ export const POSE_COMPUTERS: Record<VisualState, PoseComputer> = {
   hammering: (ctx) => {
     const { t, phase, baseY, buildTarget } = ctx;
     if (!buildTarget) return {};
-    const offsets: [number, number][] = [[0, 0.3], [0.4, -0.15], [-0.3, 0.25], [0.15, -0.3]];
-    const ci = Math.floor((t + phase * 7) / 3) % offsets.length;
     const hc = Math.sin(t * 3.5 + phase);
     return {
-      gX: buildTarget[0] + offsets[ci][0], gZ: buildTarget[2] + offsets[ci][1], gY: baseY,
+      gX: buildTarget[0], gZ: buildTarget[2], gY: baseY,
       tRx: 0.12 + hc * 0.06, hRx: 0.06,
       laRx: -0.9 + Math.sin(t * 3.5 + phase) * 0.7,
       raRx: -0.9 + Math.sin(t * 3.5 + phase + Math.PI) * 0.7,
@@ -256,13 +248,11 @@ export const POSE_COMPUTERS: Record<VisualState, PoseComputer> = {
   },
 
   hammering_orbit: (ctx) => {
-    const { t, phase, variant, baseX, baseY, baseZ } = ctx;
-    const wp = t * (0.82 + variant * 0.08) + phase;
-    const or = 0.48 + variant * 0.12;
+    const { t, phase, baseX, baseY, baseZ } = ctx;
     const hc = Math.sin(t * 3 + phase);
     return {
-      gX: baseX + Math.sin(wp) * or,
-      gZ: baseZ + Math.cos(wp * 0.9) * or * 0.75,
+      gX: baseX,
+      gZ: baseZ,
       gY: baseY + Math.abs(hc) * 0.04,
       tRx: 0.1 + hc * 0.06, hRx: 0.08,
       laRx: -0.8 + Math.sin(t * 3 + phase) * 0.8,

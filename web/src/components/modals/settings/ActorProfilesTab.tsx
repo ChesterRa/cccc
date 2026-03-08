@@ -18,7 +18,6 @@ type EditorState = {
   revision: number;
   name: string;
   runtime: string;
-  runner: "pty" | "headless";
   command: string;
   useDefaultCommand: boolean;
   submit: "enter" | "newline" | "none";
@@ -52,24 +51,22 @@ function defaultCommandForRuntime(runtime: string): string {
   return String(RUNTIME_DEFAULT_COMMANDS[key] || key || "").trim();
 }
 
-function supportsRuntimeDefaultCommand(runtime: string, runner: "pty" | "headless"): boolean {
-  return runner !== "headless" && String(runtime || "").trim() !== "custom";
+function supportsRuntimeDefaultCommand(runtime: string): boolean {
+  return String(runtime || "").trim() !== "custom";
 }
 
 function buildEditor(profile?: ActorProfile | null): EditorState {
   const runtime = String(profile?.runtime || "codex");
-  const runner = (String(profile?.runner || "pty") === "headless" ? "headless" : "pty");
   const command = formatCommand(profile?.command);
   const defaultCommand = defaultCommandForRuntime(runtime);
   const useDefaultCommand =
-    supportsRuntimeDefaultCommand(runtime, runner) &&
+    supportsRuntimeDefaultCommand(runtime) &&
     (!command.trim() || command.trim() === defaultCommand);
   return {
     id: String(profile?.id || ""),
     revision: Number(profile?.revision || 0),
     name: String(profile?.name || ""),
     runtime,
-    runner,
     command,
     useDefaultCommand,
     submit: (String(profile?.submit || "enter") as "enter" | "newline" | "none"),
@@ -127,8 +124,8 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
   }, [duplicateSourceProfileId, profiles]);
 
   const editorSupportsDefaultCommand = useMemo(
-    () => supportsRuntimeDefaultCommand(editor.runtime, editor.runner),
-    [editor.runtime, editor.runner]
+    () => supportsRuntimeDefaultCommand(editor.runtime),
+    [editor.runtime]
   );
   const editorDefaultCommand = useMemo(
     () => defaultCommandForRuntime(editor.runtime),
@@ -361,7 +358,7 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
         id: editor.id || undefined,
         name,
         runtime: editor.runtime,
-        runner: editor.runner,
+        runner: "pty",
         command: editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
         submit: editor.submit,
         env: {},
@@ -381,7 +378,6 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
       }
       if (
         String(editor.runtime || "").trim() === "custom" &&
-        editor.runner !== "headless" &&
         !String(payload.command || "").trim()
       ) {
         setEditorErr(t("actorProfiles.customRuntimeCommandRequired"));
@@ -465,7 +461,7 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                   {profile.name || profile.id}
                 </div>
                 <div className={`mt-0.5 text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                  <code>{profile.id}</code> · {RUNTIME_INFO[String(profile.runtime)]?.label || profile.runtime} · {profile.runner}
+                  <code>{profile.id}</code> · {RUNTIME_INFO[String(profile.runtime)]?.label || profile.runtime}
                 </div>
                 <div className={`mt-0.5 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                   {t("actorProfiles.usageCount", { count: Number(profile.usage_count || 0) })} · {t("actorProfiles.revision", { revision: Number(profile.revision || 0) })}
@@ -538,7 +534,7 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                     onChange={(e) => {
                       const nextRuntime = String(e.target.value || "");
                       setEditor((prev) => {
-                        const supportsDefault = supportsRuntimeDefaultCommand(nextRuntime, prev.runner);
+                        const supportsDefault = supportsRuntimeDefaultCommand(nextRuntime);
                         return {
                           ...prev,
                           runtime: nextRuntime,
@@ -552,28 +548,6 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                     {SUPPORTED_RUNTIMES.map((rt) => (
                       <option key={rt} value={rt}>{RUNTIME_INFO[rt]?.label || rt}</option>
                     ))}
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass(isDark)}>{t("actorProfiles.runner")}</label>
-                  <select
-                    value={editor.runner}
-                    onChange={(e) => {
-                      const nextRunner = e.target.value === "headless" ? "headless" : "pty";
-                      setEditor((prev) => {
-                        const supportsDefault = supportsRuntimeDefaultCommand(prev.runtime, nextRunner);
-                        return {
-                          ...prev,
-                          runner: nextRunner,
-                          useDefaultCommand: supportsDefault ? prev.useDefaultCommand : false,
-                          command: supportsDefault && prev.useDefaultCommand ? "" : prev.command,
-                        };
-                      });
-                    }}
-                    className={inputClass(isDark)}
-                  >
-                    <option value="pty">PTY</option>
-                    <option value="headless">Headless</option>
                   </select>
                 </div>
               </div>

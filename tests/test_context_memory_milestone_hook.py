@@ -45,7 +45,7 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "Phase 1", "goal": "deliver phase 1"}],
+                    "ops": [{"op": "task.create", "title": "Phase 1", "outcome": "deliver phase 1"}],
                 },
             )
             self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
@@ -65,7 +65,7 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "by": "user",
-                    "ops": [{"op": "task.status", "task_id": task_id, "status": "done"}],
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
                 },
             )
             self.assertTrue(complete_resp.ok, getattr(complete_resp, "error", None))
@@ -102,7 +102,7 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "Phase DryRun", "goal": "verify dry run"}],
+                    "ops": [{"op": "task.create", "title": "Phase DryRun", "outcome": "verify dry run"}],
                 },
             )
             self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
@@ -122,7 +122,7 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
                     "group_id": group_id,
                     "by": "user",
                     "dry_run": True,
-                    "ops": [{"op": "task.status", "task_id": task_id, "status": "done"}],
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
                 },
             )
             self.assertTrue(dry_resp.ok, getattr(dry_resp, "error", None))

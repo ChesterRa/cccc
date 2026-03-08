@@ -15,15 +15,9 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
 
-def _pty_supported() -> bool:
-    return bool(getattr(pty_runner, "PTY_SUPPORTED", True))
-
-
 def _effective_runner_kind(runner_kind: str) -> str:
-    rk = str(runner_kind or "").strip() or "pty"
-    if rk == "headless":
-        return "headless"
-    return "pty" if _pty_supported() else "headless"
+    rk = str(runner_kind or "").strip().lower() or "pty"
+    return "headless" if rk == "headless" else "pty"
 
 
 def handle_headless_status(args: Dict[str, Any]) -> DaemonResponse:

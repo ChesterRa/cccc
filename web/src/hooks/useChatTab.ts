@@ -27,6 +27,8 @@ interface UseChatTabOptions {
   chatScrollMemoryRef?: React.MutableRefObject<
     Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>
   >;
+  /** Scroll container ref for programmatic scrolling (e.g. after send) */
+  scrollRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
 export function useChatTab({
@@ -38,6 +40,7 @@ export function useChatTab({
   fileInputRef,
   chatAtBottomRef,
   chatScrollMemoryRef,
+  scrollRef,
 }: UseChatTabOptions) {
   // ============ Stores ============
   const {
@@ -52,7 +55,6 @@ export function useChatTab({
     closeChatWindow,
     openChatWindow,
     loadMoreHistory,
-    updateAckStatus,
   } = useGroupStore();
 
   const {
@@ -83,7 +85,6 @@ export function useChatTab({
     setPriority,
     setReplyRequired,
     setDestGroupId,
-    clearComposer,
     clearDraft,
   } = useComposerStore();
 
@@ -233,7 +234,7 @@ export function useChatTab({
 
   // Agent state snapshot
   const agentStates = useMemo(
-    () => groupContext?.agents || [],
+    () => groupContext?.agent_states || [],
     [groupContext]
   );
 
@@ -280,49 +281,87 @@ export function useChatTab({
     const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
 
     const prio = replyRequired ? "attention" : (priority || "normal");
+    const replyTargetSnapshot = replyTarget;
+    const composerFilesSnapshot = composerFiles.slice();
+    const prioritySnapshot = priority;
+    const replyRequiredSnapshot = replyRequired;
+
+    const restoreComposerState = () => {
+      setComposerText(txt);
+      setComposerFiles(composerFilesSnapshot);
+      setReplyTarget(replyTargetSnapshot);
+      setPriority(prioritySnapshot);
+      setReplyRequired(replyRequiredSnapshot);
+    };
+
+    const applyImmediateComposerFeedback = () => {
+      // 立即给输入区反馈，避免等待网络返回时卡住在原状态。
+      setComposerText("");
+      setComposerFiles([]);
+      setReplyTarget(null);
+      setPriority("normal");
+      setReplyRequired(false);
+      if (chatAtBottomRef) chatAtBottomRef.current = true;
+      setShowScrollButton(false);
+      const scrollEl = scrollRef?.current;
+      if (scrollEl) {
+        requestAnimationFrame(() => {
+          scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: "auto" });
+        });
+      }
+    };
 
     setBusy("send");
     try {
       const to = toTokens;
       let resp;
-      if (replyTarget) {
+      if (replyTargetSnapshot) {
         if (isCrossGroup) {
           showError("Cross-group send does not support replies.");
           setDestGroupId(selectedGroupId);
           return;
         }
+
+        applyImmediateComposerFeedback();
+
         resp = await api.replyMessage(
           selectedGroupId,
           txt,
           to,
-          replyTarget.eventId,
-          composerFiles.length > 0 ? composerFiles : undefined,
+          replyTargetSnapshot.eventId,
+          composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
           prio,
           replyRequired
         );
       } else {
         if (isCrossGroup) {
-          if (composerFiles.length > 0) {
+          if (composerFilesSnapshot.length > 0) {
             showError("Cross-group send does not support attachments yet.");
             return;
           }
+
+          applyImmediateComposerFeedback();
+
           resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio, replyRequired);
         } else {
+
+          applyImmediateComposerFeedback();
+
           resp = await api.sendMessage(
             selectedGroupId,
             txt,
             to,
-            composerFiles.length > 0 ? composerFiles : undefined,
+            composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
             prio,
             replyRequired
           );
         }
       }
       if (!resp.ok) {
+        restoreComposerState();
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
-      clearComposer();
       setDestGroupId(selectedGroupId);
       clearDraft(selectedGroupId);
       if (fileInputRef?.current) fileInputRef.current.value = "";
@@ -333,7 +372,13 @@ export function useChatTab({
         url.searchParams.delete("tab");
         window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
       }
+      // After sending, scroll to bottom so the user sees their new message
+      setChatUnreadCount(0);
       onMessageSent?.();
+    } catch (error) {
+      restoreComposerState();
+      const message = error instanceof Error ? error.message : "send failed";
+      showError(message);
     } finally {
       setBusy("");
     }
@@ -349,28 +394,21 @@ export function useChatTab({
     inChatWindow,
     setBusy,
     showError,
+    setComposerText,
+    setComposerFiles,
+    setReplyTarget,
+    setPriority,
+    setReplyRequired,
     setDestGroupId,
-    clearComposer,
     clearDraft,
     closeChatWindow,
     fileInputRef,
+    chatAtBottomRef,
+    scrollRef,
+    setShowScrollButton,
+    setChatUnreadCount,
     onMessageSent,
   ]);
-
-  const acknowledgeMessage = useCallback(
-    async (eventId: string) => {
-      const eid = String(eventId || "").trim();
-      if (!eid) return;
-      if (!selectedGroupId) return;
-      const resp = await api.ackMessage(selectedGroupId, eid);
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
-      }
-      updateAckStatus(eid, "user");
-    },
-    [selectedGroupId, showError, updateAckStatus]
-  );
 
   const copyMessageLink = useCallback(
     async (eventId: string) => {
@@ -580,7 +618,6 @@ export function useChatTab({
 
     // Actions
     sendMessage,
-    acknowledgeMessage,
     copyMessageLink,
     startReply,
     showRecipients,

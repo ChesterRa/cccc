@@ -221,8 +221,6 @@ export function AddActorModal({
               {selectedProfile ? (
                 <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                   {RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}
-                  {" · "}
-                  {String(selectedProfile.runner || "pty").toUpperCase()}
                 </div>
               ) : null}
             </div>

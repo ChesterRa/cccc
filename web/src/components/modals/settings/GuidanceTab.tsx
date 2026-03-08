@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { apiJson } from "../../../services/api";
+import type { GroupSettings } from "../../../types";
 import { cardClass, inputClass, labelClass, primaryButtonClass, preClass } from "./types";
 
 type PromptKind = "preamble" | "help";
@@ -18,12 +19,28 @@ type PromptsResponse = {
   help: PromptInfo;
 };
 
-export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: string }) {
+export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
+  isDark: boolean;
+  groupId?: string;
+  settings?: GroupSettings | null;
+  onUpdateSettings?: (s: Partial<GroupSettings>) => Promise<void>;
+}) {
   const { t } = useTranslation("settings");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [prompts, setPrompts] = useState<Record<PromptKind, PromptInfo> | null>(null);
   const [expandedKind, setExpandedKind] = useState<PromptKind | null>(null);
+
+  // Features
+  const [panoramaEnabled, setPanoramaEnabled] = useState(false);
+  useEffect(() => {
+    if (settings) setPanoramaEnabled(Boolean(settings.panorama_enabled));
+  }, [settings]);
+
+  const handleTogglePanorama = async (enabled: boolean) => {
+    setPanoramaEnabled(enabled);
+    if (onUpdateSettings) await onUpdateSettings({ panorama_enabled: enabled });
+  };
 
   const load = async () => {
     if (!groupId) return;
@@ -203,6 +220,30 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   return (
     <div className="space-y-4">
       {err && <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>}
+
+      {/* Features */}
+      <div className={cardClass(isDark)}>
+        <div className={`text-sm font-semibold mb-3 ${isDark ? "text-slate-100" : "text-gray-900"}`}>
+          {t("guidance.featuresTitle", "Features")}
+        </div>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={panoramaEnabled}
+            onChange={(e) => handleTogglePanorama(e.target.checked)}
+            className="w-4 h-4 rounded accent-blue-500"
+          />
+          <div>
+            <div className={`text-sm ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+              Panorama 3D
+            </div>
+            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              {t("guidance.panoramaHint", "Enable to show the 3D panorama tab")}
+            </div>
+          </div>
+        </label>
+      </div>
+
       <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
         <Trans i18nKey="guidance.overridesHint" ns="settings" components={[<span className="font-mono" />]} />
       </div>

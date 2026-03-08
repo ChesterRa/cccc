@@ -170,7 +170,7 @@ tests/test_group_template_dirty_settings_tolerance.py,B,tests,standard-file,fixe
 tests/test_im_subscribers_tolerance.py,B,tests,standard-file,fixed,qa,guards IM subscriber loader tolerance for dirty bool/int fields
 tests/test_group_lifecycle_invariants.py,B,tests,standard-file,fixed,qa,guards group start/stop running+enabled invariants
 tests/test_group_automation_baseline.py,B,tests,standard-file,fixed,qa,guards default standup baseline seeding and intentional clear semantics
-tests/test_mcp_bootstrap_ledger_tail.py,B,tests,standard-file,reviewed,qa,mcp bootstrap ledger-tail visibility rules reviewed
+tests/test_mcp_bootstrap_inbox_preview.py,B,tests,standard-file,reviewed,qa,mcp bootstrap inbox-preview trimming and stable shape reviewed
 tests/test_daemon_ipc_docs_parity.py,B,tests,standard-file,fixed,qa,guards daemon IPC op coverage in standards doc
 tests/test_docs_blob_path_consistency.py,B,tests,standard-file,fixed,qa,guards architecture blob-path terminology consistency
 tests/test_docs_mcp_architecture_surface.py,B,tests,standard-file,fixed,qa,guards architecture MCP surface narrative against legacy drift

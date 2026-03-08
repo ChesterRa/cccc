@@ -13,7 +13,7 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("Gap routing:", body)
         self.assertIn("Memory boundary:", body)
         self.assertIn("cccc_bootstrap", body)
-        self.assertIn("cccc_context_agent(action=update", body)
+        self.assertIn("cccc_agent_state(action=update", body)
         self.assertIn("cccc_capability_use(...)", body)
         self.assertIn("cccc_capability_search(...)", body)
         self.assertIn("retry guidance", body)

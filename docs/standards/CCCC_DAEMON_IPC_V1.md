@@ -528,6 +528,7 @@ Notes:
    command candidates when package metadata is incomplete.
 5. External enable runs preflight first (required env, runtime binary availability, remote URL sanity) and returns
    `reason=preflight_failed:<code>` on deterministic blockers.
+6. `activation_pending` means relist/reconnect is still required; `runnable` means binding is live enough to try; `verified` is reserved for post-call proof, not plain enable.
 
 Args:
 ```ts
@@ -553,7 +554,7 @@ Result:
   capability_id: string
   scope: "group" | "actor" | "session"
   enabled: boolean
-  state: "ready" | "failed"
+  state: "activation_pending" | "runnable" | "blocked" | "disabled"
   refresh_required: boolean
   refresh_mode?: "relist_or_reconnect"
   wait?: "relist_or_reconnect"
@@ -641,7 +642,7 @@ Result:
   capability_id: string
   scope: "group" | "global"
   blocked: boolean
-  state: "ready"
+  state: "blocked" | "unblocked"
   removed_bindings: number
   removed_runtime_bindings: number
   refresh_required: boolean
@@ -684,7 +685,7 @@ Result:
   dynamic_tool_limit: number
   dynamic_tool_dropped: number
   enabled_capabilities: string[]
-  active_skills?: Array<{
+  active_capsule_skills?: Array<{
     capability_id: string
     name: string
     description_short?: string
@@ -843,7 +844,7 @@ Result:
   deduped?: boolean
   record: Record<string, unknown>
   probe: {
-    state: "ready" | "failed" | "skipped"
+    state: "runnable" | "failed" | "skipped"
     kind?: "mcp_toolpack" | "skill"
     reason?: string
     tool_count?: number
@@ -861,10 +862,22 @@ Result:
   effective_policy_level: "indexed" | "mounted" | "enabled" | "pinned"
   enableable_now: boolean
   enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable"
+  readiness_preview?: {
+    preview_status: "blocked" | "enableable" | "needs_inspect"
+    next_step: string
+    preview_basis?: string[]
+    required_env?: string[]
+    missing_env?: string[]
+    cached_install_state?: string
+    install_error_code?: string
+    enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable" | "missing_required_env"
+    policy_source?: "external_capability_safety_mode"
+    policy_mode?: "conservative"
+  }
   enable_after_import: boolean
   enable_result?: Record<string, unknown> // same shape family as capability_enable
   refresh_required: boolean
-  state: "ready" | "failed"
+  state: "blocked" | "enableable" | "needs_inspect" | "activation_pending" | "runnable" | "verified"
   reason?: string
 }
 ```
@@ -890,6 +903,7 @@ Result:
   overlay_error: string
   policy_source: string
   policy_error: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -915,6 +929,7 @@ Result:
   overlay: Record<string, unknown>
   effective: Record<string, unknown>
   revision: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -943,6 +958,7 @@ Result:
   effective: Record<string, unknown>
   policy_source: string
   policy_error: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -973,6 +989,7 @@ Result:
   overlay_error: string
   policy_source: string
   policy_error: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -1748,40 +1765,60 @@ Result:
 ```ts
 {
   version: string
-  vision?: string
-  overview: {
-    manual: {
-      roles: string[]
-      collaboration_mode: string
+  coordination: {
+    brief: {
+      objective: string
       current_focus: string
+      constraints: string[]
+      project_brief: string
+      project_brief_stale: boolean
       updated_by: string
       updated_at: string
     }
+    tasks: Array<Record<string, unknown>>
+    recent_decisions: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
+    recent_handoffs: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
   }
-  panorama: {
-    mermaid: string
-  }
+  agent_states: Array<{
+    id: string
+    hot: {
+      active_task_id?: string | null
+      focus?: string | null
+      blockers?: string[]
+      next_action?: string | null
+    }
+    warm: {
+      what_changed?: string | null
+      open_loops?: string[]
+      commitments?: string[]
+      environment_summary?: string | null
+      user_model?: string | null
+      persona_notes?: string | null
+      resume_hint?: string | null
+    }
+    updated_at?: string | null
+  }>
   tasks_summary: {
     total: number
     done: number
     active: number
     planned: number
-    root_count: number
+    archived: number
+    root_count?: number
   }
-  active_tasks: Array<Record<string, unknown>>
-  agents: Array<{
-    id: string
-    active_task_id?: string | null
-    focus: string
-    blockers: string[]
-    next_action: string
-    what_changed: string
-    decision_delta: string
-    environment: string
-    user_profile: string
-    notes: string
-    updated_at: string
-  }>
+  attention?: {
+    blocked?: number | Array<Record<string, unknown>>
+    waiting_user?: number | Array<Record<string, unknown>>
+    pending_handoffs?: number | Array<Record<string, unknown>>
+  }
+  board?: {
+    planned?: Array<Record<string, unknown>>
+    active?: Array<Record<string, unknown>>
+    done?: Array<Record<string, unknown>>
+    archived?: Array<Record<string, unknown>>
+  }
+  panorama?: { mermaid?: string | null }
+  meta?: Record<string, unknown>
 }
 ```
 
@@ -2064,7 +2101,7 @@ Result:
 { tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
 ```
 
-`presence_get` has been removed in v2. Agent state is returned in `context_get.result.agents`.
+`presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 
 #### `blueprint_generate`
 

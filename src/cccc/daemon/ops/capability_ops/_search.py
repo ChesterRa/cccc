@@ -133,6 +133,115 @@ def _display_name_from_capability_id(capability_id: str) -> str:
     return token or cid
 
 
+def _external_policy_evidence(*, policy: Dict[str, Any], source_id: str, policy_level: str) -> Dict[str, str]:
+    if str(source_id or "").strip() not in _SOURCE_IDS:
+        return {}
+    if _normalize_policy_level(policy_level) != _LEVEL_INDEXED:
+        return {}
+    mode = _pkg()._external_capability_safety_mode_from_policy(policy)
+    if mode != "conservative":
+        return {}
+    return {
+        "policy_source": "external_capability_safety_mode",
+        "policy_mode": mode,
+        "next_step": "switch_external_capability_safety_mode_or_adjust_allowlist",
+    }
+
+
+def _build_readiness_preview(
+    *,
+    rec: Dict[str, Any],
+    capability_id: str,
+    policy: Dict[str, Any],
+    policy_level: str,
+    blocked_reason_code: str = "",
+    qualification_status: str,
+    enable_supported: bool,
+    cached_install_state: str = "",
+    install_error_code: str = "",
+    recent_success: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    source_id = str(rec.get("source_id") or "").strip()
+    install_mode = str(rec.get("install_mode") or "").strip()
+    preview_basis: List[str] = []
+    required_env: List[str] = []
+    missing_env: List[str] = []
+    try:
+        required_env = _pkg()._required_environment_names(rec)
+    except Exception:
+        required_env = []
+    if required_env:
+        preview_basis.append("catalog_record")
+        try:
+            missing_env = _pkg()._missing_required_environment_names(rec)
+        except Exception:
+            missing_env = []
+        if missing_env:
+            preview_basis.append("local_env")
+
+    has_recent_success = isinstance(recent_success, dict) and bool(recent_success)
+    if has_recent_success or cached_install_state or install_error_code:
+        preview_basis.append("runtime_cache")
+    preview_basis.append("policy")
+    preview_basis = sorted({x for x in preview_basis if str(x).strip()})
+
+    preview: Dict[str, Any] = {
+        "preview_status": "needs_inspect",
+        "next_step": "inspect",
+        "preview_basis": preview_basis,
+        "policy_level": _normalize_policy_level(policy_level),
+        "enable_supported": bool(enable_supported),
+        "install_mode": install_mode,
+    }
+    if required_env:
+        preview["required_env"] = sorted({str(x).strip() for x in required_env if str(x).strip()})
+    if missing_env:
+        preview["missing_env"] = sorted({str(x).strip() for x in missing_env if str(x).strip()})
+    if cached_install_state:
+        preview["cached_install_state"] = cached_install_state
+    if install_error_code:
+        preview["install_error_code"] = install_error_code
+    if has_recent_success:
+        preview["recent_success"] = dict(recent_success or {})
+
+    if str(blocked_reason_code or "").strip():
+        code = str(blocked_reason_code or "").strip()
+        preview["preview_status"] = "blocked"
+        preview["enable_block_reason"] = code
+        if code == "policy_level_indexed":
+            preview.update(_external_policy_evidence(policy=policy, source_id=source_id, policy_level=policy_level))
+        if "next_step" not in preview:
+            preview["next_step"] = "fix_known_blocker"
+        return preview
+
+    if not _policy_level_visible(policy_level):
+        preview["preview_status"] = "blocked"
+        preview["enable_block_reason"] = "policy_level_indexed"
+        preview.update(_external_policy_evidence(policy=policy, source_id=source_id, policy_level=policy_level))
+        if "next_step" not in preview:
+            preview["next_step"] = "fix_known_blocker"
+        return preview
+
+    if qualification_status == _QUAL_BLOCKED:
+        preview["preview_status"] = "blocked"
+        preview["enable_block_reason"] = "qualification_blocked"
+        preview["next_step"] = "fix_known_blocker"
+        return preview
+
+    if missing_env:
+        preview["preview_status"] = "blocked"
+        preview["enable_block_reason"] = "missing_required_env"
+        preview["next_step"] = "fix_known_blocker"
+        return preview
+
+    if enable_supported or has_recent_success or cached_install_state in {"installed", "installed_degraded"}:
+        preview["preview_status"] = "enableable"
+        preview["next_step"] = "enable"
+        return preview
+
+    return preview
+
+
 def _build_builtin_search_records() -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for cap_id in all_builtin_pack_ids():
@@ -169,7 +278,12 @@ def _search_matches(query: str, item: Dict[str, Any]) -> bool:
         " ".join(str(x) for x in (item.get("tags") or [])),
     ]
     haystack = " ".join(fields).lower()
-    return q in haystack
+    if q in haystack:
+        return True
+    tokens = _tokenize_search_text(q)
+    if not tokens:
+        return False
+    return any(tok in haystack for tok in tokens)
 
 
 def _score_item_tokens(item: Dict[str, Any], tokens: List[str]) -> int:
@@ -407,6 +521,8 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                     "last_action": str(recent_row.get("last_action") or ""),
                 }
             blocked_reason = str((blocked or {}).get("reason") or "").strip() if isinstance(blocked, dict) else ""
+            qualification_status = str(rec.get("qualification_status") or _QUAL_QUALIFIED)
+            blocked_reason_code = "blocked_by_global_policy" if bool(blocked) else ""
             item: Dict[str, Any] = {
                 "capability_id": cap_id,
                 "kind": kind,
@@ -420,7 +536,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 "sync_state": str(rec.get("sync_state") or ""),
                 "policy_level": policy_level,
                 "enable_supported": bool(enable_supported),
-                "qualification_status": str(rec.get("qualification_status") or _QUAL_QUALIFIED),
+                "qualification_status": qualification_status,
                 "install_mode": str(rec.get("install_mode") or ""),
                 "tags": [str(x).strip() for x in (rec.get("tags") if isinstance(rec.get("tags"), list) else []) if str(x).strip()],
                 "blocked_global": bool(blocked),
@@ -437,6 +553,18 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 item["cached_install_error_code"] = install_error_code
             if install_error:
                 item["cached_install_error"] = install_error
+            item["readiness_preview"] = _build_readiness_preview(
+                rec=rec,
+                capability_id=cap_id,
+                policy=policy,
+                policy_level=policy_level,
+                blocked_reason_code=blocked_reason_code,
+                qualification_status=str(qualification_status or "").strip().lower(),
+                enable_supported=bool(enable_supported),
+                cached_install_state=install_state,
+                install_error_code=install_error_code,
+                recent_success=recent_payload,
+            )
             if cap_id.startswith("pack:"):
                 item["tool_count"] = int(rec.get("tool_count") or 0)
                 tool_names = rec.get("tool_names") if isinstance(rec.get("tool_names"), list) else []
@@ -543,6 +671,11 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
             blocked_caps, blocked_mutated = _pkg()._collect_blocked_capabilities(state_doc, group_id=group_id)
             if mutated or blocked_mutated:
                 _save_state_doc(state_path, state_doc)
+        with _RUNTIME_LOCK:
+            _, runtime_doc = _load_runtime_doc()
+            capability_artifacts = _runtime_capability_artifacts(runtime_doc)
+            artifacts = _runtime_artifacts(runtime_doc)
+            recent_success = _runtime_recent_success(runtime_doc)
         enabled_set = set(enabled_caps)
         actor_role = _resolve_actor_role(group, actor_id)
         policy = _allowlist_policy()
@@ -790,6 +923,26 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
         items: List[Dict[str, Any]] = []
         for rec in sliced:
             cap_id = str(rec.get("capability_id") or "")
+            qualification_status = str(rec.get("qualification_status") or _QUAL_QUALIFIED)
+            enable_supported = _pkg()._record_enable_supported(rec, capability_id=cap_id)
+            blocked_scope = str(rec.get("blocked_scope") or "").strip().lower()
+            blocked_reason_code = ""
+            if blocked_scope == "global":
+                blocked_reason_code = "blocked_by_global_policy"
+            elif blocked_scope == "group":
+                blocked_reason_code = "blocked_by_group_policy"
+            artifact_id = str(capability_artifacts.get(cap_id) or "").strip()
+            artifact = artifacts.get(artifact_id) if artifact_id and isinstance(artifacts.get(artifact_id), dict) else {}
+            cached_install_state = str(artifact.get("state") or "").strip()
+            install_error_code = str(artifact.get("last_error_code") or "").strip()
+            recent_row = recent_success.get(cap_id) if isinstance(recent_success.get(cap_id), dict) else {}
+            recent_payload = {
+                "success_count": int(recent_row.get("success_count") or 0),
+                "last_success_at": str(recent_row.get("last_success_at") or ""),
+                "last_group_id": str(recent_row.get("last_group_id") or ""),
+                "last_actor_id": str(recent_row.get("last_actor_id") or ""),
+                "last_action": str(recent_row.get("last_action") or ""),
+            } if recent_row else {}
             item = {
                 "capability_id": cap_id,
                 "kind": str(rec.get("kind") or ""),
@@ -800,14 +953,20 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 "source_uri": str(rec.get("source_uri") or ""),
                 "trust_tier": str(rec.get("trust_tier") or ""),
                 "license": str(rec.get("license") or ""),
-                "qualification_status": str(rec.get("qualification_status") or _QUAL_QUALIFIED),
+                "qualification_status": qualification_status,
                 "sync_state": str(rec.get("sync_state") or ""),
                 "enabled": cap_id in enabled_set,
-                "enable_supported": _pkg()._record_enable_supported(rec, capability_id=cap_id),
+                "enable_supported": enable_supported,
                 "install_mode": str(rec.get("install_mode") or ""),
                 "policy_level": str(rec.get("policy_level") or ""),
                 "tags": list(rec.get("tags") or []),
             }
+            if cached_install_state:
+                item["cached_install_state"] = cached_install_state
+            if install_error_code:
+                item["cached_install_error_code"] = install_error_code
+            if recent_payload:
+                item["recent_success"] = recent_payload
             if cap_id.startswith("pack:"):
                 item["tool_count"] = int(rec.get("tool_count") or 0)
                 tool_names = rec.get("tool_names") if isinstance(rec.get("tool_names"), list) else []
@@ -825,9 +984,20 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 item["enable_hint"] = "enable_now"
             else:
                 item["enable_hint"] = "unsupported"
-            blocked_scope = str(rec.get("blocked_scope") or "").strip().lower()
             if blocked_scope:
                 item["blocked_scope"] = blocked_scope
+            item["readiness_preview"] = _build_readiness_preview(
+                rec=rec,
+                capability_id=cap_id,
+                policy=policy,
+                policy_level=str(rec.get("policy_level") or ""),
+                blocked_reason_code=blocked_reason_code,
+                qualification_status=str(qualification_status or "").strip().lower(),
+                enable_supported=bool(enable_supported),
+                cached_install_state=cached_install_state,
+                install_error_code=install_error_code,
+                recent_success=recent_payload,
+            )
             items.append(item)
 
         return DaemonResponse(
@@ -900,6 +1070,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             artifacts = _runtime_artifacts(runtime_doc)
             capability_artifacts = _runtime_capability_artifacts(runtime_doc)
             actor_bindings = _runtime_actor_bindings(runtime_doc)
+            recent_success = _runtime_recent_success(runtime_doc)
             per_group_bindings = (
                 actor_bindings.get(group_id)
                 if isinstance(actor_bindings.get(group_id), dict)
@@ -1100,14 +1271,14 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             [*profile_autoload_capabilities, *actor_autoload_capabilities]
         )
 
-        active_skills: List[Dict[str, Any]] = []
+        active_capsule_skills: List[Dict[str, Any]] = []
         for cap_id in enabled_caps_effective:
             rec = external_records.get(cap_id)
             if not isinstance(rec, dict):
                 continue
             if str(rec.get("kind") or "").strip().lower() != "skill":
                 continue
-            active_skills.append(
+            active_capsule_skills.append(
                 {
                     "capability_id": cap_id,
                     "name": str(rec.get("name") or cap_id),
@@ -1237,29 +1408,41 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             kind = str((rec or {}).get("kind") or "").strip().lower() if isinstance(rec, dict) else ""
             install_state = str(install_state_by_cap.get(cap_id) or "").strip()
             binding = actor_binding_state_by_cap.get(cap_id) if isinstance(actor_binding_state_by_cap.get(cap_id), dict) else {}
+            binding_state = str(binding.get("state") or "").strip().lower()
+            recent_row = recent_success.get(cap_id) if isinstance(recent_success.get(cap_id), dict) else {}
+            last_action = str(recent_row.get("last_action") or "").strip().lower()
             entry: Dict[str, str] = {}
             if kind == "skill":
                 entry["mode"] = "skill"
-                entry["state"] = str(binding.get("state") or "ready_skill")
                 if str(binding.get("last_error") or "").strip():
+                    entry["state"] = "blocked"
                     entry["last_error"] = str(binding.get("last_error") or "").strip()
+                else:
+                    entry["state"] = str(binding_state or "runnable")
             else:
                 entry["mode"] = "mcp"
                 entry["install_state"] = install_state or "unknown"
-                entry["state"] = str(binding.get("state") or (install_state or "unknown"))
                 artifact_id = str(binding.get("artifact_id") or install_artifact_by_cap.get(cap_id) or "").strip()
                 if artifact_id:
                     entry["artifact_id"] = artifact_id
                 install_error = str(install_error_by_cap.get(cap_id) or "").strip()
                 install_error_code = str(install_error_code_by_cap.get(cap_id) or "").strip()
                 if str(binding.get("last_error") or "").strip():
+                    entry["state"] = "blocked"
                     entry["last_error"] = str(binding.get("last_error") or "").strip()
-                elif install_state == "installed_degraded":
-                    entry["state"] = "ready_degraded"
+                elif last_action == "tool_call":
+                    entry["state"] = "verified"
+                elif binding_state in {"activation_pending", "runnable", "verified"}:
+                    entry["state"] = binding_state
+                elif install_state and _pkg()._install_state_allows_external_tool(install_state):
+                    entry["state"] = "activation_pending"
+                else:
+                    entry["state"] = "blocked"
+                if install_state == "installed_degraded" and entry.get("state") != "verified":
                     entry["last_error"] = install_error or "probe_timeout"
                     if install_error_code:
                         entry["last_error_code"] = install_error_code
-                elif install_state and install_state != "installed":
+                elif install_state and install_state not in {"installed", "installed_degraded"}:
                     entry["last_error"] = install_error or "install_not_ready"
                     if install_error_code:
                         entry["last_error_code"] = install_error_code
@@ -1291,7 +1474,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 "dynamic_tool_limit": max_dynamic_tools_visible,
                 "dynamic_tool_dropped": dynamic_tool_dropped,
                 "enabled_capabilities": enabled_caps_effective,
-                "active_skills": active_skills,
+                "active_capsule_skills": active_capsule_skills,
                 "autoload_skills": autoload_skills,
                 "autoload_capabilities": effective_autoload_capabilities,
                 "actor_autoload_capabilities": actor_autoload_capabilities,

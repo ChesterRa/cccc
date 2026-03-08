@@ -384,6 +384,8 @@ class IMBridge:
         self.key_manager._load()
 
         messages = self.adapter.poll()
+        if messages:
+            self._log(f"[inbound] Polled {len(messages)} messages")
 
         for msg in messages:
             chat_id = str(msg.get("chat_id") or "").strip()
@@ -399,6 +401,7 @@ class IMBridge:
             message_id = str(msg.get("message_id") or "").strip()
 
             if not text:
+                self._log(f"[inbound] Empty text, raw msg keys: {list(msg.keys())}, text field: {repr(msg.get('text'))}")
                 continue
             if self._is_historical_inbound(msg):
                 self._log(
@@ -409,6 +412,7 @@ class IMBridge:
                 continue
 
             # Authorization check: unauthorized chats may only /subscribe.
+            self._log(f"[inbound] Checking auth for chat_id={chat_id} thread={thread_id}")
             if not self.key_manager.is_authorized(chat_id, thread_id):
                 parsed_pre = parse_message(text)
                 if parsed_pre.type == CommandType.SUBSCRIBE:
@@ -730,10 +734,11 @@ class IMBridge:
         else:
             tip = "Tip: plain text routes to foreman by default; use /send for explicit recipients."
         target_label = self.group.doc.get("title", self.group.group_id)
+        group_id = self.group.group_id
         if was_subscribed:
-            headline = f"✅ Already authorized for this chat ({target_label})"
+            headline = f"✅ Already authorized for this chat ({target_label} [{group_id}])"
         else:
-            headline = f"✅ Subscribed to {target_label}"
+            headline = f"✅ Subscribed to {target_label} [{group_id}]"
         self.adapter.send_message(
             chat_id,
             f"{headline}\n"

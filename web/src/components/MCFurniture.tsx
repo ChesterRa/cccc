@@ -1,15 +1,15 @@
 import React from "react";
 import * as THREE from "three";
 
-// ── MC Grass Block ground (green top, brown sides) ──
-const GROUND_GEO = new THREE.BoxGeometry(20, 0.5, 20);
-const GRASS_TOP = new THREE.MeshStandardMaterial({ color: "#5B8731", flatShading: true });
-const DIRT_SIDE = new THREE.MeshStandardMaterial({ color: "#8B6B3E", flatShading: true });
+// ── Panorama base platform：用中性基座弱化“户外草地”观感 ──
+const GROUND_GEO = new THREE.BoxGeometry(17, 0.36, 15);
+const GRASS_TOP = new THREE.MeshStandardMaterial({ color: "#CBD5E1", flatShading: true });
+const DIRT_SIDE = new THREE.MeshStandardMaterial({ color: "#475569", flatShading: true });
 // Material array order: [+X, -X, +Y, -Y, +Z, -Z]
 const GROUND_MATS = [DIRT_SIDE, DIRT_SIDE, GRASS_TOP, DIRT_SIDE, DIRT_SIDE, DIRT_SIDE];
 
 export function MCGround() {
-  return <mesh position={[0, -0.25, 0]} receiveShadow geometry={GROUND_GEO} material={GROUND_MATS} />;
+  return <mesh position={[0, -0.18, 0]} receiveShadow geometry={GROUND_GEO} material={GROUND_MATS} />;
 }
 
 // ── MC Bed (red blanket + wood frame + pillow) ──

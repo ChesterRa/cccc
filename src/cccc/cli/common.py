@@ -102,13 +102,8 @@ def _normalize_space_query_options_cli(options: dict[str, Any]) -> dict[str, Any
     return normalized
 
 def _default_runner_kind() -> str:
-    """Pick a sensible default runner for this platform."""
-    try:
-        from ..runners import pty as pty_runner
-
-        return "pty" if bool(getattr(pty_runner, "PTY_SUPPORTED", True)) else "headless"
-    except Exception:
-        return "headless"
+    """Use the current product-standard runner."""
+    return "pty"
 
 def _ensure_daemon_running() -> bool:
     resp = call_daemon({"op": "ping"}, timeout_s=1.0)

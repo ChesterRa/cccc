@@ -4,22 +4,20 @@ import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, Literal, Optional, Union
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException, Path as FastApiPath, Request, WebSocket
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
 from ...contracts.v1.automation import AutomationRule
+from ...kernel.settings import get_remote_access_settings
+from ...kernel.web_tokens import list_tokens, lookup_token
 
 
 def _default_runner_kind() -> str:
-    try:
-        from ...runners import pty as pty_runner
-
-        return "pty" if bool(getattr(pty_runner, "PTY_SUPPORTED", True)) else "headless"
-    except Exception:
-        return "headless"
+    return "pty"
 
 
 class CreateGroupRequest(BaseModel):
@@ -165,6 +163,10 @@ class GroupSettingsRequest(BaseModel):
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
     terminal_transcript_notify_tail: Optional[bool] = None
     terminal_transcript_notify_lines: Optional[int] = None
+
+    # Features
+    panorama_enabled: Optional[bool] = None
+
     by: str = Field(default="user")
 
 
@@ -371,3 +373,137 @@ class RouteContext:
     cached_json: Callable[..., Awaitable[Dict[str, Any]]]
     apply_web_logging: Callable[..., None]
     configured_web_token: Callable[[], str]
+
+
+def _configured_web_token() -> str:
+    """从 settings 优先读取旧 Web Token，再回退到环境变量。"""
+    try:
+        cfg = get_remote_access_settings()
+        token = str(cfg.get("web_token") or "").strip() if isinstance(cfg, dict) else ""
+        if token:
+            return token
+    except Exception:
+        pass
+    return str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
+
+
+def _anonymous_principal() -> Any:
+    return SimpleNamespace(kind="anonymous", user_id="", allowed_groups=(), is_admin=False)
+
+
+def _tokens_enabled() -> bool:
+    return bool(list_tokens()) or bool(_configured_web_token())
+
+
+def _principal_kind(principal: Any) -> str:
+    return str(getattr(principal, "kind", "anonymous") or "anonymous").strip() or "anonymous"
+
+
+def _principal_allowed_groups(principal: Any) -> tuple[str, ...]:
+    raw = getattr(principal, "allowed_groups", ()) or ()
+    if not isinstance(raw, (list, tuple, set)):
+        return ()
+    values = [str(item or "").strip() for item in raw]
+    return tuple(item for item in values if item)
+
+
+def _principal_is_admin(principal: Any) -> bool:
+    return bool(getattr(principal, "is_admin", False))
+
+
+def _extract_group_item_id(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("id") or item.get("group_id") or "").strip()
+
+
+def get_principal(conn: Request | WebSocket) -> Any:
+    state = getattr(conn, "state", None)
+    principal = getattr(state, "principal", None)
+    return principal if principal is not None else _anonymous_principal()
+
+
+def check_admin(conn: Request | WebSocket) -> Any:
+    principal = get_principal(conn)
+    if not _tokens_enabled():
+        return principal
+    if _principal_kind(principal) == "user" and _principal_is_admin(principal):
+        return principal
+    raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "admin access required", "details": {}})
+
+
+def check_group(conn: Request | WebSocket, group_id: str) -> Any:
+    principal = get_principal(conn)
+    if not _tokens_enabled():
+        return principal
+    gid = str(group_id or "").strip()
+    allowed_groups = _principal_allowed_groups(principal)
+    if _principal_kind(principal) != "user":
+        raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "group access required", "details": {"group_id": gid}})
+    if _principal_is_admin(principal) or not allowed_groups or gid in allowed_groups:
+        return principal
+    raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "group access denied", "details": {"group_id": gid}})
+
+
+def require_admin(request: Request) -> Any:
+    return check_admin(request)
+
+
+def require_group(request: Request, group_id: str = FastApiPath(...)) -> Any:
+    return check_group(request, group_id)
+
+
+def filter_groups_for_principal(conn: Request | WebSocket, groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    principal = get_principal(conn)
+    if not _tokens_enabled() or _principal_is_admin(principal):
+        return groups
+    if _principal_kind(principal) != "user":
+        return []
+    allowed_groups = _principal_allowed_groups(principal)
+    if not allowed_groups:
+        return groups
+    allowed = set(allowed_groups)
+    return [item for item in groups if _extract_group_item_id(item) in allowed]
+
+
+def _extract_token_from_headers(headers: Any) -> str:
+    try:
+        auth = str(headers.get("authorization") or "").strip()
+    except Exception:
+        auth = ""
+    if auth.lower().startswith("bearer "):
+        return str(auth[7:] or "").strip()
+    return ""
+
+
+def resolve_websocket_principal(websocket: WebSocket) -> Any:
+    token = _extract_token_from_headers(getattr(websocket, "headers", {}) or {})
+    if not token:
+        try:
+            cookies = getattr(websocket, "cookies", None) or {}
+            token = str(cookies.get("cccc_web_token") or "").strip()
+        except Exception:
+            token = ""
+    if not token:
+        try:
+            token = str(websocket.query_params.get("token") or "").strip()
+        except Exception:
+            token = ""
+    if not token:
+        return _anonymous_principal()
+    entry = lookup_token(token)
+    if not isinstance(entry, dict) and token == _configured_web_token():
+        return SimpleNamespace(kind="user", user_id="admin", allowed_groups=(), is_admin=True)
+    if not isinstance(entry, dict):
+        return _anonymous_principal()
+    return SimpleNamespace(
+        kind="user",
+        user_id=str(entry.get("user_id") or "").strip(),
+        allowed_groups=tuple(str(item or "").strip() for item in (entry.get("allowed_groups") or []) if str(item or "").strip()),
+        is_admin=bool(entry.get("is_admin", False)),
+    )
+
+
+def websocket_tokens_active() -> bool:
+    """Check if token auth is actually configured (new tokens or legacy)."""
+    return _tokens_enabled()

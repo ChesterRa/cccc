@@ -39,14 +39,14 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             context_path.write_text(
                 yaml.safe_dump(
                     {
-                        "vision": "v",
-                        "meta": [],
-                        "overview": {
-                            "manual": {
-                                "roles": ["lead", "peer"],
+                        "coordination": {
+                            "brief": {
+                                "objective": "v",
                                 "current_focus": "testing",
+                                "constraints": ["lead", "peer"],
                             }
                         },
+                        "meta": [],
                     },
                     sort_keys=False,
                 ),
@@ -54,9 +54,9 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             )
 
             ctx = storage.load_context()
-            self.assertEqual(ctx.vision, "v")
-            self.assertEqual(ctx.overview.manual.roles, ["lead", "peer"])
-            self.assertEqual(ctx.overview.manual.current_focus, "testing")
+            self.assertEqual(ctx.coordination.brief.objective, "v")
+            self.assertEqual(ctx.coordination.brief.constraints, ["lead", "peer"])
+            self.assertEqual(ctx.coordination.brief.current_focus, "testing")
             # meta was invalid (list instead of dict), should be replaced with default
             self.assertIsInstance(ctx.meta, dict)
             self.assertTrue(bool(ctx.meta))
@@ -73,10 +73,10 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
                 yaml.safe_dump(
                     {
                         "id": "T001",
-                        "name": "task",
+                        "title": "task",
                         "status": "unknown_status",
-                        "steps": [
-                            {"id": "S1", "name": "step1", "status": "broken_status"},
+                        "checklist": [
+                            {"id": "S1", "text": "step1", "status": "broken_status"},
                             "bad",
                         ],
                     },
@@ -89,8 +89,8 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             self.assertIsNotNone(task)
             assert task is not None
             self.assertEqual(task.status.value, "planned")
-            self.assertEqual(len(task.steps), 1)
-            self.assertEqual(task.steps[0].status.value, "pending")
+            self.assertEqual(len(task.checklist), 1)
+            self.assertEqual(task.checklist[0].status.value, "pending")
         finally:
             cleanup()
 
@@ -103,8 +103,7 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             agents_path.write_text(
                 yaml.safe_dump(
                     {
-                        "agents": [{"id": "peer1", "focus": "busy"}, "bad"],
-                        "heartbeat_timeout_seconds": "oops",
+                        "agent_states": [{"actor_id": "peer1", "hot": {"focus": "busy"}}, "bad"],
                     },
                     sort_keys=False,
                 ),
@@ -114,7 +113,7 @@ class TestContextStorageDirtyTolerance(unittest.TestCase):
             agents_state = storage.load_agents()
             self.assertEqual(len(agents_state.agents), 1)
             self.assertEqual(agents_state.agents[0].id, "peer1")
-            self.assertEqual(agents_state.agents[0].focus, "busy")
+            self.assertEqual(agents_state.agents[0].hot.focus, "busy")
         finally:
             cleanup()
 

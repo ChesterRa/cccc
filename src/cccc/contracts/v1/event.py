@@ -81,8 +81,6 @@ class GroupSetActiveScopeData(BaseModel):
 
 class GroupStartData(BaseModel):
     started: List[str] = Field(default_factory=list)
-    # When PTY is unavailable (e.g., Windows), some actors may be forced to headless.
-    forced_headless: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
 
