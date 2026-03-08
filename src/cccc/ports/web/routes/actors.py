@@ -122,6 +122,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "runner": req.runner,
                     "runtime": req.runtime,
                     "title": req.title,
+                    "extra_prompt": req.extra_prompt,
                     "command": command,
                     "env": dict(req.env),
                     "capability_autoload": list(req.capability_autoload or []),
@@ -145,6 +146,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         # Note: role is ignored - auto-determined by position
         if req.title is not None:
             patch["title"] = req.title
+        if req.extra_prompt is not None:
+            patch["extra_prompt"] = req.extra_prompt
         if req.command is not None:
             patch["command"] = _normalize_command(req.command)
         if req.env is not None:

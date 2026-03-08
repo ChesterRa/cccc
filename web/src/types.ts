@@ -77,6 +77,7 @@ export type Actor = {
   id: string;
   role?: string;
   title?: string;
+  extra_prompt?: string;
   enabled?: boolean;
   running?: boolean;  // Actual process running status
   idle_seconds?: number | null;  // Seconds since last PTY output (null if not running/headless)

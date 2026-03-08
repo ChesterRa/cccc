@@ -43,6 +43,7 @@ def handle_actor_add(
     by = str(args.get("by") or "user").strip()
     command_raw = args.get("command")
     env_raw = args.get("env")
+    extra_prompt = str(args.get("extra_prompt") or "").strip()
     capability_autoload_raw = args.get("capability_autoload")
     env_private_raw = args.get("env_private")
     default_scope_key = str(args.get("default_scope_key") or "").strip()
@@ -162,6 +163,7 @@ def handle_actor_add(
             title=title,
             command=command,
             env=env,
+            extra_prompt=extra_prompt,
             default_scope_key=default_scope_key,
             submit=submit or "enter",
             capability_autoload=list(capability_autoload_raw) if isinstance(capability_autoload_raw, list) else None,

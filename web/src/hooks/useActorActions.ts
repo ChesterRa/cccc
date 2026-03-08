@@ -10,8 +10,13 @@ export function useActorActions(groupId: string) {
   const { setBusy, setActiveTab, showError } = useUIStore();
   const { openModal, setEditingActor } = useModalStore();
   const { setInboxActorId, setInboxMessages } = useInboxStore();
-  const { setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText } =
-    useFormStore();
+  const {
+    setEditActorRuntime,
+    setEditActorCommand,
+    setEditActorTitle,
+    setEditActorExtraPrompt,
+    setEditActorCapabilityAutoloadText,
+  } = useFormStore();
 
   // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
@@ -69,10 +74,18 @@ export function useActorActions(groupId: string) {
       setEditActorRuntime((runtime || "codex") as SupportedRuntime);
       setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
       setEditActorTitle(actor.title || "");
+      setEditActorExtraPrompt(actor.extra_prompt || "");
       setEditActorCapabilityAutoloadText(formatCapabilityIdInput(actor.capability_autoload));
       setEditingActor(actor);
     },
-    [setEditingActor, setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText]
+    [
+      setEditingActor,
+      setEditActorRuntime,
+      setEditActorCommand,
+      setEditActorTitle,
+      setEditActorExtraPrompt,
+      setEditActorCapabilityAutoloadText,
+    ]
   );
 
   // Remove actor

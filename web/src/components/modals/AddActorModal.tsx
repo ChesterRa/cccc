@@ -43,6 +43,8 @@ export interface AddActorModalProps {
 
   newActorSecretsSetText: string;
   setNewActorSecretsSetText: (v: string) => void;
+  newActorExtraPrompt: string;
+  setNewActorExtraPrompt: (v: string) => void;
   newActorCapabilityAutoloadText: string;
   setNewActorCapabilityAutoloadText: (v: string) => void;
 
@@ -86,6 +88,8 @@ export function AddActorModal({
   setNewActorUseDefaultCommand,
   newActorSecretsSetText,
   setNewActorSecretsSetText,
+  newActorExtraPrompt,
+  setNewActorExtraPrompt,
   newActorCapabilityAutoloadText,
   setNewActorCapabilityAutoloadText,
   showAdvancedActor,
@@ -395,10 +399,36 @@ export function AddActorModal({
             <span className={classNames("transition-transform", showAdvancedActor && "rotate-90")}>▶</span>
             {t('advancedOptions')}
           </button>
-          ) : null}
+          ) : (
+            <button
+              className={`flex items-center gap-2 text-xs min-h-[36px] ${isDark ? "text-slate-400 hover:text-slate-300" : "text-gray-500 hover:text-gray-700"}`}
+              onClick={() => setShowAdvancedActor(!showAdvancedActor)}
+            >
+              <span className={classNames("transition-transform", showAdvancedActor && "rotate-90")}>▶</span>
+              {t('advancedOptions')}
+            </button>
+          )}
 
-          {!newActorUseProfile && showAdvancedActor && (
+          {showAdvancedActor && (
             <div className={`space-y-4 pl-4 border-l-2 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+              <div>
+                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("extraPrompt")}</label>
+                <textarea
+                  className={`w-full rounded-xl border px-3 py-2 text-sm min-h-[96px] transition-colors ${
+                    isDark
+                      ? "bg-slate-900/80 border-slate-600/50 text-white placeholder-slate-500 focus:border-blue-500"
+                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                  }`}
+                  value={newActorExtraPrompt}
+                  onChange={(e) => setNewActorExtraPrompt(e.target.value)}
+                  placeholder={t("extraPromptPlaceholder")}
+                  spellCheck={false}
+                />
+                <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("extraPromptHint")}</div>
+              </div>
+
+              {!newActorUseProfile ? (
+                <>
               <CapabilityPicker
                 isDark={isDark}
                 value={parseCapabilityIdInput(newActorCapabilityAutoloadText)}
@@ -463,6 +493,8 @@ export function AddActorModal({
                   {t('secretsFormat').replace(/<1>|<\/1>|<2>|<\/2>/g, '')}
                 </div>
               </div>
+                </>
+              ) : null}
             </div>
           )}
 

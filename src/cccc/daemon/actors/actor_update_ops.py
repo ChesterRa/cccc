@@ -69,6 +69,7 @@ def handle_actor_update(
         "title",
         "command",
         "env",
+        "extra_prompt",
         "default_scope_key",
         "submit",
         "capability_autoload",

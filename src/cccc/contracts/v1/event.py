@@ -125,6 +125,7 @@ class ActorUpdatePatch(BaseModel):
     title: Optional[str] = None
     command: Optional[List[str]] = None
     env: Optional[Dict[str, str]] = None
+    extra_prompt: Optional[str] = None
     default_scope_key: Optional[str] = None
     submit: Optional[ActorSubmit] = None
     capability_autoload: Optional[List[str]] = None

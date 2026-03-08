@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,7 @@ class ActorCreateRequest(BaseModel):
     runner: RunnerKind = Field(default_factory=_default_runner_kind)
     runtime: AgentRuntime = Field(default="codex")
     title: str = Field(default="")
+    extra_prompt: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
     capability_autoload: list[str] = Field(default_factory=list)
@@ -96,6 +98,7 @@ class ActorUpdateRequest(BaseModel):
     by: str = Field(default="user")
     # Note: role is ignored - auto-determined by position
     title: Optional[str] = None
+    extra_prompt: Optional[str] = None
     command: Optional[Union[str, list[str]]] = None
     env: Optional[Dict[str, str]] = None
     capability_autoload: Optional[list[str]] = None

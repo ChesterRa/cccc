@@ -620,6 +620,7 @@ export async function addActor(
   options?: {
     profileId?: string;
     title?: string;
+    extraPrompt?: string;
     capabilityAutoload?: string[];
   }
 ) {
@@ -638,6 +639,7 @@ export async function addActor(
         ? options?.capabilityAutoload
         : [],
       title: options?.title || "",
+      extra_prompt: options?.extraPrompt || "",
       default_scope_key: "",
       by: "user",
     }),
@@ -654,6 +656,7 @@ export async function updateActor(
     profileId?: string;
     profileAction?: "convert_to_custom";
     enabled?: boolean;
+    extraPrompt?: string;
     capabilityAutoload?: string[];
   }
 ) {
@@ -661,6 +664,7 @@ export async function updateActor(
   if (runtime !== undefined && runtime !== "") body.runtime = runtime;
   if (command !== undefined) body.command = command.trim();
   if (title !== undefined) body.title = title.trim();
+  if (opts?.extraPrompt !== undefined) body.extra_prompt = String(opts.extraPrompt || "").trim();
   if (opts?.profileId !== undefined) body.profile_id = String(opts.profileId || "");
   if (opts?.profileAction) body.profile_action = opts.profileAction;
   if (typeof opts?.enabled === "boolean") body.enabled = opts.enabled;

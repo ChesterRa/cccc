@@ -184,6 +184,7 @@ def add_actor(
     title: str = "",
     command: Optional[List[str]] = None,
     env: Optional[Dict[str, str]] = None,
+    extra_prompt: str = "",
     default_scope_key: str = "",
     submit: ActorSubmit = "enter",
     capability_autoload: Optional[List[str]] = None,
@@ -211,6 +212,7 @@ def add_actor(
         title=title.strip() if title else "",
         command=list(command or []),
         env=dict(env or {}),
+        extra_prompt=str(extra_prompt or "").strip(),
         default_scope_key=default_scope_key.strip(),
         submit=submit,
         capability_autoload=_normalize_capability_id_list(capability_autoload or []),
@@ -317,6 +319,9 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             item["env"] = env
         else:
             raise ValueError("invalid env")
+
+    if "extra_prompt" in patch:
+        item["extra_prompt"] = str(patch.get("extra_prompt") or "").strip()
 
     if "default_scope_key" in patch:
         item["default_scope_key"] = str(patch.get("default_scope_key") or "").strip()

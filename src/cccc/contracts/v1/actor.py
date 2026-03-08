@@ -43,6 +43,7 @@ class Actor(BaseModel):
     title: str = ""
     command: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
+    extra_prompt: str = ""
     default_scope_key: str = ""
     submit: ActorSubmit = "enter"
     capability_autoload: List[str] = Field(default_factory=list)

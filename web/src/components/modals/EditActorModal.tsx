@@ -15,6 +15,7 @@ export interface EditActorSavePayload {
   setVars: Record<string, string>;
   unsetKeys: string[];
   clear: boolean;
+  extraPrompt: string;
   capabilityAutoload: string[];
   profileId?: string;
   convertToCustom?: boolean;
@@ -42,6 +43,8 @@ export interface EditActorModalProps {
   onChangeCommand: (command: string) => void;
   title: string;
   onChangeTitle: (title: string) => void;
+  extraPrompt: string;
+  onChangeExtraPrompt: (extraPrompt: string) => void;
   capabilityAutoloadText: string;
   onChangeCapabilityAutoloadText: (value: string) => void;
   onSave: (payload: EditActorSavePayload) => Promise<void>;
@@ -107,6 +110,8 @@ export function EditActorModal({
   onChangeCommand,
   title,
   onChangeTitle,
+  extraPrompt,
+  onChangeExtraPrompt,
   capabilityAutoloadText,
   onChangeCapabilityAutoloadText,
   onSave,
@@ -367,6 +372,7 @@ export function EditActorModal({
           setVars: {},
           unsetKeys: [],
           clear: false,
+          extraPrompt: String(extraPrompt || "").trim(),
           capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
           profileId,
         });
@@ -410,6 +416,7 @@ export function EditActorModal({
         setVars: setParsed.setVars,
         unsetKeys: unsetParsed.unsetKeys,
         clear: secretsClearAll,
+        extraPrompt: String(extraPrompt || "").trim(),
         capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
         convertToCustom: linked && pendingConvertToCustom,
       });
@@ -462,6 +469,22 @@ export function EditActorModal({
               placeholder={actorId}
             />
             <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("leaveEmptyForId")}</div>
+          </div>
+
+          <div>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("extraPrompt")}</label>
+            <textarea
+              className={`w-full rounded-xl border px-3 py-2 text-sm min-h-[96px] transition-colors ${
+                isDark
+                  ? "bg-slate-900/80 border-slate-600/50 text-white placeholder-slate-500 focus:border-blue-500"
+                  : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+              }`}
+              value={extraPrompt}
+              onChange={(e) => onChangeExtraPrompt(e.target.value)}
+              placeholder={t("extraPromptPlaceholder")}
+              spellCheck={false}
+            />
+            <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("extraPromptHint")}</div>
           </div>
 
           <div>

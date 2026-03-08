@@ -209,6 +209,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     # Group override: CCCC_PREAMBLE.md under CCCC_HOME.
     pf = read_group_prompt_file(group, PREAMBLE_FILENAME)
     custom_body = str(pf.content or "").strip() if pf.found else ""
+    actor_extra_prompt = str(actor.get("extra_prompt") or "").strip()
 
     body = custom_body if custom_body else str(DEFAULT_PREAMBLE_BODY or "").strip()
 
@@ -217,4 +218,6 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "---\n" + "\n".join(core_lines).rstrip(),
         body.rstrip(),
     ]
+    if actor_extra_prompt:
+        parts.append("Actor-specific instructions:\n" + actor_extra_prompt)
     return "\n\n".join([p for p in parts if p]).rstrip() + "\n"

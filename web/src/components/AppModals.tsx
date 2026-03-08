@@ -115,10 +115,12 @@ export function AppModals({
     editActorRuntime,
     editActorCommand,
     editActorTitle,
+    editActorExtraPrompt,
     editActorCapabilityAutoloadText,
     setEditActorRuntime,
     setEditActorCommand,
     setEditActorTitle,
+    setEditActorExtraPrompt,
     setEditActorCapabilityAutoloadText,
     newActorId,
     newActorRole,
@@ -126,6 +128,7 @@ export function AppModals({
     newActorCommand,
     newActorUseDefaultCommand,
     newActorSecretsSetText,
+    newActorExtraPrompt,
     newActorCapabilityAutoloadText,
     newActorUseProfile,
     newActorProfileId,
@@ -137,6 +140,7 @@ export function AppModals({
     setNewActorCommand,
     setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
+    setNewActorExtraPrompt,
     setNewActorCapabilityAutoloadText,
     setNewActorUseProfile,
     setNewActorProfileId,
@@ -384,12 +388,14 @@ export function AppModals({
       ? editingActor.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
       : "";
     const currentTitle = String(editingActor.title || "").trim();
+    const currentExtraPrompt = String(editingActor.extra_prompt || "").trim();
     const currentCapabilityAutoload = normalizeCapabilityIdList(
       (editingActor as { capability_autoload?: unknown[] })?.capability_autoload
     );
     const nextRuntime = String(editActorRuntime || "codex").trim();
     const nextCommand = String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
+    const nextExtraPrompt = String(editActorExtraPrompt || "").trim();
     const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
       ? normalizeCapabilityIdList(payload.capabilityAutoload)
       : [];
@@ -397,11 +403,12 @@ export function AppModals({
     const runtimeChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
     const commandChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
     const titleChanged = nextTitle !== currentTitle;
+    const extraPromptChanged = nextExtraPrompt !== currentExtraPrompt;
     const autoloadChanged =
       JSON.stringify(nextCapabilityAutoload) !== JSON.stringify(currentCapabilityAutoload);
     const profileChanged = mode === "profile" && profileId !== String(editingActor.profile_id || "").trim();
     const hasActorMutation =
-      convertToCustom || runtimeChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
+      convertToCustom || runtimeChanged || commandChanged || titleChanged || extraPromptChanged || autoloadChanged || profileChanged;
 
     if (!options.restart && !hasActorMutation && !willChangeSecrets) {
       throw new Error(NO_CHANGES_SENTINEL);
@@ -442,7 +449,7 @@ export function AppModals({
       }
 
       if (mode === "profile") {
-        const needProfilePatch = profileChanged || titleChanged || autoloadChanged;
+        const needProfilePatch = profileChanged || titleChanged || extraPromptChanged || autoloadChanged;
         if (needProfilePatch) {
           const profileResp = await api.updateActor(
             selectedGroupId,
@@ -452,6 +459,7 @@ export function AppModals({
             nextTitle,
             {
               profileId,
+              extraPrompt: nextExtraPrompt,
               capabilityAutoload: nextCapabilityAutoload,
             }
           );
@@ -475,6 +483,7 @@ export function AppModals({
           nextRuntime !== snapshotRuntime ||
           nextCommand !== snapshotCommand ||
           nextTitle !== snapshotTitle ||
+          nextExtraPrompt !== String(actorSnapshot.extra_prompt || currentExtraPrompt).trim() ||
           autoloadChanged;
         if (needCustomPatch) {
           const customResp = await api.updateActor(
@@ -483,7 +492,7 @@ export function AppModals({
             editActorRuntime,
             editActorCommand,
             nextTitle,
-            { capabilityAutoload: nextCapabilityAutoload }
+            { extraPrompt: nextExtraPrompt, capabilityAutoload: nextCapabilityAutoload }
           );
           if (!customResp.ok) {
             showError(`${customResp.error.code}: ${customResp.error.message}`);
@@ -518,7 +527,7 @@ export function AppModals({
 
       if (!options.restart) {
         const isRunning = Boolean(editingActor.running ?? editingActor.enabled ?? false);
-        const restartRequired = isRunning && (willChangeSecrets || profileChanged || runtimeChanged || commandChanged || convertToCustom);
+        const restartRequired = isRunning && (willChangeSecrets || profileChanged || runtimeChanged || commandChanged || extraPromptChanged || convertToCustom);
         if (restartRequired) {
           showNotice({ message: t("savedRestartRequired", { label }) });
         }
@@ -541,11 +550,12 @@ export function AppModals({
     setEditActorRuntime((runtime || "codex") as SupportedRuntime);
     setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
     setEditActorTitle(String(actor.title || ""));
+    setEditActorExtraPrompt(String(actor.extra_prompt || ""));
     setEditActorCapabilityAutoloadText(
       formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload)
     );
     setEditingActor(actor as Actor);
-  }, [setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText, setEditingActor]);
+  }, [setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorExtraPrompt, setEditActorCapabilityAutoloadText, setEditingActor]);
 
   useEffect(() => {
     if (!editingActor) return;
@@ -558,6 +568,7 @@ export function AppModals({
       Number(editingActor.profile_revision_applied || 0) !== Number(latest.profile_revision_applied || 0) ||
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
       String(editingActor.title || "") !== String(latest.title || "") ||
+      String(editingActor.extra_prompt || "") !== String(latest.extra_prompt || "") ||
       String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
         String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "") ||
       String(
@@ -744,9 +755,11 @@ export function AppModals({
         newActorUseProfile
           ? {
               profileId: String(selectedProfile?.id || "").trim(),
+              extraPrompt: String(newActorExtraPrompt || "").trim(),
               capabilityAutoload,
             }
           : {
+              extraPrompt: String(newActorExtraPrompt || "").trim(),
               capabilityAutoload,
             }
       );
@@ -1071,6 +1084,8 @@ export function AppModals({
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
+        extraPrompt={editActorExtraPrompt}
+        onChangeExtraPrompt={setEditActorExtraPrompt}
         capabilityAutoloadText={editActorCapabilityAutoloadText}
         onChangeCapabilityAutoloadText={setEditActorCapabilityAutoloadText}
         onSave={handleSaveEditActorOnly}
@@ -1139,6 +1154,8 @@ export function AppModals({
         setNewActorUseDefaultCommand={setNewActorUseDefaultCommand}
         newActorSecretsSetText={newActorSecretsSetText}
         setNewActorSecretsSetText={setNewActorSecretsSetText}
+        newActorExtraPrompt={newActorExtraPrompt}
+        setNewActorExtraPrompt={setNewActorExtraPrompt}
         newActorCapabilityAutoloadText={newActorCapabilityAutoloadText}
         setNewActorCapabilityAutoloadText={setNewActorCapabilityAutoloadText}
         showAdvancedActor={showAdvancedActor}
