@@ -130,6 +130,7 @@ export default function App() {
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const [mountedActorIds, setMountedActorIds] = React.useState<string[]>([]);
   const [ccccHome, setCcccHome] = React.useState("");
+  const [daemonVersion, setDaemonVersion] = React.useState("");
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = React.useState<boolean | null>(null);
 
   // Custom hooks
@@ -389,6 +390,7 @@ export default function App() {
     void api.fetchPing().then((resp) => {
       if (resp.ok) {
         setWebReadOnly(Boolean(resp.result?.web?.read_only));
+        setDaemonVersion(String(resp.result?.daemon?.version || "").trim());
       }
     }).catch(() => {
       /* ignore */
@@ -528,11 +530,13 @@ export default function App() {
             theme={theme}
             onThemeChange={setTheme}
             webReadOnly={webReadOnly}
+            webVersion={__WEB_VERSION__}
             selectedGroupId={selectedGroupId}
             groupDoc={groupDoc}
             selectedGroupRunning={selectedGroupRunning}
             actors={actors}
             sseStatus={sseStatus}
+            daemonVersion={daemonVersion}
             busy={busy}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenGroupEdit={canManageGroups ? () => {

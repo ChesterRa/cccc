@@ -22,6 +22,8 @@ export interface AppHeaderProps {
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   webReadOnly?: boolean;
+  webVersion?: string;
+  daemonVersion?: string;
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
@@ -44,6 +46,8 @@ export function AppHeader({
   theme,
   onThemeChange,
   webReadOnly,
+  webVersion,
+  daemonVersion,
   selectedGroupId,
   groupDoc,
   selectedGroupRunning,
@@ -110,6 +114,26 @@ export function AppHeader({
                 );
               })()}
           </div>
+          {(webVersion || daemonVersion) && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+              {webVersion && (
+                <span
+                  className="inline-flex items-center rounded-full border border-black/10 bg-black/5 px-2 py-0.5 font-mono dark:border-white/10 dark:bg-white/5"
+                  title={t("connectedWebVersionTitle", { version: webVersion })}
+                >
+                  {t("connectedWebVersion", { version: webVersion })}
+                </span>
+              )}
+              {daemonVersion && (
+                <span
+                  className="inline-flex items-center rounded-full border border-black/10 bg-black/5 px-2 py-0.5 font-mono dark:border-white/10 dark:bg-white/5"
+                  title={t("connectedDaemonVersionTitle", { version: daemonVersion })}
+                >
+                  {t("connectedDaemonVersion", { version: daemonVersion })}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
