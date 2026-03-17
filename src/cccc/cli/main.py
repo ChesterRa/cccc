@@ -12,6 +12,7 @@ from .messaging_cmds import *  # noqa: F401,F403
 from .space_cmds import *  # noqa: F401,F403
 from .im_cmds import *  # noqa: F401,F403
 from .system_cmds import *  # noqa: F401,F403
+from .dev_cmds import *  # noqa: F401,F403
 
 
 def _apply_invocation_web_overrides(args: argparse.Namespace) -> tuple[dict[str, Optional[str]], dict[str, str]]:
@@ -506,6 +507,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_space_jobs_cancel.add_argument("--lane", choices=["work", "memory"], required=True, help="Notebook lane")
     p_space_jobs_cancel.add_argument("--by", default="user", help="Requester (default: user)")
     p_space_jobs_cancel.set_defaults(func=cmd_space_jobs_cancel)
+
+    p_dev = sub.add_parser("dev", help="Start dev environment (daemon + API + Vite HMR)")
+    p_dev.add_argument("--port", type=int, default=5173, help="Vite dev server port (default: 5173)")
+    p_dev.set_defaults(func=cmd_dev)
 
     p_ver = sub.add_parser("version", help="Show version")
     p_ver.set_defaults(func=cmd_version)
