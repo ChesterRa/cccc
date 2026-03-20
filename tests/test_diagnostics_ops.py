@@ -1,7 +1,9 @@
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestDiagnosticsOps(unittest.TestCase):
@@ -25,6 +27,13 @@ class TestDiagnosticsOps(unittest.TestCase):
         from cccc.daemon.server import handle_request
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    def _create_group(self, title: str = "diagnostics-test") -> str:
+        resp, _ = self._call("group_create", {"title": title, "topic": "", "by": "user"})
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        gid = str((resp.result or {}).get("group_id") or "")
+        self.assertTrue(gid)
+        return gid
 
     def test_debug_ops_require_developer_mode(self) -> None:
         _, cleanup = self._with_home()
@@ -152,6 +161,66 @@ class TestDiagnosticsOps(unittest.TestCase):
             self.assertEqual(int(runtime.get("pid") or 0), 2_147_483_647)
             self.assertEqual(bool(runtime.get("pid_alive")), False)
             self.assertIn("runtime_pid_stale", web.get("issues") or [])
+        finally:
+            cleanup()
+
+    def test_feedback_bundle_export_redacts_logs_and_transcripts(self) -> None:
+        td, cleanup = self._with_home()
+        try:
+            update, _ = self._call("observability_update", {"by": "user", "patch": {"developer_mode": True}})
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            gid = self._create_group("feedback-bundle")
+            add_actor, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_actor.ok, getattr(add_actor, "error", None))
+
+            daemon_log = Path(td) / "daemon" / "ccccd.log"
+            daemon_log.parent.mkdir(parents=True, exist_ok=True)
+            daemon_log.write_text(
+                "Authorization: Bearer sk-live-secret-token\nOPENAI_API_KEY=sk-abcdefghi123456\n",
+                encoding="utf-8",
+            )
+
+            with patch("cccc.runners.pty.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.runners.pty.SUPERVISOR.tail_output",
+                return_value=b'export OPENAI_API_KEY="sk-terminal-secret"\nCookie: sessionid=abc123\n',
+            ):
+                resp, _ = self._call("feedback_bundle_export", {"group_id": gid, "by": "user"})
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            attachment = result.get("attachment") if isinstance(result.get("attachment"), dict) else {}
+            rel_path = str(attachment.get("path") or "")
+            self.assertTrue(rel_path.startswith("state/blobs/"))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            bundle_path = Path(str(group.path)) / rel_path
+            self.assertTrue(bundle_path.exists())
+
+            with zipfile.ZipFile(bundle_path) as zf:
+                daemon_text = zf.read("logs/daemon.log").decode("utf-8")
+                terminal_text = zf.read("terminals/peer1.txt").decode("utf-8")
+                manifest = zf.read("manifest.json").decode("utf-8")
+
+            self.assertIn("[REDACTED]", daemon_text)
+            self.assertNotIn("sk-live-secret-token", daemon_text)
+            self.assertNotIn("sk-abcdefghi123456", daemon_text)
+            self.assertIn("[REDACTED]", terminal_text)
+            self.assertNotIn("sk-terminal-secret", terminal_text)
+            self.assertNotIn("sessionid=abc123", terminal_text)
+            self.assertIn('"kind": "feedback_bundle"', manifest)
         finally:
             cleanup()
 

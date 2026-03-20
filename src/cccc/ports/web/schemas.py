@@ -67,6 +67,10 @@ class DebugClearLogsRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class FeedbackBundleExportRequest(BaseModel):
+    by: str = Field(default="user")
+
+
 class GroupTemplatePreviewRequest(BaseModel):
     template: str = Field(default="")
     by: str = Field(default="user")

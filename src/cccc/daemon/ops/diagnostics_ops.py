@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import io
+import json
 import os
+import re
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor, get_effective_role, list_actors
+from ...kernel.blobs import sanitize_filename, store_blob_bytes
 from ...kernel.group import load_group
+from ...kernel.ledger import read_last_lines
 from ...kernel.settings import get_remote_access_settings, resolve_remote_access_web_binding
 from ...kernel.terminal_transcript import get_terminal_transcript_settings
 from ...paths import ensure_home
@@ -27,6 +33,18 @@ from ...util.conv import coerce_bool
 from ...util.process import pid_is_alive
 from ...util.time import utc_now_iso
 from ... import __version__
+
+
+_ASSIGNMENT_RE = re.compile(
+    r"(?im)(\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|SESSION|COOKIE|AUTH)[A-Z0-9_]*\b\s*[:=]\s*)([^\s,;]+)"
+)
+_JSON_SECRET_RE = re.compile(
+    r'(?im)("?[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|SESSION|COOKIE|AUTH)[A-Z0-9_]*"?\s*:\s*)(".*?"|\'.*?\'|[^,\s}]+)'
+)
+_AUTH_BEARER_RE = re.compile(r"(?im)(authorization\s*:\s*bearer\s+)([^\s]+)")
+_COOKIE_RE = re.compile(r"(?im)(cookie\s*:\s*)(.+)")
+_OPENAI_KEY_RE = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b")
+_ANTHROPIC_KEY_RE = re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}\b")
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -56,6 +74,17 @@ def _web_exposure_class(host: str, public_url: str) -> str:
     if str(public_url or "").strip():
         return "public"
     return "local" if is_loopback_host(host) else "private"
+
+
+def _authorize_debug_group_access(*, group_id: str, by: str) -> tuple[Any | None, DaemonResponse | None]:
+    group = load_group(group_id) if group_id else None
+    if group_id and group is None:
+        return None, _error("group_not_found", f"group not found: {group_id}")
+    if group is not None and by and by != "user":
+        role = get_effective_role(group, by)
+        if role != "foreman":
+            return None, _error("permission_denied", "debug tools are restricted to user + foreman")
+    return group, None
 
 
 def _build_web_debug_snapshot(*, home: Path) -> Dict[str, Any]:
@@ -132,6 +161,110 @@ def _build_web_debug_snapshot(*, home: Path) -> Dict[str, Any]:
     }
 
 
+def _build_debug_snapshot_result(
+    *,
+    home: Path,
+    group: Any | None,
+    get_observability: Callable[[], Dict[str, Any]],
+    effective_runner_kind: Callable[[str], str],
+    throttle_debug_summary: Callable[[str], Dict[str, Any]],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "developer_mode": True,
+        "observability": get_observability(),
+        "daemon": {
+            "pid": os.getpid(),
+            "version": __version__,
+            "ts": utc_now_iso(),
+            "log_path": str(home / "daemon" / "ccccd.log"),
+        },
+        "web": _build_web_debug_snapshot(home=home),
+    }
+    if group is None:
+        return out
+    out["group"] = {
+        "group_id": group.group_id,
+        "state": str(group.doc.get("state") or "active"),
+        "active_scope_key": str(group.doc.get("active_scope_key") or ""),
+        "title": str(group.doc.get("title") or ""),
+    }
+    actors = []
+    for actor in list_actors(group):
+        if not isinstance(actor, dict):
+            continue
+        aid = str(actor.get("id") or "").strip()
+        if not aid:
+            continue
+        runner_kind = str(actor.get("runner") or "pty")
+        runner_effective = effective_runner_kind(runner_kind)
+        running = False
+        try:
+            if runner_effective == "pty":
+                running = pty_runner.SUPERVISOR.actor_running(group.group_id, aid)
+            elif runner_effective == "headless":
+                running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
+        except Exception:
+            running = False
+        actors.append(
+            {
+                "id": aid,
+                "role": get_effective_role(group, aid),
+                "runtime": str(actor.get("runtime") or ""),
+                "runner": runner_kind,
+                "runner_effective": (runner_effective if runner_effective != runner_kind else runner_kind),
+                "enabled": coerce_bool(actor.get("enabled"), default=True),
+                "running": bool(running),
+                "unread_count": int(actor.get("unread_count") or 0),
+            }
+        )
+    out["actors"] = actors
+    try:
+        out["delivery"] = throttle_debug_summary(group.group_id)
+    except Exception:
+        out["delivery"] = {}
+    return out
+
+
+def _redact_sensitive_text(text: str) -> str:
+    if not text:
+        return ""
+    out = str(text)
+    out = _AUTH_BEARER_RE.sub(r"\1[REDACTED]", out)
+    out = _COOKIE_RE.sub(r"\1[REDACTED]", out)
+    out = _ASSIGNMENT_RE.sub(r"\1[REDACTED]", out)
+    out = _JSON_SECRET_RE.sub(r'\1"[REDACTED]"', out)
+    out = _OPENAI_KEY_RE.sub("[REDACTED]", out)
+    out = _ANTHROPIC_KEY_RE.sub("[REDACTED]", out)
+    return out
+
+
+def _collect_terminal_snapshot(*, group_id: str, actor_id: str, max_chars: int, compact: bool = True) -> str:
+    try:
+        raw = pty_runner.SUPERVISOR.tail_output(group_id=group_id, actor_id=actor_id, max_bytes=max_chars * 4)
+    except Exception:
+        return ""
+    raw_text = raw.decode("utf-8", errors="replace")
+    text = raw_text
+    try:
+        from ...util.terminal_render import render_transcript
+
+        text = render_transcript(raw_text, compact=compact)
+    except Exception:
+        text = raw_text
+    if len(text) > max_chars:
+        text = text[-max_chars:]
+    return _redact_sensitive_text(text)
+
+
+def _collect_log_tail(path: Path | None, *, lines: int) -> str:
+    if path is None or not path.exists() or not path.is_file():
+        return ""
+    try:
+        return _redact_sensitive_text("\n".join(read_last_lines(path, int(lines))))
+    except Exception:
+        return ""
+
+
 def handle_debug_snapshot(
     args: Dict[str, Any],
     *,
@@ -144,68 +277,19 @@ def handle_debug_snapshot(
         return _error("developer_mode_required", "developer mode is disabled")
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip()
-    group = load_group(group_id) if group_id else None
-    if group_id and group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
-    if group is not None and by and by != "user":
-        role = get_effective_role(group, by)
-        if role != "foreman":
-            return _error("permission_denied", "debug tools are restricted to user + foreman")
+    group, auth_err = _authorize_debug_group_access(group_id=group_id, by=by)
+    if auth_err is not None:
+        return auth_err
 
     try:
         home = ensure_home()
-        out: Dict[str, Any] = {
-            "developer_mode": True,
-            "observability": get_observability(),
-            "daemon": {
-                "pid": os.getpid(),
-                "version": __version__,
-                "ts": utc_now_iso(),
-                "log_path": str(home / "daemon" / "ccccd.log"),
-            },
-            "web": _build_web_debug_snapshot(home=home),
-        }
-        if group is not None:
-            out["group"] = {
-                "group_id": group.group_id,
-                "state": str(group.doc.get("state") or "active"),
-                "active_scope_key": str(group.doc.get("active_scope_key") or ""),
-                "title": str(group.doc.get("title") or ""),
-            }
-            actors = []
-            for actor in list_actors(group):
-                if not isinstance(actor, dict):
-                    continue
-                aid = str(actor.get("id") or "").strip()
-                if not aid:
-                    continue
-                runner_kind = str(actor.get("runner") or "pty")
-                runner_effective = effective_runner_kind(runner_kind)
-                running = False
-                try:
-                    if runner_effective == "pty":
-                        running = pty_runner.SUPERVISOR.actor_running(group.group_id, aid)
-                    elif runner_effective == "headless":
-                        running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
-                except Exception:
-                    running = False
-                actors.append(
-                    {
-                        "id": aid,
-                        "role": get_effective_role(group, aid),
-                        "runtime": str(actor.get("runtime") or ""),
-                        "runner": runner_kind,
-                        "runner_effective": (runner_effective if runner_effective != runner_kind else runner_kind),
-                        "enabled": coerce_bool(actor.get("enabled"), default=True),
-                        "running": bool(running),
-                        "unread_count": int(actor.get("unread_count") or 0),
-                    }
-                )
-            out["actors"] = actors
-            try:
-                out["delivery"] = throttle_debug_summary(group.group_id)
-            except Exception:
-                out["delivery"] = {}
+        out = _build_debug_snapshot_result(
+            home=home,
+            group=group,
+            get_observability=get_observability,
+            effective_runner_kind=effective_runner_kind,
+            throttle_debug_summary=throttle_debug_summary,
+        )
         return DaemonResponse(ok=True, result=out)
     except Exception as e:
         return _error("debug_snapshot_failed", str(e))
@@ -408,6 +492,126 @@ def handle_debug_clear_logs(args: Dict[str, Any], *, developer_mode_enabled: Cal
         return _error("debug_clear_logs_failed", str(e))
 
 
+def handle_feedback_bundle_export(
+    args: Dict[str, Any],
+    *,
+    developer_mode_enabled: Callable[[], bool],
+    get_observability: Callable[[], Dict[str, Any]],
+    effective_runner_kind: Callable[[str], str],
+    throttle_debug_summary: Callable[[str], Dict[str, Any]],
+    pty_backlog_bytes: Callable[[], int],
+) -> DaemonResponse:
+    if not developer_mode_enabled():
+        return _error("developer_mode_required", "developer mode is disabled")
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group, auth_err = _authorize_debug_group_access(group_id=group_id, by=by)
+    if auth_err is not None:
+        return auth_err
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    log_lines = int(args.get("log_lines") or 400)
+    if log_lines <= 0:
+        log_lines = 400
+    if log_lines > 4000:
+        log_lines = 4000
+    terminal_max_chars = int(args.get("terminal_max_chars") or 12000)
+    if terminal_max_chars <= 0:
+        terminal_max_chars = 12000
+    if terminal_max_chars > 200_000:
+        terminal_max_chars = 200_000
+
+    try:
+        home = ensure_home()
+        snapshot = _build_debug_snapshot_result(
+            home=home,
+            group=group,
+            get_observability=get_observability,
+            effective_runner_kind=effective_runner_kind,
+            throttle_debug_summary=throttle_debug_summary,
+        )
+
+        daemon_log_path, _ = _debug_component_path(component="daemon", group_id=group_id)
+        web_log_path, _ = _debug_component_path(component="web", group_id=group_id)
+        im_log_path, _ = _debug_component_path(component="im", group_id=group_id)
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            manifest = {
+                "kind": "feedback_bundle",
+                "generated_at": utc_now_iso(),
+                "group_id": group_id,
+                "group_title": str(group.doc.get("title") or ""),
+                "by": by,
+                "log_lines": log_lines,
+                "terminal_max_chars": terminal_max_chars,
+                "redaction": "best_effort",
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            zf.writestr("snapshot/debug_snapshot.json", json.dumps(snapshot, ensure_ascii=False, indent=2))
+
+            daemon_log = _collect_log_tail(daemon_log_path, lines=log_lines)
+            if daemon_log:
+                zf.writestr("logs/daemon.log", daemon_log)
+            web_log = _collect_log_tail(web_log_path, lines=log_lines)
+            if web_log:
+                zf.writestr("logs/web.log", web_log)
+            im_log = _collect_log_tail(im_log_path, lines=log_lines)
+            if im_log:
+                zf.writestr("logs/im.log", im_log)
+
+            terminal_capture_bytes = max(terminal_max_chars * 4, int(pty_backlog_bytes()))
+            for actor in list_actors(group):
+                if not isinstance(actor, dict):
+                    continue
+                actor_id = str(actor.get("id") or "").strip()
+                if not actor_id or str(actor.get("runner") or "pty").strip() != "pty":
+                    continue
+                try:
+                    running = bool(pty_runner.SUPERVISOR.actor_running(group_id, actor_id))
+                except Exception:
+                    running = False
+                if not running:
+                    continue
+                transcript = _collect_terminal_snapshot(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    max_chars=min(terminal_max_chars, terminal_capture_bytes),
+                )
+                if not transcript:
+                    continue
+                safe_actor_id = sanitize_filename(actor_id, fallback="actor")
+                zf.writestr(f"terminals/{safe_actor_id}.txt", transcript)
+
+        filename = sanitize_filename(
+            f"cccc-feedback-bundle-{group_id}-{utc_now_iso().replace(':', '').replace('-', '')}.zip",
+            fallback=f"cccc-feedback-bundle-{group_id}.zip",
+        )
+        attachment = store_blob_bytes(
+            group,
+            data=zip_buffer.getvalue(),
+            filename=filename,
+            mime_type="application/zip",
+            kind="file",
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group_id,
+                "attachment": attachment,
+                "bundle": {
+                    "filename": filename,
+                    "redaction": "best_effort",
+                },
+            },
+        )
+    except Exception as e:
+        return _error("feedback_bundle_export_failed", str(e))
+
+
 def try_handle_diagnostics_op(
     op: str,
     args: Dict[str, Any],
@@ -437,6 +641,15 @@ def try_handle_diagnostics_op(
         return handle_terminal_clear(
             args,
             can_read_terminal_transcript=can_read_terminal_transcript,
+        )
+    if op == "feedback_bundle_export":
+        return handle_feedback_bundle_export(
+            args,
+            developer_mode_enabled=developer_mode_enabled,
+            get_observability=get_observability,
+            effective_runner_kind=effective_runner_kind,
+            throttle_debug_summary=throttle_debug_summary,
+            pty_backlog_bytes=pty_backlog_bytes,
         )
     if op == "debug_tail_logs":
         return handle_debug_tail_logs(args, developer_mode_enabled=developer_mode_enabled)

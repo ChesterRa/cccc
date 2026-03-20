@@ -2371,3 +2371,13 @@ export async function clearLogs(component: "daemon" | "web" | "im", groupId: str
     body: JSON.stringify({ component, group_id: groupId, by: "user" }),
   });
 }
+
+export async function exportFeedbackBundle(groupId: string) {
+  return apiJson<{ attachment?: { path?: string; title?: string; mime_type?: string; bytes?: number } }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/feedback_bundle/export`,
+    {
+      method: "POST",
+      body: JSON.stringify({ by: "user" }),
+    }
+  );
+}

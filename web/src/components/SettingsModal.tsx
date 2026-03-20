@@ -140,6 +140,9 @@ export function SettingsModal({
   const [registryBusy, setRegistryBusy] = useState(false);
   const [registryErr, setRegistryErr] = useState("");
   const [registryResult, setRegistryResult] = useState<api.RegistryReconcileResult | null>(null);
+  const [feedbackBundleBusy, setFeedbackBundleBusy] = useState(false);
+  const [feedbackBundleErr, setFeedbackBundleErr] = useState("");
+  const [feedbackBundleInfo, setFeedbackBundleInfo] = useState("");
 
   // ============ Effects ============
 
@@ -749,6 +752,38 @@ export function SettingsModal({
     }
   };
 
+  const handleExportFeedbackBundle = async () => {
+    if (!groupId) return;
+    setFeedbackBundleBusy(true);
+    setFeedbackBundleErr("");
+    setFeedbackBundleInfo("");
+    try {
+      const resp = await api.exportFeedbackBundle(groupId);
+      if (!resp.ok) {
+        setFeedbackBundleErr(resp.error?.message || t("developer.feedbackBundleFailed"));
+        return;
+      }
+      const path = String(resp.result?.attachment?.path || "").trim();
+      const blobName = path.split("/").pop() || "";
+      if (!path.startsWith("state/blobs/") || !blobName) {
+        setFeedbackBundleErr(t("developer.feedbackBundleFailed"));
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+      a.download = String(resp.result?.attachment?.title || blobName);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setFeedbackBundleInfo(t("developer.feedbackBundleDownloaded"));
+      window.setTimeout(() => setFeedbackBundleInfo(""), 1500);
+    } catch {
+      setFeedbackBundleErr(t("developer.feedbackBundleFailed"));
+    } finally {
+      setFeedbackBundleBusy(false);
+    }
+  };
+
   // ============ Derived state (must be before early return to keep hooks stable) ============
 
   const globalSettingsEnabled = canAccessGlobalSettings === true;
@@ -1054,6 +1089,10 @@ export function SettingsModal({
                   registryResult={registryResult}
                   onPreviewRegistry={loadRegistryPreview}
                   onReconcileRegistry={handleReconcileRegistry}
+                  feedbackBundleBusy={feedbackBundleBusy}
+                  feedbackBundleErr={feedbackBundleErr}
+                  feedbackBundleInfo={feedbackBundleInfo}
+                  onExportFeedbackBundle={handleExportFeedbackBundle}
                 />
               )}
               </>
