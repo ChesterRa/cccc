@@ -2,6 +2,16 @@
 
 This page focuses on high-ROI, real-world CCCC workflows.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `group` is the main collaboration unit
+- `actor` is the live scheduled participant used in each scenario
+- `profile` is reusable runtime configuration and is separate from the actor
+- `attach` sets the group's `authoritative_workspace`
+- `status` should be read as operator-facing evidence
+
 ## How to Read This Page
 
 Each scenario includes:
@@ -24,8 +34,10 @@ cd /path/to/repo
 cccc attach .
 cccc setup --runtime claude
 cccc setup --runtime codex
-cccc actor add builder --runtime claude
-cccc actor add reviewer --runtime codex
+cccc actor profile upsert --id builder-shared --name "Builder Shared" --runtime claude
+cccc actor profile upsert --id reviewer-shared --name "Reviewer Shared" --runtime codex
+cccc actor add builder --profile-id builder-shared
+cccc actor add reviewer --profile-id reviewer-shared
 cccc group start
 ```
 
@@ -58,10 +70,14 @@ Split one medium project into parallel tracks while keeping alignment.
 ### Minimal Setup
 
 ```bash
-cccc actor add foreman --runtime claude
-cccc actor add frontend --runtime codex
-cccc actor add backend --runtime gemini
-cccc actor add qa --runtime kimi
+cccc actor profile upsert --id foreman-shared --name "Foreman Shared" --runtime claude
+cccc actor profile upsert --id frontend-shared --name "Frontend Shared" --runtime codex
+cccc actor profile upsert --id backend-shared --name "Backend Shared" --runtime gemini
+cccc actor profile upsert --id qa-shared --name "QA Shared" --runtime kimi
+cccc actor add foreman --profile-id foreman-shared
+cccc actor add frontend --profile-id frontend-shared
+cccc actor add backend --profile-id backend-shared
+cccc actor add qa --profile-id qa-shared
 cccc group start
 ```
 
@@ -155,3 +171,17 @@ Run comparable multi-agent sessions with stable logging and replayability.
 - `docs/guide/operations.md`
 - `docs/reference/positioning.md`
 - `docs/reference/features.md`
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-23`: Added concrete `profile` creation plus `actor add --profile-id ...` examples so scenario setup reflects the current CLI surface.
+- `2026-03-23`: Added local glossary alignment so scenario docs stop implying that actor setup, reusable profile config, attach authority, and status evidence are the same layer.

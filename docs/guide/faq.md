@@ -2,6 +2,19 @@
 
 Frequently asked questions about CCCC.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `group` is the concise repo-local term, while `working group` remains
+  compatibility wording
+- `attach` defines a group's `authoritative_workspace`
+- `scope` is older wording that may still appear in historical answers
+- `profile` means reusable actor runtime configuration and launch intent
+- `status` is an evidence-bound surface, not proof that every deeper capability
+  is available
+- `resume` is layered and does not only mean native runtime session continuity
+
 ## Installation & Setup
 
 ### How do I install CCCC?
@@ -76,6 +89,20 @@ This checks Python version, available runtimes, and daemon status.
 
 ```bash
 cccc actor add my-agent --runtime custom --command "my-custom-cli"
+```
+
+### What is the difference between an actor and a profile?
+
+- An `actor` is the live scheduled participant inside a group.
+- A `profile` is reusable runtime configuration that an actor may link to.
+- Linking a profile does not by itself prove that the actor is currently
+  running, resumed, or attached to any particular live session.
+
+Typical profile-backed path:
+
+```bash
+cccc actor profile upsert --id shared-dev --name "Shared Dev" --runtime claude
+cccc actor add dev --profile-id shared-dev
 ```
 
 ### Agent won't start?
@@ -198,14 +225,16 @@ cccc doctor                  # Check configuration
 
 ### What is a Working Group?
 
-A working group is like an IM group chat with execution capabilities. It includes:
+A `group` is the core collaboration unit in CCCC. Older FAQ wording may still
+say `working group` for compatibility. It includes:
 - An append-only ledger (message history)
 - One or more actors (agents)
-- Optional scopes (project directories)
+- An attached project path that acts as the group's authoritative workspace
 
 ### What is the Ledger?
 
-The ledger is an append-only event stream that stores all messages, state changes, and decisions. It's the single source of truth for a working group.
+The ledger is an append-only event stream that stores all messages, state
+changes, and decisions. It's the single source of truth for a group.
 
 ### What is MCP?
 
@@ -213,4 +242,23 @@ MCP (Model Context Protocol) is how agents interact with CCCC. It exposes a rich
 
 ### What is a Scope?
 
-A scope is a project directory attached to a working group. Agents work within scopes, and events are attributed to scopes.
+`Scope` is older compatibility wording for an attached project directory. In
+current glossary terms, `attach` sets the group's
+`authoritative_workspace`, while actor runtimes may later work in the same path
+or a different `execution_workspace` depending on explicit policy.
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [execution_workspace](/reference/glossary/execution_workspace)
+- [profile](/reference/glossary/profile)
+- [resume](/reference/glossary/resume)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-21`: Added local glossary alignment so FAQ answers stop treating `working group`, `scope`, `status`, and `resume` as self-evident legacy shorthand.
+- `2026-03-23`: Added a concrete profile-management command path so the actor-versus-profile FAQ points to the current CLI surface.
+- `2026-03-23`: Added `profile` alignment and an explicit actor-versus-profile FAQ so reusable runtime configuration is not confused with live actor state.

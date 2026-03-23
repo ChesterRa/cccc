@@ -2,6 +2,15 @@
 
 Get started with CCCC using the Web interface.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `attach` sets the group's `authoritative_workspace`
+- `actor` is the live participant you create and start in Web UI
+- `profile` is reusable runtime configuration, separate from the live actor
+- `status` is an evidence-bound operator-facing surface
+
 ## Step 1: Start CCCC
 
 Open a terminal and run:
@@ -35,6 +44,10 @@ cccc attach .
 
 3. Refresh the Web UI to see your new group
 
+In current glossary wording, `attach` sets the group's
+`authoritative_workspace`. That does not by itself create per-actor isolated
+execution workspaces.
+
 ## Step 4: Add Your First Agent
 
 1. Click **Add Actor** in the header
@@ -43,6 +56,18 @@ cccc attach .
    - **Runtime**: Select your installed CLI (e.g., Claude)
    - **Runner**: PTY (terminal) or Headless
 3. Click **Create**
+
+This step creates a live `actor`. In current product terms, any future
+profile-backed Web flow should still be read as linking reusable configuration
+to the actor, not replacing actor identity.
+
+Today, if you want a profile-backed setup before returning to the Web UI, you
+can do it from another terminal:
+
+```bash
+cccc actor profile upsert --id assistant-shared --name "Assistant Shared" --runtime claude
+cccc actor add assistant --profile-id assistant-shared
+```
 
 ## Step 5: Configure MCP (First Time Only)
 
@@ -155,3 +180,18 @@ Run `cccc attach .` in your project directory, then refresh the Web UI.
 - [Workflows](/guide/workflows) - Learn collaboration patterns
 - [Web UI Guide](/guide/web-ui) - Detailed UI documentation
 - [IM Bridge](/guide/im-bridge/) - Set up mobile access
+- [Local Glossary](/reference/glossary/) - Canonical local term meanings
+
+## Related Glossary
+
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-21`: Added local glossary alignment so Web quick-start wording distinguishes group attachment from future execution-workspace policy.
+- `2026-03-23`: Added a profile-backed setup note so Web quick-start reflects the current CLI actor/profile surface.
+- `2026-03-23`: Added actor-versus-profile quick-start wording so Web setup does not collapse reusable runtime configuration into live actor creation.

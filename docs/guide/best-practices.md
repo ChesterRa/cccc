@@ -2,6 +2,16 @@
 
 Tips for getting the most out of CCCC.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `group` is the main collaboration unit
+- `actor` is the live scheduled participant
+- `profile` is reusable actor runtime configuration, not the live actor itself
+- `attach` sets the group's `authoritative_workspace`
+- `status` is an evidence-bound operator-facing surface
+
 ## Setting Up for Success
 
 ### Write a Good PROJECT.md
@@ -116,14 +126,21 @@ Agents read the markdown and follow the rules semantically. There's no special p
 Use recommended flags for autonomous operation:
 
 ```bash
+# Reusable profile-backed setup
+cccc actor profile upsert --id impl-shared --name "Implementer Shared" --runtime claude
+cccc actor add impl --profile-id impl-shared
 # Claude Code
-cccc actor add impl --runtime claude
 # Uses: claude --dangerously-skip-permissions
 
+# Reusable profile-backed setup
+cccc actor profile upsert --id review-shared --name "Reviewer Shared" --runtime codex
+cccc actor add review --profile-id review-shared
 # Codex
-cccc actor add review --runtime codex
 # Uses: codex --dangerously-bypass-approvals-and-sandbox --search
 ```
+
+This keeps reusable runtime intent in `profile` records while leaving the live
+scheduled participant as the `actor`.
 
 ## Effective Communication
 
@@ -254,3 +271,17 @@ If an agent keeps repeating:
 - Check commits before pushing
 - Use code review agents
 - Set up CI/CD guardrails
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-23`: Added profile-backed runtime setup examples so best-practice guidance matches the current CLI actor/profile split.
+- `2026-03-23`: Added glossary alignment so best-practice guidance distinguishes live actor behavior from reusable profile configuration and keeps attach/status semantics explicit.

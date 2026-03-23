@@ -16,6 +16,10 @@ cccc attach .
 
 This binds the current directory as a "scope" and creates a working group.
 
+In current glossary wording, `attach` sets the group's
+`authoritative_workspace`. Older shorthand like `scope` remains compatibility
+wording in some guides and CLI surfaces.
+
 ## Step 3: Configure MCP for Your Runtime
 
 ```bash
@@ -31,6 +35,19 @@ cccc actor add assistant --runtime claude
 ```
 
 The first enabled actor automatically becomes the "foreman" (coordinator).
+
+At this step you are creating a live `actor`. Reusable `profile` support is a
+separate concept used when you want runtime defaults or launch intent to be
+reused across actors or later sessions.
+
+If you want that reusable layer first, you can now create it directly from the
+CLI before attaching it to a live actor:
+
+```bash
+cccc actor profile upsert --id shared-codex --name "Shared Codex" --runtime codex
+cccc actor profile list
+cccc actor add assistant --profile-id shared-codex
+```
 
 ## Step 5: Start the Agent
 
@@ -163,7 +180,8 @@ Access at http://127.0.0.1:8848/
 cd ~/projects/my-app
 cccc attach .
 cccc setup --runtime claude
-cccc actor add dev --runtime claude
+cccc actor profile upsert --id dev-shared --name "Dev Shared" --runtime claude
+cccc actor add dev --profile-id dev-shared
 
 # Work
 cccc group start
@@ -219,3 +237,19 @@ cccc attach .
 - [Workflows](/guide/workflows) - Learn collaboration patterns
 - [CLI Reference](/reference/cli) - Complete command reference
 - [IM Bridge](/guide/im-bridge/) - Set up mobile access
+- [Local Glossary](/reference/glossary/) - Canonical local term meanings
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+
+## Change Log
+
+- `2026-03-21`: Added local glossary alignment so quick-start wording around `attach` points readers to `authoritative_workspace` instead of leaving `scope` ambiguous.
+- `2026-03-23`: Added a concrete `actor add --profile-id ...` quick-start path so profile-backed live actor setup is shown, not just described.
+- `2026-03-23`: Added direct `cccc actor profile ...` quick-start examples so reusable runtime configuration is no longer only described abstractly.
+- `2026-03-23`: Added actor-versus-profile quick-start wording so reusable runtime configuration is not confused with live actor creation.
