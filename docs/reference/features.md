@@ -2,6 +2,19 @@
 
 Detailed feature documentation for CCCC.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `group` is the main collaboration unit
+- `attach` sets a group's `authoritative_workspace`
+- `profile` means reusable actor runtime configuration, not the live actor itself
+- `status` means an evidence-bound operator-facing state surface
+- `resume` should be read by boundary: IM delivery resume is not the same thing
+  as runtime-native session resume
+- `host_surface` refers to CCCC-owned readable truth surfaces, not downstream
+  interpretation layers
+
 ## IM-Style Messaging
 
 ### Core Contracts
@@ -128,7 +141,7 @@ cccc im logs -f
 ```
 System Prompt (thin layer)
 ├── Who you are: Actor ID, role
-├── Where you are: Working Group, Scope
+├── Where you are: Group, attached workspace anchor
 └── What you can do: MCP tool list + key reminders (see cccc_help)
 
 MCP Tools (authoritative playbook + execution interface)
@@ -231,6 +244,30 @@ cccc actor secrets <actor_id> --unset KEY
 cccc actor secrets <actor_id> --keys
 ```
 
+## Actor Profiles
+
+CCCC also supports reusable actor `profile` objects on the daemon / Web / MCP
+side.
+
+- A profile stores reusable runtime configuration such as runtime kind, runner,
+  command, submit policy, capability defaults, and profile-owned secrets.
+- An actor remains the live scheduled participant in a group.
+- Linking an actor to a profile means the actor inherits reusable runtime
+  intent; it does not by itself prove current runtime liveness, execution
+  workspace, or native session continuity.
+- Profile linkage is useful when repeated group setups or multiple actors should
+  share the same runtime defaults without copying all fields by hand.
+
+CLI surface:
+
+```bash
+cccc actor profile upsert --id shared-dev --name "Shared Dev" --runtime claude
+cccc actor profile secrets shared-dev --keys
+cccc actor add <actor_id> --profile-id shared-dev
+cccc actor update <actor_id> --profile-id shared-dev
+cccc actor update <actor_id> --profile-action convert_to_custom
+```
+
 ## Blueprint / Group Template
 
 CCCC Web supports blueprint export/import for portable group setup.
@@ -330,3 +367,18 @@ cccc setup --runtime custom
 cccc doctor        # Environment check + runtime detection
 cccc runtime list  # List available runtimes (JSON)
 ```
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [profile](/reference/glossary/profile)
+- [resume](/reference/glossary/resume)
+- [status](/reference/glossary/status)
+- [host_surface](/reference/glossary/host_surface)
+
+## Change Log
+
+- `2026-03-21`: Added local glossary alignment so feature-level docs stop mixing group semantics, attach authority, status surfaces, and different kinds of resume into one vague layer.
+- `2026-03-23`: Added `profile` alignment and a dedicated actor-profile section so reusable runtime configuration stops being conflated with live actor identity.

@@ -10,7 +10,18 @@ Core value:
 - durable collaboration substrate (append-only ledger)
 - unified control plane across Web/CLI/MCP/IM
 - explicit message semantics for reliable coordination
-- operationally manageable actor runtime model
+- operationally manageable actor/profile runtime model
+
+Current profile-backed path:
+
+```bash
+cccc actor profile upsert --id shared-dev --name "Shared Dev" --runtime claude
+cccc actor add dev --profile-id shared-dev
+```
+
+That profile-backed setup path is part of the product model: reusable runtime
+intent belongs to `profile`, while the live scheduled participant remains the
+`actor`.
 
 ## What CCCC Is Not
 
@@ -21,6 +32,9 @@ CCCC is not:
 - a substitute for deterministic batch orchestration platforms
 
 CCCC should own collaboration state and control-plane semantics; other systems can own compute DAGs and business workflows.
+
+For recurring local terms such as `group`, `actor`, `profile`, `attach`, and
+`host_surface`, prefer the local glossary over older prose shortcuts.
 
 ## Ideal Adoption Scenarios
 
@@ -56,3 +70,17 @@ Recommended layering:
 - IM gateway: remote ops and lightweight interventions
 
 This separation keeps CCCC focused, composable, and maintainable.
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [host_surface](/reference/glossary/host_surface)
+
+## Change Log
+
+- `2026-03-23`: Added a profile-backed setup path so positioning language points to the current actor/profile product model, not only abstract semantics.
+- `2026-03-21`: Added local glossary alignment guidance so product-positioning prose does not drift away from repo-local semantic definitions.
+- `2026-03-23`: Updated positioning language so reusable actor profiles are treated as part of the runtime model instead of disappearing behind actor-only wording.

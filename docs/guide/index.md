@@ -8,6 +8,13 @@ Use this section based on your role and goal.
 - [Web UI Quick Start](/guide/getting-started/web) if you prefer visual control
 - [CLI Quick Start](/guide/getting-started/cli) if you prefer terminal-first workflow
 
+Current recommended profile-backed start path:
+
+```bash
+cccc actor profile upsert --id starter-shared --name "Starter Shared" --runtime claude
+cccc actor add starter --profile-id starter-shared
+```
+
 ## If You Need Practical, High-ROI Patterns
 
 - [Use Cases](/guide/use-cases) for production-like collaboration scenarios
@@ -28,7 +35,21 @@ Use this section based on your role and goal.
 ## Core Concepts (Short Version)
 
 - **Working Group**: the collaboration unit with durable history
-- **Actor**: an agent runtime session (foreman/peer)
-- **Scope**: a directory context attached to a group
+- **Actor**: the live scheduled participant (foreman/peer)
+- **Profile**: reusable actor runtime configuration and launch intent
+- **Scope**: older compatibility wording for a directory context attached to a group
 - **Ledger**: append-only collaboration event stream
 - **Daemon**: single writer and source of operational truth
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+
+## Change Log
+
+- `2026-03-23`: Added a profile-backed start path to the guide landing page so high-level onboarding points to the current actor/profile setup model.
+- `2026-03-23`: Added `profile` to the short core-concepts map so the main guide landing page no longer collapses reusable runtime configuration into actor-only wording.

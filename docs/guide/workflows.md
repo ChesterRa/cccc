@@ -2,6 +2,18 @@
 
 Common patterns for using CCCC to coordinate AI agents.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `attach` sets the group's `authoritative_workspace`
+- `shared` is the default lightweight execution interpretation unless an
+  explicit isolated policy exists
+- `group` is the main collaboration unit
+- `profile` is reusable actor runtime configuration, not the live actor itself
+- `status` updates should be read as operator-facing evidence, not as proof of
+  every deeper runtime capability
+
 ## Solo Development with One Agent
 
 The simplest setup: one agent assisting you with a project.
@@ -11,9 +23,13 @@ The simplest setup: one agent assisting you with a project.
 ```bash
 cd /your/project
 cccc attach .
-cccc actor add assistant --runtime claude
+cccc actor profile upsert --id assistant-shared --name "Assistant Shared" --runtime claude
+cccc actor add assistant --profile-id assistant-shared
 cccc
 ```
+
+In current glossary wording, `cccc attach .` anchors the group to that project
+as its `authoritative_workspace`.
 
 ### Workflow
 
@@ -30,8 +46,10 @@ Use one agent for implementation and another for review.
 ### Setup
 
 ```bash
-cccc actor add implementer --runtime claude
-cccc actor add reviewer --runtime codex
+cccc actor profile upsert --id impl-shared --name "Implementer Shared" --runtime claude
+cccc actor profile upsert --id review-shared --name "Reviewer Shared" --runtime codex
+cccc actor add implementer --profile-id impl-shared
+cccc actor add reviewer --profile-id review-shared
 cccc group start
 ```
 
@@ -54,10 +72,14 @@ For complex projects, use multiple specialized agents.
 ### Setup Example
 
 ```bash
-cccc actor add architect --runtime claude    # Design decisions
-cccc actor add frontend --runtime codex      # UI implementation
-cccc actor add backend --runtime droid       # API implementation
-cccc actor add tester --runtime kimi         # Testing
+cccc actor profile upsert --id architect-shared --name "Architect Shared" --runtime claude
+cccc actor profile upsert --id frontend-shared --name "Frontend Shared" --runtime codex
+cccc actor profile upsert --id backend-shared --name "Backend Shared" --runtime droid
+cccc actor profile upsert --id tester-shared --name "Tester Shared" --runtime kimi
+cccc actor add architect --profile-id architect-shared    # Design decisions
+cccc actor add frontend --profile-id frontend-shared      # UI implementation
+cccc actor add backend --profile-id backend-shared        # API implementation
+cccc actor add tester --profile-id tester-shared          # Testing
 ```
 
 ### Coordination
@@ -136,3 +158,18 @@ cccc send "Please refactor the entire authentication module. Report progress eve
 - IM Bridge sends updates to your phone
 - Check progress via Web UI when convenient
 - Agents notify on completion or errors
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [profile](/reference/glossary/profile)
+- [shared](/reference/glossary/shared)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-21`: Added local glossary alignment so workflow examples consistently describe group attachment, default shared execution, and status language.
+- `2026-03-23`: Added concrete profile-backed actor setup examples so workflow docs reflect the new CLI profile linkage surface.
+- `2026-03-23`: Added `profile` alignment so workflow examples keep reusable runtime configuration separate from live actor participation.
