@@ -50,12 +50,19 @@ Notes:
 
 ### `cccc attach`
 
-Create or attach to a working group.
+Bind a project path to the current or selected group as its authoritative workspace.
 
 ```bash
-cccc attach .           # Attach current directory as scope
+cccc attach .           # Attach current directory as authoritative workspace
 cccc attach /path/to/project
 ```
+
+Notes:
+- `attach` defines the group's `authoritative_workspace`.
+- It does not by itself create per-actor isolated workspaces.
+- Current product direction keeps the default execution path lightweight: actors
+  still default to `workspace_mode = shared` unless a future explicit isolated
+  policy says otherwise.
 
 ### `cccc groups`
 
@@ -99,6 +106,7 @@ Add a new actor to the group.
 cccc actor add <actor_id> --runtime claude
 cccc actor add <actor_id> --runtime codex
 cccc actor add <actor_id> --runtime custom --command "my-agent"
+cccc actor add <actor_id> --profile-id shared-profile
 ```
 
 Options:
@@ -106,6 +114,9 @@ Options:
 - `--command`: Custom command (for custom runtime)
 - `--runner`: Runner type (pty or headless)
 - `--title`: Display title
+- `--profile-id`: Link the new live actor to a reusable `profile`
+- `--profile-scope` / `--profile-owner-id`: Address explicit user-scoped
+  profiles when `--profile-id` is used
 
 ### `cccc actor`
 
@@ -119,7 +130,39 @@ cccc actor restart <actor_id>      # Restart actor
 cccc actor remove <actor_id>       # Remove actor
 cccc actor update <actor_id> ...   # Update actor settings
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
+cccc actor update <actor_id> --profile-id shared-profile
+cccc actor update <actor_id> --profile-action convert_to_custom
 ```
+
+### `cccc actor profile`
+
+Manage reusable actor runtime profiles.
+
+```bash
+cccc actor profile list
+cccc actor profile list --view my
+cccc actor profile get <profile_id>
+cccc actor profile upsert --name "Shared Codex" --runtime codex
+cccc actor profile upsert --id shared --command "codex --resume"
+cccc actor profile delete <profile_id>
+cccc actor profile secrets <profile_id> --keys
+```
+
+Notes:
+- Reusable `profile` records can now be managed directly from the CLI instead
+  of only being mentioned as actor linkage metadata.
+- `list` supports `--view global|my|all`.
+- `get` and `delete` support `--scope global|user` and `--owner-id ...` so the
+  CLI can address explicit user-scoped profile refs.
+- `upsert` stores reusable launch intent and capability defaults; it does not
+  by itself prove any live runtime continuity.
+- `secrets` manages runtime-only secret keys for a reusable profile without
+  mixing those values into the profile document itself.
+
+Notes:
+- An actor's runtime defaults may come from direct actor config or a linked
+  reusable `profile`; that linkage is configuration intent, not live runtime
+  proof.
 
 ## Message Commands
 
@@ -223,6 +266,23 @@ Notes:
 - `cccc space sync` performs two-way reconcile for Group Space:
   - local `repo/space/` files -> provider sources,
   - provider source/artifact projection -> local `repo/space/` (`.sync/remote-sources` and `artifacts/`).
+
+## Related Glossary
+
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [workspace_mode](/reference/glossary/workspace_mode)
+- [profile](/reference/glossary/profile)
+- [resume](/reference/glossary/resume)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-23`: Added `cccc actor profile ...` reference coverage so reusable
+  profile management is documented as a first-class CLI surface.
+- `2026-03-23`: Added `profile` glossary alignment so CLI actor lifecycle notes distinguish reusable runtime config from live runtime evidence.
+
+- `2026-03-21`: Aligned CLI wording with the new local glossary so `attach`, `resume`, and `status` stop drifting between shorthand and canonical repo-local meaning.
 
 ## Setup Commands
 
