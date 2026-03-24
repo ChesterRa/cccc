@@ -127,6 +127,9 @@ cccc actor list                    # List actors
 cccc actor start <actor_id>        # Start actor
 cccc actor stop <actor_id>         # Stop actor
 cccc actor restart <actor_id>      # Restart actor
+cccc actor sessions                # Show recoverable Codex sessions for actors
+cccc actor sessions <actor_id>     # Show one actor's recovery candidate
+cccc actor sessions <actor_id> --probe-status
 cccc actor remove <actor_id>       # Remove actor
 cccc actor update <actor_id> ...   # Update actor settings
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
@@ -163,6 +166,19 @@ Notes:
 - An actor's runtime defaults may come from direct actor config or a linked
   reusable `profile`; that linkage is configuration intent, not live runtime
   proof.
+- For `codex` PTY actors, `cccc actor restart <actor_id>` now attempts best-effort session recovery from prior PTY state and `~/.codex` metadata.
+- See `Codex Session Resume` for the exact recovery sources and boundaries.
+- In local glossary terms, `resume` is layered semantics: CCCC-owned recovery and
+  native runtime recovery are related but not identical.
+- Planned next layer: actor-configured native resume bindings should be able to
+  prefer a stored `session_id` on launch while still preserving current prompt
+  injection and CCCC-owned recovery behavior.
+- See `Actor Native Resume Bindings` for the agreed Web UI and actor-settings
+  design.
+- `cccc actor sessions --probe-status` is now a safety hint, not an automatic PTY injection.
+- If you need `/status`, first enter the actor's actual `Codex` terminal, then run `/status` manually inside that session.
+- `/status` output is useful runtime evidence, but it is not by itself proof
+  that later native resume will succeed.
 
 ## Message Commands
 
