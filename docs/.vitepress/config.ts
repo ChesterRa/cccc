@@ -78,6 +78,8 @@ export default defineConfig({
             { text: 'Architecture', link: '/reference/architecture' },
             { text: 'Local Glossary', link: '/reference/glossary/' },
             { text: 'Chat Data Flow', link: '/reference/chat-data-flow' },
+            { text: 'Actor Lifecycle Surfaces', link: '/reference/actor-group-lifecycle-surfaces' },
+            { text: 'Actor Terminal Input Control', link: '/reference/actor-terminal-input-control' },
             { text: 'Actor Native Resume Bindings', link: '/reference/actor-native-resume-bindings' },
             { text: 'Codex Session Resume', link: '/reference/codex-session-resume' },
             { text: 'Runtime Session Recovery Strategy', link: '/reference/runtime-session-recovery-strategy' },
