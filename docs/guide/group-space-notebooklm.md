@@ -2,6 +2,15 @@
 
 This guide covers the user-facing Web flow for connecting NotebookLM and choosing which notebooks CCCC should use.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `group` remains the lifecycle owner of notebook binding state
+- `attach` sets the group's `authoritative_workspace`
+- `status` on this page should be read as a lightweight operator-facing snapshot
+- provider binding state does not replace group/runtime truth
+
 The Web UI is intentionally minimal:
 
 1. connect Google
@@ -127,3 +136,14 @@ Relevant metadata files remain:
 - `<scope_root>/space/artifacts/notebooklm/...`
 
 These implementation details matter for agent/developer workflows, but they are not part of the normal user-facing binding flow.
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-23`: Added glossary alignment so NotebookLM binding guidance keeps group ownership, attach authority, and lightweight status semantics explicit.
