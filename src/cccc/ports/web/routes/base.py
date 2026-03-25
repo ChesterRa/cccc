@@ -19,6 +19,7 @@ from ..branding import (
 from ..schemas import (
     BrandingUpdateRequest,
     DebugClearLogsRequest,
+    FeedbackBundleExportRequest,
     ObservabilityUpdateRequest,
     RegistryReconcileRequest,
     RemoteAccessConfigureRequest,
@@ -735,6 +736,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "group_id": group_id,
                     "actor_id": actor_id,
                     "by": "user",
+                },
+            }
+        )
+
+    @group_router.post("/feedback_bundle/export")
+    async def feedback_bundle_export(group_id: str, req: FeedbackBundleExportRequest) -> Dict[str, Any]:
+        """Generate a redacted feedback bundle zip for this group and store it under blobs."""
+        return await ctx.daemon(
+            {
+                "op": "feedback_bundle_export",
+                "args": {
+                    "group_id": group_id,
+                    "by": str(req.by or "user"),
                 },
             }
         )

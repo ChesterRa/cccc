@@ -47,6 +47,10 @@ interface DeveloperTabProps {
   } | null;
   onPreviewRegistry: () => void;
   onReconcileRegistry: () => void;
+  feedbackBundleBusy: boolean;
+  feedbackBundleErr: string;
+  feedbackBundleInfo: string;
+  onExportFeedbackBundle: () => void;
 }
 
 export function DeveloperTab({
@@ -84,6 +88,10 @@ export function DeveloperTab({
   registryResult,
   onPreviewRegistry,
   onReconcileRegistry,
+  feedbackBundleBusy,
+  feedbackBundleErr,
+  feedbackBundleInfo,
+  onExportFeedbackBundle,
 }: DeveloperTabProps) {
   const { t } = useTranslation("settings");
   const missing = Array.isArray(registryResult?.missing_group_ids) ? registryResult!.missing_group_ids : [];
@@ -240,6 +248,37 @@ export function DeveloperTab({
             {obsBusy ? t("common:saving") : t("developer.saveDeveloperSettings")}
           </button>
         </div>
+      </div>
+
+      <div className={cardClass()}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.feedbackBundleTitle")}</div>
+            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
+              {t("developer.feedbackBundleHint")}
+            </div>
+          </div>
+          <button
+            onClick={onExportFeedbackBundle}
+            disabled={!developerMode || !groupId || feedbackBundleBusy}
+            className={primaryButtonClass(!developerMode || !groupId || feedbackBundleBusy)}
+          >
+            {feedbackBundleBusy ? t("common:loading") : t("developer.feedbackBundleAction")}
+          </button>
+        </div>
+
+        {!groupId && (
+          <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+            {t("developer.openFromGroup")}
+          </div>
+        )}
+
+        {feedbackBundleErr ? (
+          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{feedbackBundleErr}</div>
+        ) : null}
+        {feedbackBundleInfo ? (
+          <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{feedbackBundleInfo}</div>
+        ) : null}
       </div>
 
       {/* Registry maintenance */}

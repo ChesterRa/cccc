@@ -431,6 +431,38 @@ Notes:
 - Requires developer mode.
 - Permission is `user`, or `foreman` when `group_id` is provided.
 
+#### `feedback_bundle_export`
+
+Developer-mode export of a redacted diagnostics bundle for a group.
+
+Args:
+```ts
+{ group_id: string; by?: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  attachment: {
+    path: string
+    title?: string
+    mime_type?: string
+    bytes?: number
+  }
+  bundle: {
+    filename: string
+    redaction: "best_effort"
+  }
+}
+```
+
+Notes:
+- Requires developer mode.
+- Requires `group_id`.
+- Permission is `user`, or `foreman` for group-scoped access.
+- The exported zip may include `manifest.json`, `snapshot/debug_snapshot.json`, recent logs, and PTY terminal captures with best-effort redaction applied.
+
 ### 8.3 Groups and Scopes
 
 #### `attach`
