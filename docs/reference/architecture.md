@@ -10,19 +10,46 @@
 
 - Like an IM group chat, but with execution/delivery capabilities
 - Each group has an append-only ledger (event stream)
-- Can bind multiple Scopes (project directories)
+- Can bind project directories, with one current authoritative workspace anchor
 
 ### Actor
 
 - **Foreman**: Coordinator + Executor (the first enabled actor automatically becomes foreman)
 - **Peer**: Independent expert (other actors)
 - Supports PTY (terminal) and Headless (MCP-only) runners
+- Runtime execution may happen in the authoritative workspace or a different execution workspace, depending on explicit policy
+
+### Profile
+
+- A `profile` is a reusable actor runtime configuration object
+- It can carry runtime defaults, launch intent, and profile-owned secrets
+- An actor may link to a profile, but the actor remains the live scheduled participant
+- Profile linkage should not be confused with live runtime truth or successful native resume
+
+Typical profile-backed path:
+
+```bash
+cccc actor profile upsert --id shared-dev --name "Shared Dev" --runtime claude
+cccc actor add <actor_id> --profile-id shared-dev
+```
+
+That profile-backed path stores reusable runtime intent in the profile while the
+actor continues to own live scheduling and runtime state.
 
 ### Ledger
 
 - Single source of truth: `~/.cccc/groups/<group_id>/ledger.jsonl`
 - All messages, events, and decisions are recorded here
 - Supports snapshot/compaction
+
+## Workspace Semantics
+
+- `attach` defines the current `authoritative_workspace` for a group.
+- The `authoritative_workspace` is the semantic project anchor for the group.
+- An actor's `execution_workspace` is the effective path its runtime is working in.
+- In the default `shared` interpretation, execution workspace and authoritative workspace are the same path.
+- If a future optional `isolated` mode is enabled, execution workspace may differ, but authority does not move away from the attached workspace.
+- Older wording such as `scope` remains compatibility wording in some docs and APIs, but local glossary wording wins when there is conflict.
 
 ## Directory Layout
 
@@ -169,6 +196,10 @@ class ChatMessageData:
 
 MCP is exposed as an action-oriented surface. Tool count is intentionally not hardcoded, because optional capability packs can add more tools when enabled.
 
+The local glossary term `host_surface` is useful here: CCCC-owned readable
+surfaces such as MCP status tools should expose host/runtime truth without
+pretending to be higher-level interpretation layers.
+
 The surface is best understood as capability groups instead of a fixed namespace/tool count. Each group can expose one or more MCP tools, and some groups use action-style wrappers rather than one-tool-per-operation naming.
 
 ### Core Collaboration Capability Groups
@@ -209,3 +240,20 @@ src/cccc/
 │   └── mcp/              # MCP Server
 └── resources/            # Built-in resources
 ```
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [execution_workspace](/reference/glossary/execution_workspace)
+- [host_surface](/reference/glossary/host_surface)
+- [registry](/reference/glossary/registry)
+
+## Change Log
+
+- `2026-03-21`: Aligned architecture wording with the new local glossary so `attach`, workspace authority, execution workspace, registry, and host-surface meanings stay repo-local and explicit.
+- `2026-03-23`: Added a profile-backed path example so the architecture page ties the actor/profile split to the current CLI surface.
+- `2026-03-23`: Added the repo-local `profile` layer to the core-concepts section so live actor identity and reusable runtime configuration are no longer conflated.

@@ -2,6 +2,21 @@
 
 This page is for operators who need reliable day-to-day CCCC execution.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `registry` is a secondary bookkeeping and lookup surface, not the truth root
+- `group` is the main runtime ownership unit
+- `profile` is reusable actor runtime configuration, not the live actor itself
+- `status` is an evidence-bound operator surface
+- `attach` and `authoritative_workspace` remain distinct from lower-level
+  runtime execution details
+
+Operator shortcut:
+- reusable launch intent can now be inspected and changed with
+  `cccc actor profile ...` before or between live actor runs
+
 ## 1) Runtime Topology
 
 Default runtime home:
@@ -13,6 +28,10 @@ Key paths:
 - `~/.cccc/daemon/ccccd.log`
 - `~/.cccc/groups/<group_id>/group.yaml`
 - `~/.cccc/groups/<group_id>/ledger.jsonl`
+
+Notes:
+- `registry.json` is for indexing and lookup.
+- Group state and runtime evidence remain the stronger truth sources.
 
 ## 2) Startup and Health Checks
 
@@ -203,3 +222,19 @@ Optional throughput tuning:
 export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
 export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
 ```
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [profile](/reference/glossary/profile)
+- [registry](/reference/glossary/registry)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-21`: Added local glossary alignment so the operator runbook keeps registry, group ownership, status surfaces, and workspace authority clearly separated.
+- `2026-03-23`: Added `cccc actor profile ...` operator note so reusable launch
+  intent management is documented alongside runtime operations.
+- `2026-03-23`: Added `profile` alignment so operator lifecycle and recovery actions are not confused with reusable runtime configuration semantics.

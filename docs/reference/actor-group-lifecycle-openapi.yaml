@@ -1,0 +1,184 @@
+openapi: 3.1.0
+info:
+  title: CCCC Actor And Group Lifecycle API
+  version: 0.1.0-draft
+  summary: Focused OpenAPI excerpt for group and actor lifecycle routes
+  description: |
+    This is a focused OpenAPI draft for the Web HTTP routes used to start,
+    stop, and restart `CCCC` actors and groups.
+
+    It is intentionally not a full product-wide OpenAPI document. It only
+    covers the lifecycle routes that back the current Web UI controls.
+
+    Terminology boundary:
+    - group lifecycle routes operate on live group state
+    - actor lifecycle routes operate on live actor state
+    - reusable actor profile configuration is related but out of scope here
+    - attach / authoritative workspace semantics remain separate from these
+      lifecycle entry points
+servers:
+  - url: http://127.0.0.1:8848
+    description: Local default Web UI server
+tags:
+  - name: Groups
+  - name: Actors
+paths:
+  /api/v1/groups/{group_id}/start:
+    post:
+      tags: [Groups]
+      summary: Start a working group
+      description: Start enabled actors in the target group.
+      operationId: startGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/ByQuery'
+      responses:
+        '200':
+          description: Group start request accepted by the daemon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonEnvelope'
+  /api/v1/groups/{group_id}/stop:
+    post:
+      tags: [Groups]
+      summary: Stop a working group
+      description: Stop actor runtimes in the target group.
+      operationId: stopGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/ByQuery'
+      responses:
+        '200':
+          description: Group stop request accepted by the daemon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonEnvelope'
+  /api/v1/groups/{group_id}/state:
+    post:
+      tags: [Groups]
+      summary: Set group state
+      description: |
+        Set the target group state to `active`, `idle`, or `paused`.
+
+        In the current HTTP surface, `stopped` is handled by the dedicated
+        `/stop` endpoint instead of this route.
+      operationId: setGroupState
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/ByQuery'
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [active, idle, paused]
+      responses:
+        '200':
+          description: Group state change request accepted by the daemon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonEnvelope'
+  /api/v1/groups/{group_id}/actors/{actor_id}/start:
+    post:
+      tags: [Actors]
+      summary: Start one actor
+      description: Start or enable the target actor runtime.
+      operationId: startActor
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/ActorId'
+        - $ref: '#/components/parameters/ByQuery'
+      responses:
+        '200':
+          description: Actor start request accepted by the daemon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonEnvelope'
+  /api/v1/groups/{group_id}/actors/{actor_id}/stop:
+    post:
+      tags: [Actors]
+      summary: Stop one actor
+      description: Stop or disable the target actor runtime.
+      operationId: stopActor
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/ActorId'
+        - $ref: '#/components/parameters/ByQuery'
+      responses:
+        '200':
+          description: Actor stop request accepted by the daemon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonEnvelope'
+  /api/v1/groups/{group_id}/actors/{actor_id}/restart:
+    post:
+      tags: [Actors]
+      summary: Restart one actor
+      description: Restart the target actor runtime.
+      operationId: restartActor
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/ActorId'
+        - $ref: '#/components/parameters/ByQuery'
+      responses:
+        '200':
+          description: Actor restart request accepted by the daemon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonEnvelope'
+components:
+  parameters:
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Target working group identifier
+    ActorId:
+      name: actor_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Target actor identifier
+    ByQuery:
+      name: by
+      in: query
+      required: false
+      schema:
+        type: string
+        default: user
+      description: Requester identity string forwarded to the daemon
+  schemas:
+    DaemonEnvelope:
+      type: object
+      description: Generic Web-to-daemon JSON envelope used by these routes
+      properties:
+        ok:
+          type: boolean
+        result:
+          type: object
+          additionalProperties: true
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+      required: [ok]
+    ErrorObject:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+      required: [code, message]

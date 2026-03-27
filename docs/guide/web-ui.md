@@ -2,6 +2,16 @@
 
 The CCCC Web UI is a mobile-first control plane for managing your AI agents.
 
+## Terminology Alignment
+
+This document follows the local glossary:
+
+- `actor` is the live participant shown in the UI
+- `profile` is reusable runtime configuration and launch intent
+- `attach` sets the group's `authoritative_workspace`
+- `status` is an evidence-bound surface
+- `resume` is layered and is not automatically proved by one visible status line
+
 ## Accessing the Web UI
 
 After starting CCCC:
@@ -31,6 +41,22 @@ The Web UI has these main areas:
 1. Click the **+** button in the sidebar
 2. Or use CLI: `cccc attach /path/to/project`
 
+Planned next step for template-driven setup:
+
+This section describes intended behavior, not a shipped Web UI screen yet.
+
+- after choosing a project path and template file, Web UI should expose a
+  `Resume Recovery` section
+- the user can add actor-specific bindings of:
+  - actor
+  - `session_id`
+  - enabled toggle
+- those bindings should stay outside the portable template file itself
+- when enabled for a `codex` PTY actor, launch should prefer native
+  `codex resume <session_id>`
+- disabling resume later in actor settings should not erase the stored
+  `session_id`
+
 ### Switching Groups
 
 Click on a group in the sidebar to switch.
@@ -54,11 +80,23 @@ Click on a group in the sidebar to switch.
 3. Set actor ID and options
 4. Click **Create**
 
+If the UI later exposes reusable profile selection, that should be read as
+"link this live actor to a reusable runtime profile", not "replace actor
+identity with profile identity".
+
 ### Starting/Stopping Agents
 
 - Click the **Play** button to start an agent
 - Click the **Stop** button to stop
 - Use **Restart** to clear context and restart
+
+For native runtime resume, the intended behavior is:
+
+- launch may resume the runtime's own session when the actor is configured for
+  native resume
+- CCCC's own preamble/help/system prompt injection flow should remain unchanged
+
+See also: `Actor Native Resume Bindings` and `Codex Session Resume`.
 
 ### Viewing Agent Terminal
 
@@ -199,3 +237,16 @@ Then authenticate once to bootstrap the session cookie:
 - Open `http://YOUR_HOST:8848/?token=<access-token>` (or `.../ui/?token=...`) using an Access Token created in Web Access.
 
 After that, you can use the Web UI normally without `?token=...`.
+
+## Related Glossary
+
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+- [resume](/reference/glossary/resume)
+- [status](/reference/glossary/status)
+
+## Change Log
+
+- `2026-03-23`: Added local glossary alignment so Web UI guidance keeps actor identity, reusable profile config, attach authority, and evidence-bound resume/status semantics separate.

@@ -2,6 +2,16 @@
 
 Get CCCC running in 10 minutes.
 
+## Terminology Alignment
+
+This page follows the local glossary:
+
+- `group` is the main collaboration unit
+- `actor` is the live scheduled participant
+- `profile` is reusable actor runtime configuration and launch intent
+- `attach` sets the group's `authoritative_workspace`
+- older `scope` wording may still appear as compatibility shorthand
+
 ## Choose Your Approach
 
 CCCC offers two ways to get started:
@@ -100,6 +110,17 @@ cccc doctor
 
 This checks Python version, available runtimes, and system configuration.
 
+If you already know you want reusable runtime intent instead of one-off actor
+creation, the current CLI supports a profile-backed start path:
+
+```bash
+cccc actor profile upsert --id starter-shared --name "Starter Shared" --runtime claude
+cccc actor add starter --profile-id starter-shared
+```
+
+That is the profile-backed setup path. The live scheduled participant is still
+the actor; the profile stores reusable runtime defaults.
+
 ## Next Steps
 
 - [Web UI Quick Start](./web) - Get started with the visual interface
@@ -109,3 +130,16 @@ This checks Python version, available runtimes, and system configuration.
 - [Use Cases](/guide/use-cases) - Learn high-ROI real-world patterns
 - [Operations Runbook](/guide/operations) - Run CCCC with operator-grade reliability
 - [Positioning](/reference/positioning) - Decide where CCCC should sit in your stack
+
+## Related Glossary
+
+- [group](/reference/glossary/group)
+- [actor](/reference/glossary/actor)
+- [profile](/reference/glossary/profile)
+- [attach](/reference/glossary/attach)
+- [authoritative_workspace](/reference/glossary/authoritative_workspace)
+
+## Change Log
+
+- `2026-03-23`: Added a profile-backed setup pointer so the landing page reflects the current actor/profile product split.
+- `2026-03-23`: Added glossary alignment so the main getting-started entry uses repo-local `group` / `actor` / `profile` / `attach` meanings instead of leaving old shorthand implicit.
