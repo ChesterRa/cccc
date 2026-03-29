@@ -237,6 +237,18 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 |:----:|:-------:|
 | ![Chat](screenshots/chat.png) | ![Terminal](screenshots/terminal.png) |
 
+### Desktop app (macOS · Windows · Linux)
+
+A native desktop wrapper is available in [`desktop/`](desktop/).  It packages
+the Web UI in a Tauri v2 shell with a transparent, chrome-free title bar and
+native window drag — no browser required.
+
+```bash
+cd desktop && npm install && npm run build
+```
+
+See [`desktop/README.md`](desktop/README.md) for full setup instructions.
+
 ### Remote access
 
 For accessing the Web UI from outside localhost:
