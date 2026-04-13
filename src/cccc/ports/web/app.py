@@ -441,6 +441,7 @@ def create_app() -> FastAPI:
     app.add_middleware(UiCacheControlMiddleware)
 
     from .routes.base import register_base_routes
+    from .routes.group_learning import register_group_learning_routes
     from .routes.space import create_routers as create_space_routers
     from .routes.groups import register_group_routes
     from .routes.messaging import create_routers as create_messaging_routers
@@ -465,6 +466,7 @@ def create_app() -> FastAPI:
     for router in create_space_routers(route_ctx):
         app.include_router(router)
     register_group_routes(app, ctx=route_ctx)
+    register_group_learning_routes(app, ctx=route_ctx)
     for router in create_messaging_routers(route_ctx):
         app.include_router(router)
     for router in create_actor_routers(route_ctx):

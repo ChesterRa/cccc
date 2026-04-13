@@ -25,7 +25,9 @@ from ..kernel.actors import find_actor
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
+from ..kernel.procedural_skills import select_procedural_skills_for_consumption
 from ..kernel.system_prompt import render_system_prompt
+from .headless_experience import maybe_capture_headless_turn_success_experience
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
@@ -123,6 +125,133 @@ class ClaudeAppSession:
         self._active_tool_activities: Dict[str, str] = {}  # tool_use_id → activity_id
         self._tool_activity_context: Dict[str, Dict[str, Any]] = {}
         self._active_control_kind = ""
+        self._active_prompt_text = ""
+
+    @staticmethod
+    def _usage_error_text(error: Any) -> str:
+        if isinstance(error, dict):
+            message = str(error.get("message") or error.get("code") or "").strip()
+            if message:
+                return message
+            try:
+                return json.dumps(error, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                return str(error).strip()
+        return str(error or "").strip()
+
+    def _maybe_report_turn_skill_usage(
+        self,
+        *,
+        turn_id: str,
+        event_id: str,
+        status: str,
+        error: Any = None,
+    ) -> None:
+        normalized_turn_id = str(turn_id or "").strip()
+        if not normalized_turn_id:
+            return
+        group = load_group(self.group_id)
+        if group is None:
+            return
+        actor = find_actor(group, self.actor_id)
+        raw_skills = actor.get("procedural_skills") if isinstance(actor, dict) and isinstance(actor.get("procedural_skills"), list) else None
+        skills = select_procedural_skills_for_consumption(
+            group,
+            limit=1,
+            provided_skills=raw_skills if isinstance(raw_skills, list) else None,
+        )
+        if not skills:
+            return
+        skill = skills[0] if isinstance(skills[0], dict) else {}
+        skill_id = str(skill.get("skill_id") or "").strip()
+        if not skill_id:
+            return
+
+        normalized_status = str(status or "").strip().lower() or "completed"
+        error_text = self._trim(self._usage_error_text(error), limit=220)
+        evidence_payload: Dict[str, Any] = {
+            "source": "headless.turn.completed",
+            "status": normalized_status,
+            "event_id": str(event_id or "").strip(),
+            "runtime": "claude",
+        }
+        if error_text:
+            evidence_payload["error"] = error_text
+
+        args: Dict[str, Any] = {
+            "group_id": self.group_id,
+            "skill_id": skill_id,
+            "by": self.actor_id,
+            "actor_id": self.actor_id,
+            "turn_id": normalized_turn_id,
+            "evidence_payload": evidence_payload,
+            "generate_patch": False,
+        }
+        if normalized_status in {"completed", "success"}:
+            args["evidence_type"] = "note_only"
+            args["outcome"] = "success"
+        else:
+            failure_signal = error_text or f"Headless turn completed with status={normalized_status}."
+            args.update(
+                {
+                    "evidence_type": "failure_signal_triggered",
+                    "outcome": "failed",
+                    "reason": f"headless turn completed with status={normalized_status}",
+                    "generate_patch": True,
+                    "patch_kind": "clarify_failure_signal",
+                    "proposed_delta": {"failure_signal": failure_signal},
+                }
+            )
+
+        try:
+            from ..contracts.v1 import DaemonRequest
+            from .server import handle_request
+
+            resp, _ = handle_request(
+                DaemonRequest.model_validate(
+                    {
+                        "op": "procedural_skill_report_usage",
+                        "args": args,
+                    }
+                )
+            )
+            if not bool(getattr(resp, "ok", False)):
+                logger.warning(
+                    "claude turn skill usage report failed: group=%s actor=%s turn=%s skill=%s err=%s",
+                    self.group_id,
+                    self.actor_id,
+                    normalized_turn_id,
+                    skill_id,
+                    getattr(getattr(resp, "error", None), "message", ""),
+                )
+        except Exception:
+            logger.exception(
+                "claude turn skill usage report crashed: group=%s actor=%s turn=%s skill=%s",
+                self.group_id,
+                self.actor_id,
+                normalized_turn_id,
+                skill_id,
+            )
+
+    def _maybe_capture_turn_success_experience(
+        self,
+        *,
+        turn_id: str,
+        event_id: str,
+        status: str,
+        prompt_text: str,
+    ) -> None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"completed", "success"}:
+            return
+        maybe_capture_headless_turn_success_experience(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            runtime="claude",
+            turn_id=turn_id,
+            event_id=event_id,
+            prompt_text=prompt_text,
+        )
 
     # ── state persistence ───────────────────────────────────────────────
 
@@ -760,6 +889,7 @@ class ClaudeAppSession:
             with self._lock:
                 self._active_turn_id = turn_id
                 self._active_event_id = payload.event_id
+                self._active_prompt_text = payload.text if not payload.control_kind else ""
                 if not payload.control_kind:
                     self._session_state.status = "working"
                 self._session_state.current_task_id = turn_id or payload.event_id or None
@@ -781,6 +911,7 @@ class ClaudeAppSession:
                     self._session_state.status = "idle"
                     self._active_event_id = ""
                     self._active_control_kind = ""
+                    self._active_prompt_text = ""
                     self._session_state.current_task_id = None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
@@ -1132,6 +1263,12 @@ class ClaudeAppSession:
                 "status": "completed",
             },
         )
+        if not control_kind:
+            self._maybe_report_turn_skill_usage(
+                turn_id=turn_id,
+                event_id=active_event_id,
+                status="completed",
+            )
 
         self._turn_done.set()
 
@@ -1350,6 +1487,20 @@ class ClaudeAppSession:
                 },
             )
         elif subtype in ("success", ""):
+            with self._lock:
+                active_prompt_text = self._active_prompt_text
+                self._active_prompt_text = ""
+            self._maybe_report_turn_skill_usage(
+                turn_id=turn_id,
+                event_id=active_event_id,
+                status="completed",
+            )
+            self._maybe_capture_turn_success_experience(
+                turn_id=turn_id,
+                event_id=active_event_id,
+                status="completed",
+                prompt_text=active_prompt_text,
+            )
             self._emit(
                 "headless.turn.completed",
                 {
@@ -1359,7 +1510,15 @@ class ClaudeAppSession:
                 },
             )
         else:
+            with self._lock:
+                self._active_prompt_text = ""
             error_text = str(event.get("error") or event.get("result") or "unknown error")
+            self._maybe_report_turn_skill_usage(
+                turn_id=turn_id,
+                event_id=active_event_id,
+                status=subtype or "completed",
+                error={"message": error_text},
+            )
             self._emit(
                 "headless.turn.failed" if subtype == "error" else "headless.turn.completed",
                 {

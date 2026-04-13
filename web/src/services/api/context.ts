@@ -7,6 +7,8 @@ import type {
   CapabilityStateResult,
   ContextDetailLevel,
   CoordinationBrief,
+  GroupLearningSnapshot,
+  LearningProceduralSkill,
   GroupAutomation,
   GroupContext,
   GroupSettings,
@@ -78,6 +80,43 @@ export async function fetchTasks(groupId: string) {
     ? resp.result.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
     : [];
   return { ok: true, result: { tasks } } as ApiResponse<{ tasks: Task[] }>;
+}
+
+export async function fetchGroupLearning(groupId: string, init?: RequestInit) {
+  return apiJson<GroupLearningSnapshot>(`/api/v1/groups/${encodeURIComponent(groupId)}/learning`, init);
+}
+
+export type ProceduralSkillPayload = {
+  skill_id?: string;
+  title: string;
+  goal: string;
+  steps: string[];
+  constraints?: string[];
+  failure_signals?: string[];
+  stability?: string;
+  review_mode?: string;
+  status?: string;
+  source_experience_candidate_id?: string;
+};
+
+export async function createProceduralSkill(groupId: string, payload: ProceduralSkillPayload) {
+  return apiJson<{ skill: LearningProceduralSkill }>(`/api/v1/groups/${encodeURIComponent(groupId)}/learning/skills`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateProceduralSkill(groupId: string, skillId: string, payload: ProceduralSkillPayload) {
+  return apiJson<{ skill: LearningProceduralSkill }>(`/api/v1/groups/${encodeURIComponent(groupId)}/learning/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProceduralSkill(groupId: string, skillId: string) {
+  return apiJson<{ skill_id: string }>(`/api/v1/groups/${encodeURIComponent(groupId)}/learning/skills/${encodeURIComponent(skillId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function contextSync(groupId: string, ops: Array<Record<string, unknown>>, dryRun: boolean = false) {

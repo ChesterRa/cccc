@@ -5,7 +5,9 @@ from typing import Any, Dict, List
 
 from ..util.conv import coerce_bool
 from .actors import get_effective_role, is_pet_actor, list_visible_actors
+from .experience_assets import select_experience_assets_for_consumption
 from .group import Group
+from .procedural_skills import select_procedural_skills_for_consumption
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 
 
@@ -16,6 +18,8 @@ def render_role_system_prompt(
     role: str,
     runtime_name: str = "",
     runner: str = "pty",
+    experience_assets: List[Dict[str, Any]] | None = None,
+    procedural_skills: List[Dict[str, Any]] | None = None,
 ) -> str:
     """Render the shared system prompt frame for a concrete role/identity.
 
@@ -153,10 +157,45 @@ def render_role_system_prompt(
     custom_body = str(pf.content or "").strip() if pf.found else ""
 
     body = custom_body if custom_body else str(DEFAULT_PREAMBLE_BODY or "").strip()
+    skill_lines: List[str] = []
+    asset_lines: List[str] = []
+    if procedural_skills:
+        skill_lines.append("Active Procedural Skills:")
+        for item in procedural_skills:
+            title = str(item.get("title") or "").strip() or str(item.get("skill_id") or "").strip() or "Untitled skill"
+            skill_id = str(item.get("skill_id") or "").strip()
+            goal = str(item.get("goal") or "").strip()
+            steps = item.get("steps") if isinstance(item.get("steps"), list) else []
+            step_preview = "; ".join(str(step or "").strip() for step in steps if str(step or "").strip())
+            line = f"- {title}"
+            if skill_id:
+                line += f" [{skill_id}]"
+            if goal:
+                line += f": goal={goal}"
+            if step_preview:
+                line += f" | steps={step_preview}"
+            skill_lines.append(line)
+    if experience_assets:
+        asset_lines.append("Active Experience Assets:")
+        for item in experience_assets:
+            title = str(item.get("title") or "").strip() or str(item.get("candidate_id") or "").strip() or "Untitled asset"
+            candidate_id = str(item.get("candidate_id") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            action = str(item.get("recommended_action") or "").strip()
+            line = f"- {title}"
+            if candidate_id:
+                line += f" [{candidate_id}]"
+            if summary:
+                line += f": {summary}"
+            if action:
+                line += f" | action: {action}"
+            asset_lines.append(line)
 
     parts = [
         "\n".join(lines).rstrip(),
         "---\n" + "\n".join(core_lines).rstrip(),
+        "\n".join(skill_lines).rstrip(),
+        "\n".join(asset_lines).rstrip(),
         body.rstrip(),
     ]
     return "\n\n".join([p for p in parts if p]).rstrip() + "\n"
@@ -178,10 +217,24 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     role = get_effective_role(group, actor_id)
     runner = str(actor.get("runner") or "pty").strip()
     runtime_name = str(actor.get("runtime") or "").strip()
+    raw_assets = actor.get("experience_assets")
+    raw_skills = actor.get("procedural_skills")
+    experience_assets = select_experience_assets_for_consumption(
+        group,
+        limit=3,
+        provided_assets=raw_assets if isinstance(raw_assets, list) else None,
+    )
+    procedural_skills = select_procedural_skills_for_consumption(
+        group,
+        limit=3,
+        provided_skills=raw_skills if isinstance(raw_skills, list) else None,
+    )
     return render_role_system_prompt(
         group=group,
         actor_id=actor_id,
         role=role,
         runtime_name=runtime_name,
         runner=runner,
+        procedural_skills=[item for item in procedural_skills if isinstance(item, dict)],
+        experience_assets=[item for item in experience_assets if isinstance(item, dict)],
     )

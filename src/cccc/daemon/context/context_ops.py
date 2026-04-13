@@ -41,6 +41,12 @@ from ...kernel.context import (
     normalize_task_type,
     _utc_now_iso,
 )
+from ...kernel.experience import (
+    SOURCE_KIND_COORDINATION_DECISION,
+    SOURCE_KIND_ROOT_TASK_DONE,
+    append_experience_candidate,
+    build_experience_candidate,
+)
 from ...kernel.actors import get_effective_role, list_actors
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
@@ -1129,6 +1135,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     agents_dirty = False
     dirty_task_ids: List[str] = []
     deleted_task_ids: List[str] = []
+    pending_experience_candidates: List[Dict[str, Any]] = []
     pet_user_model_updates: Dict[str, str] = {}
     pet_review_reasons: Set[str] = set()
     pet_review_immediate = False
@@ -1225,6 +1232,24 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                         )
                     except Exception:
                         logger.exception("memory_coordination_note_hook_failed group_id=%s kind=%s", group_id, note_kind)
+                    if note_kind == "decision":
+                        try:
+                            candidate = build_experience_candidate(
+                                source_kind=SOURCE_KIND_COORDINATION_DECISION,
+                                payload={
+                                    "summary": summary,
+                                    "by": by,
+                                    "task_id": task_id,
+                                    "source_refs": [
+                                        "context_sync:coordination.note.add",
+                                        f"coordination:{note_kind}",
+                                    ],
+                                },
+                            )
+                            if isinstance(candidate, dict):
+                                pending_experience_candidates.append(candidate)
+                        except Exception:
+                            logger.exception("experience_decision_candidate_hook_failed group_id=%s", group_id)
                 context_dirty = True
                 _mark_change(idx, op_name, f"Added {note_kind} note")
                 continue
@@ -1462,26 +1487,21 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
                     if new_status == TaskStatus.DONE and task.is_root:
                         try:
-                            from ..memory.memory_ops import handle_memory_reme_write
-
-                            promotion_note = (
-                                f"Root task completed: id={task.id}, title={task.title}, outcome={task.outcome}, "
-                                f"by={by}, at={task.updated_at}"
+                            candidate = build_experience_candidate(
+                                source_kind=SOURCE_KIND_ROOT_TASK_DONE,
+                                payload={
+                                    "task": task,
+                                    "by": by,
+                                    "source_refs": [
+                                        "context_sync:task.move",
+                                        f"task_status:{prev_status.value}->{new_status.value}",
+                                    ],
+                                },
                             )
-                            handle_memory_reme_write(
-                                {
-                                    "group_id": group_id,
-                                    "target": "memory",
-                                    "mode": "append",
-                                    "content": promotion_note,
-                                    "idempotency_key": f"root_task_done:{task.id}",
-                                    "actor_id": by,
-                                    "tags": ["root_task_done", "stable"],
-                                    "source_refs": [f"task:{task.id}"],
-                                }
-                            )
+                            if isinstance(candidate, dict):
+                                pending_experience_candidates.append(candidate)
                         except Exception:
-                            logger.exception("memory_root_task_hook_failed group_id=%s task_id=%s", group_id, task.id)
+                            logger.exception("experience_root_task_candidate_hook_failed group_id=%s task_id=%s", group_id, task.id)
                 continue
 
             if op_name == "task.restore":
@@ -1766,6 +1786,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                             group_id,
                             actor_id,
                         )
+            for candidate in pending_experience_candidates:
+                append_experience_candidate(storage.group, candidate)
             if context_dirty or tasks_changed or agents_changed:
                 storage.bump_version_state(
                     context_changed=context_dirty,

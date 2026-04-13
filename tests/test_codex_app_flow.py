@@ -1203,6 +1203,236 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_turn_completed_auto_reports_failed_skill_usage_and_generates_patch_candidate(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.kernel.group import load_group
+        from cccc.util.fs import read_json
+
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-turn-usage-failed", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            create_task_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.create", "title": "Phase 1", "outcome": "deliver phase 1"}],
+                },
+            )
+            self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
+            task_list_resp, _ = self._call("task_list", {"group_id": group_id})
+            tasks = (task_list_resp.result or {}).get("tasks") if isinstance(task_list_resp.result, dict) else []
+            task_id = str((tasks[0] if tasks else {}).get("id") or "")
+            self.assertTrue(task_id)
+            done_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
+                },
+            )
+            self.assertTrue(done_resp.ok, getattr(done_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            candidates_doc = read_json(Path(group.path) / "state" / "experience_candidates.json")
+            candidates = candidates_doc.get("candidates") if isinstance(candidates_doc.get("candidates"), list) else []
+            candidate_id = str((candidates[0] if candidates else {}).get("id") or "")
+            self.assertTrue(candidate_id)
+
+            promote_resp, _ = self._call(
+                "experience_promote_to_memory",
+                {"group_id": group_id, "candidate_id": candidate_id, "by": "user"},
+            )
+            self.assertTrue(promote_resp.ok, getattr(promote_resp, "error", None))
+
+            session = CodexAppSession(group_id=group_id, actor_id="peer1", cwd=Path(home), env={})
+            session._active_event_id = "evt-usage-failed"
+            session._handle_notification("turn/started", {"turn": {"id": "turn-usage-failed"}})
+            session._handle_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-usage-failed",
+                        "status": "failed",
+                        "error": {"message": "Recall gate skipped again"},
+                    }
+                },
+            )
+
+            usage_doc = read_json(Path(group.path) / "state" / "procedural_skill_usage.json")
+            usage_events = usage_doc.get("events") if isinstance(usage_doc.get("events"), list) else []
+            self.assertEqual(len(usage_events), 1)
+            usage_event = usage_events[0] if isinstance(usage_events[0], dict) else {}
+            self.assertEqual(str(usage_event.get("skill_id") or ""), f"procskill_{candidate_id}")
+            self.assertEqual(str(usage_event.get("turn_id") or ""), "turn-usage-failed")
+            self.assertEqual(str(usage_event.get("evidence_type") or ""), "failure_signal_triggered")
+            self.assertEqual(str(usage_event.get("outcome") or ""), "failed")
+
+            patch_doc = read_json(Path(group.path) / "state" / "procedural_skill_patch_candidates.json")
+            patch_candidates = patch_doc.get("candidates") if isinstance(patch_doc.get("candidates"), list) else []
+            self.assertEqual(len(patch_candidates), 1)
+            patch_candidate = patch_candidates[0] if isinstance(patch_candidates[0], dict) else {}
+            self.assertEqual(str(patch_candidate.get("skill_id") or ""), f"procskill_{candidate_id}")
+            self.assertEqual(str(patch_candidate.get("patch_kind") or ""), "clarify_failure_signal")
+            self.assertEqual(str(patch_candidate.get("status") or ""), "pending")
+            self.assertEqual(list(patch_candidate.get("evidence_refs") or []), [str(usage_event.get("event_id") or "")])
+        finally:
+            cleanup()
+
+    def test_codex_turn_completed_auto_reports_success_and_validates_observing_skill(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.kernel.group import load_group
+        from cccc.util.fs import read_json
+
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-turn-usage-success", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            create_task_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.create", "title": "Phase 1", "outcome": "deliver phase 1"}],
+                },
+            )
+            self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
+            task_list_resp, _ = self._call("task_list", {"group_id": group_id})
+            tasks = (task_list_resp.result or {}).get("tasks") if isinstance(task_list_resp.result, dict) else []
+            task_id = str((tasks[0] if tasks else {}).get("id") or "")
+            self.assertTrue(task_id)
+            done_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
+                },
+            )
+            self.assertTrue(done_resp.ok, getattr(done_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            candidates_doc = read_json(Path(group.path) / "state" / "experience_candidates.json")
+            candidates = candidates_doc.get("candidates") if isinstance(candidates_doc.get("candidates"), list) else []
+            candidate_id = str((candidates[0] if candidates else {}).get("id") or "")
+            self.assertTrue(candidate_id)
+
+            promote_resp, _ = self._call(
+                "experience_promote_to_memory",
+                {"group_id": group_id, "candidate_id": candidate_id, "by": "user"},
+            )
+            self.assertTrue(promote_resp.ok, getattr(promote_resp, "error", None))
+
+            report_resp, _ = self._call(
+                "procedural_skill_report_usage",
+                {
+                    "group_id": group_id,
+                    "skill_id": f"procskill_{candidate_id}",
+                    "by": "user",
+                    "actor_id": "peer1",
+                    "turn_id": "turn-observe-seed",
+                    "evidence_type": "missing_constraint",
+                    "evidence_payload": {"constraint": "must verify recall gate first"},
+                    "outcome": "failed",
+                    "generate_patch": True,
+                    "patch_kind": "adjust_constraint",
+                    "reason": "runtime drifted without explicit guardrail",
+                    "proposed_delta": {"constraint": "Verify recall gate before acting on recalled memory."},
+                },
+            )
+            self.assertTrue(report_resp.ok, getattr(report_resp, "error", None))
+            patch_candidate = (
+                report_resp.result.get("patch_candidate")
+                if isinstance(report_resp.result, dict) and isinstance(report_resp.result.get("patch_candidate"), dict)
+                else {}
+            )
+            patch_candidate_id = str(patch_candidate.get("candidate_id") or "")
+            self.assertTrue(patch_candidate_id)
+
+            govern_resp, _ = self._call(
+                "procedural_skill_govern_patch",
+                {
+                    "group_id": group_id,
+                    "candidate_id": patch_candidate_id,
+                    "lifecycle_action": "merge",
+                    "reason": "merge tested procedural correction",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(govern_resp.ok, getattr(govern_resp, "error", None))
+
+            session = CodexAppSession(group_id=group_id, actor_id="peer1", cwd=Path(home), env={})
+            session._active_event_id = "evt-usage-success"
+            session._handle_notification("turn/started", {"turn": {"id": "turn-usage-success"}})
+            session._handle_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-usage-success",
+                        "status": "completed",
+                    }
+                },
+            )
+
+            usage_doc = read_json(Path(group.path) / "state" / "procedural_skill_usage.json")
+            usage_events = usage_doc.get("events") if isinstance(usage_doc.get("events"), list) else []
+            self.assertEqual(len(usage_events), 2)
+            latest_event = usage_events[-1] if isinstance(usage_events[-1], dict) else {}
+            self.assertEqual(str(latest_event.get("turn_id") or ""), "turn-usage-success")
+            self.assertEqual(str(latest_event.get("evidence_type") or ""), "note_only")
+            self.assertEqual(str(latest_event.get("outcome") or ""), "success")
+
+            skill_doc = read_json(Path(group.path) / "state" / "procedural_skills" / f"procskill_{candidate_id}.json")
+            post_merge_evaluation = (
+                skill_doc.get("post_merge_evaluation")
+                if isinstance(skill_doc.get("post_merge_evaluation"), dict)
+                else {}
+            )
+            self.assertEqual(str(post_merge_evaluation.get("status") or ""), "validated")
+            self.assertEqual(str(post_merge_evaluation.get("candidate_id") or ""), patch_candidate_id)
+            self.assertEqual(str(post_merge_evaluation.get("evidence_event_id") or ""), str(latest_event.get("event_id") or ""))
+            self.assertEqual(str(skill_doc.get("stability") or ""), "stable")
+        finally:
+            cleanup()
+
     def test_claude_stream_completion_does_not_auto_materialize_chat_message(self) -> None:
         from cccc.daemon.claude_app_sessions import ClaudeAppSession
         from cccc.kernel.headless_events import headless_events_path
@@ -1251,6 +1481,214 @@ class TestCodexAppFlow(unittest.TestCase):
             ]
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
             self.assertEqual(chat_messages, [])
+        finally:
+            cleanup()
+
+    def test_claude_turn_completed_auto_reports_failed_skill_usage_and_generates_patch_candidate(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.kernel.group import load_group
+        from cccc.util.fs import read_json
+
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "claude-turn-usage-failed", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "claude",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            create_task_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.create", "title": "Phase 1", "outcome": "deliver phase 1"}],
+                },
+            )
+            self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
+            task_list_resp, _ = self._call("task_list", {"group_id": group_id})
+            tasks = (task_list_resp.result or {}).get("tasks") if isinstance(task_list_resp.result, dict) else []
+            task_id = str((tasks[0] if tasks else {}).get("id") or "")
+            self.assertTrue(task_id)
+            done_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
+                },
+            )
+            self.assertTrue(done_resp.ok, getattr(done_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            candidates_doc = read_json(Path(group.path) / "state" / "experience_candidates.json")
+            candidates = candidates_doc.get("candidates") if isinstance(candidates_doc.get("candidates"), list) else []
+            candidate_id = str((candidates[0] if candidates else {}).get("id") or "")
+            self.assertTrue(candidate_id)
+
+            promote_resp, _ = self._call(
+                "experience_promote_to_memory",
+                {"group_id": group_id, "candidate_id": candidate_id, "by": "user"},
+            )
+            self.assertTrue(promote_resp.ok, getattr(promote_resp, "error", None))
+
+            session = ClaudeAppSession(group_id=group_id, actor_id="peer1", cwd=Path(home), env={})
+            session._active_turn_id = "turn-claude-failed"
+            session._active_event_id = "evt-claude-failed"
+            session._handle_result_event({"subtype": "error", "error": "Recall gate skipped again"})
+
+            usage_doc = read_json(Path(group.path) / "state" / "procedural_skill_usage.json")
+            usage_events = usage_doc.get("events") if isinstance(usage_doc.get("events"), list) else []
+            self.assertEqual(len(usage_events), 1)
+            usage_event = usage_events[0] if isinstance(usage_events[0], dict) else {}
+            self.assertEqual(str(usage_event.get("skill_id") or ""), f"procskill_{candidate_id}")
+            self.assertEqual(str(usage_event.get("turn_id") or ""), "turn-claude-failed")
+            self.assertEqual(str(usage_event.get("evidence_type") or ""), "failure_signal_triggered")
+            self.assertEqual(str(usage_event.get("outcome") or ""), "failed")
+
+            patch_doc = read_json(Path(group.path) / "state" / "procedural_skill_patch_candidates.json")
+            patch_candidates = patch_doc.get("candidates") if isinstance(patch_doc.get("candidates"), list) else []
+            self.assertEqual(len(patch_candidates), 1)
+            patch_candidate = patch_candidates[0] if isinstance(patch_candidates[0], dict) else {}
+            self.assertEqual(str(patch_candidate.get("patch_kind") or ""), "clarify_failure_signal")
+        finally:
+            cleanup()
+
+    def test_claude_turn_completed_auto_reports_success_and_validates_observing_skill(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.kernel.group import load_group
+        from cccc.util.fs import read_json
+
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "claude-turn-usage-success", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "claude",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            create_task_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.create", "title": "Phase 1", "outcome": "deliver phase 1"}],
+                },
+            )
+            self.assertTrue(create_task_resp.ok, getattr(create_task_resp, "error", None))
+            task_list_resp, _ = self._call("task_list", {"group_id": group_id})
+            tasks = (task_list_resp.result or {}).get("tasks") if isinstance(task_list_resp.result, dict) else []
+            task_id = str((tasks[0] if tasks else {}).get("id") or "")
+            self.assertTrue(task_id)
+            done_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
+                },
+            )
+            self.assertTrue(done_resp.ok, getattr(done_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            candidates_doc = read_json(Path(group.path) / "state" / "experience_candidates.json")
+            candidates = candidates_doc.get("candidates") if isinstance(candidates_doc.get("candidates"), list) else []
+            candidate_id = str((candidates[0] if candidates else {}).get("id") or "")
+            self.assertTrue(candidate_id)
+
+            promote_resp, _ = self._call(
+                "experience_promote_to_memory",
+                {"group_id": group_id, "candidate_id": candidate_id, "by": "user"},
+            )
+            self.assertTrue(promote_resp.ok, getattr(promote_resp, "error", None))
+
+            report_resp, _ = self._call(
+                "procedural_skill_report_usage",
+                {
+                    "group_id": group_id,
+                    "skill_id": f"procskill_{candidate_id}",
+                    "by": "user",
+                    "actor_id": "peer1",
+                    "turn_id": "turn-claude-observe-seed",
+                    "evidence_type": "missing_constraint",
+                    "evidence_payload": {"constraint": "must verify recall gate first"},
+                    "outcome": "failed",
+                    "generate_patch": True,
+                    "patch_kind": "adjust_constraint",
+                    "reason": "runtime drifted without explicit guardrail",
+                    "proposed_delta": {"constraint": "Verify recall gate before acting on recalled memory."},
+                },
+            )
+            self.assertTrue(report_resp.ok, getattr(report_resp, "error", None))
+            patch_candidate = (
+                report_resp.result.get("patch_candidate")
+                if isinstance(report_resp.result, dict) and isinstance(report_resp.result.get("patch_candidate"), dict)
+                else {}
+            )
+            patch_candidate_id = str(patch_candidate.get("candidate_id") or "")
+            self.assertTrue(patch_candidate_id)
+
+            govern_resp, _ = self._call(
+                "procedural_skill_govern_patch",
+                {
+                    "group_id": group_id,
+                    "candidate_id": patch_candidate_id,
+                    "lifecycle_action": "merge",
+                    "reason": "merge tested procedural correction",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(govern_resp.ok, getattr(govern_resp, "error", None))
+
+            session = ClaudeAppSession(group_id=group_id, actor_id="peer1", cwd=Path(home), env={})
+            session._active_turn_id = "turn-claude-success"
+            session._active_event_id = "evt-claude-success"
+            session._handle_result_event({"subtype": "success"})
+
+            usage_doc = read_json(Path(group.path) / "state" / "procedural_skill_usage.json")
+            usage_events = usage_doc.get("events") if isinstance(usage_doc.get("events"), list) else []
+            self.assertEqual(len(usage_events), 2)
+            latest_event = usage_events[-1] if isinstance(usage_events[-1], dict) else {}
+            self.assertEqual(str(latest_event.get("turn_id") or ""), "turn-claude-success")
+            self.assertEqual(str(latest_event.get("evidence_type") or ""), "note_only")
+            self.assertEqual(str(latest_event.get("outcome") or ""), "success")
+
+            skill_doc = read_json(Path(group.path) / "state" / "procedural_skills" / f"procskill_{candidate_id}.json")
+            post_merge_evaluation = (
+                skill_doc.get("post_merge_evaluation")
+                if isinstance(skill_doc.get("post_merge_evaluation"), dict)
+                else {}
+            )
+            self.assertEqual(str(post_merge_evaluation.get("status") or ""), "validated")
+            self.assertEqual(str(post_merge_evaluation.get("candidate_id") or ""), patch_candidate_id)
         finally:
             cleanup()
 

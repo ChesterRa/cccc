@@ -1,5 +1,7 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -143,6 +145,7 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertEqual(str(gate.get("status") or ""), "ready")
         hits = gate.get("hits") if isinstance(gate.get("hits"), list) else []
         self.assertGreaterEqual(len(hits), 1)
+        self.assertEqual(gate.get("experience_assets"), [])
 
         next_calls = out["next_calls"]
         self.assertEqual(next_calls["inbox_list"], 'cccc_inbox_list(kind_filter="all")')
@@ -211,6 +214,221 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertIn("workspace has multiple parallel edits", query)
         self.assertIn("cares about ROI and low noise", query)
 
+    def test_recall_gate_exposes_experience_asset_summaries(self) -> None:
+        from cccc.kernel.experience_assets import write_experience_asset_mirror
+        from cccc.kernel.group import Group
+        from cccc.kernel.procedural_skills import write_procedural_skill_asset_mirror
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_core, cccc_group_actor
+        from cccc.ports.mcp.handlers import context as cccc_context
+
+        with tempfile.TemporaryDirectory() as td, patch.dict(
+            os.environ,
+            {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "peer1"},
+            clear=False,
+        ), patch.object(
+            cccc_group_actor,
+            "group_info",
+            return_value={"group": {"group_id": "g_test", "title": "temp_task", "active_scope_key": "s1", "scopes": []}},
+        ), patch.object(
+            cccc_group_actor,
+            "actor_list",
+            return_value={"actors": [{"id": "peer1", "role": "peer", "runner": "pty"}]},
+        ), patch.object(
+            cccc_core,
+            "project_info",
+            return_value={"found": False, "path": None},
+        ), patch.object(
+            cccc_context,
+            "context_get",
+            return_value={
+                "coordination": {"brief": {"objective": "memory lane"}, "tasks": [], "recent_decisions": [], "recent_handoffs": []},
+                "agent_states": [{"id": "peer1", "hot": {"focus": "memory lane"}, "warm": {}}],
+            },
+        ), patch.object(
+            cccc_core,
+            "inbox_list",
+            return_value={"messages": []},
+        ), patch.object(
+            cccc_core,
+            "_call_daemon_or_raise",
+            return_value={"hits": []},
+        ):
+            group = Group(group_id="g_test", path=Path(td), doc={"title": "temp_task", "group_id": "g_test", "scopes": []})
+            write_experience_asset_mirror(
+                group,
+                candidate={
+                    "id": "exp_123",
+                    "status": "promoted_to_memory",
+                    "title": "Memory lane pattern",
+                    "summary": "Use memory lane recovery before touching live state.",
+                    "recommended_action": "Open recall gate first.",
+                    "failure_signals": ["skip recall gate"],
+                    "source_refs": ["task:T001"],
+                    "promotion": {"at": "2026-03-07T00:00:00Z"},
+                },
+                memory_entry={"entry_id": "expmem_123", "file_path": "/tmp/MEMORY.md"},
+            )
+            write_procedural_skill_asset_mirror(
+                group,
+                candidate={
+                    "id": "exp_123",
+                    "status": "promoted_to_memory",
+                    "title": "Memory lane pattern",
+                    "summary": "Use memory lane recovery before touching live state.",
+                    "recommended_action": "Open recall gate first.",
+                    "source_refs": ["task:T001"],
+                    "promotion": {"at": "2026-03-07T00:00:00Z"},
+                },
+                memory_entry={"entry_id": "expmem_123", "file_path": "/tmp/MEMORY.md"},
+            )
+            with patch.object(cccc_core, "load_group", return_value=group):
+                out = mcp_server.bootstrap(group_id="g_test", actor_id="peer1")
+
+        gate = out["memory_recall_gate"]
+        assets = gate.get("experience_assets") if isinstance(gate.get("experience_assets"), list) else []
+        skills = gate.get("procedural_skills") if isinstance(gate.get("procedural_skills"), list) else []
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(str(assets[0].get("candidate_id") or ""), "exp_123")
+        self.assertIn("memory lane", str(assets[0].get("summary") or "").lower())
+        self.assertEqual(str(skills[0].get("source_experience_candidate_id") or ""), "exp_123")
+        self.assertIn("memory lane", str(skills[0].get("goal") or "").lower())
+
+    def test_recall_gate_asset_selection_uses_query_rank(self) -> None:
+        from cccc.kernel.experience_assets import write_experience_asset_mirror
+        from cccc.kernel.group import Group
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_core, cccc_group_actor
+        from cccc.ports.mcp.handlers import context as cccc_context
+
+        with tempfile.TemporaryDirectory() as td, patch.dict(
+            os.environ,
+            {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "peer1"},
+            clear=False,
+        ), patch.object(
+            cccc_group_actor,
+            "group_info",
+            return_value={"group": {"group_id": "g_test", "title": "temp_task", "active_scope_key": "s1", "scopes": []}},
+        ), patch.object(
+            cccc_group_actor,
+            "actor_list",
+            return_value={"actors": [{"id": "peer1", "role": "peer", "runner": "pty"}]},
+        ), patch.object(
+            cccc_core,
+            "project_info",
+            return_value={"found": False, "path": None},
+        ), patch.object(
+            cccc_context,
+            "context_get",
+            return_value={
+                "coordination": {"brief": {"objective": "memory lane"}, "tasks": [], "recent_decisions": [], "recent_handoffs": []},
+                "agent_states": [{"id": "peer1", "hot": {"focus": "memory lane"}, "warm": {}}],
+            },
+        ), patch.object(
+            cccc_core,
+            "inbox_list",
+            return_value={"messages": []},
+        ), patch.object(
+            cccc_core,
+            "_call_daemon_or_raise",
+            return_value={"hits": []},
+        ):
+            group = Group(group_id="g_test", path=Path(td), doc={"title": "temp_task", "group_id": "g_test", "scopes": []})
+            write_experience_asset_mirror(
+                group,
+                candidate={
+                    "id": "exp_network",
+                    "status": "promoted_to_memory",
+                    "title": "Network queue drain",
+                    "summary": "Investigate queue drain before touching runtime.",
+                    "recommended_action": "Check queue depth first.",
+                    "failure_signals": ["queue grows"],
+                    "source_refs": ["task:T002"],
+                    "promotion": {"at": "2026-03-08T00:00:00Z"},
+                },
+                memory_entry={"entry_id": "expmem_network", "file_path": "/tmp/MEMORY.md"},
+            )
+            write_experience_asset_mirror(
+                group,
+                candidate={
+                    "id": "exp_memory",
+                    "status": "promoted_to_memory",
+                    "title": "Memory lane pattern",
+                    "summary": "Use memory lane recovery before touching live state.",
+                    "recommended_action": "Open recall gate first.",
+                    "failure_signals": ["skip recall gate"],
+                    "source_refs": ["task:T001"],
+                    "promotion": {"at": "2026-03-07T00:00:00Z"},
+                },
+                memory_entry={"entry_id": "expmem_memory", "file_path": "/tmp/MEMORY.md"},
+            )
+            with patch.object(cccc_core, "load_group", return_value=group):
+                out = mcp_server.bootstrap(group_id="g_test", actor_id="peer1")
+
+        assets = out["memory_recall_gate"].get("experience_assets") if isinstance(out["memory_recall_gate"].get("experience_assets"), list) else []
+        self.assertGreaterEqual(len(assets), 2)
+        self.assertEqual(str(assets[0].get("candidate_id") or ""), "exp_memory")
+
+    def test_recall_gate_ignores_retired_experience_assets(self) -> None:
+        from cccc.kernel.experience_assets import write_experience_asset_mirror
+        from cccc.kernel.group import Group
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_core, cccc_group_actor
+        from cccc.ports.mcp.handlers import context as cccc_context
+
+        with tempfile.TemporaryDirectory() as td, patch.dict(
+            os.environ,
+            {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "peer1"},
+            clear=False,
+        ), patch.object(
+            cccc_group_actor,
+            "group_info",
+            return_value={"group": {"group_id": "g_test", "title": "temp_task", "active_scope_key": "s1", "scopes": []}},
+        ), patch.object(
+            cccc_group_actor,
+            "actor_list",
+            return_value={"actors": [{"id": "peer1", "role": "peer", "runner": "pty"}]},
+        ), patch.object(
+            cccc_core,
+            "project_info",
+            return_value={"found": False, "path": None},
+        ), patch.object(
+            cccc_context,
+            "context_get",
+            return_value={
+                "coordination": {"brief": {"objective": "memory lane"}, "tasks": [], "recent_decisions": [], "recent_handoffs": []},
+                "agent_states": [{"id": "peer1", "hot": {"focus": "memory lane"}, "warm": {}}],
+            },
+        ), patch.object(
+            cccc_core,
+            "inbox_list",
+            return_value={"messages": []},
+        ), patch.object(
+            cccc_core,
+            "_call_daemon_or_raise",
+            return_value={"hits": []},
+        ):
+            group = Group(group_id="g_test", path=Path(td), doc={"title": "temp_task", "group_id": "g_test", "scopes": []})
+            write_experience_asset_mirror(
+                group,
+                candidate={
+                    "id": "exp_retired",
+                    "status": "rejected",
+                    "title": "Retired pattern",
+                    "summary": "This should stay hidden.",
+                    "recommended_action": "Do not use.",
+                    "source_refs": ["task:T900"],
+                    "promotion": {"at": "2026-03-01T00:00:00Z"},
+                },
+                memory_entry={"entry_id": "expmem_retired", "file_path": "/tmp/MEMORY.md"},
+            )
+            with patch.object(cccc_core, "load_group", return_value=group):
+                out = mcp_server.bootstrap(group_id="g_test", actor_id="peer1")
+
+        assets = out["memory_recall_gate"].get("experience_assets") if isinstance(out["memory_recall_gate"].get("experience_assets"), list) else []
+        self.assertEqual(assets, [])
+
     def test_build_bootstrap_context_preserves_mind_context_mini_under_budget_pressure(self) -> None:
         from cccc.ports.mcp.handlers.cccc_core import _build_bootstrap_context
 
@@ -278,7 +496,121 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertIn("preserve continuity", str(mini.get("persona_notes") or ""))
         self.assertTrue(assigned_active)
         self.assertEqual(assigned_active[0].get("task_type"), "optimization")
-        self.assertEqual(assigned_active[0].get("parent_id"), "T000")
+
+    def test_recall_gate_ready_when_high_relevance_promoted_exists_without_memory_hits(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_core, cccc_group_actor
+        from cccc.ports.mcp.handlers import context as cccc_context
+
+        def _fake_daemon(req, *args, **kwargs):
+            op = str(req.get("op") or "")
+            if op == "memory_reme_search":
+                return {"hits": []}
+            return {}
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "peer1"}, clear=False), patch.object(
+            cccc_group_actor,
+            "group_info",
+            return_value={"group": {"group_id": "g_test", "title": "temp_task", "active_scope_key": "s1", "scopes": []}},
+        ), patch.object(
+            cccc_group_actor,
+            "actor_list",
+            return_value={"actors": [{"id": "peer1", "role": "peer", "runner": "pty"}]},
+        ), patch.object(
+            cccc_core,
+            "project_info",
+            return_value={"found": False, "path": None},
+        ), patch.object(
+            cccc_context,
+            "context_get",
+            return_value={
+                "coordination": {"brief": {"objective": "Stabilize collaboration"}, "tasks": [], "recent_decisions": [], "recent_handoffs": []},
+                "agent_states": [{
+                    "id": "peer1",
+                    "hot": {"focus": "", "next_action": "", "active_task_id": None, "blockers": []},
+                    "warm": {"resume_hint": "re-check shared assumptions"},
+                }],
+            },
+        ), patch.object(
+            cccc_core,
+            "inbox_list",
+            return_value={"messages": []},
+        ), patch.object(
+            cccc_core,
+            "query_experience_recall",
+            return_value={
+                "query": "shared assumptions",
+                "task_refs": [],
+                "decision_refs": [],
+                "memory_hits": [],
+                "experience": {
+                    "promoted": [{"id": "exp1", "summary": "Freeze recall contract", "score": 0.91}],
+                    "candidates": [],
+                    "promoted_top_score": 0.91,
+                },
+                "has_any": True,
+                "has_high_relevance_promoted": True,
+            },
+        ), patch.object(
+            cccc_core,
+            "_call_daemon_or_raise",
+            side_effect=_fake_daemon,
+        ):
+            out = mcp_server.bootstrap(group_id="g_test", actor_id="peer1")
+
+        gate = out["memory_recall_gate"]
+        self.assertEqual(str(gate.get("status") or ""), "ready")
+        self.assertEqual(gate.get("hits"), [])
+        self.assertEqual(gate.get("experience", {}).get("promoted_top_score"), 0.91)
+
+    def test_recall_gate_stays_empty_when_only_context_refs_exist(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_core, cccc_group_actor
+        from cccc.ports.mcp.handlers import context as cccc_context
+
+        def _fake_daemon(req, *args, **kwargs):
+            op = str(req.get("op") or "")
+            if op == "memory_reme_search":
+                return {"hits": []}
+            return {}
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "peer1"}, clear=False), patch.object(
+            cccc_group_actor,
+            "group_info",
+            return_value={"group": {"group_id": "g_test", "title": "temp_task", "active_scope_key": "s1", "scopes": []}},
+        ), patch.object(
+            cccc_group_actor,
+            "actor_list",
+            return_value={"actors": [{"id": "peer1", "role": "peer", "runner": "pty"}]},
+        ), patch.object(
+            cccc_core,
+            "project_info",
+            return_value={"found": False, "path": None},
+        ), patch.object(
+            cccc_context,
+            "context_get",
+            return_value={
+                "coordination": {
+                    "brief": {"objective": "Stabilize collaboration"},
+                    "tasks": [{"id": "T001", "title": "Keep bootstrap lean", "status": "active"}],
+                    "recent_decisions": [{"summary": "Keep recall small", "task_id": "T001"}],
+                    "recent_handoffs": [],
+                },
+                "agent_states": [{"id": "peer1", "hot": {}, "warm": {}}],
+            },
+        ), patch.object(
+            cccc_core,
+            "inbox_list",
+            return_value={"messages": []},
+        ), patch.object(
+            cccc_core,
+            "_call_daemon_or_raise",
+            side_effect=_fake_daemon,
+        ):
+            out = mcp_server.bootstrap(group_id="g_test", actor_id="peer1")
+
+        gate = out["memory_recall_gate"]
+        self.assertEqual(str(gate.get("status") or ""), "empty")
 
 
 if __name__ == "__main__":

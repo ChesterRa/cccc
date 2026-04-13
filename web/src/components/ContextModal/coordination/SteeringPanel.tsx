@@ -38,6 +38,7 @@ interface SteeringPanelProps {
   handoffDraft: NoteDraft;
   activeTaskOptions: Task[];
   projectPanel: ReactNode;
+  learningPanel: ReactNode;
   onOpenSteeringTab: (tab: SteeringTab) => void;
   onStartBriefEdit: () => void;
   onCancelBriefEdit: () => void;
@@ -67,6 +68,7 @@ export function SteeringPanel({
   handoffDraft,
   activeTaskOptions,
   projectPanel,
+  learningPanel,
   onOpenSteeringTab,
   onStartBriefEdit,
   onCancelBriefEdit,
@@ -118,6 +120,7 @@ export function SteeringPanel({
             <button type="button" onClick={() => onOpenSteeringTab("summary")} className={tabButtonClass(steeringTab === "summary")}>{tr("context.brief", "Summary")}</button>
             <button type="button" onClick={() => onOpenSteeringTab("project")} className={tabButtonClass(steeringTab === "project")}>{tr("context.projectMd", "PROJECT.md")}</button>
             <button type="button" onClick={() => onOpenSteeringTab("log")} className={tabButtonClass(steeringTab === "log")}>{tr("context.activityLog", "Activity")}</button>
+            <button type="button" onClick={() => onOpenSteeringTab("learning")} className={tabButtonClass(steeringTab === "learning")}>{tr("context.learning", "Learning")}</button>
           </div>
 
           {steeringTab === "summary" ? (
@@ -183,6 +186,8 @@ export function SteeringPanel({
           ) : null}
 
           {steeringTab === "project" ? projectPanel : null}
+
+          {steeringTab === "learning" ? learningPanel : null}
 
           {steeringTab === "log" ? (
             <div className="space-y-3">

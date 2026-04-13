@@ -8,6 +8,7 @@ def _handle_memory_namespace(
     arguments: Dict[str, Any],
     *,
     resolve_group_id: Callable[[Dict[str, Any]], str],
+    resolve_caller_from_by: Callable[[Dict[str, Any]], str],
     coerce_bool: Callable[..., bool],
     call_daemon_or_raise: Callable[..., Dict[str, Any]],
     mcp_error_cls: Type[Exception],
@@ -62,9 +63,123 @@ def _handle_memory_namespace(
                     args[field] = val
             return call_daemon_or_raise({"op": "memory_reme_write", "args": args})
 
+        if action == "promote_experience":
+            candidate_id = str(arguments.get("candidate_id") or "").strip()
+            if not candidate_id:
+                raise mcp_error_cls("validation_error", "missing candidate_id")
+            by = resolve_caller_from_by(arguments)
+            args = {
+                "group_id": gid,
+                "candidate_id": candidate_id,
+                "by": by,
+                "dry_run": coerce_bool(arguments.get("dry_run"), default=False),
+            }
+            promote_result = call_daemon_or_raise({"op": "experience_promote_to_memory", "args": args})
+            if not isinstance(promote_result, dict):
+                return promote_result
+            if bool(args.get("dry_run")):
+                return promote_result
+            commit_state = str(promote_result.get("commit_state") or "")
+            asset_write = promote_result.get("asset_write") if isinstance(promote_result.get("asset_write"), dict) else {}
+            if commit_state == "disk_committed" and str(asset_write.get("status") or "") == "written":
+                delivery_result = call_daemon_or_raise(
+                    {
+                        "op": "experience_runtime_prompt_delivery",
+                        "args": {
+                            "group_id": gid,
+                            "candidate_id": candidate_id,
+                        },
+                    }
+                )
+                if isinstance(delivery_result, dict) and isinstance(delivery_result.get("runtime_prompt_delivery"), dict):
+                    merged = dict(promote_result)
+                    merged["runtime_prompt_delivery"] = delivery_result["runtime_prompt_delivery"]
+                    return merged
+            return promote_result
+
+        if action == "govern_experience":
+            lifecycle_action = str(arguments.get("lifecycle_action") or "").strip().lower()
+            if lifecycle_action not in {"reject", "merge", "supersede"}:
+                raise mcp_error_cls("validation_error", "lifecycle_action must be one of: reject, merge, supersede")
+            by = resolve_caller_from_by(arguments)
+            args = {
+                "group_id": gid,
+                "by": by,
+                "lifecycle_action": lifecycle_action,
+                "dry_run": coerce_bool(arguments.get("dry_run"), default=False),
+            }
+            for field in ("candidate_id", "target_candidate_id", "reason"):
+                val = arguments.get(field)
+                if val is not None:
+                    args[field] = val
+            source_candidate_ids = arguments.get("source_candidate_ids")
+            if isinstance(source_candidate_ids, list):
+                args["source_candidate_ids"] = source_candidate_ids
+            return call_daemon_or_raise({"op": "experience_govern", "args": args})
+
+        if action == "repair_experience":
+            candidate_id = str(arguments.get("candidate_id") or "").strip()
+            if not candidate_id:
+                raise mcp_error_cls("validation_error", "missing candidate_id")
+            by = resolve_caller_from_by(arguments)
+            args = {
+                "group_id": gid,
+                "candidate_id": candidate_id,
+                "by": by,
+                "dry_run": coerce_bool(arguments.get("dry_run"), default=False),
+            }
+            return call_daemon_or_raise({"op": "experience_repair_memory", "args": args})
+
+        if action == "report_skill_usage":
+            skill_id = str(arguments.get("skill_id") or "").strip()
+            if not skill_id:
+                raise mcp_error_cls("validation_error", "missing skill_id")
+            by = resolve_caller_from_by(arguments)
+            turn_id = str(arguments.get("turn_id") or "").strip()
+            evidence_type = str(arguments.get("evidence_type") or "").strip()
+            if not turn_id:
+                raise mcp_error_cls("validation_error", "missing turn_id")
+            if not evidence_type:
+                raise mcp_error_cls("validation_error", "missing evidence_type")
+            args = {
+                "group_id": gid,
+                "skill_id": skill_id,
+                "by": by,
+                "actor_id": arguments.get("actor_id") or by,
+                "turn_id": turn_id,
+                "evidence_type": evidence_type,
+                "outcome": arguments.get("outcome") or "",
+                "reason": arguments.get("reason") or "",
+                "generate_patch": coerce_bool(arguments.get("generate_patch"), default=False),
+            }
+            if isinstance(arguments.get("evidence_payload"), dict):
+                args["evidence_payload"] = arguments["evidence_payload"]
+            if arguments.get("patch_kind") is not None:
+                args["patch_kind"] = arguments.get("patch_kind")
+            if isinstance(arguments.get("proposed_delta"), dict):
+                args["proposed_delta"] = arguments["proposed_delta"]
+            return call_daemon_or_raise({"op": "procedural_skill_report_usage", "args": args})
+
+        if action == "govern_skill_patch":
+            candidate_id = str(arguments.get("candidate_id") or "").strip()
+            lifecycle_action = str(arguments.get("lifecycle_action") or "").strip().lower()
+            if not candidate_id:
+                raise mcp_error_cls("validation_error", "missing candidate_id")
+            if lifecycle_action not in {"merge", "reject"}:
+                raise mcp_error_cls("validation_error", "lifecycle_action must be one of: merge, reject")
+            by = resolve_caller_from_by(arguments)
+            args = {
+                "group_id": gid,
+                "candidate_id": candidate_id,
+                "lifecycle_action": lifecycle_action,
+                "by": by,
+                "reason": arguments.get("reason") or "",
+            }
+            return call_daemon_or_raise({"op": "procedural_skill_govern_patch", "args": args})
+
         raise mcp_error_cls(
             "invalid_request",
-            "cccc_memory action must be one of: layout_get/search/get/write",
+            "cccc_memory action must be one of: layout_get/search/get/write/promote_experience/govern_experience/repair_experience/report_skill_usage/govern_skill_patch",
         )
 
     if name == "cccc_memory_admin":

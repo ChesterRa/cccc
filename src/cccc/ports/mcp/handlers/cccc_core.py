@@ -7,8 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ....daemon.memory.experience_assets import query_experience_recall
 from ....kernel.agent_state_hygiene import build_mind_context_mini, evaluate_agent_state_hygiene
+from ....kernel.experience_assets import select_experience_assets_for_consumption
 from ....kernel.group import load_group
+from ....kernel.procedural_skills import select_procedural_skills_for_consumption
 from ....kernel.group_space import get_group_space_prompt_state
 from ....kernel.prompt_files import load_builtin_help_markdown as _load_builtin_help_markdown
 from ....util.fs import read_json
@@ -168,6 +171,11 @@ def _build_memory_recall_gate(*, group_id: str, actor_id: str, context: Dict[str
         "status": "empty",
         "query": query,
         "hits": [],
+        "task_refs": [],
+        "decision_refs": [],
+        "experience": {"promoted": [], "candidates": [], "promoted_top_score": 0.0},
+        "experience_assets": [],
+        "procedural_skills": [],
         "note": (
             "Recall gate: read this before planning or implementation. "
             "If it is empty, expand with local cccc_memory(search/get)."
@@ -187,21 +195,50 @@ def _build_memory_recall_gate(*, group_id: str, actor_id: str, context: Dict[str
             timeout_s=4.0,
         )
         hits = search_result.get("hits") if isinstance(search_result, dict) else []
-        compact_hits: List[Dict[str, Any]] = []
-        if isinstance(hits, list):
-            for item in hits[:3]:
-                if not isinstance(item, dict):
-                    continue
-                compact_hits.append(
-                    {
-                        "path": str(item.get("path") or ""),
-                        "start_line": int(item.get("start_line") or 1),
-                        "score": float(item.get("score") or 0.0),
-                        "snippet": _trim_text(item.get("snippet"), max_chars=220),
-                    }
-                )
-        gate["hits"] = compact_hits
-        gate["status"] = "ready" if compact_hits else "empty"
+        recall = query_experience_recall(
+            group_id=group_id,
+            query=query,
+            context=context if isinstance(context, dict) else {},
+            memory_hits=hits,
+        )
+        memory_hits = recall.get("memory_hits") if isinstance(recall.get("memory_hits"), list) else []
+        gate["hits"] = memory_hits
+        gate["task_refs"] = recall.get("task_refs") if isinstance(recall.get("task_refs"), list) else []
+        gate["decision_refs"] = recall.get("decision_refs") if isinstance(recall.get("decision_refs"), list) else []
+        gate["experience"] = recall.get("experience") if isinstance(recall.get("experience"), dict) else {"promoted": [], "candidates": [], "promoted_top_score": 0.0}
+        group = load_group(group_id)
+        if group is not None:
+            assets = select_experience_assets_for_consumption(group, query=query, limit=3)
+            gate["experience_assets"] = [
+                {
+                    "asset_id": str(item.get("asset_id") or "").strip(),
+                    "candidate_id": str(item.get("candidate_id") or "").strip(),
+                    "title": str(item.get("title") or "").strip(),
+                    "summary": str(item.get("summary") or "").strip(),
+                    "recommended_action": str(item.get("recommended_action") or "").strip(),
+                    "memory_entry_id": str(item.get("memory_entry_id") or "").strip(),
+                    "score": float(item.get("score") or 0.0),
+                }
+                for item in assets
+            ]
+            skills = select_procedural_skills_for_consumption(group, query=query, limit=3)
+            gate["procedural_skills"] = [
+                {
+                    "skill_id": str(item.get("skill_id") or "").strip(),
+                    "source_experience_candidate_id": str(item.get("source_experience_candidate_id") or "").strip(),
+                    "title": str(item.get("title") or "").strip(),
+                    "goal": str(item.get("goal") or "").strip(),
+                    "steps": [str(step or "").strip() for step in (item.get("steps") if isinstance(item.get("steps"), list) else []) if str(step or "").strip()],
+                    "memory_entry_id": str(item.get("memory_entry_id") or "").strip(),
+                    "score": float(item.get("score") or 0.0),
+                }
+                for item in skills
+            ]
+        has_any = bool(recall.get("has_any"))
+        high_promoted = bool(recall.get("has_high_relevance_promoted"))
+        has_assets = bool(gate.get("experience_assets"))
+        has_skills = bool(gate.get("procedural_skills"))
+        gate["status"] = "ready" if (has_any or high_promoted or has_assets or has_skills) else "empty"
     except Exception as e:
         gate["status"] = "error"
         gate["error"] = str(e)
