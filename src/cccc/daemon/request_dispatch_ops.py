@@ -37,6 +37,7 @@ from .ops.capability_ops import try_handle_capability_op
 from .im.im_ops import try_handle_im_op
 from .actors.runner_ops import try_handle_headless_op
 from .memory.memory_ops import try_handle_memory_op
+from .memory.experience_ops import try_handle_experience_op
 
 
 @dataclass(frozen=True)
@@ -390,6 +391,10 @@ def dispatch_request(
     context_resp = try_handle_context_op(op, args)
     if context_resp is not None:
         return context_resp, False
+
+    experience_resp = try_handle_experience_op(op, args)
+    if experience_resp is not None:
+        return experience_resp, False
 
     memory_resp = try_handle_memory_op(op, args)
     if memory_resp is not None:

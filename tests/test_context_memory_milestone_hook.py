@@ -35,7 +35,7 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
         self.assertTrue(group_id)
         return group_id
 
-    def test_root_task_complete_triggers_file_memory_writes(self) -> None:
+    def test_root_task_complete_creates_experience_candidate_and_preserves_daily_memory(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
@@ -75,20 +75,25 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
+            candidates_file = Path(group.path) / "state" / "experience_candidates.json"
+            self.assertTrue(candidates_file.exists())
+            candidates_text = candidates_file.read_text(encoding="utf-8")
+            self.assertIn("task.root_done", candidates_text)
+            self.assertIn(task_id, candidates_text)
+
             memory_root = Path(group.path) / "state" / "memory"
             self.assertTrue(memory_root.exists())
 
             memory_file = memory_root / "MEMORY.md"
             self.assertTrue(memory_file.exists())
             memory_text = memory_file.read_text(encoding="utf-8")
-            self.assertIn("Root task completed", memory_text)
-            self.assertIn(task_id, memory_text)
+            self.assertNotIn("Root task completed", memory_text)
+            self.assertNotIn(task_id, memory_text)
 
             daily_files = sorted((memory_root / "daily").glob("*.md"))
             self.assertGreaterEqual(len(daily_files), 1)
             daily_text = "\n".join(p.read_text(encoding="utf-8") for p in daily_files)
             self.assertIn("Task status update", daily_text)
-            self.assertIn("Root task completed", daily_text)
             self.assertIn(task_id, daily_text)
         finally:
             cleanup()

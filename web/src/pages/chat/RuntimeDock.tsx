@@ -13,6 +13,7 @@ import {
   upsertRuntimeDockTickerCache,
   type RuntimeDockTickerCache,
 } from "./runtimeDockTickerCache";
+import { splitRuntimeDockTickerText } from "./runtimeDockTickerText";
 import { buildRuntimeDockTickerEntries, type RuntimeDockTickerEntry } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
@@ -175,6 +176,8 @@ function RuntimeDockTicker({
         {visibleEntries.map((entry, index) => {
           const slotFromLatest = visibleEntries.length - index - 1;
           const isMessage = entry.kind === "message";
+          const textLines = isMessage ? splitRuntimeDockTickerText(entry.text) : [entry.text];
+          const [firstLine, ...restLines] = textLines;
           return (
             <div
               key={entry.id}
@@ -195,11 +198,32 @@ function RuntimeDockTicker({
                   : "border-cyan-500/[0.14] bg-white/[0.78] text-gray-700"
               )}
             >
-              <span className={classNames("font-semibold", isDark ? "text-cyan-100" : "text-cyan-700")}>
-                {entry.actorLabel}
-              </span>
-              <span className={isDark ? "text-slate-500" : "text-gray-400"}>: </span>
-              <span>{entry.text}</span>
+              {isMessage ? (
+                <>
+                  <div className="block">
+                    <span className={classNames("font-semibold", isDark ? "text-cyan-100" : "text-cyan-700")}>
+                      {entry.actorLabel}
+                    </span>
+                    <span className={isDark ? "text-slate-500" : "text-gray-400"}>: </span>
+                    <span>{firstLine}</span>
+                  </div>
+                  <div className={classNames(restLines.length > 0 ? "mt-1 space-y-0.5" : "hidden")}>
+                    {restLines.map((line, lineIndex) => (
+                      <div key={`${entry.id}:line:${lineIndex}`} className="block">
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className={classNames("font-semibold", isDark ? "text-cyan-100" : "text-cyan-700")}>
+                    {entry.actorLabel}
+                  </span>
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>: </span>
+                  <span>{entry.text}</span>
+                </>
+              )}
             </div>
           );
         })}

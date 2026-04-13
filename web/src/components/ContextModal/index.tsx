@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   type DragEndEvent,
@@ -14,6 +14,7 @@ import {
   apiJson,
   contextSync,
   deleteCoordinationTask,
+  fetchGroupLearning,
   fetchGroupPrompts,
   updateCoordinationBrief,
   updateCoordinationTask,
@@ -24,6 +25,7 @@ import {
 import { reloadContextAfterWrite } from "../../features/contextModal/contextWriteback";
 import type {
   GroupContext,
+  GroupLearningSnapshot,
   GroupSettings,
   ProjectMdInfo,
   Task,
@@ -35,6 +37,7 @@ import {
 } from "../../utils/taskWorkflow";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useLatestRequest } from "../../hooks/useLatestRequest";
 import { ModalFrame } from "../modals/ModalFrame";
 import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/settings/types";
 import { parseHelpMarkdown, updatePetHelpNote } from "../../utils/helpMarkdown";
@@ -71,6 +74,8 @@ import {
   type TaskFilterValue,
 } from "./model";
 import { createContextModalUi } from "./ui";
+
+const LearningPanel = lazy(() => import("./learning/LearningPanel").then((module) => ({ default: module.LearningPanel })));
 
 interface ContextModalProps {
   isOpen: boolean;
@@ -138,7 +143,14 @@ export function ContextModal({
   const [handoffDraft, setHandoffDraft] = useState<NoteDraft>(emptyNoteDraft());
   const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
   const [activityError, setActivityError] = useState("");
+  const [learningSnapshot, setLearningSnapshot] = useState<GroupLearningSnapshot | null>(null);
+  const [learningBusy, setLearningBusy] = useState(false);
+  const [learningError, setLearningError] = useState("");
+  const [learningLoadedGroupId, setLearningLoadedGroupId] = useState("");
   const lastOpenedGroupRef = useRef("");
+  const projectRequest = useLatestRequest();
+  const learningRequest = useLatestRequest();
+  const petPersonaRequest = useLatestRequest();
 
   const brief = context?.coordination?.brief || null;
   const desktopPetEnabled = Boolean(settings?.desktop_pet_enabled);
@@ -258,46 +270,76 @@ export function ContextModal({
     if (!force && projectMd !== null) return projectMd;
     setProjectBusy(true);
     setProjectError("");
-    try {
-      const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`);
-      if (!resp.ok) {
-        setProjectMd(null);
-        setProjectError(resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
-        return null;
-      }
-      setProjectMd(resp.result);
-      return resp.result ?? null;
-    } finally {
-      setProjectBusy(false);
+    let nextProject: ProjectMdInfo | null = null;
+    await projectRequest.runLatest({
+      run: (signal) => apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`, { signal }),
+      onSuccess: (resp) => {
+        if (!resp.ok) {
+          setProjectMd(null);
+          setProjectError(resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
+          return;
+        }
+        nextProject = resp.result ?? null;
+        setProjectMd(resp.result);
+      },
+      onSettled: () => setProjectBusy(false),
+    });
+    return nextProject;
+  }, [groupId, projectMd, projectRequest, tr]);
+
+  const loadLearningSnapshot = useCallback(async (force: boolean = false): Promise<GroupLearningSnapshot | null> => {
+    if (!groupId) return null;
+    if (!force && learningSnapshot !== null && learningLoadedGroupId === groupId) {
+      return learningSnapshot;
     }
-  }, [groupId, projectMd, tr]);
+    setLearningBusy(true);
+    setLearningError("");
+    let nextSnapshot: GroupLearningSnapshot | null = null;
+    await learningRequest.runLatest({
+      run: (signal) => fetchGroupLearning(groupId, { signal }),
+      onSuccess: (resp) => {
+        if (!resp.ok) {
+          setLearningError(resp.error?.message || tr("context.failedToLoadLearning", "Failed to load learning board"));
+          return;
+        }
+        nextSnapshot = resp.result ?? null;
+        setLearningSnapshot(resp.result);
+        setLearningLoadedGroupId(groupId);
+      },
+      onSettled: () => setLearningBusy(false),
+    });
+    return nextSnapshot;
+  }, [groupId, learningLoadedGroupId, learningRequest, learningSnapshot, tr]);
 
   const loadPetPersona = useCallback(async (force: boolean = false): Promise<GroupPromptInfo | null> => {
     if (!groupId) return null;
     if (!force && petHelpPrompt !== null) return petHelpPrompt;
     setPetPersonaBusy(true);
     setPetPersonaError("");
-    try {
-      const resp = await fetchGroupPrompts(groupId);
-      if (!resp.ok) {
-        setPetHelpPrompt(null);
-        setPetPersonaError(resp.error?.message || tr("context.failedToLoadPetPersona", "Failed to load pet persona"));
-        return null;
-      }
-      const nextHelp = resp.result?.help ?? null;
-      if (!nextHelp) {
-        setPetHelpPrompt(null);
-        setPetPersonaError(tr("context.failedToLoadPetPersona", "Failed to load pet persona"));
-        return null;
-      }
-      setPetHelpPrompt(nextHelp);
-      const parsedPet = parseHelpMarkdown(String(nextHelp.content || "")).pet;
-      setPetPersonaDraft(resolvePetPersonaDraft(parsedPet));
-      return nextHelp;
-    } finally {
-      setPetPersonaBusy(false);
-    }
-  }, [groupId, petHelpPrompt, tr]);
+    let nextHelpPrompt: GroupPromptInfo | null = null;
+    await petPersonaRequest.runLatest({
+      run: (signal) => fetchGroupPrompts(groupId, { signal, noCache: true }),
+      onSuccess: (resp) => {
+        if (!resp.ok) {
+          setPetHelpPrompt(null);
+          setPetPersonaError(resp.error?.message || tr("context.failedToLoadPetPersona", "Failed to load pet persona"));
+          return;
+        }
+        const nextHelp = resp.result?.help ?? null;
+        if (!nextHelp) {
+          setPetHelpPrompt(null);
+          setPetPersonaError(tr("context.failedToLoadPetPersona", "Failed to load pet persona"));
+          return;
+        }
+        nextHelpPrompt = nextHelp;
+        setPetHelpPrompt(nextHelp);
+        const parsedPet = parseHelpMarkdown(String(nextHelp.content || "")).pet;
+        setPetPersonaDraft(resolvePetPersonaDraft(parsedPet));
+      },
+      onSettled: () => setPetPersonaBusy(false),
+    });
+    return nextHelpPrompt;
+  }, [groupId, petHelpPrompt, petPersonaRequest, tr]);
 
   useEffect(() => {
     if (!isOpen || !groupId) return;
@@ -333,6 +375,13 @@ export function ContextModal({
     setHandoffDraft(emptyNoteDraft());
     setActivityBusyKind(null);
     setActivityError("");
+    setLearningSnapshot(null);
+    setLearningBusy(false);
+    setLearningError("");
+    setLearningLoadedGroupId("");
+    projectRequest.cancelLatest();
+    learningRequest.cancelLatest();
+    petPersonaRequest.cancelLatest();
   }, [groupId, isOpen]);
 
   useEffect(() => {
@@ -357,6 +406,15 @@ export function ContextModal({
       void loadProjectMd();
     }
   }, [editingProject, groupId, isOpen, loadProjectMd, projectBusy, projectMd, steeringTab]);
+
+  useEffect(() => {
+    if (!isOpen || !groupId || activeView !== "coordination" || steeringTab !== "learning") return;
+    const missingSkillsField =
+      learningSnapshot !== null && !Array.isArray((learningSnapshot as GroupLearningSnapshot & { skills?: unknown }).skills);
+    if ((learningSnapshot === null || missingSkillsField) && !learningBusy) {
+      void loadLearningSnapshot(true);
+    }
+  }, [activeView, groupId, isOpen, learningBusy, learningSnapshot, loadLearningSnapshot, steeringTab]);
 
   useEffect(() => {
     if (!isOpen || !groupId || activeView !== "desktop_pet") return;
@@ -608,7 +666,10 @@ export function ContextModal({
     if (tab === "project") {
       void loadProjectMd();
     }
-  }, [confirmDiscardTaskChanges, loadProjectMd]);
+    if (tab === "learning") {
+      void loadLearningSnapshot();
+    }
+  }, [confirmDiscardTaskChanges, loadLearningSnapshot, loadProjectMd]);
 
   const handleSwitchActiveView = useCallback((next: ContextModalView) => {
     if (next !== "coordination") {
@@ -965,6 +1026,20 @@ export function ContextModal({
     />
   );
 
+  const learningPanel = (
+    <Suspense fallback={<section className={classNames(ui.surfaceClass, "rounded-xl border p-4 text-sm", "glass-card text-[var(--color-text-secondary)]")}>{tr("context.loading", "Loading…")}</section>}>
+      <LearningPanel
+        groupId={groupId}
+        tr={tr}
+        ui={ui}
+        data={learningSnapshot}
+        loading={learningBusy}
+        error={learningError}
+        onRefresh={() => void loadLearningSnapshot(true)}
+      />
+    </Suspense>
+  );
+
   if (!isOpen) return null;
 
   const viewButtonClass = (active: boolean) => classNames(
@@ -1018,6 +1093,7 @@ export function ContextModal({
                   handoffDraft={handoffDraft}
                   activeTaskOptions={activeTaskOptions}
                   projectPanel={projectPanel}
+                  learningPanel={learningPanel}
                   onOpenSteeringTab={openSteeringTab}
                   onStartBriefEdit={startBriefEdit}
                   onCancelBriefEdit={cancelBriefEdit}

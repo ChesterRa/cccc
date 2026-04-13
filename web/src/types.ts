@@ -631,6 +631,106 @@ export type ProjectMdInfo = {
   error?: string | null;
 };
 
+export type LearningOverview = {
+  usage_events_24h: number;
+  usage_events_7d: number;
+  pending_patch_count: number;
+  merged_patch_count_7d: number;
+  rejected_patch_count_7d: number;
+  active_skill_count: number;
+  observing_skill_count: number;
+  runtime_consumed_recent_count: number;
+};
+
+export type LearningFunnel = {
+  evidence_count: number;
+  below_threshold_count: number;
+  candidate_created_count: number;
+  candidate_ready_count: number;
+  pending_review_count: number;
+  merged_count: number;
+  runtime_consumed_count: number;
+  threshold: number;
+};
+
+export type LearningPendingPatch = {
+  candidate_id: string;
+  skill_id: string;
+  source_experience_candidate_id?: string | null;
+  patch_kind: string;
+  reason?: string | null;
+  score: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  evidence_count: number;
+  last_evidence_at?: string | null;
+  sample_evidence_type?: string | null;
+  sample_outcome?: string | null;
+  review_mode?: string | null;
+  regressed_from_candidate_id?: string | null;
+};
+
+export type LearningRecentItem = {
+  candidate_id: string;
+  skill_id: string;
+  source_experience_candidate_id?: string | null;
+  title?: string | null;
+  patch_kind: string;
+  reason?: string | null;
+  score: number;
+  merged_at?: string | null;
+  merged_by?: string | null;
+  evidence_count: number;
+  runtime_consumed_count: number;
+  post_merge_status?: string | null;
+  stability?: string | null;
+  patch_review_mode?: string | null;
+  observed_at?: string | null;
+  followup_candidate_id?: string | null;
+  followup_review_mode?: string | null;
+  regressed_from_candidate_id?: string | null;
+};
+
+export type LearningObservingSkill = {
+  skill_id: string;
+  source_experience_candidate_id?: string | null;
+  title?: string | null;
+  goal?: string | null;
+  status: string;
+  candidate_id?: string | null;
+  stability?: string | null;
+  patch_review_mode?: string | null;
+  opened_at?: string | null;
+  observe_until?: string | null;
+  observed_at?: string | null;
+  followup_candidate_id?: string | null;
+  followup_review_mode?: string | null;
+  regressed_from_candidate_id?: string | null;
+};
+
+export type LearningProceduralSkill = {
+  skill_id: string;
+  source_experience_candidate_id?: string | null;
+  title?: string | null;
+  goal?: string | null;
+  steps: string[];
+  constraints: string[];
+  failure_signals: string[];
+  status: string;
+  stability?: string | null;
+  review_mode?: string | null;
+  updated_at?: string | null;
+};
+
+export type GroupLearningSnapshot = {
+  overview: LearningOverview;
+  funnel: LearningFunnel;
+  pending_patches: LearningPendingPatch[];
+  recent_learning: LearningRecentItem[];
+  observing_skills: LearningObservingSkill[];
+  skills: LearningProceduralSkill[];
+};
+
 export type GroupSettings = {
   default_send_to: "foreman" | "broadcast";
   nudge_after_seconds: number;

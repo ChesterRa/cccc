@@ -873,6 +873,7 @@ def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[D
         name,
         arguments,
         resolve_group_id=_resolve_group_id,
+        resolve_caller_from_by=_resolve_caller_from_by,
         coerce_bool=coerce_bool,
         call_daemon_or_raise=_call_daemon_or_raise,
         mcp_error_cls=MCPError,

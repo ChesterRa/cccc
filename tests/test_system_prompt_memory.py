@@ -81,6 +81,102 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertNotIn("Planning gate (6D)", prompt)
             self.assertNotIn("Todo discipline:", prompt)
             self.assertNotIn("Gap policy:", prompt)
+            self.assertNotIn("Active Experience Assets:", prompt)
+        finally:
+            cleanup()
+
+    def test_prompt_injects_experience_asset_cards(self) -> None:
+        from cccc.kernel.actors import find_actor
+        from cccc.kernel.group import load_group
+        from cccc.kernel.system_prompt import render_system_prompt
+
+        _, cleanup = self._with_home()
+        try:
+            gid, aid = self._create_group_with_actor(title="prompt-memory-assets")
+            self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [{"op": "task.create", "title": "Phase 1", "outcome": "stabilize memory lane"}],
+                },
+            )
+            task_list, _ = self._call("task_list", {"group_id": gid})
+            tasks = (task_list.result or {}).get("tasks") if isinstance(task_list.result, dict) else []
+            task_id = str((tasks[0] if tasks else {}).get("id") or "")
+            self.assertTrue(task_id)
+            self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [{"op": "task.move", "task_id": task_id, "status": "done"}],
+                },
+            )
+
+            from cccc.kernel.group import load_group as reload_group
+            from cccc.util.fs import read_json
+
+            group = reload_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            candidates_path = group.path / "state" / "experience_candidates.json"
+            candidate_doc = read_json(candidates_path)
+            candidates = candidate_doc.get("candidates") if isinstance(candidate_doc.get("candidates"), list) else []
+            candidate_id = str((candidates[0] if candidates else {}).get("id") or "")
+            self.assertTrue(candidate_id)
+
+            promote, _ = self._call(
+                "experience_promote_to_memory",
+                {"group_id": gid, "candidate_id": candidate_id, "by": "user"},
+            )
+            self.assertTrue(promote.ok, getattr(promote, "error", None))
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = find_actor(group, aid)
+            self.assertIsNotNone(actor)
+            prompt = render_system_prompt(group=group, actor=actor or {})
+
+            self.assertIn("Active Procedural Skills:", prompt)
+            self.assertIn(f"procskill_{candidate_id}", prompt)
+            self.assertIn("Active Experience Assets:", prompt)
+            self.assertIn(candidate_id, prompt)
+            self.assertIn("stabilize memory lane", prompt)
+            self.assertNotIn("Promote this outcome", prompt)
+        finally:
+            cleanup()
+
+    def test_prompt_consumption_policy_normalizes_and_caps_actor_assets(self) -> None:
+        from cccc.kernel.actors import find_actor
+        from cccc.kernel.group import load_group
+        from cccc.kernel.system_prompt import render_system_prompt
+
+        _, cleanup = self._with_home()
+        try:
+            gid, aid = self._create_group_with_actor(title="prompt-memory-policy")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = find_actor(group, aid)
+            self.assertIsNotNone(actor)
+            actor = dict(actor or {})
+            actor["experience_assets"] = [
+                {"candidate_id": "exp_old", "title": "Old asset", "summary": "older", "recommended_action": "ignore", "promoted_at": "2026-03-01T00:00:00Z"},
+                {"candidate_id": "exp_new", "title": "Newest asset", "summary": "newest", "recommended_action": "use newest", "promoted_at": "2026-03-04T00:00:00Z"},
+                {"candidate_id": "exp_mid", "title": "Middle asset", "summary": "middle", "recommended_action": "use middle", "promoted_at": "2026-03-03T00:00:00Z"},
+                {"candidate_id": "", "title": "Broken asset", "summary": "invalid", "recommended_action": "skip", "promoted_at": "2026-03-05T00:00:00Z"},
+                {"candidate_id": "exp_low", "title": "Low asset", "summary": "low", "recommended_action": "use low", "promoted_at": "2026-03-02T00:00:00Z"},
+            ]
+
+            prompt = render_system_prompt(group=group, actor=actor)
+
+            self.assertIn("exp_new", prompt)
+            self.assertIn("exp_mid", prompt)
+            self.assertIn("exp_low", prompt)
+            self.assertNotIn("exp_old", prompt)
+            self.assertNotIn("Broken asset", prompt)
         finally:
             cleanup()
 

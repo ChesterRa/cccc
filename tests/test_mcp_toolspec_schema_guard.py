@@ -56,7 +56,22 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIsInstance(props, dict)
         action = props.get("action") if isinstance(props, dict) else {}
         self.assertIsInstance(action, dict)
-        self.assertEqual(action.get("enum"), ["layout_get", "search", "get", "write"])
+        self.assertEqual(
+            action.get("enum"),
+            ["layout_get", "search", "get", "write", "promote_experience", "govern_experience", "repair_experience", "report_skill_usage", "govern_skill_patch"],
+        )
+        self.assertIn("candidate_id", props)
+        self.assertIn("skill_id", props)
+        self.assertIn("by", props)
+        self.assertIn("turn_id", props)
+        self.assertIn("evidence_type", props)
+        self.assertIn("generate_patch", props)
+        self.assertIn("patch_kind", props)
+        self.assertIn("proposed_delta", props)
+        self.assertIn("dry_run", props)
+        self.assertIn("lifecycle_action", props)
+        self.assertIn("target_candidate_id", props)
+        self.assertIn("source_candidate_ids", props)
 
     def test_memory_admin_actions_match_reme_surface(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory_admin"), None)

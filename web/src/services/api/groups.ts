@@ -605,8 +605,11 @@ export type PromptUpdateOptions = {
   changedBlocks?: string[];
 };
 
-export async function fetchGroupPrompts(groupId: string) {
+export async function fetchGroupPrompts(groupId: string, init?: RequestInit & { noCache?: boolean }) {
   const gid = String(groupId || "").trim();
+  if (init?.noCache || init?.signal) {
+    return apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`, init);
+  }
   return reuseSharedReadRequest(
     groupPromptsKey(gid),
     () => apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`),
