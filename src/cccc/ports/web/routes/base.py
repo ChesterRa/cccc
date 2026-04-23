@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.scope import detect_scope
 from ....kernel.settings import get_observability_settings, get_web_branding_settings
+from ....ports.mcp.handlers.cccc_capability import capability_use
 from ..branding import (
     build_branding_payload,
     delete_branding_asset,
@@ -866,6 +867,48 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if "record" in payload:
             args["record"] = payload["record"]
         return await ctx.daemon({"op": "capability_import", "args": args})
+
+    @group_router.post("/capabilities/use")
+    async def capability_use_route(group_id: str, request: Request) -> Dict[str, Any]:
+        """Enable a capability if needed, then optionally call a tool."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability use endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        try:
+            result = capability_use(
+                group_id=group_id,
+                by="user",
+                actor_id=str(payload.get("actor_id") or "user").strip() or "user",
+                capability_id=str(payload.get("capability_id") or "").strip(),
+                tool_name=str(payload.get("tool_name") or "").strip(),
+                tool_arguments=payload.get("tool_arguments") if isinstance(payload.get("tool_arguments"), dict) else {},
+                scope=str(payload.get("scope") or "session").strip().lower() or "session",
+                ttl_seconds=int(payload.get("ttl_seconds") or 3600),
+                reason=str(payload.get("reason") or "").strip(),
+            )
+            return {"ok": True, "result": result}
+        except Exception as exc:
+            code = str(getattr(exc, "code", "") or "capability_use_failed").strip()
+            details = getattr(exc, "details", None)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": code,
+                    "message": str(exc) or code,
+                    "details": details,
+                },
+            ) from exc
 
     @group_router.post("/capabilities/uninstall")
     async def capability_uninstall(group_id: str, request: Request) -> Dict[str, Any]:

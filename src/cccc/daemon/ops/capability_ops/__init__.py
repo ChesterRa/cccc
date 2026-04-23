@@ -20,6 +20,8 @@ from ._common import (  # noqa: F401
     _RAW_GITHUB_BASE,
     _OPENCLAW_SKILLS_TREE_API,
     _OPENCLAW_SKILLS_BLOB_BASE,
+    _SUPERPOWERS_SKILLS_TREE_API,
+    _SUPERPOWERS_SKILLS_BLOB_BASE,
     _CLAWSKILLS_DATA_URL_DEFAULT,
     _SKILL_NAME_RE,
     _ARG_TEMPLATE_RE,
@@ -173,6 +175,7 @@ from ._remote import (  # noqa: F401
     _extract_skill_dependencies,
     _validate_agentskill_frontmatter,
     _sync_anthropic_skills_source,
+    _sync_superpowers_skills_source,
     _mark_source_disabled,
 )
 

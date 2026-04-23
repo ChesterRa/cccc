@@ -19,6 +19,7 @@ import * as api from "../services/api";
 import { buildReplyComposerState } from "../utils/chatReply";
 import { copyTextToClipboard } from "../utils/copy";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
+import { useSlashCommands } from "./useSlashCommands";
 
 type ChatTFunction = (key: string, options?: Record<string, unknown>) => string;
 export type GroupSendBlockedReason = "paused" | "stopped";
@@ -763,6 +764,15 @@ export function useChatTab({
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
+  const { slashCommands, tryExecuteSlashCommand } = useSlashCommands({
+    selectedGroupId,
+    fileInputRef,
+    clearComposer,
+    showError,
+    showNotice,
+    onExecuted: onMessageSent,
+    t,
+  });
 
   // ============ Computed Values ============
 
@@ -1110,6 +1120,15 @@ export function useChatTab({
       showError(getGroupSendBlockedMessage(groupSendBlockedReason, t));
       return;
     }
+    if (await tryExecuteSlashCommand({
+      text: txt,
+      composerFilesCount: composerFiles.length,
+      hasReplyTarget: Boolean(replyTarget),
+      hasQuotedPresentationRef: Boolean(quotedPresentationRef),
+      sendGroupId: String(sendGroupId || "").trim(),
+    })) {
+      return;
+    }
 
     const dstGroup = String(sendGroupId || "").trim();
     const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
@@ -1374,6 +1393,7 @@ export function useChatTab({
     promoteStreamingEventsByPrefix,
     removeStreamingEventsByPrefix,
     resolveAssistantTargets,
+    tryExecuteSlashCommand,
     upsertStreamingEvent,
     t,
   ]);
@@ -1577,6 +1597,7 @@ export function useChatTab({
     destGroupId: sendGroupId,
     setDestGroupId,
     mentionSuggestions,
+    slashCommands,
 
     // Agent state
     agentStates,

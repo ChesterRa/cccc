@@ -365,7 +365,13 @@ export type CapabilityStateResult = {
   actor_id: string;
   enabled: CapabilityEnabledEntry[];
   enabled_capabilities?: string[];
-  dynamic_tools?: Array<{ name: string; capability_id: string; description?: string }>;
+  dynamic_tools?: Array<{
+    name: string;
+    capability_id: string;
+    description?: string;
+    real_tool_name?: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
   active_capsule_skills?: Array<{
     capability_id: string;
     name?: string;

@@ -291,6 +291,32 @@ export async function enableGroupCapability(
   });
 }
 
+export async function useGroupCapability(
+  groupId: string,
+  opts?: {
+    capabilityId?: string;
+    toolName?: string;
+    toolArguments?: Record<string, unknown>;
+    scope?: "session" | "actor" | "group";
+    actorId?: string;
+    ttlSeconds?: number;
+    reason?: string;
+  },
+) {
+  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/use`, {
+    method: "POST",
+    body: JSON.stringify({
+      capability_id: opts?.capabilityId || "",
+      tool_name: opts?.toolName || "",
+      tool_arguments: opts?.toolArguments || {},
+      scope: opts?.scope || "session",
+      actor_id: opts?.actorId || "user",
+      ttl_seconds: opts?.ttlSeconds || 3600,
+      reason: opts?.reason || "",
+    }),
+  });
+}
+
 export async function importCapability(
   groupId: string,
   record: CapabilityImportRecord,

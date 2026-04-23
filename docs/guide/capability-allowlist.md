@@ -51,10 +51,16 @@ Discovery flow:
 1. search local curated catalog first
 2. optionally augment from remote fallback when local results are insufficient:
    - MCP: official MCP Registry
-   - skill: GitHub / AgentSkills-aligned / SkillsMP / ClawHub remote search
+   - skill: GitHub / AgentSkills-aligned / Superpowers / SkillsMP / ClawHub remote search
 3. cache accepted remote hits into local catalog
 
 This keeps runtime stable while preserving long-tail discoverability.
+
+Packaged skill sources currently include:
+
+1. `anthropic_skills`: official Anthropic skill corpus, synced as `skill:anthropic:<name>`
+2. `superpowers_skills`: Obra Superpowers `skills/*/SKILL.md` corpus, synced as `skill:superpowers:<name>`
+3. `github_skills_curated`: manually curated third-party skill entries
 
 ## 4. Daemon Ops (Global Overlay)
 

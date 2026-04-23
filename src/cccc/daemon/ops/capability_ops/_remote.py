@@ -27,6 +27,8 @@ from ._common import (
     _RAW_GITHUB_BASE,
     _OPENCLAW_SKILLS_TREE_API,
     _OPENCLAW_SKILLS_BLOB_BASE,
+    _SUPERPOWERS_SKILLS_TREE_API,
+    _SUPERPOWERS_SKILLS_BLOB_BASE,
     _CLAWSKILLS_DATA_URL_DEFAULT,
     _SKILL_NAME_RE,
     _CLAWSKILLS_ENTRY_RE,
@@ -1170,6 +1172,133 @@ def _sync_anthropic_skills_source(catalog: Dict[str, Any], *, force: bool = Fals
         )
         return upserted
     except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as e:
+        state["sync_state"] = "degraded"
+        state["error"] = str(e)
+        state["staleness_seconds"] = _catalog_staleness_seconds(str(state.get("last_synced_at") or ""))
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Superpowers skills source sync
+# ---------------------------------------------------------------------------
+
+def _superpowers_skill_description(frontmatter: Dict[str, Any], body: str) -> str:
+    desc = str(frontmatter.get("description") or "").strip()
+    if desc:
+        return desc[:1024]
+    for line in str(body or "").splitlines():
+        clean = line.strip().lstrip("#").strip()
+        if clean and not clean.startswith("<!--"):
+            return clean[:1024]
+    return ""
+
+
+def _parse_superpowers_skill_markdown(markdown: str, *, dir_name: str) -> Tuple[Dict[str, Any], str, List[str]]:
+    try:
+        frontmatter, body = _split_frontmatter(markdown)
+        errors = _validate_agentskill_frontmatter(frontmatter, dir_name=dir_name)
+        return frontmatter, body, errors
+    except (ValueError, yaml.YAMLError):
+        body = str(markdown or "")
+        description = _superpowers_skill_description({}, body)
+        frontmatter = {"name": dir_name, "description": description}
+        errors: List[str] = []
+        if not body.strip():
+            errors.append("missing body")
+        return frontmatter, body, errors
+
+
+def _sync_superpowers_skills_source(catalog: Dict[str, Any], *, force: bool = False) -> int:
+    sources = catalog["sources"]
+    state = sources["superpowers_skills"]
+    interval_s = max(60, _env_int("CCCC_CAPABILITY_SKILL_SYNC_INTERVAL_SECONDS", 12 * 3600))
+    stale = _catalog_staleness_seconds(str(state.get("last_synced_at") or ""))
+    if (not force) and stale is not None and stale < interval_s:
+        return 0
+
+    records = catalog["records"]
+    now_iso = utc_now_iso()
+    try:
+        tree_data = _pkg()._http_get_json(
+            _SUPERPOWERS_SKILLS_TREE_API,
+            headers=_github_headers(),
+            timeout=12.0,
+        )
+        tree_items = tree_data.get("tree") if isinstance(tree_data, dict) else None
+        if not isinstance(tree_items, list):
+            raise ValueError("unexpected GitHub tree response shape")
+
+        upserted = 0
+        for item in tree_items:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            match = re.fullmatch(r"skills/([a-z0-9]+(?:-[a-z0-9]+)*)/SKILL\.md", path)
+            if not match:
+                continue
+            dir_name = match.group(1)
+            raw_url = f"{_SUPERPOWERS_SKILLS_BLOB_BASE}/{path}"
+            req = Request(raw_url, method="GET")
+            for k, v in _github_headers().items():
+                req.add_header(k, v)
+            with _pkg().urlopen(req, timeout=12.0) as resp:
+                md = resp.read().decode("utf-8", errors="replace")
+
+            frontmatter, body, errors = _parse_superpowers_skill_markdown(md, dir_name=dir_name)
+            name = str(frontmatter.get("name") or dir_name).strip()
+            description = _superpowers_skill_description(frontmatter, body)
+            license_text = str(frontmatter.get("license") or "").strip()
+            tags_raw = frontmatter.get("tags")
+            tags = (
+                [str(x).strip() for x in tags_raw if str(x).strip()]
+                if isinstance(tags_raw, list)
+                else []
+            )
+            capsule_text = _extract_skill_capsule(frontmatter, body)
+            if raw_url not in capsule_text:
+                capsule_text = f"{capsule_text}\nSource: {raw_url}".strip()
+            qualification = _QUAL_BLOCKED if errors else _QUAL_QUALIFIED
+
+            record = {
+                "capability_id": f"skill:superpowers:{name}",
+                "kind": "skill",
+                "name": name,
+                "description_short": description,
+                "tags": ["skill", "external", "superpowers", "github", *tags],
+                "source_id": "superpowers_skills",
+                "source_tier": "tier2",
+                "source_uri": f"https://github.com/obra/superpowers/tree/main/skills/{dir_name}",
+                "source_record_id": path,
+                "source_record_version": str(item.get("sha") or "").strip(),
+                "updated_at_source": now_iso,
+                "last_synced_at": now_iso,
+                "sync_state": "fresh",
+                "install_mode": "builtin",
+                "install_spec": {},
+                "requirements": {},
+                "license": license_text,
+                "trust_tier": "tier2",
+                "qualification_status": qualification,
+                "qualification_reasons": errors,
+                "health_status": "ok",
+                "enable_supported": qualification != _QUAL_BLOCKED,
+                "capsule_text": capsule_text[:2400],
+                "requires_capabilities": _extract_skill_dependencies(frontmatter),
+            }
+            records[str(record["capability_id"])] = record
+            upserted += 1
+
+        state["last_synced_at"] = now_iso
+        state["staleness_seconds"] = 0
+        state["sync_state"] = "fresh"
+        state["error"] = ""
+        state["record_count"] = sum(
+            1
+            for item in records.values()
+            if isinstance(item, dict) and str(item.get("source_id") or "") == "superpowers_skills"
+        )
+        return upserted
+    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, yaml.YAMLError) as e:
         state["sync_state"] = "degraded"
         state["error"] = str(e)
         state["staleness_seconds"] = _catalog_staleness_seconds(str(state.get("last_synced_at") or ""))

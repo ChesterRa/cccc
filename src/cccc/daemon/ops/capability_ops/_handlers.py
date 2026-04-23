@@ -523,6 +523,12 @@ def _sync_catalog(catalog_doc: Dict[str, Any], *, force: bool) -> Dict[str, Any]
         _mark_source_disabled(catalog_doc, "anthropic_skills")
         upserted["anthropic_skills"] = 0
 
+    if _env_bool("CCCC_CAPABILITY_SOURCE_SUPERPOWERS_SKILLS_ENABLED", True):
+        upserted["superpowers_skills"] = int(_pkg()._sync_superpowers_skills_source(catalog_doc, force=force))
+    else:
+        _mark_source_disabled(catalog_doc, "superpowers_skills")
+        upserted["superpowers_skills"] = 0
+
     pruned = _prune_catalog_records(catalog_doc)
     _refresh_source_record_counts(catalog_doc)
 

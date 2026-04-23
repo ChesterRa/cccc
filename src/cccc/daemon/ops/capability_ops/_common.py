@@ -21,6 +21,7 @@ _SOURCE_IDS = (
     "agent_self_proposed",
     "mcp_registry_official",
     "anthropic_skills",
+    "superpowers_skills",
     "github_skills_curated",
     "skillsmp_remote",
     "clawhub_remote",
@@ -34,6 +35,8 @@ _GITHUB_API_BASE = "https://api.github.com"
 _RAW_GITHUB_BASE = "https://raw.githubusercontent.com"
 _OPENCLAW_SKILLS_TREE_API = f"{_GITHUB_API_BASE}/repos/openclaw/skills/git/trees/main?recursive=1"
 _OPENCLAW_SKILLS_BLOB_BASE = "https://raw.githubusercontent.com/openclaw/skills/main"
+_SUPERPOWERS_SKILLS_TREE_API = f"{_GITHUB_API_BASE}/repos/obra/superpowers/git/trees/main?recursive=1"
+_SUPERPOWERS_SKILLS_BLOB_BASE = "https://raw.githubusercontent.com/obra/superpowers/main"
 _CLAWSKILLS_DATA_URL_DEFAULT = "https://clawskills.co/skills-data.js"
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _ARG_TEMPLATE_RE = re.compile(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}")

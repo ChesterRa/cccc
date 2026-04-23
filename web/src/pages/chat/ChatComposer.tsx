@@ -8,9 +8,11 @@ import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
 import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
+import { SlashCommandMenu } from "./SlashCommandMenu";
 import { GroupCombobox } from "../../components/GroupCombobox";
 import { updateSettings } from "../../services/api";
 import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
+import { filterSlashCommands, type SlashCommandItem } from "../../utils/slashCommands";
 
 function cleanVoicePromptContextText(value: unknown, maxLen = 240): string {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -82,6 +84,7 @@ export interface ChatComposerProps {
   setMentionSelectedIndex: Dispatch<SetStateAction<number>>;
   setMentionFilter: Dispatch<SetStateAction<string>>;
   onAppendRecipientToken: (token: string) => void;
+  slashCommands: SlashCommandItem[];
 }
 
 
@@ -124,10 +127,13 @@ export function ChatComposer({
   setMentionSelectedIndex,
   setMentionFilter,
   onAppendRecipientToken,
+  slashCommands,
 }: ChatComposerProps) {
   const composerHeightRef = useRef(0);
   const isUserInputRef = useRef(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("prompt");
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
@@ -295,6 +301,7 @@ export function ChatComposer({
   const renderRecipientChipContent = useCallback((label: string) => (
     <span className="truncate">{label}</span>
   ), []);
+  const slashSuggestions = useMemo(() => filterSlashCommands(slashCommands, composerText), [slashCommands, composerText]);
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -350,6 +357,16 @@ export function ChatComposer({
     });
 
     // Detect @ mentions for the recipient helper menu.
+    const trimmedStart = val.trimStart();
+    const slashModeActive = trimmedStart.startsWith("/") && !trimmedStart.slice(1).includes(" ");
+    if (slashModeActive) {
+      const nextSuggestions = filterSlashCommands(slashCommands, val);
+      setShowSlashMenu(nextSuggestions.length > 0 || trimmedStart === "/");
+      setSlashSelectedIndex(0);
+      setShowMentionMenu(false);
+      return;
+    }
+    setShowSlashMenu(false);
     const lastAt = val.lastIndexOf("@");
     if (lastAt >= 0) {
       const afterAt = val.slice(lastAt + 1);
@@ -371,6 +388,30 @@ export function ChatComposer({
 
   // Handle keyboard shortcuts and mention navigation.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && slashSuggestions.length > 0) {
+      const maxIndex = slashSuggestions.length - 1;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashSelectedIndex((prev) => (prev >= maxIndex ? 0 : prev + 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashSelectedIndex((prev) => (prev <= 0 ? maxIndex : prev - 1));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectSlashCommand(slashSuggestions[slashSelectedIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSlashMenu(false);
+        setSlashSelectedIndex(0);
+        return;
+      }
+    }
     if (showMentionMenu && mentionSuggestions.length > 0) {
       const maxIndex = Math.min(mentionSuggestions.length, 8) - 1;
       if (e.key === "ArrowDown") {
@@ -396,6 +437,9 @@ export function ChatComposer({
       }
     }
     if (e.key === "Enter" && !showMentionMenu) {
+      if (showSlashMenu) {
+        return;
+      }
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         onSendMessage();
@@ -420,6 +464,14 @@ export function ChatComposer({
     }
     setShowMentionMenu(false);
     setMentionSelectedIndex(0);
+  };
+
+  const selectSlashCommand = (selected: SlashCommandItem | undefined) => {
+    if (!selected) return;
+    setComposerText(`/${selected.name} `);
+    setShowSlashMenu(false);
+    setSlashSelectedIndex(0);
+    requestAnimationFrame(() => composerRef.current?.focus());
   };
 
   const canSend = composerText.trim() || composerFiles.length > 0;
@@ -832,9 +884,22 @@ export function ChatComposer({
                 onPaste={handlePaste}
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
-                onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
+                onBlur={() => setTimeout(() => {
+                  setShowMentionMenu(false);
+                  setShowSlashMenu(false);
+                }, 150)}
                 aria-label={t('messageInput')}
               />
+
+              {showSlashMenu && (
+                <SlashCommandMenu
+                  isDark={isDark}
+                  suggestions={slashSuggestions}
+                  selectedIndex={slashSelectedIndex}
+                  onSelect={selectSlashCommand}
+                  onHover={setSlashSelectedIndex}
+                />
+              )}
 
               {/* Mention menu */}
               {showMentionMenu && mentionSuggestions.length > 0 && (

@@ -17,6 +17,7 @@ defaults:
     manual_import: mounted
     agent_self_proposed: indexed
     anthropic_skills: mounted
+    superpowers_skills: mounted
     github_skills_curated: mounted
     skillsmp_remote: indexed
     clawhub_remote: indexed
@@ -55,6 +56,9 @@ sources:
   - source_id: anthropic_skills
     enabled: true
     rationale: "Official Anthropic skill source."
+  - source_id: superpowers_skills
+    enabled: true
+    rationale: "Obra Superpowers skill corpus synced from GitHub as CCCC capsule skills."
   - source_id: github_skills_curated
     enabled: true
     rationale: "Curated third-party skill entries (manual curation, no periodic crawling)."
@@ -284,6 +288,9 @@ skills:
     - source_id: anthropic_skills
       level: mounted
       rationale: "Official high-quality skill corpus."
+    - source_id: superpowers_skills
+      level: mounted
+      rationale: "External Superpowers skill corpus; visible and enableable as capsule skills."
     - source_id: github_skills_curated
       level: mounted
       rationale: "Curated third-party skills are cataloged; explicit promotion required."

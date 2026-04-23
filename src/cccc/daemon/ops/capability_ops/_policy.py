@@ -66,6 +66,7 @@ def _policy_default_compiled() -> Dict[str, Any]:
             "manual_import": _LEVEL_MOUNTED,
             "agent_self_proposed": _LEVEL_INDEXED,
             "anthropic_skills": _LEVEL_MOUNTED,
+            "superpowers_skills": _LEVEL_MOUNTED,
             "github_skills_curated": _LEVEL_MOUNTED,
             "skillsmp_remote": _LEVEL_MOUNTED,
             "clawhub_remote": _LEVEL_MOUNTED,

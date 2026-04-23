@@ -77,6 +77,7 @@ def _new_catalog_doc() -> Dict[str, Any]:
             "agent_self_proposed": _source_state_template("never"),
             "mcp_registry_official": _source_state_template("never"),
             "anthropic_skills": _source_state_template("never"),
+            "superpowers_skills": _source_state_template("never"),
             "github_skills_curated": _source_state_template("never"),
             "skillsmp_remote": _source_state_template("never"),
             "clawhub_remote": _source_state_template("never"),

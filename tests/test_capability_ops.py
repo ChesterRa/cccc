@@ -596,6 +596,52 @@ class TestCapabilityOps(unittest.TestCase):
         source_state = catalog.get("sources", {}).get("anthropic_skills", {})
         self.assertEqual(source_state.get("sync_state"), "fresh")
 
+    def test_sync_superpowers_skills_accepts_github_tree_payload(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        class _Resp:
+            def __init__(self, text: str) -> None:
+                self._body = text.encode("utf-8")
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        catalog = ops._new_catalog_doc()
+        skill_md = (
+            "---\n"
+            "name: example-power\n"
+            "description: Example Superpowers skill\n"
+            "license: MIT\n"
+            "---\n"
+            "Use this skill for focused examples.\n"
+        )
+        tree_payload = {
+            "tree": [
+                {"type": "blob", "path": "README.md", "sha": "ignore"},
+                {"type": "blob", "path": "skills/example-power/SKILL.md", "sha": "abc123"},
+            ]
+        }
+        with patch(
+            "cccc.daemon.ops.capability_ops._http_get_json",
+            return_value=tree_payload,
+        ), patch("cccc.daemon.ops.capability_ops.urlopen", return_value=_Resp(skill_md)):
+            upserted = ops._sync_superpowers_skills_source(catalog, force=True)
+
+        self.assertEqual(upserted, 1)
+        record = catalog.get("records", {}).get("skill:superpowers:example-power")
+        self.assertIsInstance(record, dict)
+        self.assertEqual(record.get("source_id"), "superpowers_skills")
+        self.assertEqual(record.get("qualification_status"), "qualified")
+        self.assertIn("Source: https://raw.githubusercontent.com/obra/superpowers/main/skills/example-power/SKILL.md", str(record.get("capsule_text") or ""))
+        source_state = catalog.get("sources", {}).get("superpowers_skills", {})
+        self.assertEqual(source_state.get("sync_state"), "fresh")
+
     def test_auto_sync_respects_source_enable_flags(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -605,11 +651,15 @@ class TestCapabilityOps(unittest.TestCase):
             {
                 "CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED": "1",
                 "CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED": "0",
+                "CCCC_CAPABILITY_SOURCE_SUPERPOWERS_SKILLS_ENABLED": "0",
             },
             clear=False,
         ), patch("cccc.daemon.ops.capability_ops._sync_mcp_registry_source", return_value=0), patch(
             "cccc.daemon.ops.capability_ops._sync_anthropic_skills_source",
             side_effect=AssertionError("anthropic source should be disabled"),
+        ), patch(
+            "cccc.daemon.ops.capability_ops._sync_superpowers_skills_source",
+            side_effect=AssertionError("superpowers source should be disabled"),
         ):
             changed = ops._auto_sync_catalog(catalog)
 
@@ -618,6 +668,9 @@ class TestCapabilityOps(unittest.TestCase):
         anthropic = sources.get("anthropic_skills", {})
         self.assertEqual(anthropic.get("sync_state"), "disabled")
         self.assertEqual(anthropic.get("error"), "source_disabled_by_policy")
+        superpowers = sources.get("superpowers_skills", {})
+        self.assertEqual(superpowers.get("sync_state"), "disabled")
+        self.assertEqual(superpowers.get("error"), "source_disabled_by_policy")
 
     def test_sync_capability_catalog_once_saves_when_changed(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
@@ -5097,6 +5150,7 @@ class TestCapabilityOps(unittest.TestCase):
                             "manual_import": "indexed",
                             "mcp_registry_official": "indexed",
                             "anthropic_skills": "indexed",
+                            "superpowers_skills": "indexed",
                             "github_skills_curated": "indexed",
                             "skillsmp_remote": "indexed",
                             "clawhub_remote": "indexed",
