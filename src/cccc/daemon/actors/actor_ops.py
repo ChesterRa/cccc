@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
@@ -17,7 +16,6 @@ from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, deri
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ..context.context_ops import _agent_state_to_dict
-from .codex_project_config import sync_codex_project_config_for_scope
 from .private_env_ops import mask_private_env_value
 from ...util.conv import coerce_bool
 
@@ -257,37 +255,7 @@ def handle_actor_env_private_update(
         return _error("too_many_keys", "too many private env keys configured")
 
     keys = sorted(updated.keys())
-    result: Dict[str, Any] = {"group_id": group_id, "actor_id": actor_id, "keys": keys}
-    scope_url = ""
-    active_scope_key = str(group.doc.get("active_scope_key") or "").strip()
-    if active_scope_key:
-        scopes = group.doc.get("scopes")
-        if isinstance(scopes, list):
-            for item in scopes:
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("scope_key") or "").strip() != active_scope_key:
-                    continue
-                scope_url = str(item.get("url") or "").strip()
-                break
-    if scope_url and str(actor.get("runtime") or "codex").strip() == "codex":
-        try:
-            synced_path = sync_codex_project_config_for_scope(
-                scope_root=scope_url,
-                private_env=updated,
-                actor=dict(actor),
-            )
-            if synced_path:
-                result["codex_project_config_sync"] = "updated"
-                result["codex_project_config_path"] = synced_path
-            else:
-                config_path = Path(scope_url).expanduser().resolve() / ".codex" / "config.toml"
-                if config_path.exists():
-                    result["codex_project_config_sync"] = "skipped"
-                    result["codex_project_config_path"] = str(config_path)
-        except Exception:
-            result["codex_project_config_sync"] = "failed"
-    return DaemonResponse(ok=True, result=result)
+    return DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id, "keys": keys})
 
 
 def try_handle_actor_aux_op(

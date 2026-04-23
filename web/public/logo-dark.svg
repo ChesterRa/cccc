@@ -1,8 +1,32 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="36">
-    <path d="M 397.4 397.4 A 200 200 0 1 1 397.4 114.6" />
-    <path d="M 358.5 358.5 A 145 145 0 1 1 358.5 153.5" />
-    <path d="M 319.6 319.6 A 90 90 0 1 1 319.6 192.4" />
-    <path d="M 280.7 280.7 A 35 35 0 1 1 280.7 231.3" />
+  <defs>
+    <linearGradient id="ccccDarkStroke" x1="98" y1="82" x2="406" y2="422" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.58" stop-color="#F4EFE8" />
+      <stop offset="1" stop-color="#D8B88A" />
+    </linearGradient>
+    <radialGradient id="ccccDarkCore" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(262 255) rotate(132.346) scale(84.5376 93.3857)">
+      <stop offset="0" stop-color="#FFE0B3" />
+      <stop offset="0.5" stop-color="#F0BE79" />
+      <stop offset="1" stop-color="#B07B44" />
+    </radialGradient>
+    <filter id="ccccDarkShadow" x="22" y="30" width="468" height="452" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix" />
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
+      <feOffset dy="12" />
+      <feGaussianBlur stdDeviation="12" />
+      <feColorMatrix type="matrix" values="0 0 0 0 0.0470588 0 0 0 0 0.0470588 0 0 0 0 0.0470588 0 0 0 0.3 0" />
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_ccccDark" />
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_ccccDark" result="shape" />
+    </filter>
+  </defs>
+  <g filter="url(#ccccDarkShadow)">
+    <g fill="none" stroke="url(#ccccDarkStroke)" stroke-linecap="round" stroke-width="36">
+      <path d="M 397.4 397.4 A 200 200 0 1 1 397.4 114.6" />
+      <path d="M 358.5 358.5 A 145 145 0 1 1 358.5 153.5" />
+      <path d="M 319.6 319.6 A 90 90 0 1 1 319.6 192.4" />
+      <path d="M 280.7 280.7 A 35 35 0 1 1 280.7 231.3" />
+    </g>
+    <circle cx="256" cy="256" r="14" fill="url(#ccccDarkCore)" />
   </g>
 </svg>

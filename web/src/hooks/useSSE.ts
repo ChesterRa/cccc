@@ -172,6 +172,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   // a re-render cascade through App.tsx → all children.
   const selectedGroupId = useGroupStore((s) => s.selectedGroupId);
   const appendEvent = useGroupStore((s) => s.appendEvent);
+  const appendHeadlessEvent = useGroupStore((s) => s.appendHeadlessEvent);
   const updateReadStatus = useGroupStore((s) => s.updateReadStatus);
   const updateAckStatus = useGroupStore((s) => s.updateAckStatus);
   const updateReplyStatus = useGroupStore((s) => s.updateReplyStatus);
@@ -500,6 +501,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       const streamId = typeof data.stream_id === "string" ? data.stream_id.trim() : "";
       const pendingEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
       if (!actorId || !eventType) return;
+      appendHeadlessEvent(ev, groupId);
 
       function updateHeadlessActorRuntime(update: ActorActivityUpdate) {
         const actorsSnapshot = useGroupStore.getState().actors;

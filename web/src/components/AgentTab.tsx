@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
-import { Actor, AgentState, HeadlessPreviewSession, StreamingActivity, RUNTIME_INFO } from "../types";
+import { Actor, AgentState, HeadlessPreviewSession, HeadlessStreamEvent, StreamingActivity, RUNTIME_INFO } from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
@@ -12,6 +12,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
 import { HeadlessLiveTrace } from "./headless/HeadlessLiveTrace";
+import { HeadlessRawTrace } from "./headless/HeadlessRawTrace";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
@@ -22,6 +23,7 @@ import { copyTextToClipboard } from "../utils/copy";
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
+const EMPTY_HEADLESS_RAW_EVENTS: HeadlessStreamEvent[] = [];
 
 // Delay before showing terminal after connection (allows backlog replay to complete without visible scrolling)
 const TERMINAL_SHOW_DELAY_MS = 150;
@@ -98,6 +100,14 @@ export function AgentTab({
     if (!actorId) return EMPTY_STREAMING_ACTIVITIES;
     const activities = bucket.latestActorActivitiesByActorId?.[actorId];
     return Array.isArray(activities) ? activities : EMPTY_STREAMING_ACTIVITIES;
+  });
+  const rawHeadlessEvents = useGroupStore((state) => {
+    const bucket = state.chatByGroup[String(groupId || "").trim()];
+    if (!bucket) return EMPTY_HEADLESS_RAW_EVENTS;
+    const actorId = String(actor.id || "").trim();
+    if (!actorId) return EMPTY_HEADLESS_RAW_EVENTS;
+    const events = bucket.rawHeadlessEventsByActorId?.[actorId];
+    return Array.isArray(events) ? events : EMPTY_HEADLESS_RAW_EVENTS;
   });
   const observabilityLoaded = useObservabilityStore((s) => s.loaded);
   const loadObservability = useObservabilityStore((s) => s.load);
@@ -832,23 +842,34 @@ export function AgentTab({
           <div className="flex h-full min-h-0 flex-col px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3">
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 min-h-0 flex-1">
               <div className="min-h-0 flex-1">
-              <HeadlessLiveTrace
-                previewSessions={headlessPreviewSessions}
-                fallbackText={latestHeadlessText}
-                fallbackActivities={latestHeadlessActivities}
-                fallbackUpdatedAt={String(latestHeadlessPreview?.updatedAt || "").trim()}
-                fallbackPendingEventId={String(latestHeadlessPreview?.pendingEventId || `preview:${actor.id}`).trim()}
-                fallbackStreamId={String(latestHeadlessPreview?.currentStreamId || "").trim()}
-                fallbackStreamPhase={String(latestHeadlessPreview?.streamPhase || "").trim().toLowerCase()}
-                fallbackPhase={String(latestHeadlessPreview?.phase || "").trim().toLowerCase()}
-                emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
-                recentLabel="Recent"
-                isDark={isDark}
-                density="expanded"
-                className={classNames(
-                  "h-full min-h-[420px] overflow-y-auto text-left text-[var(--color-text-secondary)]"
-                )}
-              />
+              {rawHeadlessEvents.length > 0 ? (
+                <HeadlessRawTrace
+                  events={rawHeadlessEvents}
+                  emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
+                  isDark={isDark}
+                  className={classNames(
+                    "h-full min-h-[420px] text-left text-[var(--color-text-secondary)]"
+                  )}
+                />
+              ) : (
+                <HeadlessLiveTrace
+                  previewSessions={headlessPreviewSessions}
+                  fallbackText={latestHeadlessText}
+                  fallbackActivities={latestHeadlessActivities}
+                  fallbackUpdatedAt={String(latestHeadlessPreview?.updatedAt || "").trim()}
+                  fallbackPendingEventId={String(latestHeadlessPreview?.pendingEventId || `preview:${actor.id}`).trim()}
+                  fallbackStreamId={String(latestHeadlessPreview?.currentStreamId || "").trim()}
+                  fallbackStreamPhase={String(latestHeadlessPreview?.streamPhase || "").trim().toLowerCase()}
+                  fallbackPhase={String(latestHeadlessPreview?.phase || "").trim().toLowerCase()}
+                  emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
+                  recentLabel="Recent"
+                  isDark={isDark}
+                  density="expanded"
+                  className={classNames(
+                    "h-full min-h-[420px] overflow-y-auto text-left text-[var(--color-text-secondary)]"
+                  )}
+                />
+              )}
               </div>
             </div>
           </div>

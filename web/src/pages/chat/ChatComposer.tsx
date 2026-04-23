@@ -630,16 +630,24 @@ export function ChatComposer({
               <div
                 key={`${f.name}:${idx}`}
                 className={classNames(
-                  "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs max-w-full shadow-sm transition-all",
-                  isDark ? "border-white/10 bg-slate-900/50 text-slate-300" : "border-black/5 bg-gray-50 text-gray-700"
+                  "inline-flex max-w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-xs shadow-sm transition-all",
+                  "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"
                 )}
               >
-                <AttachmentIcon size={12} className="opacity-60" />
-                <span className="truncate">{f.name}</span>
+                <AttachmentIcon
+                  size={12}
+                  className="flex-shrink-0 text-[var(--color-text-tertiary)]"
+                />
+                <span
+                  className="truncate font-medium text-[var(--color-text-primary)]"
+                  title={f.name}
+                >
+                  {f.name}
+                </span>
                 <button
                   className={classNames(
                     "flex-shrink-0 p-1.5 -mr-1 rounded-full",
-                    isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-700"
+                    "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
                   )}
                   onClick={() => onRemoveComposerFile(idx)}
                   aria-label={t('removeAttachment', { name: f.name })}

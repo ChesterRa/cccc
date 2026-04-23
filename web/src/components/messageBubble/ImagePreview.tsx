@@ -7,13 +7,14 @@ import { CloseIcon, ImageIcon } from "../Icons";
 const IMAGE_ASPECT_RATIO_CACHE = new Map<string, number>();
 const IMAGE_LOAD_ERROR_CACHE = new Set<string>();
 const LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE = {
-  filter: "contrast(1.16) brightness(0.97) saturate(1.01)",
-  boxShadow: "0 1px 0 rgba(15,23,42,0.03), 0 0 0 1px rgba(15,23,42,0.04)",
+  filter: "contrast(1.12) brightness(0.985) saturate(1.01)",
+  boxShadow:
+    "0 10px 24px -18px rgba(15,23,42,0.24), 0 0 0 1px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.82)",
 } as const;
 const LIGHT_IMAGE_CANVAS_STYLE = {
-  backgroundColor: "rgb(245, 245, 245)",
+  backgroundColor: "rgb(236, 239, 243)",
   backgroundImage:
-    "linear-gradient(45deg, rgba(15,23,42,0.035) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.035) 75%), linear-gradient(45deg, rgba(15,23,42,0.035) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.035) 75%)",
+    "linear-gradient(45deg, rgba(15,23,42,0.06) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.06) 75%), linear-gradient(45deg, rgba(15,23,42,0.06) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.06) 75%)",
   backgroundPosition: "0 0, 8px 8px",
   backgroundSize: "16px 16px",
 } as const;
@@ -185,18 +186,39 @@ export function ImagePreview({
       <a
         href={href}
         className={classNames(
-          "inline-flex max-w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors",
+          "group flex w-full flex-col overflow-hidden rounded-xl border p-2 text-left transition-colors",
           isUserMessage
-            ? "bg-[rgb(35,36,37)]/92 text-white border border-[rgb(35,36,37)] hover:bg-black"
+            ? "border-[rgb(35,36,37)]/24 bg-white/10 text-white hover:bg-white/14"
             : isDark
-              ? "bg-slate-900/50 text-slate-300 border border-slate-700 hover:bg-slate-900"
-              : "bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100",
+              ? "border-white/10 bg-slate-900/50 text-slate-300 hover:bg-slate-900/65"
+              : "border-[rgba(15,23,42,0.12)] bg-[rgb(238,241,245)] text-[var(--color-text-secondary)] hover:bg-[rgb(232,236,241)]",
         )}
         title={t("download", { name: alt })}
         download
       >
-        <ImageIcon size={14} className="opacity-70 flex-shrink-0" />
-        <span className="truncate">{alt}</span>
+        <div
+          className={classNames(
+            "flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border border-dashed px-4 text-center",
+            isUserMessage
+              ? "border-white/20 bg-black/10"
+              : isDark
+                ? "border-white/12 bg-slate-950/70"
+                : "border-[rgba(15,23,42,0.14)] bg-white/85",
+          )}
+        >
+          <ImageIcon size={24} className="mb-3 flex-shrink-0 opacity-65" />
+          <div className={classNames("text-xs font-semibold", isUserMessage ? "text-white" : "text-[var(--color-text-primary)]")}>
+            {t("imagePreviewUnavailable", { defaultValue: "图片预览失败" })}
+          </div>
+          <div className="mt-1 text-[11px] opacity-75">
+            {t("downloadOriginalImage", { defaultValue: "点击下载原图" })}
+          </div>
+        </div>
+        <div className="min-w-0 px-1 pt-2">
+          <div className={classNames("truncate text-[11px] font-medium", isUserMessage ? "text-white/88" : "text-[var(--color-text-secondary)]")}>
+            {alt}
+          </div>
+        </div>
       </a>
     );
   }
@@ -213,7 +235,7 @@ export function ImagePreview({
             ? "border-[rgb(35,36,37)]/14 bg-white/10 hover:bg-white/14"
             : isDark
               ? "border-white/10 bg-slate-900/45 hover:bg-slate-900/55"
-              : "border-black/8 bg-[rgb(245,247,250)] hover:bg-[rgb(241,244,248)]",
+              : "border-[rgba(15,23,42,0.12)] bg-[rgb(238,241,245)] hover:bg-[rgb(232,236,241)]",
         )}
         onClick={() => setIsLightboxOpen(true)}
         aria-label={t("openImagePreview", { name: alt })}
@@ -238,17 +260,17 @@ export function ImagePreview({
             src={displaySrc || resolvedHref || href}
             alt={alt}
             className={classNames(
-              "cursor-zoom-in rounded-lg object-contain transition-opacity group-hover:opacity-95",
+              "cursor-zoom-in rounded-lg transition-opacity group-hover:opacity-95",
               isSvg
                 ? classNames("block h-auto w-full", isGridLayout ? "max-h-40" : "max-h-64 sm:max-h-80")
-                : "block h-full w-full",
+                : "block h-full w-full object-cover",
               isSvg
                 ? null
                 : isUserMessage
                   ? "bg-white"
                   : isDark
                     ? "bg-slate-950/80"
-                    : "bg-white shadow-[inset_0_0_0_1px_rgba(15,23,42,0.06)]",
+                    : "bg-white shadow-[0_10px_24px_-18px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.08)]",
             )}
             style={
               isSvg

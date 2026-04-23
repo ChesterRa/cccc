@@ -4,6 +4,7 @@ import type {
   GroupMeta,
   GroupDoc,
   GroupRuntimeStatus,
+  HeadlessStreamEvent,
 } from "../types";
 import {
   normalizeReplySessionTimestamp,
@@ -16,6 +17,7 @@ import {
   getCachedGroupView,
   getGroupChatBucket,
   GroupChatBucket,
+  HEADLESS_RAW_EVENT_LIMIT,
   loadArchivedGroupIds,
   loadGroupOrder,
   loadSelectedGroupId,
@@ -59,6 +61,23 @@ import {
 } from "./groupStreamingReducers";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 
+function stableSerialize(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(",")}}`;
+}
+
+function buildHeadlessEventSignature(event: HeadlessStreamEvent): string {
+  return [
+    String(event.id || "").trim(),
+    String(event.ts || "").trim(),
+    String(event.actor_id || "").trim(),
+    String(event.type || "").trim(),
+    stableSerialize(event.data || {}),
+  ].join("|");
+}
 
 export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
@@ -257,6 +276,29 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         }
       }
       return buildChatBucketPatch(state, gid, patch) ?? state;
+    }),
+  appendHeadlessEvent: (event, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const actorId = String(event.actor_id || "").trim();
+      const eventType = String(event.type || "").trim();
+      if (!actorId || !eventType) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const currentByActor = bucket.rawHeadlessEventsByActorId || {};
+      const currentEvents = Array.isArray(currentByActor[actorId]) ? currentByActor[actorId] : [];
+      const nextSignature = buildHeadlessEventSignature(event);
+      const exists = currentEvents.some((candidate) => buildHeadlessEventSignature(candidate) === nextSignature);
+      if (exists) return state;
+      const nextEvents = currentEvents.concat([event]);
+      return buildChatBucketPatch(state, gid, {
+        rawHeadlessEventsByActorId: {
+          ...currentByActor,
+          [actorId]: nextEvents.length > HEADLESS_RAW_EVENT_LIMIT
+            ? nextEvents.slice(nextEvents.length - HEADLESS_RAW_EVENT_LIMIT)
+            : nextEvents,
+        },
+      }) ?? state;
     }),
   upsertStreamingEvent: (event, groupId) =>
     set((state) => {

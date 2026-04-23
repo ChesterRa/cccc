@@ -6,6 +6,7 @@ import type {
   GroupPresentation,
   GroupRuntimeStatus,
   GroupSettings,
+  HeadlessStreamEvent,
   HeadlessPreviewBlock,
   HeadlessPreviewSession,
   LedgerEvent,
@@ -30,6 +31,7 @@ export type GroupChatBucket = {
   streamingActivitiesByStreamId: Record<string, StreamingActivity[]>;
   replySessionsByPendingEventId: Record<string, StreamingReplySession>;
   pendingEventIdByStreamId: Record<string, string>;
+  rawHeadlessEventsByActorId: Record<string, HeadlessStreamEvent[]>;
   previewSessionsByActorId: Record<string, HeadlessPreviewSession[]>;
   latestActorPreviewByActorId: Record<string, HeadlessPreviewSession>;
   latestActorTextByActorId: Record<string, string>;
@@ -70,6 +72,7 @@ export const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   streamingActivitiesByStreamId: {},
   replySessionsByPendingEventId: {},
   pendingEventIdByStreamId: {},
+  rawHeadlessEventsByActorId: {},
   previewSessionsByActorId: {},
   latestActorPreviewByActorId: {},
   latestActorTextByActorId: {},
@@ -88,6 +91,7 @@ const GROUP_ORDER_KEY = "cccc-group-order";
 const ARCHIVED_GROUP_IDS_KEY = "cccc-archived-group-ids";
 const SELECTED_GROUP_ID_KEY = "cccc-selected-group-id";
 const RUNTIME_ONLY_UI_EVENT_KINDS = new Set(["actor.activity", "context.sync"]);
+export const HEADLESS_RAW_EVENT_LIMIT = 400;
 
 export let refreshGroupsInFlight = false;
 export let refreshGroupsQueued = false;
@@ -403,6 +407,7 @@ export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>,
       streamingActivitiesByStreamId: stored.streamingActivitiesByStreamId || {},
       replySessionsByPendingEventId: stored.replySessionsByPendingEventId || {},
       pendingEventIdByStreamId: stored.pendingEventIdByStreamId || {},
+      rawHeadlessEventsByActorId: stored.rawHeadlessEventsByActorId || {},
       previewSessionsByActorId: stored.previewSessionsByActorId || Object.fromEntries(
         Object.entries(stored.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [actorId, [preview]])
       ),
@@ -419,6 +424,7 @@ export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>,
     streamingActivitiesByStreamId: {},
     replySessionsByPendingEventId: {},
     pendingEventIdByStreamId: {},
+    rawHeadlessEventsByActorId: {},
     previewSessionsByActorId: {},
     latestActorPreviewByActorId: {},
     latestActorTextByActorId: {},
@@ -719,6 +725,7 @@ export function buildChatBucketPatch(
   const prevStreamingActivitiesByStreamId = prev.streamingActivitiesByStreamId || {};
   const prevReplySessionsByPendingEventId = prev.replySessionsByPendingEventId || {};
   const prevPendingEventIdByStreamId = prev.pendingEventIdByStreamId || {};
+  const prevRawHeadlessEventsByActorId = prev.rawHeadlessEventsByActorId || {};
   const prevPreviewSessionsByActorId = prev.previewSessionsByActorId || Object.fromEntries(
     Object.entries(prev.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [actorId, [preview]])
   );
@@ -734,6 +741,9 @@ export function buildChatBucketPatch(
   const nextPendingEventIdByStreamId = patch.pendingEventIdByStreamId !== undefined
     ? patch.pendingEventIdByStreamId
     : prevPendingEventIdByStreamId;
+  const nextRawHeadlessEventsByActorId = patch.rawHeadlessEventsByActorId !== undefined
+    ? patch.rawHeadlessEventsByActorId
+    : prevRawHeadlessEventsByActorId;
   const previewIndex = deriveHeadlessPreviewIndex(
     prevPreviewSessionsByActorId,
     nextStreamingEvents,
@@ -758,6 +768,7 @@ export function buildChatBucketPatch(
         streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
         replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
         pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+        rawHeadlessEventsByActorId: nextRawHeadlessEventsByActorId,
         previewSessionsByActorId: previewIndex.previewSessionsByActorId,
         latestActorPreviewByActorId: previewIndex.latestActorPreviewByActorId,
         latestActorTextByActorId: previewIndex.latestActorTextByActorId,

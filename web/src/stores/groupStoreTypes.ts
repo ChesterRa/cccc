@@ -6,6 +6,7 @@ import type {
   GroupPresentation,
   GroupRuntimeStatus,
   GroupSettings,
+  HeadlessStreamEvent,
   LedgerEvent,
   LedgerEventStatusPayload,
   RuntimeInfo,
@@ -44,6 +45,7 @@ export interface GroupState {
   setEvents: (events: LedgerEvent[], groupId?: string) => void;
   mergeEventStatuses: (statuses: Record<string, LedgerEventStatusPayload>, groupId?: string) => void;
   appendEvent: (event: LedgerEvent, groupId?: string) => void;
+  appendHeadlessEvent: (event: HeadlessStreamEvent, groupId?: string) => void;
   upsertStreamingEvent: (event: LedgerEvent, groupId?: string) => void;
   upsertStreamingText: (streamId: string, text: string, groupId?: string) => void;
   upsertStreamingActivities: (streamId: string, activities: StreamingActivity[], groupId?: string) => void;
