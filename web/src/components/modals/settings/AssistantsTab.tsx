@@ -36,7 +36,7 @@ const VOICE_BACKENDS = [
   "assistant_service_local_asr",
   "external_provider_asr",
 ];
-const VOICE_AVAILABLE_BACKENDS = new Set(["browser_asr"]);
+const VOICE_AVAILABLE_BACKENDS = new Set(["browser_asr", "assistant_service_local_asr"]);
 
 const VOICE_RECOMMENDED_QUIET_SECONDS = 5;
 const VOICE_MIN_QUIET_SECONDS = 1;
@@ -44,6 +44,7 @@ const VOICE_MAX_QUIET_SECONDS = 60;
 const VOICE_RECOMMENDED_MAX_WINDOW_SECONDS = 120;
 const VOICE_MIN_MAX_WINDOW_SECONDS = 10;
 const VOICE_MAX_MAX_WINDOW_SECONDS = 300;
+const STREAMING_ASR_RUNTIME_ID = "sherpa_onnx_streaming";
 
 const DEFAULT_VOICE_SECRETARY_GUIDANCE = [
   "- Keep working documents useful: synthesize decisions, action items, requirements, risks, and open questions; do not dump raw transcript.",
@@ -307,6 +308,7 @@ export function AssistantsTab({
   const [recognitionBackend, setRecognitionBackend] = useState("browser_asr");
   const [voiceQuietWindowSeconds, setVoiceQuietWindowSeconds] = useState(VOICE_RECOMMENDED_QUIET_SECONDS);
   const [voiceMaxWindowSeconds, setVoiceMaxWindowSeconds] = useState(VOICE_RECOMMENDED_MAX_WINDOW_SECONDS);
+  const [serviceRuntimeInstallBusy, setServiceRuntimeInstallBusy] = useState(false);
 
   const [assistantHelpPrompt, setAssistantHelpPrompt] = useState<GroupPromptInfo | null>(null);
   const [petPersonaDraft, setPetPersonaDraft] = useState("");
@@ -454,6 +456,7 @@ export function AssistantsTab({
           auto_document_quiet_ms: Math.round(quietSeconds * 1000),
           auto_document_max_window_seconds: Math.round(maxWindowSeconds),
           document_default_dir: "docs/voice-secretary",
+          service_model_id: "",
           tts_enabled: false,
         },
         by: "user",
@@ -584,22 +587,21 @@ export function AssistantsTab({
   const backendSelectable = (backend: string) => VOICE_AVAILABLE_BACKENDS.has(backend);
   const currentBackendUnavailable = !backendSelectable(recognitionBackend);
 
-  if (!groupId) {
-    return (
-      <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-        <div>
-          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("assistants.title")}</h3>
-          <p className="mt-1 text-xs text-[var(--color-text-muted)]">{t("assistants.openFromGroup")}</p>
-        </div>
-      </div>
-    );
-  }
-
   const voiceEnabledTone = voiceEnabled ? "on" : "off";
   const serviceHealth = recordFromUnknown(recordFromUnknown(voiceAssistant?.health).service);
   const serviceStatus = String(serviceHealth.status || (recognitionBackend === "assistant_service_local_asr" ? "not_started" : "")).trim();
   const serviceAlive = Boolean(serviceHealth.alive);
-  const asrCommandConfigured = Boolean(serviceHealth.asr_command_configured || serviceHealth.asr_mock_configured);
+  const serviceRuntimesById = assistantState?.service_runtimes_by_id || {};
+  const streamingRuntime = serviceRuntimesById[STREAMING_ASR_RUNTIME_ID];
+  const streamingRuntimeStatus = String(streamingRuntime?.status || "not_installed").trim() || "not_installed";
+  const streamingRuntimeInstalling = streamingRuntimeStatus === "installing";
+  const streamingRuntimeReady = streamingRuntimeStatus === "ready";
+  const selectedServiceModelInstalling = serviceRuntimeInstallBusy || streamingRuntimeInstalling;
+  const asrCommandConfigured = Boolean(
+    serviceHealth.asr_command_configured
+    || serviceHealth.asr_mock_configured
+    || serviceHealth.managed_asr_command_configured,
+  );
   const serviceLastError = recordFromUnknown(serviceHealth.last_error);
   const serviceLastErrorMessage = String(serviceLastError.message || "").trim();
   const serviceTone: "on" | "off" | "info" = recognitionBackend === "assistant_service_local_asr"
@@ -613,6 +615,54 @@ export function AssistantsTab({
     backendSelectable(recognitionBackend)
     && recognitionBackend === "assistant_service_local_asr"
     && (!asrCommandConfigured || Boolean(serviceLastErrorMessage));
+  const showServiceModelControls =
+    backendSelectable(recognitionBackend) && recognitionBackend === "assistant_service_local_asr";
+
+  const installStreamingRuntime = async () => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    setServiceRuntimeInstallBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await saveVoiceSettings({ backend: "assistant_service_local_asr" });
+      if (!saved) return;
+      const resp = await api.installVoiceAssistantRuntime(gid, {
+        runtimeId: STREAMING_ASR_RUNTIME_ID,
+        by: "user",
+        background: true,
+      });
+      if (!resp.ok) {
+        setError(resp.error?.message || t("assistants.streamingRuntimeInstallFailed"));
+        return;
+      }
+      setNotice(t("assistants.streamingRuntimeInstallStarted"));
+      await loadAssistants({ quiet: true });
+    } catch {
+      setError(t("assistants.streamingRuntimeInstallFailed"));
+    } finally {
+      setServiceRuntimeInstallBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isActive || !groupId || !showServiceModelControls || !selectedServiceModelInstalling) return undefined;
+    const timer = window.setInterval(() => {
+      void loadAssistants({ quiet: true });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [groupId, isActive, loadAssistants, selectedServiceModelInstalling, showServiceModelControls]);
+
+  if (!groupId) {
+    return (
+      <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div>
+          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("assistants.title")}</h3>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">{t("assistants.openFromGroup")}</p>
+        </div>
+      </div>
+    );
+  }
   const parsedHelp = assistantHelpPrompt ? parseHelpMarkdown(String(assistantHelpPrompt.content || "")) : null;
   const savedPetPersona = parsedHelp?.pet || "";
   const savedVoiceSecretaryGuidance = parsedHelp?.voiceSecretary || "";
@@ -769,6 +819,43 @@ export function AssistantsTab({
                     </div>
                   </div>
 
+                  {showServiceModelControls ? (
+                    <div className={`mt-4 space-y-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+                              {t("assistants.streamingRuntimeTitle")}
+                            </div>
+                            <StatusPill tone={streamingRuntimeReady ? "on" : streamingRuntimeStatus === "failed" ? "off" : "info"}>
+                              {t("assistants.serviceRuntimeStatusShort", { status: streamingRuntimeStatus })}
+                            </StatusPill>
+                          </div>
+                          <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                            {t("assistants.streamingRuntimeHint")}
+                          </p>
+                          {streamingRuntime?.error?.message ? (
+                            <p className="mt-1 text-[11px] leading-5 text-rose-700 dark:text-rose-300">
+                              {t("assistants.serviceRuntimeError", { message: String(streamingRuntime.error.message || "") })}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void installStreamingRuntime()}
+                          disabled={busy || voiceSaveBusy || streamingRuntimeInstalling || streamingRuntimeReady}
+                          className={secondaryButtonClass("sm")}
+                        >
+                          {streamingRuntimeReady
+                            ? t("assistants.streamingRuntimeInstalled", { defaultValue: "Runtime installed" })
+                            : streamingRuntimeInstalling
+                              ? t("assistants.streamingRuntimeInstalling")
+                              : t("assistants.streamingRuntimeInstall")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -848,8 +935,14 @@ export function AssistantsTab({
                       </div>
                       <div className="mt-1">
                         {asrCommandConfigured
-                          ? t("assistants.serviceAsrConfigured")
-                          : t("assistants.serviceAsrMissingCommand")}
+                          ? (
+                            serviceHealth.managed_asr_command_configured
+                              ? t("assistants.serviceAsrManagedModelReady")
+                              : t("assistants.serviceAsrConfigured")
+                          )
+                          : streamingRuntimeReady
+                            ? t("assistants.streamingRuntimeNotConnected")
+                            : t("assistants.serviceAsrMissingCommand")}
                       </div>
                       {serviceLastErrorMessage ? (
                         <div className="mt-1 text-rose-700 dark:text-rose-300">

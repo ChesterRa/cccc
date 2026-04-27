@@ -249,6 +249,18 @@ class AssistantVoiceTranscriptionRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class AssistantVoiceModelInstallRequest(BaseModel):
+    model_id: str = Field(default="")
+    by: str = Field(default="user")
+    background: bool = Field(default=False)
+
+
+class AssistantVoiceRuntimeInstallRequest(BaseModel):
+    runtime_id: str = Field(default="")
+    by: str = Field(default="user")
+    background: bool = Field(default=True)
+
+
 class AssistantVoiceTranscriptSegmentRequest(BaseModel):
     session_id: str = Field(default="")
     segment_id: str = Field(default="")

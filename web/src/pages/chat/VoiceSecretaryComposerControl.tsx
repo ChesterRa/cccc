@@ -6,8 +6,10 @@ import type {
   AssistantVoiceAskFeedback,
   AssistantVoiceDocument,
   AssistantVoicePromptDraft,
+  AssistantServiceRuntime,
   AssistantVoiceTranscriptSegmentResult,
   BuiltinAssistant,
+  LedgerEvent,
 } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { ChevronDownIcon, CloseIcon, CopyIcon, MaximizeIcon, MicrophoneIcon, SparklesIcon, StopIcon } from "../../components/Icons";
@@ -25,8 +27,8 @@ import {
   saveVoiceAssistantDocument,
   selectVoiceAssistantDocument,
   sendVoiceAssistantDocumentInstruction,
-  transcribeVoiceAssistantAudio,
   updateAssistantSettings,
+  withAuthToken,
 } from "../../services/api";
 import { useGroupStore, useUIStore } from "../../stores";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -137,15 +139,30 @@ type VoiceActivityFeedItem =
   | { kind: "document"; id: string; sortAt: number; item: VoiceDocumentActivityItem }
   | { kind: "prompt"; id: string; sortAt: number; status: "waiting" | "ready"; text: string };
 
+type AssistantVoiceDocumentLedgerData = {
+  action?: unknown;
+  document_path?: unknown;
+  input_kind?: unknown;
+  input_preview?: unknown;
+  request_id?: unknown;
+  status?: unknown;
+  title?: unknown;
+  workspace_path?: unknown;
+};
+
+type StreamTextAnimateProps = {
+  text: string;
+  className?: string;
+};
+
 type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
-type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue | "media_recorder";
+type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue;
 type BrowserSpeechSupportIssue = "" | "unsupported";
 
 const VOICE_CAPTURE_LOCK_KEY = "cccc.voiceSecretary.activeCapture";
 const VOICE_CAPTURE_CHANNEL_NAME = "cccc.voiceSecretary.capture";
 const VOICE_CAPTURE_LOCK_TTL_MS = 30 * 1000;
 const VOICE_CAPTURE_LOCK_PROBE_TIMEOUT_MS = 300;
-const VOICE_ASSISTANT_FRESHNESS_POLL_MS = 5000;
 const BROWSER_DEFAULT_MIC_LABEL = "browser_default";
 const SERVICE_DEFAULT_MIC_LABEL = "service_default";
 const BROWSER_SPEECH_MIN_QUIET_MS = 1_000;
@@ -157,11 +174,13 @@ const BROWSER_SPEECH_RESTART_MAX_MS = 8000;
 const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
+const SERVICE_STREAMING_PARTIAL_COMMIT_MS = 2500;
 const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
-const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 15_000;
-const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 15_000;
+const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 60_000;
+const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 60_000;
 const VOICE_ACTIVITY_FEED_LIMIT = 10;
 const VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS = 72;
+const STREAMING_ASR_RUNTIME_ID = "sherpa_onnx_streaming";
 const TWO_LINE_STATUS_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
@@ -464,26 +483,6 @@ function getBrowserMicrophoneSupportIssue(): BrowserMicrophoneSupportIssue {
 function getBrowserAudioSupportIssue(): BrowserAudioSupportIssue {
   const microphoneIssue = getBrowserMicrophoneSupportIssue();
   if (microphoneIssue) return microphoneIssue;
-  if (typeof MediaRecorder === "undefined") return "media_recorder";
-  return "";
-}
-
-function preferredMediaRecorderMimeType(): string {
-  if (typeof MediaRecorder === "undefined") return "";
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-    "audio/mp4",
-  ];
-  for (const candidate of candidates) {
-    try {
-      if (MediaRecorder.isTypeSupported(candidate)) return candidate;
-    } catch {
-      // ignore unsupported browser probe
-    }
-  }
   return "";
 }
 
@@ -510,17 +509,28 @@ function browserSpeechRestartDelayMs(transientErrorCount: number): number {
   return Math.min(BROWSER_SPEECH_RESTART_MAX_MS, BROWSER_SPEECH_RESTART_BASE_MS * count);
 }
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const value = typeof reader.result === "string" ? reader.result : "";
-      const commaIndex = value.indexOf(",");
-      resolve(commaIndex >= 0 ? value.slice(commaIndex + 1) : value);
-    };
-    reader.onerror = () => reject(reader.error || new Error("blob read failed"));
-    reader.readAsDataURL(blob);
-  });
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function float32To16kPcm16(input: Float32Array, inputSampleRate: number): Uint8Array {
+  const sourceRate = Math.max(1, Number(inputSampleRate) || 48000);
+  const targetRate = 16000;
+  const ratio = sourceRate / targetRate;
+  const outputLength = Math.max(0, Math.floor(input.length / ratio));
+  const output = new Int16Array(outputLength);
+  for (let index = 0; index < outputLength; index += 1) {
+    const sourceIndex = Math.min(input.length - 1, Math.floor(index * ratio));
+    const sample = Math.max(-1, Math.min(1, input[sourceIndex] || 0));
+    output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return new Uint8Array(output.buffer);
 }
 
 function voiceLanguageOptionValues(configuredLanguage: string): string[] {
@@ -534,6 +544,10 @@ function numberFromUnknown(value: unknown, fallback: number, min: number, max: n
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return fallback;
   return Math.max(min, Math.min(max, Math.round(numberValue)));
+}
+
+function recordFromUnknown(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function normalizeBrowserTranscriptChunk(value: string): string {
@@ -580,6 +594,44 @@ function hashComposerSnapshot(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+function splitStreamText(value: string): string[] {
+  const text = String(value || "");
+  if (!text) return [];
+  const segmenterConstructor = typeof Intl !== "undefined"
+    ? (Intl as typeof Intl & { Segmenter?: new (locale?: string, options?: { granularity?: "grapheme" }) => { segment: (input: string) => Iterable<{ segment: string }> } }).Segmenter
+    : undefined;
+  if (segmenterConstructor) {
+    try {
+      const segmenter = new segmenterConstructor(undefined, { granularity: "grapheme" });
+      return Array.from(segmenter.segment(text), (item) => item.segment);
+    } catch {
+      // Fall back to Array.from below.
+    }
+  }
+  return Array.from(text);
+}
+
+function StreamTextAnimate({ text, className }: StreamTextAnimateProps) {
+  const segments = useMemo(() => splitStreamText(text), [text]);
+  if (!segments.length) return null;
+  return (
+    <span className={classNames("stream-text-animate", className || "")}>
+      {segments.map((segment, index) => {
+        if (!segment.trim()) return segment;
+        return (
+          <span
+            key={`${index}-${segment}`}
+            className="stream-text-animate-segment"
+            style={{ animationDelay: `${Math.min(index, 36) * 12}ms` }}
+          >
+            {segment}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function abortBrowserSpeechRecognition(recognition: BrowserSpeechRecognition | null): void {
   if (!recognition) return;
   recognition.onend = null;
@@ -617,6 +669,15 @@ export function VoiceSecretaryComposerControl({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaChunksRef = useRef<Blob[]>([]);
+  const serviceAudioContextRef = useRef<AudioContext | null>(null);
+  const serviceAudioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const serviceAudioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const serviceAudioWsRef = useRef<WebSocket | null>(null);
+  const serviceAudioSeqRef = useRef(0);
+  const serviceFinalTranscriptRef = useRef("");
+  const serviceLatestPartialTranscriptRef = useRef("");
+  const serviceCommittedTranscriptRef = useRef("");
+  const servicePartialCommitTimerRef = useRef<number | null>(null);
   const voiceCaptureOwnerIdRef = useRef(createVoiceCaptureOwnerId());
   const recordingRef = useRef(false);
   const transcriptFlushTimerRef = useRef<number | null>(null);
@@ -650,6 +711,7 @@ export function VoiceSecretaryComposerControl({
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<"" | "enable" | "voice_language" | "transcribe" | "save_doc" | "new_doc" | "instruct_doc" | "instruct_ask" | "archive_doc" | "capture_target" | "clear_ask">("");
   const [assistant, setAssistant] = useState<BuiltinAssistant | null>(null);
+  const [serviceRuntimesById, setServiceRuntimesById] = useState<Record<string, AssistantServiceRuntime>>({});
   const [documents, setDocuments] = useState<AssistantVoiceDocument[]>([]);
   const [viewedDocumentPath, setViewedDocumentPath] = useState("");
   const [captureTargetDocumentPath, setCaptureTargetDocumentPath] = useState("");
@@ -678,26 +740,16 @@ export function VoiceSecretaryComposerControl({
   const [activityClockMs, setActivityClockMs] = useState(() => Date.now());
   const [voiceReplyBubbleRequestId, setVoiceReplyBubbleRequestId] = useState("");
   const [copiedVoiceReplyRequestId, setCopiedVoiceReplyRequestId] = useState("");
-  const latestVoiceLedgerSignal = useGroupStore((state) => {
+  const latestVoiceLedgerEvent = useGroupStore((state): LedgerEvent | null => {
     const gid = String(selectedGroupId || "").trim();
     const events = gid ? (state.chatByGroup[gid]?.events || []) : [];
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index];
       const kind = String(event?.kind || "").trim();
       if (!kind.startsWith("assistant.voice.")) continue;
-      const data = event?.data && typeof event.data === "object"
-        ? event.data as { request_id?: unknown; action?: unknown; document_path?: unknown; status?: unknown }
-        : null;
-      return [
-        String(event?.id || "").trim(),
-        kind,
-        String(data?.request_id || "").trim(),
-        String(data?.action || "").trim(),
-        String(data?.document_path || "").trim(),
-        String(data?.status || "").trim(),
-      ].join(":");
+      return event;
     }
-    return "";
+    return null;
   });
 
   useEffect(() => {
@@ -832,6 +884,17 @@ export function VoiceSecretaryComposerControl({
   );
   const browserSpeechReady = recognitionBackend === "browser_asr";
   const serviceAsrReady = recognitionBackend === "assistant_service_local_asr";
+  const serviceHealth = recordFromUnknown(assistant?.health?.service);
+  const serviceManagedModel = recordFromUnknown(serviceHealth.managed_model);
+  const serviceStreamingBackend = recordFromUnknown(serviceHealth.streaming_backend);
+  const streamingRuntimeReady = String(serviceRuntimesById[STREAMING_ASR_RUNTIME_ID]?.status || "").trim() === "ready";
+  const serviceAsrConfigured = Boolean(
+    serviceStreamingBackend.ready
+    || serviceHealth.asr_command_configured
+    || serviceHealth.asr_mock_configured
+    || serviceHealth.managed_asr_command_configured
+    || serviceManagedModel.command_ready,
+  );
   const browserSpeechSupportIssue = browserSpeechReady ? getBrowserSpeechSupportIssue() : "";
   const serviceAudioSupportIssue = serviceAsrReady ? getBrowserAudioSupportIssue() : "";
   const getBrowserSpeechIssueMessage = useCallback((issue: BrowserSpeechSupportIssue) => {
@@ -851,11 +914,6 @@ export function VoiceSecretaryComposerControl({
     if (issue === "get_user_media") {
       return t("voiceSecretaryGetUserMediaUnavailable", {
         defaultValue: "This browser page cannot access the microphone API. Open it through localhost or HTTPS and allow microphone access.",
-      });
-    }
-    if (issue === "media_recorder") {
-      return t("voiceSecretaryMediaRecorderUnavailable", {
-        defaultValue: "This browser does not support MediaRecorder audio capture. Use Browser ASR or another browser with MediaRecorder support.",
       });
     }
     return "";
@@ -962,8 +1020,20 @@ export function VoiceSecretaryComposerControl({
   ) => {
     const createdAt = item.createdAt || Date.now();
     const id = `doc-activity-${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setDocumentActivityItems((prev) => [
-      {
+    setDocumentActivityItems((prev) => {
+      const nextPath = String(item.documentPath || "").trim();
+      const nextPreview = normalizeBrowserTranscriptChunk(String(item.preview || ""));
+      const duplicate = prev.some((existing) => (
+        existing.status === item.status
+        && String(existing.documentPath || "").trim() === nextPath
+        && (
+          normalizeBrowserTranscriptChunk(String(existing.preview || "")) === nextPreview
+          || (item.status === "updated" && !nextPreview)
+        )
+        && Math.abs(existing.createdAt - createdAt) <= 3000
+      ));
+      if (duplicate) return prev;
+      return [{
         id,
         status: item.status,
         documentTitle: item.documentTitle,
@@ -972,10 +1042,22 @@ export function VoiceSecretaryComposerControl({
         mode: item.mode || "document",
         createdAt,
       },
-      ...prev,
-    ].slice(0, 20));
+      ...prev].slice(0, 20);
+    });
     setActivityClockMs(createdAt);
   }, []);
+
+  const pushDocumentUpdatedActivity = useCallback((
+    item: Omit<VoiceDocumentActivityItem, "id" | "createdAt" | "mode" | "status"> & {
+      createdAt?: number;
+      mode?: VoiceSecretaryCaptureMode;
+    },
+  ) => {
+    pushDocumentActivity({
+      ...item,
+      status: "updated",
+    });
+  }, [pushDocumentActivity]);
 
   const updateLiveTranscriptPreview = useCallback((text: string, phase: VoiceTranscriptPreviewPhase) => {
     const clean = normalizeBrowserTranscriptChunk(text);
@@ -1038,6 +1120,7 @@ export function VoiceSecretaryComposerControl({
         return;
       }
       setAssistant(resp.result.assistant || null);
+      setServiceRuntimesById(resp.result.service_runtimes_by_id || {});
       const promptDraft = resp.result.prompt_draft || null;
       if (promptDraft && pendingPromptRequestIdRef.current && promptDraft.request_id === pendingPromptRequestIdRef.current) {
         setPendingPromptDraft(promptDraft);
@@ -1067,8 +1150,7 @@ export function VoiceSecretaryComposerControl({
         if (!signature.replace(/:/g, "")) return;
         const previousSignature = previousDocumentSignatures.get(docKey);
         if (previousSignature && previousSignature !== signature) {
-          pushDocumentActivity({
-            status: "updated",
+          pushDocumentUpdatedActivity({
             documentTitle: String(document.title || "").trim(),
             documentPath: docKey,
           });
@@ -1127,7 +1209,7 @@ export function VoiceSecretaryComposerControl({
     } finally {
       if (seq === refreshSeq.current && !quiet) setLoading(false);
     }
-  }, [loadDocumentDraft, pushDocumentActivity, selectedGroupId, showError]);
+  }, [loadDocumentDraft, pushDocumentUpdatedActivity, selectedGroupId, showError]);
 
   useEffect(() => {
     if (!open) return;
@@ -1135,23 +1217,38 @@ export function VoiceSecretaryComposerControl({
   }, [open, refreshAssistant]);
 
   useEffect(() => {
-    if (!latestVoiceLedgerSignal) return;
-    if (!open && !pendingPromptRequestId && !pendingAskRequestId) return;
-    if (latestVoiceLedgerSignal === lastVoiceLedgerSignalRef.current) return;
-    lastVoiceLedgerSignalRef.current = latestVoiceLedgerSignal;
-    void refreshAssistant({ quiet: true });
-  }, [latestVoiceLedgerSignal, open, pendingAskRequestId, pendingPromptRequestId, refreshAssistant]);
-
-  useEffect(() => {
-    if (!open || !assistantEnabled) return undefined;
-    if (typeof window === "undefined") return undefined;
-    const timer = window.setInterval(() => {
-      void refreshAssistant({ quiet: true });
-    }, VOICE_ASSISTANT_FRESHNESS_POLL_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [assistantEnabled, open, refreshAssistant]);
+    if (!latestVoiceLedgerEvent) return;
+    if (!open) return;
+    const eventId = String(latestVoiceLedgerEvent.id || "").trim();
+    const eventKey = eventId || [
+      String(latestVoiceLedgerEvent.kind || "").trim(),
+      String(latestVoiceLedgerEvent.ts || "").trim(),
+    ].join(":");
+    if (!eventKey || eventKey === lastVoiceLedgerSignalRef.current) return;
+    lastVoiceLedgerSignalRef.current = eventKey;
+    const kind = String(latestVoiceLedgerEvent.kind || "").trim();
+    const data = latestVoiceLedgerEvent.data && typeof latestVoiceLedgerEvent.data === "object"
+      ? latestVoiceLedgerEvent.data as AssistantVoiceDocumentLedgerData
+      : null;
+    if (kind === "assistant.voice.document" && data) {
+      const action = String(data.action || "").trim();
+      const inputPreview = String(data.input_preview || "").trim();
+      if (action === "input_appended" && inputPreview) {
+        const createdAt = assistantVoiceTimestampMs(String(latestVoiceLedgerEvent.ts || "")) || Date.now();
+        pushDocumentUpdatedActivity({
+          documentTitle: String(data.title || "").trim(),
+          documentPath: String(data.document_path || data.workspace_path || "").trim(),
+          preview: inputPreview,
+          createdAt,
+          mode: "document",
+        });
+      }
+    }
+  }, [
+    latestVoiceLedgerEvent,
+    open,
+    pushDocumentUpdatedActivity,
+  ]);
 
   useEffect(() => {
     const hasActiveAsk = askFeedbackItems.some((item) => isActiveAskFeedbackStatus(item.status));
@@ -1180,22 +1277,6 @@ export function VoiceSecretaryComposerControl({
       window.clearInterval(timer);
     };
   }, [askFeedbackItems, documentActivityItems, liveTranscriptPreview, pendingPromptRequestId, recording]);
-
-  useEffect(() => {
-    if (!pendingPromptRequestId || pendingPromptDraft) return undefined;
-    if (typeof window === "undefined") return undefined;
-    let cancelled = false;
-    const poll = () => {
-      if (cancelled) return;
-      void refreshAssistant({ quiet: true });
-    };
-    poll();
-    const timer = window.setInterval(poll, 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [pendingPromptDraft, pendingPromptRequestId, refreshAssistant]);
 
   const acknowledgePromptDraft = useCallback(async (
     draft: AssistantVoicePromptDraft,
@@ -1309,7 +1390,13 @@ export function VoiceSecretaryComposerControl({
       window.clearTimeout(transcriptMaxFlushTimerRef.current);
       transcriptMaxFlushTimerRef.current = null;
     }
+    if (servicePartialCommitTimerRef.current !== null) {
+      window.clearTimeout(servicePartialCommitTimerRef.current);
+      servicePartialCommitTimerRef.current = null;
+    }
     browserFinalTranscriptBufferRef.current = "";
+    serviceLatestPartialTranscriptRef.current = "";
+    serviceCommittedTranscriptRef.current = "";
     if (browserSpeechRestartTimerRef.current !== null) {
       window.clearTimeout(browserSpeechRestartTimerRef.current);
       browserSpeechRestartTimerRef.current = null;
@@ -1347,6 +1434,12 @@ export function VoiceSecretaryComposerControl({
     if (browserSpeechStopFinalizeTimerRef.current === null) return;
     window.clearTimeout(browserSpeechStopFinalizeTimerRef.current);
     browserSpeechStopFinalizeTimerRef.current = null;
+  }, []);
+
+  const clearServicePartialCommitTimer = useCallback(() => {
+    if (servicePartialCommitTimerRef.current === null) return;
+    window.clearTimeout(servicePartialCommitTimerRef.current);
+    servicePartialCommitTimerRef.current = null;
   }, []);
 
   const clearBrowserSpeechMediaHandlers = useCallback(() => {
@@ -1439,18 +1532,6 @@ export function VoiceSecretaryComposerControl({
         return;
       }
       applyTranscriptAppendResult(resp.result);
-      const resultDocument = resp.result.document;
-      const resultDocumentPath = voiceDocumentPath(resultDocument) || targetDocumentPath;
-      const resultDocumentTitle = String(resultDocument?.title || captureTargetDocumentTitle || "").trim();
-      if (cleanText) {
-        pushDocumentActivity({
-          status: "queued",
-          documentTitle: resultDocumentTitle,
-          documentPath: resultDocumentPath,
-          preview: cleanText,
-        });
-        setLiveTranscriptPreview(null);
-      }
     } catch {
       showError(t("voiceSecretaryTranscriptAppendFailed", {
         defaultValue: "Failed to save Voice Secretary transcript segment.",
@@ -1459,9 +1540,7 @@ export function VoiceSecretaryComposerControl({
   }, [
     applyTranscriptAppendResult,
     assistantEnabled,
-    captureTargetDocumentTitle,
     effectiveRecognitionLanguage,
-    pushDocumentActivity,
     recognitionBackend,
     selectedAudioDeviceLabel,
     selectedGroupId,
@@ -1687,6 +1766,39 @@ export function VoiceSecretaryComposerControl({
   }, [scheduleTranscriptMaxFlush]);
 
   const cleanupServiceAudio = useCallback(() => {
+    const ws = serviceAudioWsRef.current;
+    serviceAudioWsRef.current = null;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.close(1000, "cleanup");
+      } catch {
+        // ignore websocket cleanup failure
+      }
+    }
+    const processor = serviceAudioProcessorRef.current;
+    serviceAudioProcessorRef.current = null;
+    if (processor) {
+      processor.onaudioprocess = null;
+      try {
+        processor.disconnect();
+      } catch {
+        // ignore audio processor cleanup failure
+      }
+    }
+    const source = serviceAudioSourceRef.current;
+    serviceAudioSourceRef.current = null;
+    if (source) {
+      try {
+        source.disconnect();
+      } catch {
+        // ignore audio source cleanup failure
+      }
+    }
+    const audioContext = serviceAudioContextRef.current;
+    serviceAudioContextRef.current = null;
+    if (audioContext && audioContext.state !== "closed") {
+      void audioContext.close().catch(() => undefined);
+    }
     const recorder = mediaRecorderRef.current;
     mediaRecorderRef.current = null;
     if (recorder) {
@@ -1698,9 +1810,13 @@ export function VoiceSecretaryComposerControl({
     stopMediaStream(mediaStreamRef.current);
     mediaStreamRef.current = null;
     mediaChunksRef.current = [];
+    serviceFinalTranscriptRef.current = "";
+    serviceLatestPartialTranscriptRef.current = "";
+    serviceCommittedTranscriptRef.current = "";
+    clearServicePartialCommitTimer();
     releaseVoiceCaptureLock(voiceCaptureOwnerIdRef.current);
     setRecording(false);
-  }, [clearBrowserSpeechMediaHandlers]);
+  }, [clearBrowserSpeechMediaHandlers, clearServicePartialCommitTimer]);
 
   const stopBrowserSpeech = useCallback(() => {
     browserSpeechStopRequestedRef.current = true;
@@ -1737,6 +1853,19 @@ export function VoiceSecretaryComposerControl({
   }, [clearBrowserSpeechMediaHandlers, clearBrowserSpeechRestartTimer, clearBrowserSpeechStopFinalizeTimer, flushBrowserTranscriptWindow]);
 
   const stopServiceAudio = useCallback(() => {
+    const ws = serviceAudioWsRef.current;
+    const processor = serviceAudioProcessorRef.current;
+    if (processor) processor.onaudioprocess = null;
+    setRecording(false);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        serviceAudioSeqRef.current += 1;
+        ws.send(JSON.stringify({ type: "stop", seq: serviceAudioSeqRef.current }));
+        return;
+      } catch {
+        // fall through to local cleanup
+      }
+    }
     const recorder = mediaRecorderRef.current;
     if (!recorder) {
       cleanupServiceAudio();
@@ -1754,7 +1883,7 @@ export function VoiceSecretaryComposerControl({
   }, [cleanupServiceAudio]);
 
   const stopCurrentRecording = useCallback(() => {
-    if (mediaRecorderRef.current) {
+    if (mediaRecorderRef.current || serviceAudioWsRef.current) {
       stopServiceAudio();
       return;
     }
@@ -1794,9 +1923,10 @@ export function VoiceSecretaryComposerControl({
     clearBrowserSpeechStopFinalizeTimer();
     clearTranscriptFlushTimer();
     clearTranscriptMaxFlushTimer();
+    clearServicePartialCommitTimer();
     cleanupServiceAudio();
     releaseVoiceCaptureLock(voiceCaptureOwnerIdRef.current);
-  }, [cleanupServiceAudio, clearBrowserSpeechRestartTimer, clearBrowserSpeechStopFinalizeTimer, clearTranscriptFlushTimer, clearTranscriptMaxFlushTimer]);
+  }, [cleanupServiceAudio, clearBrowserSpeechRestartTimer, clearBrowserSpeechStopFinalizeTimer, clearServicePartialCommitTimer, clearTranscriptFlushTimer, clearTranscriptMaxFlushTimer]);
 
   const startBrowserSpeech = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
@@ -2099,75 +2229,72 @@ export function VoiceSecretaryComposerControl({
     updateLiveTranscriptPreview,
   ]);
 
-  const transcribeServiceAudio = useCallback(async (chunks: Blob[], mimeType: string, gid: string) => {
-    const audioBlob = new Blob(chunks, { type: mimeType || "audio/webm" });
-    if (!audioBlob.size) {
-      showError(t("voiceSecretaryAudioEmpty", { defaultValue: "No audio was captured." }));
+  const handleServiceStreamingFinal = useCallback(async (text: string) => {
+    const clean = normalizeBrowserTranscriptChunk(text);
+    if (!clean) return;
+    clearServicePartialCommitTimer();
+    const committed = normalizeBrowserTranscriptChunk(serviceCommittedTranscriptRef.current);
+    if (committed && (committed === clean || committed.endsWith(clean))) {
+      serviceFinalTranscriptRef.current = committed;
+      updateLiveTranscriptPreview(committed, "final");
       return;
     }
-    setActionBusy("transcribe");
-    setSpeechError("");
-    try {
-      const audioBase64 = await blobToBase64(audioBlob);
-      const resp = await transcribeVoiceAssistantAudio(gid, {
-        audioBase64,
-        mimeType: audioBlob.type || mimeType || "audio/webm",
-        language: effectiveRecognitionLanguage,
-        by: "user",
+    const newText = committed && clean.startsWith(committed)
+      ? clean.slice(committed.length).trim()
+      : clean;
+    serviceFinalTranscriptRef.current = mergeTranscriptChunks(serviceFinalTranscriptRef.current, clean);
+    updateLiveTranscriptPreview(serviceFinalTranscriptRef.current, "final");
+    if (captureMode === "prompt") {
+      await requestPromptRefine(newText, "service_prompt_refine");
+    } else if (captureMode === "instruction") {
+      await sendInstructionTranscript(newText, { triggerKind: "service_voice_instruction" });
+    } else {
+      await appendTranscriptSegment(newText, {
+        flush: false,
+        source: "assistant_service_local_asr_streaming",
+        triggerKind: "service_streaming_transcript",
+        inputDeviceLabel: selectedAudioDeviceLabel,
       });
-      if (!resp.ok) {
-        const code = String(resp.error.code || "").trim();
-        const message = code === "asr_backend_unavailable"
-          ? t("voiceSecretaryServiceAsrCommandMissing", {
-              defaultValue: "Audio was captured, but assistant service local ASR is not configured. Set CCCC_VOICE_SECRETARY_ASR_COMMAND on the daemon host, or switch to Browser ASR.",
-            })
-          : resp.error.message || t("voiceSecretaryAudioTranscribeFailed", {
-              defaultValue: "Voice Secretary could not transcribe the recorded audio.",
-            });
-        setSpeechError(message);
-        showError(message);
-        await refreshAssistant({ quiet: true });
-        return;
-      }
-      const text = String(resp.result.transcript || "").trim();
-      if (text) {
-        updateLiveTranscriptPreview(text, "final");
-        if (captureMode === "prompt") {
-          await requestPromptRefine(text, "service_prompt_refine");
-        } else if (captureMode === "instruction") {
-          await sendInstructionTranscript(text, { triggerKind: "service_voice_instruction" });
-        } else {
-          await appendTranscriptSegment(text, {
-            flush: true,
-            source: "assistant_service_local_asr",
-            triggerKind: "service_transcript",
-            inputDeviceLabel: selectedAudioDeviceLabel,
-          });
-        }
-      }
-      if (!text) setAssistant(resp.result.assistant || null);
-      await refreshAssistant({ quiet: true });
-    } catch {
-      const message = t("voiceSecretaryAudioTranscribeFailed", {
-        defaultValue: "Voice Secretary could not transcribe the recorded audio.",
-      });
-      setSpeechError(message);
-      showError(message);
-    } finally {
-      setActionBusy("");
     }
+    serviceCommittedTranscriptRef.current = mergeTranscriptChunks(committed, newText);
   }, [
     appendTranscriptSegment,
     captureMode,
-    effectiveRecognitionLanguage,
+    clearServicePartialCommitTimer,
     requestPromptRefine,
-    refreshAssistant,
     selectedAudioDeviceLabel,
     sendInstructionTranscript,
-    showError,
-    t,
     updateLiveTranscriptPreview,
   ]);
+
+  const commitServiceStreamingPartial = useCallback(async (triggerKind = "service_streaming_partial") => {
+    const partial = normalizeBrowserTranscriptChunk(serviceLatestPartialTranscriptRef.current);
+    if (!partial) return;
+    const committed = normalizeBrowserTranscriptChunk(serviceCommittedTranscriptRef.current);
+    if (committed && (committed === partial || committed.endsWith(partial))) return;
+    const newText = committed && partial.startsWith(committed)
+      ? partial.slice(committed.length).trim()
+      : partial;
+    if (!newText) return;
+    if (captureMode === "prompt") return;
+    if (captureMode === "instruction") return;
+    await appendTranscriptSegment(newText, {
+      flush: false,
+      source: "assistant_service_local_asr_streaming",
+      triggerKind,
+      inputDeviceLabel: selectedAudioDeviceLabel,
+    });
+    serviceCommittedTranscriptRef.current = mergeTranscriptChunks(committed, newText);
+  }, [appendTranscriptSegment, captureMode, selectedAudioDeviceLabel]);
+
+  const scheduleServicePartialCommit = useCallback(() => {
+    if (captureMode !== "document") return;
+    clearServicePartialCommitTimer();
+    servicePartialCommitTimerRef.current = window.setTimeout(() => {
+      servicePartialCommitTimerRef.current = null;
+      void commitServiceStreamingPartial();
+    }, SERVICE_STREAMING_PARTIAL_COMMIT_MS);
+  }, [captureMode, clearServicePartialCommitTimer, commitServiceStreamingPartial]);
 
   const startServiceAudio = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
@@ -2179,6 +2306,16 @@ export function VoiceSecretaryComposerControl({
       showError(t("voiceSecretaryServiceBackendRequired", {
         defaultValue: "Switch recognition to Assistant service local ASR in Assistants settings first.",
       }));
+      return;
+    }
+    if (!serviceAsrConfigured) {
+      showError(streamingRuntimeReady
+        ? t("voiceSecretaryStreamingRuntimeNotConnected", {
+          defaultValue: "Streaming ASR runtime is installed, but the live streaming transcription backend is not connected yet. Use Browser ASR until the streaming backend is enabled.",
+        })
+        : t("voiceSecretaryServiceAsrNeedsRuntime", {
+          defaultValue: "Browser microphone capture is available, but assistant service local ASR runtime is not ready yet. Install the streaming ASR runtime in Settings > Assistants, or switch back to Browser ASR.",
+        }));
       return;
     }
     const supportIssue = getBrowserAudioSupportIssue();
@@ -2202,34 +2339,116 @@ export function VoiceSecretaryComposerControl({
         ? { audio: { deviceId: { exact: selectedAudioDeviceId } } }
         : { audio: true };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      const mimeType = preferredMediaRecorderMimeType();
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) {
+        throw new Error("AudioContext unavailable");
+      }
+      const audioContext = new AudioContextConstructor();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = withAuthToken(`${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/transcriptions/ws`);
+      const ws = new WebSocket(wsUrl);
       mediaStreamRef.current = stream;
-      mediaRecorderRef.current = recorder;
-      mediaChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size) mediaChunksRef.current.push(event.data);
+      serviceAudioContextRef.current = audioContext;
+      serviceAudioSourceRef.current = source;
+      serviceAudioProcessorRef.current = processor;
+      serviceAudioWsRef.current = ws;
+      serviceAudioSeqRef.current = 0;
+      serviceFinalTranscriptRef.current = "";
+      serviceLatestPartialTranscriptRef.current = "";
+      serviceCommittedTranscriptRef.current = "";
+      clearServicePartialCommitTimer();
+      processor.onaudioprocess = (event) => {
+        const activeWs = serviceAudioWsRef.current;
+        if (!activeWs || activeWs.readyState !== WebSocket.OPEN || !recordingRef.current) return;
+        const input = event.inputBuffer.getChannelData(0);
+        const pcm = float32To16kPcm16(input, audioContext.sampleRate);
+        if (!pcm.byteLength) return;
+        serviceAudioSeqRef.current += 1;
+        activeWs.send(JSON.stringify({
+          type: "audio",
+          seq: serviceAudioSeqRef.current,
+          sample_rate: 16000,
+          format: "pcm16",
+          audio_base64: bytesToBase64(pcm),
+        }));
       };
-      recorder.onerror = () => {
+      ws.onopen = () => {
+        serviceAudioSeqRef.current += 1;
+        ws.send(JSON.stringify({
+          type: "start",
+          seq: serviceAudioSeqRef.current,
+          sample_rate: 16000,
+          language: effectiveRecognitionLanguage,
+          by: "user",
+        }));
+      };
+      ws.onmessage = (event) => {
+        void (async () => {
+          const payload = JSON.parse(String(event.data || "{}")) as Record<string, unknown>;
+          const type = String(payload.type || "").trim();
+          if (type === "ready") {
+            setSpeechError("");
+            return;
+          }
+          if (type === "partial") {
+            const text = String(payload.text || "").trim();
+            if (text) {
+              serviceLatestPartialTranscriptRef.current = text;
+              updateLiveTranscriptPreview(text, "interim");
+              scheduleServicePartialCommit();
+            }
+            return;
+          }
+          if (type === "final") {
+            await handleServiceStreamingFinal(String(payload.text || ""));
+            return;
+          }
+          if (type === "closed") {
+            await commitServiceStreamingPartial("push_to_talk_stop");
+            cleanupServiceAudio();
+            if (captureMode === "document") {
+              void appendTranscriptSegment("", {
+                flush: true,
+                source: "assistant_service_local_asr_streaming",
+                triggerKind: "push_to_talk_stop",
+                inputDeviceLabel: selectedAudioDeviceLabel,
+              });
+            }
+            return;
+          }
+          if (type === "error" || payload.ok === false) {
+            const error = recordFromUnknown(payload.error);
+            const message = String(error.message || "") || t("voiceSecretaryAudioTranscribeFailed", {
+              defaultValue: "Voice Secretary could not transcribe the recorded audio.",
+            });
+            setSpeechError(message);
+            showError(message);
+            cleanupServiceAudio();
+          }
+        })().catch(() => {
+          const message = t("voiceSecretaryAudioTranscribeFailed", {
+            defaultValue: "Voice Secretary could not transcribe the recorded audio.",
+          });
+          setSpeechError(message);
+          showError(message);
+          cleanupServiceAudio();
+        });
+      };
+      ws.onerror = () => {
         const message = t("voiceSecretaryAudioCaptureFailed", { defaultValue: "Audio capture failed." });
         setSpeechError(message);
         showError(message);
         cleanupServiceAudio();
       };
-      recorder.onstop = () => {
-        const chunks = [...mediaChunksRef.current];
-        const recordedMimeType = recorder.mimeType || mimeType || "audio/webm";
-        mediaRecorderRef.current = null;
-        stopMediaStream(mediaStreamRef.current);
-        mediaStreamRef.current = null;
-        mediaChunksRef.current = [];
-        releaseVoiceCaptureLock(voiceCaptureOwnerIdRef.current);
-        setRecording(false);
-        void transcribeServiceAudio(chunks, recordedMimeType, gid);
+      ws.onclose = () => {
+        if (serviceAudioWsRef.current === ws) cleanupServiceAudio();
       };
+      source.connect(processor);
+      processor.connect(audioContext.destination);
       setSpeechError("");
       setRecording(true);
-      recorder.start(1000);
       void loadAudioDevices();
     } catch (error) {
       cleanupServiceAudio();
@@ -2243,13 +2462,23 @@ export function VoiceSecretaryComposerControl({
     cleanupServiceAudio,
     getAudioCaptureErrorMessage,
     getAudioSupportIssueMessage,
+    handleServiceStreamingFinal,
+    commitServiceStreamingPartial,
+    clearServicePartialCommitTimer,
     loadAudioDevices,
+    effectiveRecognitionLanguage,
+    appendTranscriptSegment,
+    captureMode,
+    scheduleServicePartialCommit,
     selectedAudioDeviceId,
     selectedGroupId,
     serviceAsrReady,
+    serviceAsrConfigured,
     showError,
+    streamingRuntimeReady,
     t,
-    transcribeServiceAudio,
+    selectedAudioDeviceLabel,
+    updateLiveTranscriptPreview,
   ]);
 
   useEffect(() => {
@@ -3782,7 +4011,7 @@ export function VoiceSecretaryComposerControl({
                         "mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4",
                         isDark ? "text-cyan-50" : "text-cyan-950",
                       )}>
-                        {liveTranscriptDisplayText || currentLiveTranscript.text}
+                        <StreamTextAnimate text={liveTranscriptDisplayText || currentLiveTranscript.text} />
                       </div>
                       {currentLiveTranscript.documentTitle || currentLiveTranscript.documentPath ? (
                         <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
@@ -3827,7 +4056,7 @@ export function VoiceSecretaryComposerControl({
                           </div>
                           {feedItem.text ? (
                             <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-200" : "text-gray-800")}>
-                              {feedItem.text}
+                              <StreamTextAnimate text={feedItem.text} />
                             </div>
                           ) : null}
                         </div>
@@ -3870,7 +4099,7 @@ export function VoiceSecretaryComposerControl({
                           </div>
                           {item.preview ? (
                             <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-300" : "text-gray-700")}>
-                              {item.preview}
+                              <StreamTextAnimate text={item.preview} />
                             </div>
                           ) : null}
                           {title ? (
@@ -3943,7 +4172,7 @@ export function VoiceSecretaryComposerControl({
                               {t("voiceSecretaryRequestLabel", { defaultValue: "Request" })}
                             </div>
                             <div className={classNames("mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-300" : "text-gray-700")}>
-                              {requestPreview}
+                              <StreamTextAnimate text={requestPreview} />
                             </div>
                           </div>
                         ) : null}
@@ -3953,7 +4182,7 @@ export function VoiceSecretaryComposerControl({
                               {t("voiceSecretaryReplyLabel", { defaultValue: "Reply" })}
                             </div>
                             <div className={classNames("mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-200" : "text-gray-800")}>
-                              {replyPreview}
+                              <StreamTextAnimate text={replyPreview} />
                             </div>
                           </div>
                         ) : null}

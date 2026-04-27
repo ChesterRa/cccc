@@ -55,6 +55,7 @@ class AssistantVoiceDocumentData(BaseModel):
     status: str = "active"
     workspace_path: str = ""
     title: str = ""
+    input_preview: str = ""
 
     model_config = ConfigDict(extra="forbid")
 

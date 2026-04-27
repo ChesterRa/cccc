@@ -17,6 +17,10 @@ from ....contracts.v1.automation import AutomationRuleSet
 from ....daemon.codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ....daemon.server import get_daemon_endpoint
 from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
+from ....daemon.assistants.sherpa_streaming_asr import (
+    SherpaStreamingAsrError,
+    open_sherpa_streaming_session,
+)
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
@@ -58,6 +62,8 @@ from ..schemas import (
     AssistantVoiceDocumentInstructionRequest,
     AssistantVoiceDocumentSaveRequest,
     AssistantVoiceInputRequest,
+    AssistantVoiceModelInstallRequest,
+    AssistantVoiceRuntimeInstallRequest,
     AssistantVoicePromptDraftAckRequest,
     AssistantVoiceTranscriptSegmentRequest,
     AssistantVoiceTranscriptionRequest,
@@ -1742,6 +1748,185 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "mime_type": req.mime_type,
                     "language": req.language,
                     "by": req.by,
+                },
+            }
+        )
+
+    @global_router.websocket("/groups/{group_id}/assistants/voice_secretary/transcriptions/ws")
+    async def group_voice_secretary_transcription_ws(websocket: WebSocket, group_id: str) -> None:
+        await websocket.accept()
+
+        principal = resolve_websocket_principal(websocket)
+        websocket.state.principal = principal
+
+        auth_header = str((getattr(websocket, "headers", {}) or {}).get("authorization") or "").strip()
+        has_header_token = auth_header.lower().startswith("bearer ") and bool(str(auth_header[7:] or "").strip())
+        has_cookie_token = False
+        try:
+            cookies = getattr(websocket, "cookies", None) or {}
+            has_cookie_token = bool(str(cookies.get("cccc_access_token") or "").strip())
+        except Exception:
+            has_cookie_token = False
+        has_query_token = bool(str(websocket.query_params.get("token") or "").strip())
+        if (has_header_token or has_cookie_token or has_query_token) and str(getattr(principal, "kind", "anonymous") or "anonymous") != "user" and websocket_tokens_active():
+            try:
+                await websocket.send_json({"type": "error", "ok": False, "error": {"code": "auth_required", "message": "Invalid or missing authentication token"}})
+            except Exception:
+                pass
+            await websocket.close(code=4401)
+            return
+
+        try:
+            check_group(websocket, group_id)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"code": "permission_denied", "message": str(exc.detail or "permission denied")}
+            try:
+                await websocket.send_json({"type": "error", "ok": False, "error": detail})
+            except Exception:
+                pass
+            await websocket.close(code=1008)
+            return
+
+        if ctx.read_only:
+            try:
+                await websocket.send_json({"type": "error", "ok": False, "error": {"code": "read_only", "message": "web is read-only"}})
+            except Exception:
+                pass
+            await websocket.close(code=1008)
+            return
+
+        streaming_session = None
+        try:
+            while True:
+                try:
+                    payload = await websocket.receive_json()
+                except WebSocketDisconnect:
+                    return
+                except Exception as exc:
+                    await websocket.send_json({"type": "error", "ok": False, "error": {"code": "invalid_json", "message": str(exc)}})
+                    continue
+
+                message_type = str(payload.get("type") or "transcribe").strip()
+                seq = payload.get("seq")
+                if message_type == "start":
+                    group = load_group(group_id)
+                    if group is None:
+                        await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+                        continue
+                    assistants = group.doc.get("assistants") if isinstance(group.doc.get("assistants"), dict) else {}
+                    assistant = assistants.get("voice_secretary") if isinstance(assistants.get("voice_secretary"), dict) else {}
+                    config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
+                    selected_model_id = str(config.get("service_model_id") or "").strip()
+                    try:
+                        streaming_session = await open_sherpa_streaming_session(selected_model_id)
+                    except SherpaStreamingAsrError as exc:
+                        await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": exc.code, "message": exc.message, "details": exc.details}})
+                        continue
+                    await websocket.send_json({"type": "ready", "ok": True, "seq": seq})
+                    continue
+
+                if message_type == "audio":
+                    if streaming_session is None:
+                        await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": "asr_stream_not_started", "message": "send start before audio"}})
+                        continue
+                    try:
+                        await streaming_session.send(
+                            {
+                                "type": "audio",
+                                "seq": seq,
+                                "sample_rate": int(payload.get("sample_rate") or 16000),
+                                "audio_base64": str(payload.get("audio_base64") or payload.get("audio_b64") or ""),
+                            }
+                        )
+                        while True:
+                            try:
+                                event = await streaming_session.receive(timeout=0.01)
+                            except SherpaStreamingAsrError as exc:
+                                if exc.code == "asr_backend_timeout":
+                                    break
+                                await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": exc.code, "message": exc.message, "details": exc.details}})
+                                break
+                            event["ok"] = str(event.get("type") or "") != "error"
+                            await websocket.send_json(event)
+                    except SherpaStreamingAsrError as exc:
+                        await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": exc.code, "message": exc.message, "details": exc.details}})
+                    continue
+
+                if message_type in {"close", "stop"}:
+                    if streaming_session is not None:
+                        try:
+                            await streaming_session.send({"type": "stop", "seq": seq})
+                            while True:
+                                event = await streaming_session.receive(timeout=5.0)
+                                event["ok"] = str(event.get("type") or "") != "error"
+                                await websocket.send_json(event)
+                                if str(event.get("type") or "") == "closed":
+                                    break
+                        except SherpaStreamingAsrError as exc:
+                            await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": exc.code, "message": exc.message, "details": exc.details}})
+                        finally:
+                            await streaming_session.close()
+                            streaming_session = None
+                            await websocket.close(code=1000)
+                        return
+                    await websocket.send_json({"type": "closed", "ok": True, "seq": seq})
+                    await websocket.close(code=1000)
+                    return
+                if message_type != "transcribe":
+                    await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": "unsupported_message", "message": f"unsupported message type: {message_type}"}})
+                    continue
+
+                resp = await ctx.daemon(
+                    {
+                        "op": "assistant_voice_transcribe",
+                        "args": {
+                            "group_id": group_id,
+                            "audio_base64": str(payload.get("audio_base64") or payload.get("audio_b64") or ""),
+                            "mime_type": str(payload.get("mime_type") or payload.get("mimeType") or "application/octet-stream"),
+                            "language": str(payload.get("language") or ""),
+                            "by": str(payload.get("by") or "user").strip() or "user",
+                        },
+                    }
+                )
+                if not bool(resp.get("ok")):
+                    await websocket.send_json({"type": "transcript", "ok": False, "seq": seq, "error": resp.get("error") or {"code": "transcribe_failed", "message": "transcribe failed"}})
+                    continue
+                await websocket.send_json({"type": "transcript", "ok": True, "seq": seq, "result": resp.get("result") or {}})
+        except WebSocketDisconnect:
+            if streaming_session is not None:
+                await streaming_session.close()
+            return
+
+    @group_router.post("/assistants/voice_secretary/models/install")
+    async def group_voice_secretary_model_install(
+        group_id: str,
+        req: AssistantVoiceModelInstallRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_model_install",
+                "args": {
+                    "group_id": group_id,
+                    "model_id": req.model_id,
+                    "by": req.by,
+                    "background": req.background,
+                },
+            }
+        )
+
+    @group_router.post("/assistants/voice_secretary/runtime/install")
+    async def group_voice_secretary_runtime_install(
+        group_id: str,
+        req: AssistantVoiceRuntimeInstallRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_runtime_install",
+                "args": {
+                    "group_id": group_id,
+                    "runtime_id": req.runtime_id,
+                    "by": req.by,
+                    "background": req.background,
                 },
             }
         )

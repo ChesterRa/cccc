@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -7,6 +8,7 @@ import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from email.message import Message
 
 
 class TestAssistantOps(unittest.TestCase):
@@ -116,6 +118,75 @@ class TestAssistantOps(unittest.TestCase):
             },
         )
         self.assertTrue(enable.ok, getattr(enable, "error", None))
+
+    def _write_voice_model_manifest(self, home: str, *, model_id: str = "mock_asr") -> Path:
+        source_dir = Path(home) / "voice-model-source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        adapter_path = source_dir / "adapter.py"
+        adapter_bytes = (
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "\n"
+            "audio = Path(sys.argv[-1])\n"
+            "print(json.dumps({'text': f'managed transcript:{audio.suffix}:{audio.stat().st_size}'}))\n"
+        ).encode("utf-8")
+        adapter_path.write_bytes(adapter_bytes)
+        manifest = {
+            "voice_secretary_asr_models": [
+                {
+                    "model_id": model_id,
+                    "kind": "asr",
+                    "title": "Mock Managed ASR",
+                    "command_template": ["{python}", "{model_dir}/adapter.py", "{audio_path}"],
+                    "artifacts": [
+                        {
+                            "path": "adapter.py",
+                            "url": adapter_path.as_uri(),
+                            "sha256": hashlib.sha256(adapter_bytes).hexdigest(),
+                            "size_bytes": len(adapter_bytes),
+                        }
+                    ],
+                }
+            ]
+        }
+        manifest_path = Path(home) / "config" / "voice-models.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest_path
+
+    def test_voice_model_http_metadata_hash_mismatch_fails_before_download(self) -> None:
+        from cccc.daemon.assistants.voice_models import VoiceModelError, _download_artifact
+
+        class _HeadResponse:
+            headers: Message
+
+            def __init__(self) -> None:
+                self.headers = Message()
+                self.headers["ETag"] = '"833ca2dcfdf8ec91bd4f31cfac36d6124e0c459074d5e909aec9cabe6204a3ea"'
+                self.headers["Content-Length"] = "936291369"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        def _fake_urlopen(req, *args, **kwargs):
+            if getattr(req, "get_method", lambda: "")() == "HEAD":
+                return _HeadResponse()
+            raise AssertionError("download should not start after metadata mismatch")
+
+        artifact = {
+            "path": "model.pt",
+            "url": "https://example.invalid/models/mock-asr/model.pt",
+            "sha256": "f7cbae52854eb138167e493bf43e549bd6268d999fd9c5c0b1eef9a6ee294505",
+            "size_bytes": 936291369,
+        }
+        with tempfile.TemporaryDirectory() as td, patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            with self.assertRaises(VoiceModelError) as cm:
+                _download_artifact(artifact, output_path=Path(td) / "model.pt")
+        self.assertEqual(cm.exception.code, "voice_model_manifest_hash_invalid")
 
     def test_voice_capture_result_idle_counts_as_continuous(self) -> None:
         from cccc.daemon.assistants.assistant_ops import _voice_capture_continuity
@@ -511,6 +582,123 @@ class TestAssistantOps(unittest.TestCase):
                 from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
 
                 stop_voice_service(group)
+            cleanup()
+
+    def test_voice_state_exposes_managed_model_status(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            self._write_voice_model_manifest(home)
+            group_id = self._create_group()
+            self._ensure_foreman(group_id)
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {
+                        "enabled": True,
+                        "config": {
+                            "capture_mode": "service",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "service_model_id": "mock_asr",
+                            "tts_enabled": False,
+                        },
+                    },
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            assistant = (state.result or {}).get("assistant") if isinstance(state.result, dict) else {}
+            service = ((assistant.get("health") or {}).get("service") or {}) if isinstance(assistant.get("health"), dict) else {}
+            managed = service.get("managed_model") if isinstance(service.get("managed_model"), dict) else {}
+            self.assertEqual(str(service.get("selected_model_id") or ""), "mock_asr")
+            self.assertEqual(str(managed.get("status") or ""), "not_installed")
+            service_models = (state.result or {}).get("service_models") if isinstance(state.result, dict) else []
+            service_models_by_id = {
+                str(item.get("model_id") or ""): item for item in service_models if isinstance(item, dict)
+            }
+            self.assertIn("mock_asr", service_models_by_id)
+            service_runtimes = (state.result or {}).get("service_runtimes_by_id") if isinstance(state.result, dict) else {}
+            self.assertIn("sherpa_onnx_streaming", service_runtimes)
+        finally:
+            cleanup()
+
+    def test_voice_model_install_and_transcribe_uses_managed_command(self) -> None:
+        home, cleanup = self._with_home()
+        old_mock = os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+        old_command = os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+        group = None
+        try:
+            from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
+            from cccc.kernel.group import load_group
+
+            self._write_voice_model_manifest(home)
+            group_id = self._create_group()
+            self._ensure_foreman(group_id)
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {
+                        "enabled": True,
+                        "config": {
+                            "capture_mode": "service",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "service_model_id": "mock_asr",
+                            "tts_enabled": False,
+                        },
+                    },
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            install, _ = self._call(
+                "assistant_voice_model_install",
+                {"group_id": group_id, "model_id": "mock_asr", "by": "user"},
+            )
+            self.assertTrue(install.ok, getattr(install, "error", None))
+            installed_model = (install.result or {}).get("model") if isinstance(install.result, dict) else {}
+            self.assertEqual(str(installed_model.get("status") or ""), "ready")
+
+            audio = base64.b64encode(b"fake audio bytes").decode("ascii")
+            transcribe, _ = self._call(
+                "assistant_voice_transcribe",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "audio_base64": audio,
+                    "mime_type": "audio/webm",
+                    "language": "en-US",
+                },
+            )
+            self.assertTrue(transcribe.ok, getattr(transcribe, "error", None))
+            result = transcribe.result or {}
+            self.assertEqual(str(result.get("transcript") or ""), "managed transcript:.webm:16")
+            service = result.get("service") if isinstance(result.get("service"), dict) else {}
+            managed = service.get("managed_model") if isinstance(service.get("managed_model"), dict) else {}
+            self.assertEqual(str(managed.get("status") or ""), "ready")
+
+            group = load_group(group_id)
+            if group is not None:
+                stop_voice_service(group)
+        finally:
+            if group is not None:
+                from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
+
+                stop_voice_service(group)
+            if old_mock is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT"] = old_mock
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+            if old_command is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
             cleanup()
 
     def test_voice_document_create_requires_attached_repo_scope(self) -> None:

@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 import unicodedata
 import uuid
@@ -41,6 +42,21 @@ from .voice_secretary_runtime_ops import (
     voice_secretary_runtime_changed,
 )
 from .voice_prompt_refine import build_voice_prompt_refine_input_text
+from .voice_models import (
+    VoiceModelError,
+    begin_voice_model_install,
+    get_voice_model_status,
+    install_voice_model,
+    list_voice_models,
+)
+from .voice_runtime_deps import (
+    VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING,
+    VoiceRuntimeDepsError,
+    get_voice_runtime_status,
+    install_voice_runtime_deps,
+    list_voice_runtime_statuses,
+)
+from .sherpa_streaming_asr import sherpa_streaming_backend_status
 from .voice_service_runtime import (
     VoiceServiceRuntimeError,
     read_voice_service_state,
@@ -50,6 +66,11 @@ from .voice_service_runtime import (
 
 
 logger = logging.getLogger(__name__)
+
+_VOICE_MODEL_INSTALL_LOCK = threading.Lock()
+_VOICE_MODEL_INSTALL_THREADS: Dict[str, threading.Thread] = {}
+_VOICE_RUNTIME_INSTALL_LOCK = threading.Lock()
+_VOICE_RUNTIME_INSTALL_THREADS: Dict[str, threading.Thread] = {}
 
 
 ASSISTANT_ID_PET = "pet"
@@ -173,6 +194,7 @@ _ASSISTANT_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "auto_document_quiet_ms": _DEFAULT_AUTO_DOCUMENT_QUIET_MS,
             "auto_document_min_chars": _DEFAULT_AUTO_DOCUMENT_MIN_CHARS,
             "auto_document_max_window_seconds": _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS,
+            "service_model_id": "",
             "tts_enabled": False,
         },
         "ui": {
@@ -192,6 +214,7 @@ _VOICE_CONFIG_KEYS = {
     "auto_document_quiet_ms",
     "auto_document_min_chars",
     "auto_document_max_window_seconds",
+    "service_model_id",
     "tts_enabled",
 }
 
@@ -331,6 +354,11 @@ def _normalize_voice_config(raw: Any, *, base: Dict[str, Any]) -> Dict[str, Any]
         except Exception as exc:
             raise ValueError("auto_document_max_window_seconds must be an integer") from exc
         out["auto_document_max_window_seconds"] = min(max(_MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS, max_window_seconds), 300)
+    if "service_model_id" in raw:
+        value = str(raw.get("service_model_id") or "").strip()
+        if value and not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", value):
+            raise ValueError("service_model_id must be a simple slug")
+        out["service_model_id"] = value
     if "tts_enabled" in raw:
         out["tts_enabled"] = coerce_bool(raw.get("tts_enabled"), default=False)
     return out
@@ -380,6 +408,9 @@ def _effective_assistant(group: Group, assistant_id: str, *, runtime_state: Opti
         service_backend_selected = str(config.get("recognition_backend") or "").strip() == "assistant_service_local_asr"
         if service_used or service_backend_selected:
             health = dict(health)
+            selected_model_id = str(config.get("service_model_id") or "").strip()
+            managed_model = get_voice_model_status(selected_model_id) if selected_model_id else {}
+            streaming_backend = sherpa_streaming_backend_status(selected_model_id)
             health["service"] = {
                 "status": str(service_state.get("status") or ("not_started" if service_backend_selected else "")),
                 "pid": service_state.get("pid"),
@@ -394,6 +425,9 @@ def _effective_assistant(group: Group, assistant_id: str, *, runtime_state: Opti
                     service_state.get("asr_mock_configured")
                     or str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()
                 ),
+                "selected_model_id": selected_model_id,
+                "managed_model": managed_model,
+                "streaming_backend": streaming_backend,
                 "last_error": service_state.get("last_error") if isinstance(service_state.get("last_error"), dict) else {},
                 "updated_at": str(service_state.get("updated_at") or ""),
             }
@@ -2615,6 +2649,7 @@ def _flush_voice_session_window(
             "status": str(document.get("status") or "active"),
             "workspace_path": str(document.get("workspace_path") or ""),
             "title": str(document.get("title") or ""),
+            "input_preview": window_text[:500],
         },
     )
     _clear_voice_session_window(
@@ -3007,6 +3042,9 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             else {}
         )
         ask_requests = _voice_ask_requests_public(runtime_state) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_models = list_voice_models() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_runtimes = list_voice_runtime_statuses() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_runtime = get_voice_runtime_status() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
         return DaemonResponse(
             ok=True,
             result={
@@ -3024,6 +3062,11 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
                 "prompt_draft": prompt_draft,
                 "ask_requests": ask_requests,
                 "latest_ask_request": ask_requests[0] if ask_requests else {},
+                "service_models": service_models,
+                "service_models_by_id": {str(item.get("model_id")): item for item in service_models},
+                "service_runtime": service_runtime,
+                "service_runtimes": service_runtimes,
+                "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
             },
         )
     assistants = [
@@ -3037,6 +3080,9 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     input_state = _load_voice_input_state(group)
     prompt_draft = _pending_voice_prompt_draft_by_request(group, request_id=prompt_request_id, runtime_state=runtime_state)
     ask_requests = _voice_ask_requests_public(runtime_state)
+    service_models = list_voice_models()
+    service_runtimes = list_voice_runtime_statuses()
+    service_runtime = get_voice_runtime_status()
     return DaemonResponse(
         ok=True,
         result={
@@ -3055,8 +3101,133 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             "prompt_draft": prompt_draft,
             "ask_requests": ask_requests,
             "latest_ask_request": ask_requests[0] if ask_requests else {},
+            "service_models": service_models,
+            "service_models_by_id": {str(item.get("model_id")): item for item in service_models},
+            "service_runtime": service_runtime,
+            "service_runtimes": service_runtimes,
+            "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
         },
     )
+
+
+def handle_assistant_voice_model_install(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    model_id = str(args.get("model_id") or "").strip()
+    background = coerce_bool(args.get("background"), default=False)
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not model_id:
+        return _error("missing_model_id", "missing model_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.settings_update")
+        if background:
+            installed = _start_voice_model_install_background(model_id)
+        else:
+            installed = install_voice_model(model_id)
+    except VoiceModelError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except VoiceRuntimeDepsError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except Exception as exc:
+        return _error("assistant_voice_model_install_failed", str(exc))
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "assistant": _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY),
+            "model": installed,
+            "service_runtime": get_voice_runtime_status(),
+        },
+    )
+
+
+def handle_assistant_voice_runtime_install(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    runtime_id = str(args.get("runtime_id") or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    background = coerce_bool(args.get("background"), default=True)
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.settings_update")
+        runtime = (
+            _start_voice_runtime_install_background(runtime_id)
+            if background
+            else install_voice_runtime_deps(runtime_id)
+        )
+    except VoiceRuntimeDepsError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except Exception as exc:
+        return _error("assistant_voice_runtime_install_failed", str(exc))
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "assistant": _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY),
+            "service_runtime": runtime,
+        },
+    )
+
+
+def _start_voice_model_install_background(model_id: str) -> Dict[str, Any]:
+    model_id = str(model_id or "").strip()
+    with _VOICE_MODEL_INSTALL_LOCK:
+        existing = _VOICE_MODEL_INSTALL_THREADS.get(model_id)
+        if existing is not None and existing.is_alive():
+            return get_voice_model_status(model_id)
+        started = begin_voice_model_install(model_id)
+
+        def _run() -> None:
+            try:
+                install_voice_model(model_id)
+            except Exception:
+                logger.exception("voice model install failed in background: model_id=%s", model_id)
+            finally:
+                with _VOICE_MODEL_INSTALL_LOCK:
+                    current = _VOICE_MODEL_INSTALL_THREADS.get(model_id)
+                    if current is threading.current_thread():
+                        _VOICE_MODEL_INSTALL_THREADS.pop(model_id, None)
+
+        thread = threading.Thread(target=_run, name=f"voice-model-install-{model_id}", daemon=True)
+        _VOICE_MODEL_INSTALL_THREADS[model_id] = thread
+        thread.start()
+        return started
+
+
+def _start_voice_runtime_install_background(runtime_id: str) -> Dict[str, Any]:
+    runtime_id = str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    if runtime_id not in {VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING}:
+        raise VoiceRuntimeDepsError("voice_runtime_unknown", f"unknown voice runtime: {runtime_id}")
+    with _VOICE_RUNTIME_INSTALL_LOCK:
+        existing = _VOICE_RUNTIME_INSTALL_THREADS.get(runtime_id)
+        if existing is not None and existing.is_alive():
+            return get_voice_runtime_status(runtime_id)
+
+        def _run() -> None:
+            try:
+                install_voice_runtime_deps(runtime_id)
+            except Exception:
+                logger.exception("voice runtime dependency install failed in background: runtime_id=%s", runtime_id)
+            finally:
+                with _VOICE_RUNTIME_INSTALL_LOCK:
+                    current = _VOICE_RUNTIME_INSTALL_THREADS.get(runtime_id)
+                    if current is threading.current_thread():
+                        _VOICE_RUNTIME_INSTALL_THREADS.pop(runtime_id, None)
+
+        thread = threading.Thread(target=_run, name=f"voice-runtime-install-{runtime_id}", daemon=True)
+        _VOICE_RUNTIME_INSTALL_THREADS[runtime_id] = thread
+        thread.start()
+        return {
+            **get_voice_runtime_status(runtime_id),
+            "status": "installing",
+        }
 
 
 def handle_assistant_settings_update(
@@ -3696,6 +3867,7 @@ def handle_assistant_voice_transcript_append(
                     "status": str(document.get("status") or "active"),
                     "workspace_path": str(document.get("workspace_path") or ""),
                     "title": str(document.get("title") or ""),
+                    "input_preview": document_source_text[:500],
                 },
             )
             _ = document_event
@@ -4998,6 +5170,10 @@ def try_handle_assistant_op(
         return handle_assistant_status_update(args)
     if op == "assistant_voice_transcribe":
         return handle_assistant_voice_transcribe(args)
+    if op == "assistant_voice_model_install":
+        return handle_assistant_voice_model_install(args)
+    if op == "assistant_voice_runtime_install":
+        return handle_assistant_voice_runtime_install(args)
     if op == "assistant_voice_transcript_append":
         return handle_assistant_voice_transcript_append(
             args,

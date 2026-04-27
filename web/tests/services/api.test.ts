@@ -683,6 +683,108 @@ describe("api.fetchPresentation", () => {
   });
 });
 
+describe("api assistant voice model helpers", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  afterEach(async () => {
+    const api = await import("../../src/services/api");
+    api.clearAuthToken();
+  });
+
+  it("normalizes assistant state service models", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        result: {
+          group_id: "g-demo",
+          assistant: {
+            assistant_id: "voice_secretary",
+            kind: "voice_secretary",
+            enabled: true,
+            lifecycle: "idle",
+            health: {
+              service: {
+                selected_model_id: "mock_asr",
+                managed_model: {
+                  model_id: "mock_asr",
+                  status: "ready",
+                  command_ready: true,
+                },
+              },
+            },
+            config: {
+              recognition_backend: "assistant_service_local_asr",
+              service_model_id: "mock_asr",
+            },
+          },
+          service_models: [
+            {
+              model_id: "mock_asr",
+              title: "Mock ASR",
+              status: "ready",
+              command_ready: true,
+              artifacts: [{ path: "adapter.py", size_bytes: 1234 }],
+            },
+          ],
+        },
+      }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchAssistant("g-demo", "voice_secretary");
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) throw new Error("expected ok response");
+    expect(resp.result.service_models_by_id?.mock_asr?.status).toBe("ready");
+    expect(resp.result.service_models?.[0]?.artifacts?.[0]?.size_bytes).toBe(1234);
+    expect((resp.result.assistant?.health?.service as Record<string, unknown>)?.selected_model_id).toBe("mock_asr");
+  });
+
+  it("calls the install model endpoint and clears assistant cache", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        result: {
+          group_id: "g-demo",
+          assistant: {
+            assistant_id: "voice_secretary",
+            kind: "voice_secretary",
+            enabled: true,
+            lifecycle: "idle",
+          },
+          model: {
+            model_id: "mock_asr",
+            status: "ready",
+          },
+        },
+      }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.installVoiceAssistantModel("g-demo", { modelId: "mock_asr", by: "user" });
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) throw new Error("expected ok response");
+    expect(resp.result.model?.model_id).toBe("mock_asr");
+    expect(resp.result.model?.status).toBe("ready");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/assistants/voice_secretary/models/install",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ model_id: "mock_asr", by: "user", background: false }),
+      }),
+    );
+  });
+});
+
 describe("api.message refs", () => {
   beforeEach(() => {
     vi.resetModules();

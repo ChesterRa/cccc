@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -60,6 +62,42 @@ class TestWebAssistantRoutes(unittest.TestCase):
         resp = self._local_call_daemon({"op": "attach", "args": {"group_id": group_id, "path": path, "by": "user"}})
         self.assertTrue(bool(resp.get("ok")), resp)
 
+    def _write_voice_model_manifest(self, home: str, *, model_id: str = "mock_asr") -> Path:
+        source_dir = Path(home) / "voice-model-source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        adapter_path = source_dir / "adapter.py"
+        adapter_bytes = (
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "\n"
+            "audio = Path(sys.argv[-1])\n"
+            "print(json.dumps({'text': f'web managed transcript:{audio.suffix}:{audio.stat().st_size}'}))\n"
+        ).encode("utf-8")
+        adapter_path.write_bytes(adapter_bytes)
+        manifest = {
+            "voice_secretary_asr_models": [
+                {
+                    "model_id": model_id,
+                    "kind": "asr",
+                    "title": "Mock Managed ASR",
+                    "command_template": ["{python}", "{model_dir}/adapter.py", "{audio_path}"],
+                    "artifacts": [
+                        {
+                            "path": "adapter.py",
+                            "url": adapter_path.as_uri(),
+                            "sha256": hashlib.sha256(adapter_bytes).hexdigest(),
+                            "size_bytes": len(adapter_bytes),
+                        }
+                    ],
+                }
+            ]
+        }
+        manifest_path = Path(home) / "config" / "voice-models.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest_path
+
     def test_web_voice_secretary_transcription_route_uses_service_asr(self) -> None:
         from cccc.ports.web.app import create_app
 
@@ -108,6 +146,79 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     result = transcribe_body.get("result") or {}
                     self.assertEqual(str(result.get("transcript") or ""), "web service transcript")
                     self.assertEqual(str(result.get("backend") or ""), "assistant_service_local_asr")
+            group = load_group(group_id)
+            if group is not None:
+                stop_voice_service(group)
+        finally:
+            if group is not None:
+                from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
+
+                stop_voice_service(group)
+            if old_mock is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT"] = old_mock
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+            if old_command is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+            cleanup()
+
+    def test_web_voice_secretary_model_install_route_downloads_and_enables_managed_model(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        old_mock = os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+        old_command = os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+        group = None
+        try:
+            from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
+            from cccc.kernel.group import load_group
+
+            self._write_voice_model_manifest(home)
+            group_id = self._create_group()
+            self._add_foreman(group_id)
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                with TestClient(create_app()) as client:
+                    settings_resp = client.put(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/settings",
+                        json={
+                            "enabled": True,
+                            "config": {
+                                "capture_mode": "service",
+                                "recognition_backend": "assistant_service_local_asr",
+                                "service_model_id": "mock_asr",
+                                "tts_enabled": False,
+                            },
+                        },
+                    )
+                    self.assertEqual(settings_resp.status_code, 200)
+                    self.assertTrue(bool(settings_resp.json().get("ok")), settings_resp.json())
+
+                    install_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/models/install",
+                        json={"model_id": "mock_asr", "by": "user"},
+                    )
+                    self.assertEqual(install_resp.status_code, 200)
+                    install_body = install_resp.json()
+                    self.assertTrue(bool(install_body.get("ok")), install_body)
+                    self.assertEqual(str(((install_body.get("result") or {}).get("model") or {}).get("status") or ""), "ready")
+
+                    transcribe_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions",
+                        json={
+                            "audio_base64": base64.b64encode(b"fake audio bytes").decode("ascii"),
+                            "mime_type": "audio/webm",
+                            "language": "en-US",
+                            "by": "user",
+                        },
+                    )
+                    self.assertEqual(transcribe_resp.status_code, 200)
+                    transcribe_body = transcribe_resp.json()
+                    self.assertTrue(bool(transcribe_body.get("ok")), transcribe_body)
+                    result = transcribe_body.get("result") or {}
+                    self.assertEqual(str(result.get("transcript") or ""), "web managed transcript:.webm:16")
             group = load_group(group_id)
             if group is not None:
                 stop_voice_service(group)

@@ -1,4 +1,6 @@
 import type {
+  AssistantServiceModel,
+  AssistantServiceRuntime,
   AssistantStateResult,
   AssistantVoiceDocument,
   AssistantVoiceDocumentMutationResult,
@@ -157,6 +159,74 @@ function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFe
   };
 }
 
+function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const modelId = asString(record.model_id).trim();
+  if (!modelId && !asString(record.status).trim()) return null;
+  const artifacts = Array.isArray(record.artifacts)
+    ? record.artifacts
+        .map((item) => {
+          const artifact = asRecord(item);
+          if (!artifact) return null;
+          return {
+            path: asOptionalString(artifact.path) || undefined,
+            size_bytes: Number.isFinite(Number(artifact.size_bytes)) ? Number(artifact.size_bytes) : undefined,
+          };
+        })
+        .filter((item) => item !== null)
+    : undefined;
+  return {
+    model_id: modelId,
+    kind: asOptionalString(record.kind) || undefined,
+    runtime_id: asOptionalString(record.runtime_id) || undefined,
+    title: asOptionalString(record.title) || undefined,
+    description: asOptionalString(record.description) || undefined,
+    status: asOptionalString(record.status) || undefined,
+    available: typeof record.available === "boolean" ? record.available : undefined,
+    installed: typeof record.installed === "boolean" ? record.installed : undefined,
+    install_dir: asOptionalString(record.install_dir) || undefined,
+    installed_at: asOptionalString(record.installed_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    command_ready: typeof record.command_ready === "boolean" ? record.command_ready : undefined,
+    manifest_sha256: asOptionalString(record.manifest_sha256) || undefined,
+    downloaded_bytes: Number.isFinite(Number(record.downloaded_bytes)) ? Number(record.downloaded_bytes) : undefined,
+    total_size_bytes: Number.isFinite(Number(record.total_size_bytes)) ? Number(record.total_size_bytes) : undefined,
+    progress_percent: Number.isFinite(Number(record.progress_percent)) ? Number(record.progress_percent) : undefined,
+    current_artifact_path: asOptionalString(record.current_artifact_path) || undefined,
+    artifact_index: Number.isFinite(Number(record.artifact_index)) ? Number(record.artifact_index) : undefined,
+    artifact_count: Number.isFinite(Number(record.artifact_count)) ? Number(record.artifact_count) : undefined,
+    error: asRecord(record.error) ?? undefined,
+    artifacts,
+  };
+}
+
+function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRuntime | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const runtimeId = asString(record.runtime_id).trim();
+  if (!runtimeId && !asString(record.status).trim()) return undefined;
+  const rawModules = asRecord(record.modules);
+  const modules: Record<string, boolean> = {};
+  if (rawModules) {
+    for (const [key, value] of Object.entries(rawModules)) modules[key] = Boolean(value);
+  }
+  return {
+    runtime_id: runtimeId,
+    status: asOptionalString(record.status) || undefined,
+    available: typeof record.available === "boolean" ? record.available : undefined,
+    installed: typeof record.installed === "boolean" ? record.installed : undefined,
+    install_dir: asOptionalString(record.install_dir) || undefined,
+    python: asOptionalString(record.python) || undefined,
+    packages: Array.isArray(record.packages) ? record.packages.map((item) => String(item || "")).filter(Boolean) : undefined,
+    modules: Object.keys(modules).length > 0 ? modules : undefined,
+    missing_modules: asStringArray(record.missing_modules),
+    installed_at: asOptionalString(record.installed_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    error: asRecord(record.error) ?? undefined,
+  };
+}
+
 function normalizeAssistantStateResult(groupId: string, result: unknown): AssistantStateResult {
   const record = asRecord(result) ?? {};
   const assistants = Array.isArray(record.assistants)
@@ -213,6 +283,40 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
         .map((item) => normalizeAssistantVoiceAskFeedback(item))
         .filter((item): item is AssistantVoiceAskFeedback => !!item)
     : [];
+  const serviceModels = Array.isArray(record.service_models)
+    ? record.service_models
+        .map((item) => normalizeAssistantServiceModel(item))
+        .filter((item): item is AssistantServiceModel => !!item)
+    : [];
+  const serviceModelsById: Record<string, AssistantServiceModel> = {};
+  for (const model of serviceModels) {
+    if (model.model_id) serviceModelsById[model.model_id] = model;
+  }
+  const rawServiceModelsById = asRecord(record.service_models_by_id);
+  if (rawServiceModelsById) {
+    for (const value of Object.values(rawServiceModelsById)) {
+      const model = normalizeAssistantServiceModel(value);
+      if (model?.model_id) serviceModelsById[model.model_id] = model;
+    }
+  }
+  const serviceRuntimes = Array.isArray(record.service_runtimes)
+    ? record.service_runtimes
+        .map((item) => normalizeAssistantServiceRuntime(item))
+        .filter((item): item is AssistantServiceRuntime => !!item)
+    : [];
+  const serviceRuntimesById: Record<string, AssistantServiceRuntime> = {};
+  for (const runtime of serviceRuntimes) {
+    if (runtime.runtime_id) serviceRuntimesById[runtime.runtime_id] = runtime;
+  }
+  const rawServiceRuntimesById = asRecord(record.service_runtimes_by_id);
+  if (rawServiceRuntimesById) {
+    for (const value of Object.values(rawServiceRuntimesById)) {
+      const runtime = normalizeAssistantServiceRuntime(value);
+      if (runtime?.runtime_id) serviceRuntimesById[runtime.runtime_id] = runtime;
+    }
+  }
+  const primaryServiceRuntime = normalizeAssistantServiceRuntime(record.service_runtime);
+  if (primaryServiceRuntime?.runtime_id) serviceRuntimesById[primaryServiceRuntime.runtime_id] = primaryServiceRuntime;
   return {
     group_id: asString(record.group_id).trim() || groupId,
     assistants: Object.values(assistantsById).sort((a, b) => a.assistant_id.localeCompare(b.assistant_id)),
@@ -236,6 +340,11 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     prompt_draft: normalizeAssistantVoicePromptDraft(record.prompt_draft),
     ask_requests: askRequests,
     latest_ask_request: normalizeAssistantVoiceAskFeedback(record.latest_ask_request) || askRequests[0],
+    service_models: Object.values(serviceModelsById).sort((a, b) => a.model_id.localeCompare(b.model_id)),
+    service_models_by_id: serviceModelsById,
+    service_runtime: primaryServiceRuntime,
+    service_runtimes: Object.values(serviceRuntimesById).sort((a, b) => a.runtime_id.localeCompare(b.runtime_id)),
+    service_runtimes_by_id: serviceRuntimesById,
   };
 }
 
@@ -450,6 +559,67 @@ export async function transcribeVoiceAssistantAudio(
   clearAssistantStateRequest(gid);
   if (!resp.ok) return resp as ApiResponse<AssistantVoiceTranscriptionResult>;
   return { ok: true, result: normalizeAssistantVoiceTranscriptionResult(gid, resp.result) };
+}
+
+export async function installVoiceAssistantModel(
+  groupId: string,
+  payload: { modelId: string; by?: string; background?: boolean },
+): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/models/install`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        model_id: String(payload.modelId || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
+        background: Boolean(payload.background),
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>;
+  const normalized = normalizeAssistantMutationResult(gid, resp.result);
+  const resultRecord = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      ...normalized,
+      model: normalizeAssistantServiceModel(resultRecord.model) || undefined,
+      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
+    },
+  };
+}
+
+export async function installVoiceAssistantRuntime(
+  groupId: string,
+  payload: { runtimeId?: string; by?: string; background?: boolean } = {},
+): Promise<ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/runtime/install`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runtime_id: String(payload.runtimeId || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
+        background: payload.background !== false,
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>;
+  const normalized = normalizeAssistantMutationResult(gid, resp.result);
+  const resultRecord = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      ...normalized,
+      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
+    },
+  };
 }
 
 export async function appendVoiceAssistantTranscriptSegment(

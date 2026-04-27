@@ -1093,6 +1093,87 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_control_turn_completion_failure_emits_failed_error(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-bootstrap"
+            session._active_event_id = "event-bootstrap"
+            session._active_control_kind = "system_notify"
+
+            with (
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "turn/completed",
+                    {
+                        "turn": {
+                            "id": "turn-bootstrap",
+                            "status": "failed",
+                            "error": {
+                                "message": "exceeded retry limit, last status: 429 Too Many Requests",
+                            },
+                        },
+                    },
+                )
+
+            done_set.assert_called_once()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.failed", event_types)
+            self.assertNotIn("headless.control.completed", event_types)
+            failed_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.failed")
+            self.assertEqual(str((failed_payload.get("error") or {}).get("message") or ""), "exceeded retry limit, last status: 429 Too Many Requests")
+        finally:
+            cleanup()
+
+    def test_codex_turn_completion_failure_emits_turn_failed_error(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-1"
+            session._active_event_id = "event-1"
+
+            with (
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "turn/completed",
+                    {
+                        "turn": {
+                            "id": "turn-1",
+                            "status": "failed",
+                            "error": "exceeded retry limit, last status: 429 Too Many Requests",
+                        },
+                    },
+                )
+
+            done_set.assert_called_once()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.turn.failed", event_types)
+            self.assertNotIn("headless.turn.completed", event_types)
+            failed_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.turn.failed")
+            self.assertEqual(str((failed_payload.get("error") or {}).get("message") or ""), "exceeded retry limit, last status: 429 Too Many Requests")
+        finally:
+            cleanup()
+
     def test_voice_secretary_control_turn_requeues_when_input_not_consumed(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 
