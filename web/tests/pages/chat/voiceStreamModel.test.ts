@@ -141,6 +141,23 @@ describe("voiceStreamModel", () => {
     ]);
   });
 
+  it("keeps distant backend speaker transcript turns as separate entries", () => {
+    const items = buildSpeakerConversationItems(
+      [],
+      [],
+      [
+        { speaker_label: "Speaker 1", start_ms: 1752, end_ms: 3862, text: "那也是这么怪的你这个也" },
+        { speaker_label: "Speaker 1", start_ms: 4925, end_ms: 6511, text: "对消息" },
+        { speaker_label: "Speaker 1", start_ms: 6865, end_ms: 8907, text: "合作" },
+      ],
+    );
+
+    expect(items.map((row) => row.text)).toEqual([
+      "合作",
+      "那也是这么怪的你这个也对消息",
+    ]);
+  });
+
   it("uses backend speaker transcript segments only when stream text is unavailable", () => {
     const items = buildSpeakerConversationItems(
       [],

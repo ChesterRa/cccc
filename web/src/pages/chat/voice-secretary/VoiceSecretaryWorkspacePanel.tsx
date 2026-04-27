@@ -267,7 +267,7 @@ export function VoiceSecretaryWorkspacePanel({
             </div>
             <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-100" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
               {view === "stream"
-                ? t("voiceSecretaryVoiceStreamCount", { count: visibleVoiceStreamItems.length, defaultValue: "{{count}} entries" })
+                ? t("voiceSecretaryVoiceStreamCount", { count: conversationItems.length, defaultValue: "{{count}} entries" })
                 : t("voiceSecretaryMarkdownBadge", { defaultValue: "Markdown" })}
             </span>
             {view === "stream" ? (

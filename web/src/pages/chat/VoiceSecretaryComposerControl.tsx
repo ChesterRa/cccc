@@ -1359,9 +1359,11 @@ export function VoiceSecretaryComposerControl({
         loadDocumentDraft(null);
       }
       if (!recordingRef.current) {
-        const sessionResp = await fetchLatestVoiceAssistantMeetingSession(gid);
+        const sessionResp = await fetchLatestVoiceAssistantMeetingSession(gid, { documentPath: nextViewedPath });
         if (seq !== refreshSeq.current) return;
         if (sessionResp.ok && sessionResp.result.session) {
+          const sessionDocumentPath = String(sessionResp.result.session.document_path || "").trim();
+          if (nextViewedPath && sessionDocumentPath && sessionDocumentPath !== nextViewedPath) return;
           const restoredItems = voiceStreamItemsFromMeetingSession(sessionResp.result.session);
           if (restoredItems.length) {
             setVoiceStreamItems((prev) => (prev.length ? prev : restoredItems));

@@ -225,11 +225,20 @@ def _read_voice_meeting_session(group_id: str, session_id: str) -> dict[str, Any
     }
 
 
-def _read_latest_voice_meeting_session(group_id: str) -> dict[str, Any]:
+def _read_latest_voice_meeting_session(group_id: str, *, document_path: str = "") -> dict[str, Any]:
     root = ensure_home() / "voice-secretary" / str(group_id or "").strip()
     if not root.exists():
         return {}
-    candidates = [path for path in root.glob("*/session.json") if path.is_file()]
+    target_document_path = str(document_path or "").strip()
+    candidates = []
+    for path in root.glob("*/session.json"):
+        if not path.is_file():
+            continue
+        if target_document_path:
+            session = _read_json_file(path)
+            if str(session.get("document_path") or "").strip() != target_document_path:
+                continue
+        candidates.append(path)
     if not candidates:
         return {}
     latest = max(candidates, key=lambda path: path.stat().st_mtime)
@@ -2567,8 +2576,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/assistants/voice_secretary/sessions/latest")
-    async def group_voice_secretary_latest_session_get(group_id: str) -> Dict[str, Any]:
-        return {"ok": True, "result": {"group_id": group_id, "session": _read_latest_voice_meeting_session(group_id)}}
+    async def group_voice_secretary_latest_session_get(group_id: str, document_path: str = "") -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "result": {
+                "group_id": group_id,
+                "session": _read_latest_voice_meeting_session(group_id, document_path=document_path),
+            },
+        }
 
     @group_router.get("/assistants/voice_secretary/sessions/{session_id}")
     async def group_voice_secretary_session_get(group_id: str, session_id: str) -> Dict[str, Any]:

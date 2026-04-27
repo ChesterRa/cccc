@@ -162,7 +162,7 @@ export function buildSpeakerConversationItems(
   speakerTranscriptSegments: VoiceSpeakerTranscriptSegment[] = [],
 ): SpeakerConversationItem[] {
   const speakerTranscriptItems = buildSpeakerTranscriptConversationItems(speakerTranscriptSegments);
-  if (speakerTranscriptItems.length) return coalesceConversationItems(speakerTranscriptItems);
+  if (speakerTranscriptItems.length) return coalesceConversationItems(speakerTranscriptItems, { maxMergedDurationMs: 6500 });
   const streamItems = sortVoiceStreamItemsForDisplay(voiceStreamItems);
   if (!streamItems.length) return [];
   return coalesceConversationItems(buildRawStreamConversationItems(streamItems));
@@ -374,7 +374,10 @@ function normalizedComparableText(value: string): string {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function coalesceConversationItems(items: SpeakerConversationItem[]): SpeakerConversationItem[] {
+function coalesceConversationItems(
+  items: SpeakerConversationItem[],
+  options: { maxMergedDurationMs?: number } = {},
+): SpeakerConversationItem[] {
   if (items.length <= 1) return items;
   const chronological = [...items].sort((left, right) => (
     Number(left.startMs ?? left.createdAt ?? 0) - Number(right.startMs ?? right.createdAt ?? 0)
@@ -383,7 +386,7 @@ function coalesceConversationItems(items: SpeakerConversationItem[]): SpeakerCon
   const merged: SpeakerConversationItem[] = [];
   chronological.forEach((item) => {
     const previous = merged[merged.length - 1];
-    if (!previous || !conversationItemsCanMerge(previous, item)) {
+    if (!previous || !conversationItemsCanMerge(previous, item, options)) {
       merged.push({ ...item });
       return;
     }
@@ -398,7 +401,11 @@ function coalesceConversationItems(items: SpeakerConversationItem[]): SpeakerCon
   ));
 }
 
-function conversationItemsCanMerge(left: SpeakerConversationItem, right: SpeakerConversationItem): boolean {
+function conversationItemsCanMerge(
+  left: SpeakerConversationItem,
+  right: SpeakerConversationItem,
+  options: { maxMergedDurationMs?: number },
+): boolean {
   if (left.phase !== right.phase || left.mode !== right.mode) return false;
   if (left.speakerLabel !== right.speakerLabel) return false;
   if (String(left.documentPath || "") !== String(right.documentPath || "")) return false;
@@ -415,7 +422,7 @@ function conversationItemsCanMerge(left: SpeakerConversationItem, right: Speaker
   ) {
     const gapMs = rightStartMs - leftEndMs;
     const mergedDurationMs = rightEndMs - leftStartMs;
-    return gapMs >= 0 && gapMs <= 1200 && mergedDurationMs <= 18_000;
+    return gapMs >= 0 && gapMs <= 1200 && mergedDurationMs <= (options.maxMergedDurationMs ?? 18_000);
   }
   return Math.abs(Number(right.createdAt || 0) - Number(left.updatedAt || 0)) <= 1500;
 }

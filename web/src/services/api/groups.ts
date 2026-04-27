@@ -597,10 +597,15 @@ export async function transcribeVoiceAssistantAudio(
 
 export async function fetchLatestVoiceAssistantMeetingSession(
   groupId: string,
+  opts?: { documentPath?: string },
 ): Promise<ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>> {
   const gid = String(groupId || "").trim();
+  const params = new URLSearchParams();
+  const documentPath = String(opts?.documentPath || "").trim();
+  if (documentPath) params.set("document_path", documentPath);
+  const query = params.toString();
   const resp = await apiJson<unknown>(
-    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/latest`,
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/latest${query ? `?${query}` : ""}`,
   );
   if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
   const record = asRecord(resp.result) ?? {};
