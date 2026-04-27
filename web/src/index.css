@@ -1513,6 +1513,41 @@ select {
   animation: subtle-pulse 2s ease-in-out infinite;
 }
 
+@keyframes stream-text-blur-in-up {
+  from {
+    opacity: 0;
+    filter: blur(7px);
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.stream-text-animate {
+  display: inline;
+}
+
+.stream-text-animate-segment {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.35em);
+  filter: blur(7px);
+  animation: stream-text-blur-in-up 260ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, filter, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-text-animate-segment {
+    opacity: 1;
+    filter: none;
+    transform: none;
+    animation: none;
+  }
+}
+
 @keyframes presentation-slot-attention-light {
   0%, 100% {
     box-shadow:

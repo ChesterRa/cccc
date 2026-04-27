@@ -912,7 +912,8 @@ class CodexAppSession:
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             turn_id = str(turn.get("id") or "").strip()
             status = str(turn.get("status") or "completed").strip() or "completed"
-            error = turn.get("error") if isinstance(turn.get("error"), dict) else None
+            raw_error = turn.get("error")
+            error = raw_error if isinstance(raw_error, dict) else ({"message": str(raw_error)} if raw_error else None)
             with self._lock:
                 active_payload = self._active_payload
             should_complete, consumption_diagnostics = _voice_secretary_control_completion_state(
@@ -990,6 +991,19 @@ class CodexAppSession:
                         "status": "failed",
                         "error": error or {"message": failure_reason},
                         "diagnostics": consumption_diagnostics,
+                    },
+                )
+                self._turn_done.set()
+                return
+            if status.lower() in {"failed", "error", "cancelled"} or error:
+                self._emit(
+                    "headless.control.failed",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": active_event_id,
+                        "control_kind": control_kind,
+                        "status": status,
+                        "error": error or {"message": status},
                     },
                 )
                 self._turn_done.set()
@@ -1233,7 +1247,9 @@ class CodexAppSession:
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             turn_id = str(turn.get("id") or "").strip()
             status = str(turn.get("status") or "completed").strip() or "completed"
-            error = turn.get("error") if isinstance(turn.get("error"), dict) else None
+            raw_error = turn.get("error")
+            error = raw_error if isinstance(raw_error, dict) else ({"message": str(raw_error)} if raw_error else None)
+            failed = status.lower() in {"failed", "error", "cancelled"} or error is not None
             with self._lock:
                 self._active_turn_id = ""
                 self._active_event_id = ""
@@ -1253,7 +1269,7 @@ class CodexAppSession:
                 )
                 self._plan_activity_id = ""
             self._emit(
-                "headless.turn.completed",
+                "headless.turn.failed" if failed else "headless.turn.completed",
                 {
                     "turn_id": turn_id,
                     "event_id": active_event_id,

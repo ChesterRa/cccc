@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { classNames } from "../../utils/classNames";
 
@@ -16,7 +17,7 @@ type MarkdownDocumentSurfaceProps = {
   onEditValueChange?: (value: string) => void;
 };
 
-export function MarkdownDocumentSurface({
+export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   isDark,
   content,
   error,
@@ -71,4 +72,4 @@ export function MarkdownDocumentSurface({
       )}
     </div>
   );
-}
+});

@@ -1,9 +1,12 @@
 import type {
+  AssistantServiceModel,
+  AssistantServiceRuntime,
   AssistantStateResult,
   AssistantVoiceDocument,
   AssistantVoiceDocumentMutationResult,
   AssistantVoiceAskFeedback,
   AssistantVoiceInputResult,
+  AssistantVoiceMeetingSession,
   AssistantVoicePromptDraft,
   AssistantVoicePromptDraftMutationResult,
   AssistantVoiceTranscriptSegmentResult,
@@ -157,6 +160,104 @@ function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFe
   };
 }
 
+function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const modelId = asString(record.model_id).trim();
+  if (!modelId && !asString(record.status).trim()) return null;
+  const artifacts = Array.isArray(record.artifacts)
+    ? record.artifacts
+        .map((item) => {
+          const artifact = asRecord(item);
+          if (!artifact) return null;
+          return {
+            path: asOptionalString(artifact.path) || undefined,
+            size_bytes: Number.isFinite(Number(artifact.size_bytes)) ? Number(artifact.size_bytes) : undefined,
+          };
+        })
+        .filter((item) => item !== null)
+    : undefined;
+  return {
+    model_id: modelId,
+    kind: asOptionalString(record.kind) || undefined,
+    runtime_id: asOptionalString(record.runtime_id) || undefined,
+    title: asOptionalString(record.title) || undefined,
+    description: asOptionalString(record.description) || undefined,
+    status: asOptionalString(record.status) || undefined,
+    available: typeof record.available === "boolean" ? record.available : undefined,
+    installed: typeof record.installed === "boolean" ? record.installed : undefined,
+    install_dir: asOptionalString(record.install_dir) || undefined,
+    installed_at: asOptionalString(record.installed_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    command_ready: typeof record.command_ready === "boolean" ? record.command_ready : undefined,
+    streaming_ready: typeof record.streaming_ready === "boolean" ? record.streaming_ready : undefined,
+    diarization_ready: typeof record.diarization_ready === "boolean" ? record.diarization_ready : undefined,
+    streaming: asRecord(record.streaming) ?? undefined,
+    diarization: asRecord(record.diarization) ?? undefined,
+    manifest_sha256: asOptionalString(record.manifest_sha256) || undefined,
+    downloaded_bytes: Number.isFinite(Number(record.downloaded_bytes)) ? Number(record.downloaded_bytes) : undefined,
+    total_size_bytes: Number.isFinite(Number(record.total_size_bytes)) ? Number(record.total_size_bytes) : undefined,
+    progress_percent: Number.isFinite(Number(record.progress_percent)) ? Number(record.progress_percent) : undefined,
+    current_artifact_path: asOptionalString(record.current_artifact_path) || undefined,
+    artifact_index: Number.isFinite(Number(record.artifact_index)) ? Number(record.artifact_index) : undefined,
+    artifact_count: Number.isFinite(Number(record.artifact_count)) ? Number(record.artifact_count) : undefined,
+    error: asRecord(record.error) ?? undefined,
+    artifacts,
+  };
+}
+
+function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRuntime | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const runtimeId = asString(record.runtime_id).trim();
+  if (!runtimeId && !asString(record.status).trim()) return undefined;
+  const rawModules = asRecord(record.modules);
+  const modules: Record<string, boolean> = {};
+  if (rawModules) {
+    for (const [key, value] of Object.entries(rawModules)) modules[key] = Boolean(value);
+  }
+  return {
+    runtime_id: runtimeId,
+    status: asOptionalString(record.status) || undefined,
+    available: typeof record.available === "boolean" ? record.available : undefined,
+    installed: typeof record.installed === "boolean" ? record.installed : undefined,
+    install_dir: asOptionalString(record.install_dir) || undefined,
+    python: asOptionalString(record.python) || undefined,
+    packages: Array.isArray(record.packages) ? record.packages.map((item) => String(item || "")).filter(Boolean) : undefined,
+    modules: Object.keys(modules).length > 0 ? modules : undefined,
+    missing_modules: asStringArray(record.missing_modules),
+    installed_at: asOptionalString(record.installed_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    error: asRecord(record.error) ?? undefined,
+  };
+}
+
+function normalizeAssistantVoiceMeetingSession(value: unknown): AssistantVoiceMeetingSession | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const sessionId = asString(record.session_id).trim();
+  if (!sessionId) return undefined;
+  return {
+    schema: Number.isFinite(Number(record.schema)) ? Number(record.schema) : undefined,
+    group_id: asOptionalString(record.group_id) || undefined,
+    session_id: sessionId,
+    status: asOptionalString(record.status) || undefined,
+    created_at: asOptionalString(record.created_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    sample_rate: Number.isFinite(Number(record.sample_rate)) ? Number(record.sample_rate) : undefined,
+    audio_duration_ms: Number.isFinite(Number(record.audio_duration_ms)) ? Number(record.audio_duration_ms) : undefined,
+    language: asOptionalString(record.language) || undefined,
+    document_path: asOptionalString(record.document_path) || undefined,
+    latest_partial: asOptionalString(record.latest_partial) || undefined,
+    last_final_text: asOptionalString(record.last_final_text) || undefined,
+    diarization_ready: typeof record.diarization_ready === "boolean" ? record.diarization_ready : undefined,
+    diarization_artifact_path: asOptionalString(record.diarization_artifact_path) || undefined,
+    segments: Array.isArray(record.segments) ? record.segments.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item) : [],
+    diarization: asRecord(record.diarization) ?? undefined,
+    error: asRecord(record.error),
+  };
+}
+
 function normalizeAssistantStateResult(groupId: string, result: unknown): AssistantStateResult {
   const record = asRecord(result) ?? {};
   const assistants = Array.isArray(record.assistants)
@@ -213,6 +314,40 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
         .map((item) => normalizeAssistantVoiceAskFeedback(item))
         .filter((item): item is AssistantVoiceAskFeedback => !!item)
     : [];
+  const serviceModels = Array.isArray(record.service_models)
+    ? record.service_models
+        .map((item) => normalizeAssistantServiceModel(item))
+        .filter((item): item is AssistantServiceModel => !!item)
+    : [];
+  const serviceModelsById: Record<string, AssistantServiceModel> = {};
+  for (const model of serviceModels) {
+    if (model.model_id) serviceModelsById[model.model_id] = model;
+  }
+  const rawServiceModelsById = asRecord(record.service_models_by_id);
+  if (rawServiceModelsById) {
+    for (const value of Object.values(rawServiceModelsById)) {
+      const model = normalizeAssistantServiceModel(value);
+      if (model?.model_id) serviceModelsById[model.model_id] = model;
+    }
+  }
+  const serviceRuntimes = Array.isArray(record.service_runtimes)
+    ? record.service_runtimes
+        .map((item) => normalizeAssistantServiceRuntime(item))
+        .filter((item): item is AssistantServiceRuntime => !!item)
+    : [];
+  const serviceRuntimesById: Record<string, AssistantServiceRuntime> = {};
+  for (const runtime of serviceRuntimes) {
+    if (runtime.runtime_id) serviceRuntimesById[runtime.runtime_id] = runtime;
+  }
+  const rawServiceRuntimesById = asRecord(record.service_runtimes_by_id);
+  if (rawServiceRuntimesById) {
+    for (const value of Object.values(rawServiceRuntimesById)) {
+      const runtime = normalizeAssistantServiceRuntime(value);
+      if (runtime?.runtime_id) serviceRuntimesById[runtime.runtime_id] = runtime;
+    }
+  }
+  const primaryServiceRuntime = normalizeAssistantServiceRuntime(record.service_runtime);
+  if (primaryServiceRuntime?.runtime_id) serviceRuntimesById[primaryServiceRuntime.runtime_id] = primaryServiceRuntime;
   return {
     group_id: asString(record.group_id).trim() || groupId,
     assistants: Object.values(assistantsById).sort((a, b) => a.assistant_id.localeCompare(b.assistant_id)),
@@ -236,6 +371,14 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     prompt_draft: normalizeAssistantVoicePromptDraft(record.prompt_draft),
     ask_requests: askRequests,
     latest_ask_request: normalizeAssistantVoiceAskFeedback(record.latest_ask_request) || askRequests[0],
+    service_models: [
+      ...serviceModels,
+      ...Object.values(serviceModelsById).filter((model) => !serviceModels.some((item) => item.model_id === model.model_id)),
+    ],
+    service_models_by_id: serviceModelsById,
+    service_runtime: primaryServiceRuntime,
+    service_runtimes: Object.values(serviceRuntimesById).sort((a, b) => a.runtime_id.localeCompare(b.runtime_id)),
+    service_runtimes_by_id: serviceRuntimesById,
   };
 }
 
@@ -452,6 +595,90 @@ export async function transcribeVoiceAssistantAudio(
   return { ok: true, result: normalizeAssistantVoiceTranscriptionResult(gid, resp.result) };
 }
 
+export async function fetchLatestVoiceAssistantMeetingSession(
+  groupId: string,
+  opts?: { documentPath?: string },
+): Promise<ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>> {
+  const gid = String(groupId || "").trim();
+  const params = new URLSearchParams();
+  const documentPath = String(opts?.documentPath || "").trim();
+  if (documentPath) params.set("document_path", documentPath);
+  const query = params.toString();
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/latest${query ? `?${query}` : ""}`,
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
+  const record = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      group_id: asString(record.group_id).trim() || gid,
+      session: normalizeAssistantVoiceMeetingSession(record.session),
+    },
+  };
+}
+
+export async function installVoiceAssistantModel(
+  groupId: string,
+  payload: { modelId: string; by?: string; background?: boolean },
+): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/models/install`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        model_id: String(payload.modelId || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
+        background: Boolean(payload.background),
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>;
+  const normalized = normalizeAssistantMutationResult(gid, resp.result);
+  const resultRecord = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      ...normalized,
+      model: normalizeAssistantServiceModel(resultRecord.model) || undefined,
+      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
+    },
+  };
+}
+
+export async function installVoiceAssistantRuntime(
+  groupId: string,
+  payload: { runtimeId?: string; by?: string; background?: boolean } = {},
+): Promise<ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/runtime/install`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runtime_id: String(payload.runtimeId || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
+        background: payload.background !== false,
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>;
+  const normalized = normalizeAssistantMutationResult(gid, resp.result);
+  const resultRecord = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      ...normalized,
+      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
+    },
+  };
+}
+
 export async function appendVoiceAssistantTranscriptSegment(
   groupId: string,
   payload: {
@@ -463,6 +690,9 @@ export async function appendVoiceAssistantTranscriptSegment(
     isFinal?: boolean;
     flush?: boolean;
     trigger?: Record<string, unknown>;
+    startMs?: number;
+    endMs?: number;
+    speakerLabel?: string;
     by?: string;
   },
 ): Promise<ApiResponse<AssistantVoiceTranscriptSegmentResult>> {
@@ -481,6 +711,9 @@ export async function appendVoiceAssistantTranscriptSegment(
         is_final: payload.isFinal !== false,
         flush: Boolean(payload.flush),
         trigger: payload.trigger || {},
+        start_ms: Number.isFinite(Number(payload.startMs)) ? Math.max(0, Math.round(Number(payload.startMs))) : null,
+        end_ms: Number.isFinite(Number(payload.endMs)) ? Math.max(0, Math.round(Number(payload.endMs))) : null,
+        speaker_label: String(payload.speakerLabel || "").trim(),
         by: String(payload.by || "user").trim() || "user",
       }),
     },

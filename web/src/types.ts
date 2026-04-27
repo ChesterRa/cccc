@@ -689,6 +689,49 @@ export type BuiltinAssistant = {
   ui?: Record<string, unknown>;
 };
 
+export type AssistantServiceModel = {
+  model_id: string;
+  kind?: string;
+  runtime_id?: string;
+  title?: string;
+  description?: string;
+  status?: "not_installed" | "downloading" | "ready" | "failed" | "unknown" | string;
+  available?: boolean;
+  installed?: boolean;
+  install_dir?: string;
+  installed_at?: string;
+  updated_at?: string;
+  command_ready?: boolean;
+  streaming_ready?: boolean;
+  diarization_ready?: boolean;
+  streaming?: Record<string, unknown>;
+  diarization?: Record<string, unknown>;
+  manifest_sha256?: string;
+  downloaded_bytes?: number;
+  total_size_bytes?: number;
+  progress_percent?: number;
+  current_artifact_path?: string;
+  artifact_index?: number;
+  artifact_count?: number;
+  error?: Record<string, unknown>;
+  artifacts?: Array<{ path?: string; size_bytes?: number }>;
+};
+
+export type AssistantServiceRuntime = {
+  runtime_id: string;
+  status?: "not_installed" | "installing" | "ready" | "failed" | string;
+  available?: boolean;
+  installed?: boolean;
+  install_dir?: string;
+  python?: string;
+  packages?: string[];
+  modules?: Record<string, boolean>;
+  missing_modules?: string[];
+  installed_at?: string;
+  updated_at?: string;
+  error?: Record<string, unknown>;
+};
+
 export type AssistantStateResult = {
   group_id: string;
   assistants?: BuiltinAssistant[];
@@ -705,6 +748,11 @@ export type AssistantStateResult = {
   prompt_draft?: AssistantVoicePromptDraft;
   ask_requests?: AssistantVoiceAskFeedback[];
   latest_ask_request?: AssistantVoiceAskFeedback;
+  service_models?: AssistantServiceModel[];
+  service_models_by_id?: Record<string, AssistantServiceModel>;
+  service_runtime?: AssistantServiceRuntime;
+  service_runtimes?: AssistantServiceRuntime[];
+  service_runtimes_by_id?: Record<string, AssistantServiceRuntime>;
 };
 
 export type AssistantVoiceTrigger = {
@@ -769,6 +817,26 @@ export type AssistantVoiceTranscriptSegmentResult = {
   actor_wake_error?: string;
   actor_notify_delivered?: boolean;
   actor_notify_delivery_error?: string;
+};
+
+export type AssistantVoiceMeetingSession = {
+  schema?: number;
+  group_id?: string;
+  session_id: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  sample_rate?: number;
+  audio_duration_ms?: number;
+  language?: string;
+  document_path?: string;
+  latest_partial?: string;
+  last_final_text?: string;
+  diarization_ready?: boolean;
+  diarization_artifact_path?: string;
+  segments?: Record<string, unknown>[];
+  diarization?: Record<string, unknown>;
+  error?: Record<string, unknown> | null;
 };
 
 export type AssistantVoiceDocumentMutationResult = {

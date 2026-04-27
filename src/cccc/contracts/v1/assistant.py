@@ -55,6 +55,7 @@ class AssistantVoiceDocumentData(BaseModel):
     status: str = "active"
     workspace_path: str = ""
     title: str = ""
+    input_preview: str = ""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -75,6 +76,18 @@ class AssistantVoiceRequestData(BaseModel):
     request_preview: str = ""
     reply_text: str = ""
     notify_event_id: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AssistantVoiceSessionData(BaseModel):
+    assistant_id: str
+    session_id: str
+    action: str
+    status: str = ""
+    artifact_path: str = ""
+    error_code: str = ""
+    error_message: str = ""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -23,6 +23,7 @@ from ...util.process import (
     terminate_pid,
 )
 from ...util.time import utc_now_iso
+from .voice_models import get_voice_model_status, resolve_installed_voice_model_command
 
 
 SERVICE_STATE_SCHEMA = 1
@@ -93,6 +94,8 @@ def _service_state_ready(state: dict[str, Any], *, pid: int | None = None) -> bo
 
 
 def _write_starting_state(group: Group, *, pid: int) -> None:
+    selected_model_id = _selected_service_model_id(group)
+    managed_model = get_voice_model_status(selected_model_id) if selected_model_id else {}
     state_path = voice_service_state_path(group)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(
@@ -107,11 +110,20 @@ def _write_starting_state(group: Group, *, pid: int) -> None:
             "status": "starting",
             "asr_command_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_COMMAND") or "").strip()),
             "asr_mock_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()),
+            "selected_model_id": selected_model_id,
+            "managed_model": managed_model,
             "last_error": {},
             "updated_at": utc_now_iso(),
         },
         indent=2,
     )
+
+
+def _selected_service_model_id(group: Group) -> str:
+    assistants = group.doc.get("assistants") if isinstance(group.doc.get("assistants"), dict) else {}
+    entry = assistants.get("voice_secretary") if isinstance(assistants.get("voice_secretary"), dict) else {}
+    config = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+    return str(config.get("service_model_id") or "").strip()
 
 
 def ensure_voice_service(group: Group, *, timeout_seconds: float = DEFAULT_START_TIMEOUT_SECONDS) -> dict[str, Any]:
@@ -127,6 +139,14 @@ def ensure_voice_service(group: Group, *, timeout_seconds: float = DEFAULT_START
     env = os.environ.copy()
     env["CCCC_HOME"] = str(ensure_home())
     env["PYTHONPATH"] = _service_pythonpath()
+    selected_model_id = _selected_service_model_id(group)
+    managed_command = ""
+    if not str(env.get("CCCC_VOICE_SECRETARY_ASR_COMMAND") or "").strip():
+        managed_command = resolve_installed_voice_model_command(selected_model_id)
+        if managed_command:
+            env["CCCC_VOICE_SECRETARY_MANAGED_ASR_COMMAND"] = managed_command
+    if selected_model_id:
+        env["CCCC_VOICE_SECRETARY_MANAGED_MODEL_ID"] = selected_model_id
     argv = resolve_background_python_argv(
         [
             sys.executable,

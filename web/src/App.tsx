@@ -189,7 +189,7 @@ export default function App() {
     void refreshInternalRuntimeActors(gid);
     const interval = window.setInterval(() => {
       void refreshInternalRuntimeActors(gid);
-    }, 10000);
+    }, 60000);
     return () => window.clearInterval(interval);
   }, [selectedGroupId, petRuntimeVisibility, refreshInternalRuntimeActors]);
 

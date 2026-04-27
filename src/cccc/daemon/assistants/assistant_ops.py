@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 import unicodedata
 import uuid
@@ -41,6 +42,22 @@ from .voice_secretary_runtime_ops import (
     voice_secretary_runtime_changed,
 )
 from .voice_prompt_refine import build_voice_prompt_refine_input_text
+from .voice_models import (
+    VoiceModelError,
+    begin_voice_model_install,
+    get_voice_model_status,
+    install_voice_model,
+    list_voice_models,
+)
+from .voice_runtime_deps import (
+    VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING,
+    VoiceRuntimeDepsError,
+    get_voice_runtime_status,
+    install_voice_runtime_deps,
+    list_voice_runtime_statuses,
+)
+from .sherpa_streaming_asr import sherpa_streaming_backend_status
+from .sherpa_diarization import sherpa_diarization_status
 from .voice_service_runtime import (
     VoiceServiceRuntimeError,
     read_voice_service_state,
@@ -50,6 +67,11 @@ from .voice_service_runtime import (
 
 
 logger = logging.getLogger(__name__)
+
+_VOICE_MODEL_INSTALL_LOCK = threading.Lock()
+_VOICE_MODEL_INSTALL_THREADS: Dict[str, threading.Thread] = {}
+_VOICE_RUNTIME_INSTALL_LOCK = threading.Lock()
+_VOICE_RUNTIME_INSTALL_THREADS: Dict[str, threading.Thread] = {}
 
 
 ASSISTANT_ID_PET = "pet"
@@ -104,7 +126,7 @@ _VOICE_TRANSCRIPT_TINY_FILLERS = {
 _VALID_LIFECYCLES = {"disabled", "idle", "running", "working", "waiting", "failed"}
 _VALID_VOICE_CAPTURE_MODES = {"browser", "service"}
 _VALID_VOICE_RECOGNITION_BACKENDS = {"mock", "assistant_service_local_asr", "browser_asr", "external_provider_asr"}
-_VALID_RECOGNITION_LANGUAGE_RE = re.compile(r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
+_VALID_RECOGNITION_LANGUAGE_RE = re.compile(r"^(auto|mixed|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
 _VOICE_DOCUMENT_INSTRUCTION_PATTERNS = (
     re.compile(r"\b(?:new|create|start)\s+(?:a\s+)?(?:separate\s+|new\s+|fresh\s+)?(?:working\s+)?(?:document|notes?|minutes)\b", re.I),
     re.compile(r"\b(?:archive|rename|revise|rewrite|update)\s+(?:this\s+|the\s+)?(?:working\s+)?(?:document|notes?|minutes)\b", re.I),
@@ -166,13 +188,15 @@ _ASSISTANT_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "config": {
             "capture_mode": "browser",
             "recognition_backend": "browser_asr",
-            "recognition_language": "auto",
+            "recognition_language": "mixed",
             "retention_ttl_seconds": 900,
             "auto_document_enabled": True,
             "document_default_dir": _DEFAULT_VOICE_DOCUMENT_DIR,
             "auto_document_quiet_ms": _DEFAULT_AUTO_DOCUMENT_QUIET_MS,
             "auto_document_min_chars": _DEFAULT_AUTO_DOCUMENT_MIN_CHARS,
             "auto_document_max_window_seconds": _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS,
+            "service_model_id": "",
+            "service_diarization_model_id": "",
             "tts_enabled": False,
         },
         "ui": {
@@ -192,6 +216,8 @@ _VOICE_CONFIG_KEYS = {
     "auto_document_quiet_ms",
     "auto_document_min_chars",
     "auto_document_max_window_seconds",
+    "service_model_id",
+    "service_diarization_model_id",
     "tts_enabled",
 }
 
@@ -299,9 +325,9 @@ def _normalize_voice_config(raw: Any, *, base: Dict[str, Any]) -> Dict[str, Any]
             raise ValueError("invalid recognition_backend")
         out["recognition_backend"] = value
     if "recognition_language" in raw:
-        value = str(raw.get("recognition_language") or "auto").strip() or "auto"
+        value = str(raw.get("recognition_language") or "mixed").strip() or "mixed"
         if not _VALID_RECOGNITION_LANGUAGE_RE.match(value):
-            raise ValueError("recognition_language must be 'auto' or a BCP-47-like language tag")
+            raise ValueError("recognition_language must be 'auto', 'mixed', or a BCP-47-like language tag")
         out["recognition_language"] = value
     if "retention_ttl_seconds" in raw:
         try:
@@ -331,6 +357,16 @@ def _normalize_voice_config(raw: Any, *, base: Dict[str, Any]) -> Dict[str, Any]
         except Exception as exc:
             raise ValueError("auto_document_max_window_seconds must be an integer") from exc
         out["auto_document_max_window_seconds"] = min(max(_MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS, max_window_seconds), 300)
+    if "service_model_id" in raw:
+        value = str(raw.get("service_model_id") or "").strip()
+        if value and not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", value):
+            raise ValueError("service_model_id must be a simple slug")
+        out["service_model_id"] = value
+    if "service_diarization_model_id" in raw:
+        value = str(raw.get("service_diarization_model_id") or "").strip()
+        if value and not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", value):
+            raise ValueError("service_diarization_model_id must be a simple slug")
+        out["service_diarization_model_id"] = value
     if "tts_enabled" in raw:
         out["tts_enabled"] = coerce_bool(raw.get("tts_enabled"), default=False)
     return out
@@ -380,6 +416,11 @@ def _effective_assistant(group: Group, assistant_id: str, *, runtime_state: Opti
         service_backend_selected = str(config.get("recognition_backend") or "").strip() == "assistant_service_local_asr"
         if service_used or service_backend_selected:
             health = dict(health)
+            selected_model_id = str(config.get("service_model_id") or "").strip()
+            selected_diarization_model_id = str(config.get("service_diarization_model_id") or "").strip()
+            managed_model = get_voice_model_status(selected_model_id) if selected_model_id else {}
+            streaming_backend = sherpa_streaming_backend_status(selected_model_id)
+            diarization_backend = sherpa_diarization_status(selected_diarization_model_id)
             health["service"] = {
                 "status": str(service_state.get("status") or ("not_started" if service_backend_selected else "")),
                 "pid": service_state.get("pid"),
@@ -394,6 +435,11 @@ def _effective_assistant(group: Group, assistant_id: str, *, runtime_state: Opti
                     service_state.get("asr_mock_configured")
                     or str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()
                 ),
+                "selected_model_id": selected_model_id,
+                "selected_diarization_model_id": selected_diarization_model_id,
+                "managed_model": managed_model,
+                "streaming_backend": streaming_backend,
+                "diarization_backend": diarization_backend,
                 "last_error": service_state.get("last_error") if isinstance(service_state.get("last_error"), dict) else {},
                 "updated_at": str(service_state.get("updated_at") or ""),
             }
@@ -2661,6 +2707,7 @@ def _flush_voice_session_window(
             "status": str(document.get("status") or "active"),
             "workspace_path": str(document.get("workspace_path") or ""),
             "title": str(document.get("title") or ""),
+            "input_preview": window_text[:500],
         },
     )
     _clear_voice_session_window(
@@ -2718,6 +2765,7 @@ def _clear_voice_session_window(group: Group, *, session_id: str, now: str, last
     session_after = sessions_after.get(session_id) if isinstance(sessions_after.get(session_id), dict) else {}
     session_after = dict(session_after)
     session_after["window_text"] = ""
+    session_after["window_segments"] = []
     session_after["window_started_at"] = ""
     session_after["window_segment_count"] = 0
     session_after["window_first_segment_id"] = ""
@@ -2971,6 +3019,65 @@ def _append_voice_window_text(previous: Any, next_text: str) -> str:
     return combined[-_MAX_TRANSCRIPT_SESSION_CHARS:].lstrip()
 
 
+def _safe_voice_ms(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except Exception:
+        return None
+    return max(0, parsed)
+
+
+def _speaker_label_for_range(start_ms: int | None, end_ms: int | None, speaker_segments: Any) -> str:
+    if start_ms is None or end_ms is None or end_ms <= start_ms or not isinstance(speaker_segments, list):
+        return ""
+    best_label = ""
+    best_overlap = 0
+    for item in speaker_segments:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("speaker_label") or "").strip()
+        if not label:
+            continue
+        seg_start = _safe_voice_ms(item.get("start_ms"))
+        seg_end = _safe_voice_ms(item.get("end_ms"))
+        if seg_start is None or seg_end is None or seg_end <= seg_start:
+            continue
+        overlap = max(0, min(end_ms, seg_end) - max(start_ms, seg_start))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_label = label
+    return best_label
+
+
+def _speakerize_voice_window_text(window_segments: Any, speaker_segments: Any, fallback: str) -> str:
+    if not isinstance(window_segments, list) or not isinstance(speaker_segments, list):
+        return fallback
+    lines: list[str] = []
+    last_label = ""
+    for item in window_segments:
+        if not isinstance(item, dict):
+            continue
+        text = _clean_multiline_text(item.get("text"), max_len=_MAX_TRANSCRIPT_CHARS)
+        if not text:
+            continue
+        start_ms = _safe_voice_ms(item.get("start_ms"))
+        end_ms = _safe_voice_ms(item.get("end_ms"))
+        label = _speaker_label_for_range(start_ms, end_ms, speaker_segments)
+        if not label:
+            label = str(item.get("speaker_label") or "").strip()
+        if not label:
+            label = "Speaker ?"
+        if label == last_label and lines:
+            lines[-1] = f"{lines[-1]} {text}".strip()
+        else:
+            lines.append(f"{label}: {text}")
+            last_label = label
+    speakerized = "\n".join(lines).strip()
+    return speakerized or fallback
+
+
 def _voice_instruction_policy() -> Dict[str, Any]:
     return {
         "default": "classify_each_job_before_writing",
@@ -3031,7 +3138,6 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     if not assistant_id or assistant_id == ASSISTANT_ID_VOICE_SECRETARY:
-        _flush_stale_voice_session_windows(group)
         _maybe_emit_voice_input_retry_notify(group)
     runtime_state = _load_runtime_state(group)
     if assistant_id:
@@ -3053,6 +3159,9 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             else {}
         )
         ask_requests = _voice_ask_requests_public(runtime_state) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_models = list_voice_models() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_runtimes = list_voice_runtime_statuses() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_runtime = get_voice_runtime_status() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
         return DaemonResponse(
             ok=True,
             result={
@@ -3070,6 +3179,11 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
                 "prompt_draft": prompt_draft,
                 "ask_requests": ask_requests,
                 "latest_ask_request": ask_requests[0] if ask_requests else {},
+                "service_models": service_models,
+                "service_models_by_id": {str(item.get("model_id")): item for item in service_models},
+                "service_runtime": service_runtime,
+                "service_runtimes": service_runtimes,
+                "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
             },
         )
     assistants = [
@@ -3083,6 +3197,9 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     input_state = _load_voice_input_state(group)
     prompt_draft = _pending_voice_prompt_draft_by_request(group, request_id=prompt_request_id, runtime_state=runtime_state)
     ask_requests = _voice_ask_requests_public(runtime_state)
+    service_models = list_voice_models()
+    service_runtimes = list_voice_runtime_statuses()
+    service_runtime = get_voice_runtime_status()
     return DaemonResponse(
         ok=True,
         result={
@@ -3101,8 +3218,133 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             "prompt_draft": prompt_draft,
             "ask_requests": ask_requests,
             "latest_ask_request": ask_requests[0] if ask_requests else {},
+            "service_models": service_models,
+            "service_models_by_id": {str(item.get("model_id")): item for item in service_models},
+            "service_runtime": service_runtime,
+            "service_runtimes": service_runtimes,
+            "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
         },
     )
+
+
+def handle_assistant_voice_model_install(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    model_id = str(args.get("model_id") or "").strip()
+    background = coerce_bool(args.get("background"), default=False)
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not model_id:
+        return _error("missing_model_id", "missing model_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.settings_update")
+        if background:
+            installed = _start_voice_model_install_background(model_id)
+        else:
+            installed = install_voice_model(model_id)
+    except VoiceModelError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except VoiceRuntimeDepsError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except Exception as exc:
+        return _error("assistant_voice_model_install_failed", str(exc))
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "assistant": _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY),
+            "model": installed,
+            "service_runtime": get_voice_runtime_status(),
+        },
+    )
+
+
+def handle_assistant_voice_runtime_install(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    runtime_id = str(args.get("runtime_id") or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    background = coerce_bool(args.get("background"), default=True)
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.settings_update")
+        runtime = (
+            _start_voice_runtime_install_background(runtime_id)
+            if background
+            else install_voice_runtime_deps(runtime_id)
+        )
+    except VoiceRuntimeDepsError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except Exception as exc:
+        return _error("assistant_voice_runtime_install_failed", str(exc))
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "assistant": _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY),
+            "service_runtime": runtime,
+        },
+    )
+
+
+def _start_voice_model_install_background(model_id: str) -> Dict[str, Any]:
+    model_id = str(model_id or "").strip()
+    with _VOICE_MODEL_INSTALL_LOCK:
+        existing = _VOICE_MODEL_INSTALL_THREADS.get(model_id)
+        if existing is not None and existing.is_alive():
+            return get_voice_model_status(model_id)
+        started = begin_voice_model_install(model_id)
+
+        def _run() -> None:
+            try:
+                install_voice_model(model_id)
+            except Exception:
+                logger.exception("voice model install failed in background: model_id=%s", model_id)
+            finally:
+                with _VOICE_MODEL_INSTALL_LOCK:
+                    current = _VOICE_MODEL_INSTALL_THREADS.get(model_id)
+                    if current is threading.current_thread():
+                        _VOICE_MODEL_INSTALL_THREADS.pop(model_id, None)
+
+        thread = threading.Thread(target=_run, name=f"voice-model-install-{model_id}", daemon=True)
+        _VOICE_MODEL_INSTALL_THREADS[model_id] = thread
+        thread.start()
+        return started
+
+
+def _start_voice_runtime_install_background(runtime_id: str) -> Dict[str, Any]:
+    runtime_id = str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    if runtime_id not in {VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING}:
+        raise VoiceRuntimeDepsError("voice_runtime_unknown", f"unknown voice runtime: {runtime_id}")
+    with _VOICE_RUNTIME_INSTALL_LOCK:
+        existing = _VOICE_RUNTIME_INSTALL_THREADS.get(runtime_id)
+        if existing is not None and existing.is_alive():
+            return get_voice_runtime_status(runtime_id)
+
+        def _run() -> None:
+            try:
+                install_voice_runtime_deps(runtime_id)
+            except Exception:
+                logger.exception("voice runtime dependency install failed in background: runtime_id=%s", runtime_id)
+            finally:
+                with _VOICE_RUNTIME_INSTALL_LOCK:
+                    current = _VOICE_RUNTIME_INSTALL_THREADS.get(runtime_id)
+                    if current is threading.current_thread():
+                        _VOICE_RUNTIME_INSTALL_THREADS.pop(runtime_id, None)
+
+        thread = threading.Thread(target=_run, name=f"voice-runtime-install-{runtime_id}", daemon=True)
+        _VOICE_RUNTIME_INSTALL_THREADS[runtime_id] = thread
+        thread.start()
+        return {
+            **get_voice_runtime_status(runtime_id),
+            "status": "installing",
+        }
 
 
 def handle_assistant_settings_update(
@@ -3514,6 +3756,11 @@ def handle_assistant_voice_transcript_append(
     language = str(args.get("language") or "").strip()
     is_final = coerce_bool(args.get("is_final"), default=True)
     flush = coerce_bool(args.get("flush"), default=False)
+    start_ms = _safe_voice_ms(args.get("start_ms"))
+    end_ms = _safe_voice_ms(args.get("end_ms"))
+    if start_ms is not None and end_ms is not None and end_ms < start_ms:
+        end_ms = start_ms
+    speaker_label = str(args.get("speaker_label") or "").strip()
     raw_trigger = dict(args.get("trigger")) if isinstance(args.get("trigger"), dict) else {}
     raw_requested_document_path = str(args.get("document_path") or raw_trigger.get("document_path") or raw_trigger.get("workspace_path") or "").strip()
     if not group_id:
@@ -3563,10 +3810,17 @@ def handle_assistant_voice_transcript_append(
         "source": str(raw_trigger.get("recognition_backend") or raw_trigger.get("source") or ""),
         "by": by,
     }
+    if start_ms is not None:
+        segment["start_ms"] = start_ms
+    if end_ms is not None:
+        segment["end_ms"] = end_ms
+    if speaker_label:
+        segment["speaker_label"] = speaker_label
     if text:
         segment_path = _append_voice_segment_jsonl(group, session_id=session_id, segment=segment)
 
     previous_window_text = _clean_multiline_text(session_entry.get("window_text"), max_len=_MAX_TRANSCRIPT_SESSION_CHARS)
+    previous_window_segments = session_entry.get("window_segments") if isinstance(session_entry.get("window_segments"), list) else []
     window_started_at = str(session_entry.get("window_started_at") or "")
     previous_window_segment_count = int(session_entry.get("window_segment_count") or 0)
     window_first_segment_id = str(session_entry.get("window_first_segment_id") or "")
@@ -3574,9 +3828,25 @@ def handle_assistant_voice_transcript_append(
         window_started_at = now
         window_first_segment_id = segment_id
     window_text = _append_voice_window_text(session_entry.get("window_text"), text if is_final else "")
+    window_segments = list(previous_window_segments)
+    if text and is_final:
+        segment_for_window = {
+            "segment_id": segment_id,
+            "text": text,
+        }
+        if start_ms is not None:
+            segment_for_window["start_ms"] = start_ms
+        if end_ms is not None:
+            segment_for_window["end_ms"] = end_ms
+        if speaker_label:
+            segment_for_window["speaker_label"] = speaker_label
+        window_segments.append(segment_for_window)
+        if len(window_segments) > 200:
+            window_segments = window_segments[-200:]
     if not window_text.strip():
         window_started_at = ""
         window_first_segment_id = ""
+        window_segments = []
     window_segment_count = previous_window_segment_count + (1 if text and is_final else 0)
     if not window_text.strip():
         window_segment_count = 0
@@ -3588,6 +3858,7 @@ def handle_assistant_voice_transcript_append(
             "session_id": session_id,
             "updated_at": now,
             "window_text": window_text,
+            "window_segments": window_segments,
             "window_started_at": window_started_at,
             "window_segment_count": window_segment_count,
             "window_first_segment_id": window_first_segment_id,
@@ -3646,6 +3917,12 @@ def handle_assistant_voice_transcript_append(
         now=now,
     )
     document_source_text = window_text.strip() if document_due else ""
+    if document_source_text and isinstance(raw_trigger.get("speaker_segments"), list):
+        document_source_text = _speakerize_voice_window_text(
+            window_segments,
+            raw_trigger.get("speaker_segments"),
+            document_source_text,
+        )
     if document_source_text and is_final and coerce_bool(assistant_config.get("auto_document_enabled"), default=True):
         try:
             document_intent_hint = _infer_voice_transcript_intent(document_source_text, raw_trigger)
@@ -3742,6 +4019,7 @@ def handle_assistant_voice_transcript_append(
                     "status": str(document.get("status") or "active"),
                     "workspace_path": str(document.get("workspace_path") or ""),
                     "title": str(document.get("title") or ""),
+                    "input_preview": document_source_text[:500],
                 },
             )
             _ = document_event
@@ -3805,7 +4083,6 @@ def handle_assistant_voice_document_list(args: Dict[str, Any]) -> DaemonResponse
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    _flush_stale_voice_session_windows(group)
     _maybe_emit_voice_input_retry_notify(group)
     documents = _retained_voice_documents(group, include_archived=include_archived, include_content=include_content)
     if requested_document_path:
@@ -5071,6 +5348,10 @@ def try_handle_assistant_op(
         return handle_assistant_status_update(args)
     if op == "assistant_voice_transcribe":
         return handle_assistant_voice_transcribe(args)
+    if op == "assistant_voice_model_install":
+        return handle_assistant_voice_model_install(args)
+    if op == "assistant_voice_runtime_install":
+        return handle_assistant_voice_runtime_install(args)
     if op == "assistant_voice_transcript_append":
         return handle_assistant_voice_transcript_append(
             args,

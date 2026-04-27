@@ -49,6 +49,8 @@ export function formatStreamingActivityKind(kind: string): string {
       return "tool";
     case "reply":
       return "reply";
+    case "error":
+      return "error";
     default:
       return normalized || "step";
   }

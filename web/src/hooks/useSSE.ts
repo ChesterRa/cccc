@@ -171,6 +171,16 @@ export function computeGroupRuntimeFromActorActivityUpdates(
   };
 }
 
+function formatHeadlessErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error.trim();
+  if (!error || typeof error !== "object") return "";
+  const obj = error as { message?: unknown; code?: unknown; type?: unknown; status?: unknown };
+  const message = String(obj.message || "").trim();
+  const code = String(obj.code || obj.type || obj.status || "").trim();
+  if (message && code && !message.includes(code)) return `${code}: ${message}`;
+  return message || code;
+}
+
 export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptions) {
   // Use individual selectors to avoid subscribing to the entire store.
   // Without selectors, every state change (e.g. appendEvent) would trigger
@@ -599,6 +609,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       }
 
       if (eventType === "headless.turn.completed" || eventType === "headless.turn.failed") {
+        const failed = eventType === "headless.turn.failed";
+        const turnId = typeof data.turn_id === "string" ? data.turn_id.trim() : "";
+        const errorMessage = formatHeadlessErrorMessage(data.error);
         flushPendingHeadlessActivities(groupId, actorId);
         flushPendingHeadlessMessages(groupId, actorId);
         clearPendingHeadlessBuffers(groupId, actorId);
@@ -609,12 +622,28 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           running: true,
           idle_seconds: null,
           effective_working_state: "idle",
-          effective_working_reason: "headless_turn_idle",
+          effective_working_reason: failed ? "headless_turn_failed" : "headless_turn_idle",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
         });
-        if (eventType === "headless.turn.failed") {
+        if (failed) {
           clearStreamingEventsForActor(actorId, groupId);
+          if (pendingEventId) {
+            upsertStreamingActivity(
+              actorId,
+              { pendingEventId, streamId: streamId || turnId },
+              {
+                id: `error:${pendingEventId || turnId || actorId}`,
+                kind: "error",
+                status: "completed",
+                summary: translateActorLabel("headlessTurnFailed", "Model request failed"),
+                detail: errorMessage || translateActorLabel("headlessTurnFailedFallback", "The model runtime reported an error."),
+                ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
+                raw_item_type: "turn_error",
+              },
+              groupId,
+            );
+          }
         } else {
           clearEmptyStreamingEventsForActor(actorId, groupId);
         }
@@ -632,11 +661,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const controlKind = typeof data.control_kind === "string" ? data.control_kind.trim() : "control";
         const turnId = typeof data.turn_id === "string" ? data.turn_id.trim() : "";
         const controlEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
-        const errorMessage = typeof data.error === "string"
-          ? data.error.trim()
-          : (data.error && typeof data.error === "object" && typeof (data.error as { message?: unknown }).message === "string"
-            ? String((data.error as { message?: unknown }).message || "").trim()
-            : "");
+        const errorMessage = formatHeadlessErrorMessage(data.error);
         const controlStatusLabel = (() => {
           switch (eventType) {
             case "headless.control.queued":

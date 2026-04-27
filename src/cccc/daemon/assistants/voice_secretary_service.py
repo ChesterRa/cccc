@@ -23,6 +23,7 @@ from typing import Any
 from ...util.fs import atomic_write_json
 from ...util.process import resolve_subprocess_argv
 from ...util.time import utc_now_iso
+from .voice_models import get_voice_model_status
 
 
 SERVICE_SCHEMA = 1
@@ -98,19 +99,38 @@ def _parse_transcript_stdout(stdout: str) -> str:
     return text
 
 
+def _parse_asr_stderr(stderr: str) -> dict[str, Any]:
+    text = str(stderr or "").strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    error = payload.get("error")
+    return dict(error) if isinstance(error, dict) else {}
+
+
 def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str, dict[str, Any]]:
     mock_text = str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()
     if mock_text:
         return mock_text, {"backend": "env_mock"}
 
     command = str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_COMMAND") or "").strip()
+    managed_command = str(os.environ.get("CCCC_VOICE_SECRETARY_MANAGED_ASR_COMMAND") or "").strip()
+    managed_model_id = str(os.environ.get("CCCC_VOICE_SECRETARY_MANAGED_MODEL_ID") or "").strip()
     if not command:
+        command = managed_command
+    if not command:
+        managed_model = get_voice_model_status(managed_model_id) if managed_model_id else {}
         raise AsrServiceError(
             "asr_backend_unavailable",
-            "assistant_service_local_asr requires CCCC_VOICE_SECRETARY_ASR_COMMAND",
+            "assistant_service_local_asr has no active transcription backend",
             details={
-                "env": "CCCC_VOICE_SECRETARY_ASR_COMMAND",
-                "hint": "Configure a local command such as a SenseVoice/FunASR wrapper; the audio path is appended unless {audio_path} is used.",
+                "managed_model": managed_model,
+                "hint": "Use Browser ASR until the streaming ASR backend is connected.",
             },
         )
 
@@ -130,8 +150,10 @@ def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str,
         argv = _command_argv(command, audio_path=tmp_path, mime_type=mime_type, language=language)
         if not argv:
             raise AsrServiceError("asr_backend_unavailable", "ASR command is empty")
-        argv = resolve_subprocess_argv(argv)
+        if argv and not Path(str(argv[0])).exists():
+            argv = resolve_subprocess_argv(argv)
         env = os.environ.copy()
+        env.pop("__PYVENV_LAUNCHER__", None)
         env["CCCC_VOICE_AUDIO_PATH"] = str(tmp_path)
         env["CCCC_VOICE_MIME_TYPE"] = mime_type
         env["CCCC_VOICE_LANGUAGE"] = language
@@ -163,6 +185,20 @@ def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str,
                 pass
 
     if completed.returncode != 0:
+        structured_error = _parse_asr_stderr(completed.stderr)
+        if structured_error:
+            code = str(structured_error.get("code") or "asr_backend_failed").strip() or "asr_backend_failed"
+            message = str(structured_error.get("message") or "ASR command failed").strip() or "ASR command failed"
+            details = structured_error.get("details") if isinstance(structured_error.get("details"), dict) else {}
+            raise AsrServiceError(
+                code,
+                message,
+                details={
+                    **details,
+                    "returncode": completed.returncode,
+                    "stderr": str(completed.stderr or "").strip()[:4000],
+                },
+            )
         raise AsrServiceError(
             "asr_backend_failed",
             "ASR command failed",
@@ -188,6 +224,7 @@ class VoiceSecretaryServiceContext:
         self._lock = threading.Lock()
 
     def snapshot(self) -> dict[str, Any]:
+        managed_model_id = str(os.environ.get("CCCC_VOICE_SECRETARY_MANAGED_MODEL_ID") or "").strip()
         with self._lock:
             return {
                 "schema": SERVICE_SCHEMA,
@@ -198,12 +235,16 @@ class VoiceSecretaryServiceContext:
                 "port": self.port,
                 "status": self.status,
                 "asr_command_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_COMMAND") or "").strip()),
+                "managed_asr_command_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_MANAGED_ASR_COMMAND") or "").strip()),
                 "asr_mock_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()),
+                "selected_model_id": managed_model_id,
+                "managed_model": get_voice_model_status(managed_model_id) if managed_model_id else {},
                 "last_error": dict(self.last_error),
                 "updated_at": utc_now_iso(),
             }
 
     def write_state(self, *, status: str | None = None, last_error: dict[str, Any] | None = None) -> None:
+        managed_model_id = str(os.environ.get("CCCC_VOICE_SECRETARY_MANAGED_MODEL_ID") or "").strip()
         with self._lock:
             if status:
                 self.status = status
@@ -218,7 +259,10 @@ class VoiceSecretaryServiceContext:
                 "port": self.port,
                 "status": self.status,
                 "asr_command_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_COMMAND") or "").strip()),
+                "managed_asr_command_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_MANAGED_ASR_COMMAND") or "").strip()),
                 "asr_mock_configured": bool(str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()),
+                "selected_model_id": managed_model_id,
+                "managed_model": get_voice_model_status(managed_model_id) if managed_model_id else {},
                 "last_error": dict(self.last_error),
                 "updated_at": utc_now_iso(),
             }

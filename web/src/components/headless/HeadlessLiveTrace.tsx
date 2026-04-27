@@ -214,6 +214,10 @@ function getActivityKindBadgeClassName(density: HeadlessLiveTraceDensity, isDark
   );
 }
 
+function isErrorActivity(activity: StreamingActivity): boolean {
+  return String(activity.kind || "").trim().toLowerCase() === "error";
+}
+
 function summarizeHeadline(
   group: HeadlessPreviewRenderGroup | undefined,
   density: HeadlessLiveTraceDensity,
@@ -250,20 +254,34 @@ function ActivityRow({
   isDark: boolean;
 }) {
   const narrative = buildActivityNarrative(entry.activity, density);
+  const error = isErrorActivity(entry.activity);
   const trailingMeta = density === "expanded" ? narrative.metaLines[0] || "" : "";
   const showDetails = density === "expanded" && narrative.detailRows.length > 0;
 
   return (
-    <div className={getActivityRowClassName(density, isDark, entry.live)} title={narrative.title || narrative.primaryTitle}>
+    <div
+      className={classNames(
+        getActivityRowClassName(density, isDark, entry.live),
+        error
+          ? (isDark ? "border-rose-400/30 bg-rose-500/[0.08]" : "border-rose-200 bg-rose-50")
+          : ""
+      )}
+      title={narrative.title || narrative.primaryTitle}
+    >
       <div className="flex min-w-0 items-center gap-2.5">
-        <span className={getActivityKindBadgeClassName(density, isDark, entry.live)}>
+        <span className={classNames(
+          getActivityKindBadgeClassName(density, isDark, entry.live),
+          error
+            ? (isDark ? "border-rose-300/30 bg-rose-400/12 text-rose-100" : "border-rose-200 bg-white text-rose-700")
+            : ""
+        )}>
           {narrative.kindLabel}
         </span>
         <div
           className={classNames(
             "min-w-0 flex-1 truncate whitespace-nowrap font-medium",
             density === "expanded" ? "text-[12.5px] leading-5" : "text-[11.5px] leading-4",
-            isDark ? "text-slate-100" : "text-slate-900"
+            error ? (isDark ? "text-rose-50" : "text-rose-800") : (isDark ? "text-slate-100" : "text-slate-900")
           )}
           title={narrative.primaryTitle}
         >

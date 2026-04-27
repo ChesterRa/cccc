@@ -134,6 +134,7 @@ Default: `CCCC_HOME=~/.cccc`
 | `assistant.voice.input` | Voice Secretary transcript/input ingestion marker |
 | `assistant.voice.prompt_draft` | Voice Secretary composer prompt draft submit/ack marker |
 | `assistant.voice.request` | Voice Secretary structured action request marker |
+| `assistant.voice.session` | Voice Secretary recording session status/artifact marker |
 | `presentation.publish` | Publish a presentation rail card |
 | `presentation.clear` | Clear presentation rail card(s) |
 

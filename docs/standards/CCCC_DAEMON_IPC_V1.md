@@ -1404,6 +1404,7 @@ Args:
       auto_document_quiet_ms?: number
       auto_document_min_chars?: number
       auto_document_max_window_seconds?: number
+      service_model_id?: string
       tts_enabled?: boolean
     }
   }
@@ -1412,11 +1413,12 @@ Args:
 
 `browser_asr` means browser-managed speech recognition and does not guarantee
 browser-device-local model execution. `assistant_service_local_asr` means ASR
-runs on the daemon host through the first-party Voice Secretary service and
-requires `CCCC_VOICE_SECRETARY_ASR_COMMAND` unless an explicit test/mock env is
-configured. The returned assistant health may include `health.service` with
-`status`, `alive`, `asr_command_configured`, `asr_mock_configured`, and
-`last_error` so Web can show whether service-local ASR is actually usable.
+runs on the daemon host through the first-party Voice Secretary service and uses
+an installed local ASR model. The returned assistant health may include `health.service` with
+`status`, `alive`, `asr_command_configured`, `asr_mock_configured`,
+`selected_model_id`, `managed_model`, and `last_error` so Web can show whether
+service-local ASR is actually usable. `service_model_id` is optional and
+selects a daemon-managed local ASR model for on-demand install/use.
 `recognition_language="auto"` means the browser/client chooses the best language
 hint; otherwise callers should pass a BCP-47-like tag such as `zh-CN`, `en-US`,
 or `ja-JP`. `auto_document_enabled=true` is the default path: stable transcript
@@ -1451,6 +1453,39 @@ Result:
 { group_id: string; assistant: Record<string, unknown>; event: CCCSEventV1 }
 ```
 
+#### `assistant_voice_model_install`
+
+Download and verify a daemon-managed local Voice Secretary ASR model into
+CCCC-owned cache storage. Built-in releases include a default model manifest;
+tests and local development may add a local overlay at
+`CCCC_HOME/config/voice-models.json`. Each artifact entry must include a fixed
+URL and `sha256`.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  model_id: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistant: Record<string, unknown>
+  model: {
+    model_id: string
+    status: "not_installed" | "downloading" | "ready" | "failed" | "unknown"
+    install_dir?: string
+    installed_at?: string
+    updated_at?: string
+    error?: Record<string, unknown>
+  }
+}
+```
+
 #### `assistant_voice_transcribe`
 
 Transcribe a push-to-talk audio payload through the daemon-managed first-party
@@ -1474,11 +1509,9 @@ Args:
 Preconditions:
 - `voice_secretary` is enabled for the group.
 - `recognition_backend` is `assistant_service_local_asr`.
-- The daemon host has `CCCC_VOICE_SECRETARY_ASR_COMMAND` configured. The command
-  receives the audio path as the final argument unless it includes
-  `{audio_path}` / `{input_path}` / `{input}`. It may also use
-  `CCCC_VOICE_AUDIO_PATH`, `CCCC_VOICE_MIME_TYPE`, and
-  `CCCC_VOICE_LANGUAGE`.
+- The selected `service_model_id` is installed and exposes a managed command via
+  the manifest. The effective command receives the audio path as the final
+  argument unless it includes `{audio_path}` / `{input_path}` / `{input}`.
 
 Result:
 ```ts
