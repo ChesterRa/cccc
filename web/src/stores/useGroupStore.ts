@@ -479,9 +479,15 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         const actorId = String(actor.id || "").trim();
         if (!targets.has(actorId)) return actor;
         changed = true;
+        const runtime = String(actor.runtime || "").trim().toLowerCase();
+        const workingState = String(actor.effective_working_state || "").trim().toLowerCase();
+        const webModelQueuedCount = runtime === "web_model" && workingState === "working"
+          ? Math.max(0, Number(actor.web_model_queued_count || 0)) + 1
+          : actor.web_model_queued_count;
         return {
           ...actor,
           unread_count: Math.max(0, Number(actor.unread_count || 0)) + 1,
+          web_model_queued_count: webModelQueuedCount,
         };
       });
 
@@ -518,6 +524,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             effective_working_reason: u.effective_working_reason,
             effective_working_updated_at: u.effective_working_updated_at ?? null,
             effective_active_task_id: u.effective_active_task_id ?? null,
+            web_model_queued_count: String(a.runtime || "").trim().toLowerCase() === "web_model"
+              && String(u.effective_working_state || "").trim().toLowerCase() !== "working"
+                ? 0
+                : a.web_model_queued_count,
           };
         }
         return a;

@@ -86,6 +86,10 @@ function profileScopeLabel(profile: ActorProfile, t: (key: string, options?: Rec
   return t("profileScopeGlobal");
 }
 
+function isWebModelProfile(profile: ActorProfile): boolean {
+  return String(profile.runtime || "").trim().toLowerCase() === "web_model";
+}
+
 function modeButtonClass(selected: boolean): string {
   return [
     "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
@@ -161,13 +165,24 @@ export function AddActorModal({
     };
   }, [avatarPreviewUrl]);
 
+  const selectableActorProfiles = useMemo(
+    () => actorProfiles.filter((profile) => !isWebModelProfile(profile)),
+    [actorProfiles],
+  );
+
+  useEffect(() => {
+    if (!isOpen || !newActorUseProfile || !String(newActorProfileId || "").trim()) return;
+    const selected = selectableActorProfiles.some((profile) => actorProfileIdentityKey(profile) === String(newActorProfileId || "").trim());
+    if (!selected) setNewActorProfileId("");
+  }, [isOpen, newActorProfileId, newActorUseProfile, selectableActorProfiles, setNewActorProfileId]);
+
   if (!isOpen) return null;
 
   const runtimeInfo = runtimes.find((r) => r.name === newActorRuntime);
   const runtimeAvailable = runtimeInfo?.available ?? false;
   const defaultCommand = runtimeInfo?.recommended_command || "";
   const newActorSecretsPlaceholder = secretsPlaceholderForRuntime(newActorRuntime);
-  const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim());
+  const selectedProfile = selectableActorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim());
   const selectedProfileRuntime = String(selectedProfile?.runtime || "").trim() as SupportedRuntime;
   const selectedProfileCommand = commandPreview(selectedProfile?.command);
   const showRuntimeSetup = !newActorUseProfile && newActorRuntime === "custom";
@@ -175,6 +190,8 @@ export function AddActorModal({
   const previewRuntime = newActorUseProfile ? selectedProfileRuntime || null : newActorRuntime;
   const previewTitle = String(newActorId || "").trim() || suggestedActorId;
   const customRunnerLockedToPty = !newActorUseProfile && !supportsStandardWebHeadlessRuntime(newActorRuntime);
+  const webModelRunnerLockedToHeadless = !newActorUseProfile && newActorRuntime === "web_model";
+  const webModelSetupIsActorBound = !newActorUseProfile && newActorRuntime === "web_model";
 
   const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
@@ -354,12 +371,17 @@ export function AddActorModal({
                         disabled={actorProfilesBusy}
                       >
                         <option value="">{actorProfilesBusy ? t("loadingProfiles") : t("selectActorProfile")}</option>
-                        {actorProfiles.map((profile) => (
+                        {selectableActorProfiles.map((profile) => (
                           <option key={actorProfileIdentityKey(profile)} value={actorProfileIdentityKey(profile)}>
                             {(profile.name || profile.id) + " · " + profileScopeLabel(profile, t)}
                           </option>
                         ))}
                       </select>
+                      {!actorProfilesBusy && actorProfiles.length > 0 && selectableActorProfiles.length === 0 ? (
+                        <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
+                          Browser Web Model profiles are actor-bound and are managed in Settings &gt; Web Models.
+                        </div>
+                      ) : null}
                     </div>
 
                     {selectedProfile ? (
@@ -391,7 +413,8 @@ export function AddActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           setNewActorRuntime(next);
-                          if (!supportsStandardWebHeadlessRuntime(next)) setNewActorRunner("pty");
+                          if (next === "web_model") setNewActorRunner("headless");
+                          else if (!supportsStandardWebHeadlessRuntime(next)) setNewActorRunner("pty");
                           setNewActorCommand("");
                           setNewActorUseDefaultCommand(next !== "custom");
                         }}
@@ -431,9 +454,9 @@ export function AddActorModal({
                       </label>
                     ) : null}
 
-                    {supportsStandardWebHeadlessRuntime(newActorRuntime) ? (
-                      <div>
-                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+	                    {supportsStandardWebHeadlessRuntime(newActorRuntime) ? (
+	                      <div>
+	                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("runnerMode", { defaultValue: "Runner mode" })}
                         </label>
                         <div className="grid grid-cols-2 gap-2">
@@ -442,6 +465,7 @@ export function AddActorModal({
                             variant="outline"
                             className={modeButtonClass(newActorRunner === "pty")}
                             onClick={() => setNewActorRunner("pty")}
+                            disabled={webModelRunnerLockedToHeadless}
                           >
                             {t("pty", { defaultValue: "PTY" })}
                           </Button>
@@ -456,14 +480,30 @@ export function AddActorModal({
                           </Button>
                         </div>
                         <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                          {customRunnerLockedToPty
+                          {webModelRunnerLockedToHeadless
+                            ? t("runnerModeWebModelNote", { defaultValue: "Browser Web Model runs through a remote MCP connector, so it is fixed to Headless." })
+                            : customRunnerLockedToPty
                             ? t("runnerModeHeadlessNote", { defaultValue: "Only some runtimes, such as codex and claude, support Headless mode. Other runtimes are fixed to PTY." })
                             : t("runnerModeHint", { defaultValue: "PTY uses terminal interaction; Headless uses structured event flow." })}
-                        </div>
-                      </div>
-                    ) : null}
+	                        </div>
+	                      </div>
+	                    ) : null}
 
-                    {showCommandEditor ? (
+	                    {newActorRuntime === "web_model" ? (
+	                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
+	                        <div className="font-medium">
+	                          {t("webModelActorBoundConnectorTitle", { defaultValue: "Actor-bound connector" })}
+	                        </div>
+	                        <div className="mt-1">
+	                          {t("webModelActorBoundConnectorHint", {
+	                            defaultValue:
+	                              "Create this actor first, then open Settings > Web Models to generate its remote MCP connector. One connector represents one actor.",
+	                          })}
+	                        </div>
+	                      </div>
+	                    ) : null}
+
+	                    {showCommandEditor ? (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("commandOverrideOptional")}
@@ -608,28 +648,34 @@ export function AddActorModal({
                     </div>
                   </details>
 
-                  <details className={`group ${nestedCardClass}`}>
-                    <summary className={collapsibleSummaryClass}>
-                      <div>
-                        <div className={collapsibleLabelClass}>{t("profileToolsSection")}</div>
-                        <div className={sectionHintClass}>{t("profileToolsSectionHint")}</div>
-                      </div>
-                      <span aria-hidden="true" className={collapsibleChevronClass}>
-                        ⌄
-                      </span>
-                    </summary>
-
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={onSaveAsProfile}
-                        disabled={busy === "actor-profile-save" || busy === "actor-add"}
-                      >
-                        {busy === "actor-profile-save" ? t("savingProfile") : t("addToActorProfiles")}
-                      </Button>
+                  {webModelSetupIsActorBound ? (
+                    <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
+                      Browser Web Model setup is actor-bound. Create the actor, then manage its connector and ChatGPT chat in Settings &gt; Web Models.
                     </div>
-                  </details>
+                  ) : (
+                    <details className={`group ${nestedCardClass}`}>
+                      <summary className={collapsibleSummaryClass}>
+                        <div>
+                          <div className={collapsibleLabelClass}>{t("profileToolsSection")}</div>
+                          <div className={sectionHintClass}>{t("profileToolsSectionHint")}</div>
+                        </div>
+                        <span aria-hidden="true" className={collapsibleChevronClass}>
+                          ⌄
+                        </span>
+                      </summary>
+
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={onSaveAsProfile}
+                          disabled={busy === "actor-profile-save" || busy === "actor-add"}
+                        >
+                          {busy === "actor-profile-save" ? t("savingProfile") : t("addToActorProfiles")}
+                        </Button>
+                      </div>
+                    </details>
+                  )}
                 </div>
               </details>
             ) : null}

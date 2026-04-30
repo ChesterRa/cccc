@@ -1,4 +1,5 @@
 from cccc.daemon.messaging.chat_ops import _build_headless_delivery_text
+from cccc.daemon.messaging.actor_turn_rendering import build_actor_delivery_text
 from cccc.daemon.messaging.delivery import PendingMessage, render_single_message
 from cccc.daemon.messaging.inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 
@@ -94,3 +95,24 @@ def test_inbound_renderer_preserves_multiline_body() -> None:
         to=["peer1"],
         body="line one\nline two",
     ) == expected
+
+
+def test_actor_delivery_text_points_attachments_to_file_read_tools() -> None:
+    text = build_actor_delivery_text(
+        text="inspect attachment",
+        priority="normal",
+        reply_required=False,
+        event_id="evt-1",
+        refs=[],
+        attachments=[
+            {
+                "title": "notes.txt",
+                "bytes": 12,
+                "path": "state/blobs/sha256_notes.txt",
+            }
+        ],
+    )
+
+    assert 'cccc_file(action="read", rel_path=...)' in text
+    assert 'action="blob_path"' in text
+    assert "- notes.txt (12 bytes) [state/blobs/sha256_notes.txt]" in text

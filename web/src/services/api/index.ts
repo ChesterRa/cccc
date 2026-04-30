@@ -6,5 +6,6 @@ export * from "./system";
 export * from "./messaging";
 export * from "./im";
 export * from "./webAccess";
+export * from "./webModel";
 export * from "./groupSpace";
 export * from "./diagnostics";

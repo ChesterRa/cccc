@@ -4,6 +4,7 @@ import hashlib
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ....kernel.access_tokens import (
@@ -13,6 +14,7 @@ from ....kernel.access_tokens import (
     lookup_access_token,
     update_access_token,
 )
+from ..middleware import set_access_token_cookie
 from ..schemas import RouteContext, require_admin
 
 
@@ -89,7 +91,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {"ok": True, "result": {"access_tokens": items}}
 
     @global_router.post("/access-tokens", dependencies=[Depends(require_admin)])
-    async def access_tokens_create(req: AccessTokenCreateRequest) -> Dict[str, Any]:
+    async def access_tokens_create(request: Request, req: AccessTokenCreateRequest) -> JSONResponse:
         user_id = str(req.user_id or "").strip()
         if not user_id:
             raise HTTPException(
@@ -97,8 +99,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 detail={"code": "invalid_request", "message": "user_id is required", "details": {}},
             )
         cleaned_allowed_groups = _clean_allowed_groups(req.allowed_groups)
+        existing = list_access_tokens()
         if not req.is_admin:
-            existing = list_access_tokens()
             has_admin = any(bool((item or {}).get("is_admin")) for item in existing if isinstance(item, dict))
             if not has_admin:
                 raise HTTPException(
@@ -122,7 +124,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 status_code=400,
                 detail={"code": "invalid_request", "message": str(exc), "details": {}},
             ) from exc
-        return {"ok": True, "result": {"access_token": entry}}
+        response = JSONResponse({"ok": True, "result": {"access_token": entry}})
+        raw_token = str(entry.get("token") or "").strip()
+        if not existing and raw_token:
+            set_access_token_cookie(response, request, raw_token)
+        return response
 
     @global_router.patch("/access-tokens/{token_id}", dependencies=[Depends(require_admin)])
     async def access_tokens_update(token_id: str, req: AccessTokenUpdateRequest) -> Dict[str, Any]:

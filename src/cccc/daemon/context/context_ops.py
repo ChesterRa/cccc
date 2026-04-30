@@ -48,6 +48,7 @@ from ...kernel.pet_actor import PET_ACTOR_ID
 from ...kernel.ledger import append_event
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..runner_state_ops import headless_state_running, read_headless_state
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...kernel.prompt_files import (
@@ -373,8 +374,12 @@ def _actor_runtime_state_to_dict(
         return result
 
     pty_terminal_text = ""
+    headless_state = None
     if effective_runner == "headless":
-        if runtime.lower() == "codex":
+        if runtime.lower() == "web_model":
+            headless_state = read_headless_state(group_id, actor_id)
+            running = bool(headless_state_running(group_id, actor_id))
+        elif runtime.lower() == "codex":
             running = bool(codex_app_supervisor.actor_running(group_id, actor_id))
         elif runtime.lower() == "claude":
             running = bool(claude_app_supervisor.actor_running(group_id, actor_id))
@@ -410,6 +415,7 @@ def _actor_runtime_state_to_dict(
             idle_seconds=idle_seconds,
             pty_terminal_text=pty_terminal_text,
             agent_state=agent_state_by_id.get(actor_id),
+            headless_state=headless_state,
         )
     )
     return result

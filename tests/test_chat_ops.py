@@ -1447,6 +1447,31 @@ class TestMCPToCoercion(unittest.TestCase):
 
         self.assertIsNone(captured.get("to"))
 
+    def test_mcp_file_read_handler_routes_to_blob_read(self) -> None:
+        from cccc.ports.mcp.server import _handle_cccc_namespace
+        from unittest.mock import patch
+
+        captured = {}
+
+        def fake_blob_read(**kwargs):
+            captured.update(kwargs)
+            return {"text": "hello", "truncated": False}
+
+        with patch("cccc.ports.mcp.server.blob_read", side_effect=fake_blob_read):
+            with patch("cccc.ports.mcp.server._resolve_group_id", return_value="g_test"):
+                _handle_cccc_namespace(
+                    "cccc_file",
+                    {
+                        "action": "read",
+                        "rel_path": "state/blobs/demo.txt",
+                        "max_bytes": 12,
+                    },
+                )
+
+        self.assertEqual(captured.get("group_id"), "g_test")
+        self.assertEqual(captured.get("rel_path"), "state/blobs/demo.txt")
+        self.assertEqual(captured.get("max_bytes"), 12)
+
 
 if __name__ == "__main__":
     unittest.main()

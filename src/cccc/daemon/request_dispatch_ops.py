@@ -37,6 +37,7 @@ from .ops.registry_ops import try_handle_registry_op
 from .ops.capability_ops import try_handle_capability_op
 from .im.im_ops import try_handle_im_op
 from .actors.runner_ops import try_handle_headless_op
+from .actors.web_model_runtime_ops import try_handle_web_model_runtime_op
 from .memory.memory_ops import try_handle_memory_op
 
 
@@ -419,6 +420,10 @@ def dispatch_request(
     headless_resp = try_handle_headless_op(op, args)
     if headless_resp is not None:
         return headless_resp, False
+
+    web_model_runtime_resp = try_handle_web_model_runtime_op(op, args)
+    if web_model_runtime_resp is not None:
+        return web_model_runtime_resp, False
 
     system_notify_resp = try_handle_system_notify_op(
         op,

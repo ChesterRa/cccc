@@ -1,4 +1,4 @@
-const STANDARD_WEB_HEADLESS_RUNTIMES = new Set(["codex", "claude"]);
+const STANDARD_WEB_HEADLESS_RUNTIMES = new Set(["codex", "claude", "web_model"]);
 
 export type ActorRunner = "pty" | "headless";
 

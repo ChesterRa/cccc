@@ -1,0 +1,146 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+
+class TestWebModelActorLifecycle(unittest.TestCase):
+    def _with_home(self):
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        td = td_ctx.__enter__()
+        os.environ["CCCC_HOME"] = td
+
+        def cleanup() -> None:
+            td_ctx.__exit__(None, None, None)
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+        return td, cleanup
+
+    def _call(self, op: str, args: dict):
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    def _create_attached_group(self, root: Path) -> str:
+        create, _ = self._call("group_create", {"title": "web-model-lifecycle", "topic": "", "by": "user"})
+        self.assertTrue(create.ok, getattr(create, "error", None))
+        group_id = str((create.result or {}).get("group_id") or "").strip()
+        attach, _ = self._call("attach", {"group_id": group_id, "path": str(root), "by": "user"})
+        self.assertTrue(attach.ok, getattr(attach, "error", None))
+        return group_id
+
+    def test_web_model_actor_add_start_stop_uses_marker_not_local_process(self) -> None:
+        from cccc.daemon.runner_state_ops import headless_state_running
+
+        home, cleanup = self._with_home()
+        try:
+            root = Path(home) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            group_id = self._create_attached_group(root)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "webpeer",
+                    "title": "Web Peer",
+                    "runtime": "web_model",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            actor = (add.result or {}).get("actor") or {}
+            self.assertEqual(actor.get("runtime"), "web_model")
+            self.assertEqual(actor.get("runner"), "headless")
+            self.assertEqual(actor.get("command"), [])
+            self.assertTrue(bool((add.result or {}).get("running")))
+            self.assertTrue(headless_state_running(group_id, "webpeer"))
+
+            actors, _ = self._call("actor_list", {"group_id": group_id, "include_unread": False})
+            self.assertTrue(actors.ok, getattr(actors, "error", None))
+            listed = ((actors.result or {}).get("actors") or [])[0]
+            self.assertTrue(bool(listed.get("running")))
+            self.assertEqual(listed.get("runner_effective"), "headless")
+            self.assertEqual(listed.get("effective_working_state"), "waiting")
+
+            stop, _ = self._call("actor_stop", {"group_id": group_id, "actor_id": "webpeer", "by": "user"})
+            self.assertTrue(stop.ok, getattr(stop, "error", None))
+            self.assertFalse(headless_state_running(group_id, "webpeer"))
+        finally:
+            cleanup()
+
+    def test_group_start_for_web_model_does_not_spawn_headless_supervisor(self) -> None:
+        from cccc.daemon.runner_state_ops import headless_state_running
+
+        home, cleanup = self._with_home()
+        try:
+            root = Path(home) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            group_id = self._create_attached_group(root)
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "webpeer",
+                    "title": "Web Peer",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            stop, _ = self._call("actor_stop", {"group_id": group_id, "actor_id": "webpeer", "by": "user"})
+            self.assertTrue(stop.ok, getattr(stop, "error", None))
+
+            with patch(
+                "cccc.daemon.group.group_lifecycle_ops.headless_runner.SUPERVISOR.start_actor",
+                side_effect=AssertionError("web_model must not spawn generic headless supervisor"),
+            ), patch(
+                "cccc.daemon.group.group_lifecycle_ops.pty_runner.SUPERVISOR.start_actor",
+                side_effect=AssertionError("web_model must not spawn PTY supervisor"),
+            ):
+                started, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+
+            self.assertTrue(started.ok, getattr(started, "error", None))
+            self.assertEqual((started.result or {}).get("started"), ["webpeer"])
+            self.assertTrue(headless_state_running(group_id, "webpeer"))
+        finally:
+            cleanup()
+
+    def test_runner_group_running_includes_web_model_marker(self) -> None:
+        from cccc.daemon.actors.runner_ops import is_group_running
+        from cccc.daemon.runner_state_ops import write_headless_state
+
+        home, cleanup = self._with_home()
+        try:
+            root = Path(home) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            group_id = self._create_attached_group(root)
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "webpeer",
+                    "title": "Web Peer",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            write_headless_state(group_id, "webpeer")
+
+            self.assertTrue(is_group_running(group_id))
+        finally:
+            cleanup()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1047,6 +1047,7 @@
     "localGoalBadge": "この端末のみ",
     "lanGoalBadge": "プライベートネットワーク",
     "publicTokenRequiredBadge": "トークン必須",
+    "publicTokenProtectedBadge": "保護済み",
     "goals": {
       "local": {
         "title": "ローカルのみ",
@@ -1068,8 +1069,10 @@
     "goalPortHintLan": "実行中の Web バインドが反映されると、プライベートネットワーク上の端末はこのポートでアクセスします。",
     "goalPortHintAdvanced": "公開プロキシやトンネルの都合で Web を別ポートで待ち受けたい場合だけ変更してください。",
     "goalPublicUrlHint": "利用者が最終的に開く URL を入れてください。たとえばリバースプロキシやトンネルの公開 URL です。",
-    "publicTokenRequiredTitle": "公開経路は無保護にしない",
-    "publicTokenRequiredHint": "公開 URL を設定すると、その経路には必ずアクセストークン保護が必要になります。",
+    "publicTokenRequiredTitle": "公開 URL の前にアクセストークンを作成",
+    "publicTokenRequiredHint": "公開 URL / トンネルモードでは必ずトークンログインが必要です。先に管理者アクセストークンを作成してから、この経路を保存または適用してください。",
+    "publicTokenProtectedTitle": "公開アクセスは保護されています",
+    "publicTokenProtectedHint": "アクセストークンは設定済みです。公開 URL 経路は引き続きトークンログインで保護されます。",
     "saveChanges": "変更を保存",
     "savedState": "保存済み",
     "primaryActionSaveHint": "先に新しいアクセス目標とバインド方針を保存します。実行中の Web がまだ旧バインドなら、その後で適用または再起動します。",

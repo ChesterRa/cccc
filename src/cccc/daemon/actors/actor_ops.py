@@ -16,7 +16,9 @@ from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, deri
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ..context.context_ops import _agent_state_to_dict
+from ..runner_state_ops import headless_state_running, read_headless_state
 from .private_env_ops import mask_private_env_value
+from .web_model_runtime_ops import decorate_web_model_queued_turn_info
 from ...util.conv import coerce_bool
 
 
@@ -63,6 +65,9 @@ def handle_actor_list(
         if not aid:
             continue
         runner_kind = str(actor.get("runner") or "pty").strip()
+        effective_runner = effective_runner_kind(runner_kind)
+        runtime = str(actor.get("runtime") or "").strip()
+        headless_state = None
         snap = runtime_snapshot.get(aid) if isinstance(runtime_snapshot.get(aid), dict) else {}
         if snap:
             actor["running"] = bool(snap.get("running"))
@@ -80,54 +85,58 @@ def handle_actor_list(
             ):
                 if key in snap:
                     actor[key] = snap.get(key)
-            continue
-        effective_runner = effective_runner_kind(runner_kind)
-        runtime = str(actor.get("runtime") or "").strip()
-        headless_state = None
-        running = False
-        idle_seconds = None
-        pty_terminal_text = ""
-        if runtime.lower() == "codex" and effective_runner == "headless":
-            state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
-            headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
-            running = bool(state is not None and codex_app_supervisor.actor_running(group_id, aid))
-        elif runtime.lower() == "claude" and effective_runner == "headless":
-            state = claude_app_supervisor.get_state(group_id=group_id, actor_id=aid)
-            headless_state = dict(state) if isinstance(state, dict) else None
-            running = bool(state is not None and claude_app_supervisor.actor_running(group_id, aid))
-        elif effective_runner == "headless":
-            state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=aid)
-            headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
-            running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(group_id, aid))
+            if runtime.lower() == "web_model" and snap_runner_effective == "headless":
+                headless_state = read_headless_state(group_id, aid)
         else:
-            running = bool(pty_runner.SUPERVISOR.actor_running(group_id, aid))
-            idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=aid) if running else None
-            if running:
-                try:
-                    pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
-                        group_id=group_id,
-                        actor_id=aid,
-                        max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
-                    ).decode("utf-8", errors="replace")
-                except Exception:
-                    pty_terminal_text = ""
-        actor["running"] = running
-        actor["idle_seconds"] = idle_seconds
-        if effective_runner == "headless" or effective_runner != runner_kind:
-            actor["runner_effective"] = effective_runner
-        else:
-            actor.pop("runner_effective", None)
-        actor.update(
-            derive_effective_working_state(
-                running=running,
-                effective_runner=effective_runner,
-                runtime=runtime,
-                idle_seconds=idle_seconds,
-                pty_terminal_text=pty_terminal_text,
-                agent_state=agent_state_by_id.get(aid),
-                headless_state=headless_state,
+            running = False
+            idle_seconds = None
+            pty_terminal_text = ""
+            if runtime.lower() == "web_model" and effective_runner == "headless":
+                headless_state = read_headless_state(group_id, aid)
+                running = bool(coerce_bool(actor.get("enabled"), default=True) and headless_state_running(group_id, aid))
+            elif runtime.lower() == "codex" and effective_runner == "headless":
+                state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
+                headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
+                running = bool(state is not None and codex_app_supervisor.actor_running(group_id, aid))
+            elif runtime.lower() == "claude" and effective_runner == "headless":
+                state = claude_app_supervisor.get_state(group_id=group_id, actor_id=aid)
+                headless_state = dict(state) if isinstance(state, dict) else None
+                running = bool(state is not None and claude_app_supervisor.actor_running(group_id, aid))
+            elif runtime.lower() != "web_model" and effective_runner == "headless":
+                state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=aid)
+                headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
+                running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(group_id, aid))
+            else:
+                running = bool(pty_runner.SUPERVISOR.actor_running(group_id, aid))
+                idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=aid) if running else None
+                if running:
+                    try:
+                        pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
+                            group_id=group_id,
+                            actor_id=aid,
+                            max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
+                        ).decode("utf-8", errors="replace")
+                    except Exception:
+                        pty_terminal_text = ""
+            actor["running"] = running
+            actor["idle_seconds"] = idle_seconds
+            if effective_runner == "headless" or effective_runner != runner_kind:
+                actor["runner_effective"] = effective_runner
+            else:
+                actor.pop("runner_effective", None)
+            actor.update(
+                derive_effective_working_state(
+                    running=running,
+                    effective_runner=effective_runner,
+                    runtime=runtime,
+                    idle_seconds=idle_seconds,
+                    pty_terminal_text=pty_terminal_text,
+                    agent_state=agent_state_by_id.get(aid),
+                    headless_state=headless_state,
+                )
             )
-        )
+        if runtime.lower() == "web_model":
+            decorate_web_model_queued_turn_info(actor, group, actor_id=aid, headless_state=headless_state)
     if include_unread:
         from ...kernel.inbox import get_indexed_unread_counts
 

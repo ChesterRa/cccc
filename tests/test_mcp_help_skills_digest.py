@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -261,6 +262,40 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertNotIn("stale skill digest", markdown)
         self.assertIn("## Role Notes", markdown)
         self.assertIn("- keep this", markdown)
+
+    def test_cccc_help_appends_web_model_transport_runtime_note(self) -> None:
+        from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
+
+        group = SimpleNamespace(doc={"actors": [{"id": "web-1", "runtime": "web_model"}]})
+        base = (
+            "## Core Routes\n"
+            "- base content\n\n"
+            "## Web Model Transport (Runtime)\n"
+            "- stale standalone web-model instructions\n"
+        )
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
+            return_value=group,
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+            return_value={"enabled_capabilities": []},
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core.get_group_space_prompt_state",
+            return_value={},
+        ):
+            markdown = _append_runtime_help_addenda(base, group_id="g1", actor_id="web-1")
+
+        self.assertEqual(markdown.count("## Web Model Transport (Runtime)"), 1)
+        self.assertIn("normal CCCC agent", markdown)
+        self.assertIn("same bootstrap/help/message/coordination/capability rules", markdown)
+        self.assertIn("do not call `cccc_runtime_wait_next_turn` first", markdown)
+        self.assertIn("remote MCP pull", markdown)
+        self.assertIn("Web chat text alone is not a visible CCCC reply", markdown)
+        self.assertIn("`cccc_shell`", markdown)
+        self.assertIn("`cccc_git`", markdown)
+        self.assertIn("`cccc_runtime_complete_turn`", markdown)
+        self.assertNotIn("stale standalone web-model instructions", markdown)
 
     def test_cccc_help_includes_context_hygiene(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call

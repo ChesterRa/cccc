@@ -13,6 +13,9 @@ from ....kernel.group import load_group
 from ....util.conv import coerce_bool
 from ..common import MCPError, _call_daemon_or_raise
 
+_MAX_BLOB_READ_BYTES = 1_000_000
+_DEFAULT_BLOB_READ_BYTES = 200_000
+
 
 def _find_target_actor(*, group_id: str, actor_id: str) -> Optional[Dict[str, Any]]:
     group = load_group(str(group_id or "").strip())
@@ -196,6 +199,53 @@ def blob_path(*, group_id: str, rel_path: str) -> Dict[str, Any]:
         rp = f"state/blobs/{rp}"
     full = resolve_blob_attachment_path(group, rel_path=rp)
     return {"path": str(full)}
+
+
+def blob_info(*, group_id: str, rel_path: str) -> Dict[str, Any]:
+    """Return metadata for a blob attachment."""
+
+    resolved = blob_path(group_id=group_id, rel_path=rel_path)
+    path = Path(str(resolved.get("path") or ""))
+    if not path.exists() or not path.is_file():
+        raise MCPError(code="not_found", message=f"blob not found: {rel_path}")
+    try:
+        size = int(path.stat().st_size)
+    except Exception:
+        size = 0
+    mt, _ = mimetypes.guess_type(path.name)
+    return {
+        "path": str(path),
+        "rel_path": str(rel_path or "").strip(),
+        "title": path.name,
+        "mime_type": str(mt or ""),
+        "bytes": size,
+    }
+
+
+def blob_read(*, group_id: str, rel_path: str, max_bytes: Any = _DEFAULT_BLOB_READ_BYTES) -> Dict[str, Any]:
+    """Read a text blob attachment by relative path."""
+
+    info = blob_info(group_id=group_id, rel_path=rel_path)
+    path = Path(str(info.get("path") or ""))
+    try:
+        limit = int(max_bytes if max_bytes is not None else _DEFAULT_BLOB_READ_BYTES)
+    except Exception:
+        limit = _DEFAULT_BLOB_READ_BYTES
+    limit = max(1, min(limit, _MAX_BLOB_READ_BYTES))
+    try:
+        with path.open("rb") as fh:
+            data = fh.read(limit + 1)
+    except Exception as exc:
+        raise MCPError(code="read_failed", message=str(exc))
+    truncated = len(data) > limit
+    raw = data[:limit]
+    text = raw.decode("utf-8", errors="replace")
+    return {
+        **info,
+        "text": text,
+        "truncated": truncated,
+        "max_bytes": limit,
+    }
 
 
 def file_send(

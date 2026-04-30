@@ -788,6 +788,32 @@ class TestActorProfilesOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_web_model_profile_upsert_forces_headless_runner(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "id": "web-profile",
+                        "name": "ChatGPT Web",
+                        "runtime": "web_model",
+                        "runner": "pty",
+                        "command": ["codex"],
+                    },
+                },
+            )
+            self.assertTrue(upsert.ok, getattr(upsert, "error", None))
+            profile = (upsert.result or {}).get("profile") if isinstance(upsert.result, dict) else {}
+            self.assertIsInstance(profile, dict)
+            assert isinstance(profile, dict)
+            self.assertEqual(profile.get("runtime"), "web_model")
+            self.assertEqual(profile.get("runner"), "headless")
+            self.assertEqual(profile.get("command"), [])
+        finally:
+            cleanup()
+
     def test_user_scope_profile_ops_require_caller_context(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -8,6 +8,7 @@ class _FakeProc:
         self.returncode = None
         self.terminated = False
         self.killed = False
+        self.pid = 4321
 
     def poll(self):
         return self.returncode
@@ -258,6 +259,73 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertIn("system_browser_cdp", str(getattr(launched, "strategy", "") or ""))
         launched.close()
         self.assertTrue(browser_proc.terminated or browser_proc.killed)
+
+    def test_system_browser_can_use_profile_dir_directly(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        browser_proc = _FakeProc()
+        fake_cm = _FakePlaywrightCM()
+        with patch.object(runtime, "ensure_sync_playwright", return_value=lambda: fake_cm), patch.object(
+            runtime, "_start_virtual_display", return_value=None
+        ), patch.object(
+            runtime, "_system_browser_binaries", return_value=["/usr/bin/google-chrome"]
+        ), patch.object(
+            runtime, "_pick_free_port", return_value=9333
+        ), patch.object(
+            runtime, "_wait_cdp_endpoint", return_value=True
+        ), patch.object(
+            runtime.subprocess, "Popen", return_value=browser_proc
+        ) as popen, patch.dict(runtime.os.environ, {"DISPLAY": ":99"}, clear=True):
+            launched = runtime.launch_projected_browser_runtime(
+                profile_dir=runtime.Path("/tmp/web-model-chatgpt-profile"),
+                url="https://chatgpt.com",
+                width=1280,
+                height=800,
+                headless=False,
+                channel_candidates=("chrome",),
+                system_profile_subdir="",
+            )
+
+        cmd = popen.call_args.args[0]
+        self.assertIn("--user-data-dir=/tmp/web-model-chatgpt-profile", cmd)
+        self.assertEqual(getattr(launched, "metadata", {}).get("cdp_port"), 9333)
+        self.assertEqual(getattr(launched, "metadata", {}).get("pid"), 4321)
+        launched.close()
+        self.assertTrue(browser_proc.terminated or browser_proc.killed)
+
+    def test_missing_browser_channels_can_fallback_to_managed_chromium(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_cm = _FakePlaywrightCM()
+        launch_calls = []
+
+        def launch_persistent_context(**kwargs):
+            launch_calls.append(dict(kwargs))
+            if kwargs.get("channel"):
+                raise RuntimeError(f"Chromium distribution {kwargs.get('channel')!r} is not found")
+            return _FakeContext()
+
+        with patch.object(runtime, "ensure_sync_playwright", return_value=lambda: fake_cm), patch.object(
+            runtime, "_start_virtual_display", return_value=None
+        ), patch.object(
+            runtime, "_system_browser_binaries", return_value=[]
+        ), patch.object(
+            fake_cm.playwright.chromium,
+            "launch_persistent_context",
+            side_effect=launch_persistent_context,
+        ), patch.dict(runtime.os.environ, {"DISPLAY": ":99"}, clear=True):
+            launched = runtime.launch_projected_browser_runtime(
+                profile_dir=runtime.Path("/tmp/projected-browser-managed-fallback"),
+                url="https://chatgpt.com",
+                width=1280,
+                height=800,
+                headless=False,
+                channel_candidates=("chrome", "msedge", None),
+            )
+
+        self.assertEqual([call.get("channel") for call in launch_calls], ["chrome", "msedge", None])
+        self.assertEqual(str(getattr(launched, "strategy", "") or ""), "playwright_chromium")
+        launched.close()
 
 
 if __name__ == "__main__":

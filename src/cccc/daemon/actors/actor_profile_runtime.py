@@ -82,10 +82,12 @@ def _resolve_profile_for_start(
 
 
 def _profile_patch(profile: Dict[str, Any]) -> Dict[str, Any]:
+    runtime = str(profile.get("runtime") or "codex")
+    runner = "headless" if runtime == "web_model" else str(profile.get("runner") or "pty")
     return {
-        "runtime": str(profile.get("runtime") or "codex"),
-        "runner": str(profile.get("runner") or "pty"),
-        "command": list(profile.get("command") or []),
+        "runtime": runtime,
+        "runner": runner,
+        "command": [] if runtime == "web_model" else list(profile.get("command") or []),
         "submit": str(profile.get("submit") or "enter"),
         # Unified model: profile variables are secret env; keep actor.env empty.
         "env": {},

@@ -11,6 +11,7 @@ export type RuntimeDockItem = {
   runtime: string;
   runner: RuntimeDockRunner;
   unreadCount: number;
+  webModelQueuedCount: number;
   liveWorkCard: LiveWorkCard | null;
 };
 
@@ -40,6 +41,7 @@ export function buildRuntimeDockItems(args: {
       runtime: String(actor.runtime || "custom").trim() || "custom",
       runner: getRuntimeDockRunner(actor),
       unreadCount: Math.max(0, Number(actor.unread_count || 0)),
+      webModelQueuedCount: Math.max(0, Number(actor.web_model_queued_count || 0)),
       liveWorkCard: liveWorkCardByActorId.get(actorId) || null,
     });
   }

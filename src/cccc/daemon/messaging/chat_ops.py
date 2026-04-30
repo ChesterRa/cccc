@@ -40,11 +40,20 @@ from .actor_delivery_planner import (
     TRANSPORT_CLAUDE_HEADLESS,
     TRANSPORT_CODEX_HEADLESS,
     TRANSPORT_PTY,
+    TRANSPORT_WEB_MODEL_BROWSER,
     event_with_effective_to,
     plan_actor_chat_delivery,
 )
+from ..actors.web_model_browser_delivery import (
+    schedule_web_model_browser_delivery,
+    web_model_browser_delivery_enabled,
+)
 from .chat_support_ops import schedule_headless_post_wake_delivery
-from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
+from .actor_turn_rendering import (
+    build_actor_delivery_text as _build_delivery_text,
+    build_actor_headless_delivery_text as _build_headless_delivery_text,
+    compact_delivery_text as _compact_delivery_text,
+)
 from ..pet.review_scheduler import request_pet_review
 from ..pet.profile_refresh import record_user_chat_message
 from ..context.context_ops import handle_context_sync
@@ -97,189 +106,6 @@ def _wake_group_on_human_message(
     except Exception:
         return group
 
-
-def _build_delivery_text(
-    *,
-    text: str,
-    priority: str,
-    reply_required: bool,
-    event_id: str,
-    refs: list[dict[str, Any]],
-    attachments: list[dict[str, Any]],
-    src_group_id: str = "",
-    src_event_id: str = "",
-) -> str:
-    delivery_text = text
-    prefix_lines: list[str] = []
-    if priority == "attention" and event_id:
-        prefix_lines.append(f"[cccc] IMPORTANT (event_id={event_id}):")
-    if reply_required and event_id:
-        prefix_lines.append(f"[cccc] REPLY REQUIRED (event_id={event_id}): reply via cccc_message_reply.")
-    if src_group_id and src_event_id:
-        prefix_lines.append(f"[cccc] RELAYED FROM (group_id={src_group_id}, event_id={src_event_id}):")
-    if prefix_lines:
-        delivery_text = "\n".join(prefix_lines) + "\n" + delivery_text
-    ref_lines = _render_delivery_refs(refs)
-    if ref_lines:
-        delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(ref_lines)).strip()
-    if attachments:
-        lines = ["[cccc] Attachments:"]
-        for attachment in attachments[:8]:
-            title = str(attachment.get("title") or attachment.get("path") or "file").strip()
-            size_bytes = int(attachment.get("bytes") or 0)
-            rel_path = str(attachment.get("path") or "").strip()
-            lines.append(f"- {title} ({size_bytes} bytes) [{rel_path}]")
-        if len(attachments) > 8:
-            lines.append(f"- … ({len(attachments) - 8} more)")
-        delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(lines)).strip()
-    return delivery_text
-
-
-def _build_headless_delivery_text(
-    *,
-    by: str,
-    to: list[str],
-    body: str,
-    reply_to: str = "",
-    quote_text: str = "",
-    source_platform: str = "",
-    source_user_name: str = "",
-    source_user_id: str = "",
-) -> str:
-    return render_actor_inbound_message(
-        ActorInboundEnvelope(
-            by=by,
-            to=to,
-            text=body,
-            reply_to=reply_to,
-            quote_text=quote_text,
-            source_platform=source_platform,
-            source_user_name=source_user_name,
-            source_user_id=source_user_id,
-        )
-    )
-
-
-def _compact_delivery_text(value: Any, *, limit: int) -> str:
-    text = re.sub(r"\s+", " ", str(value or "").strip())
-    if not text:
-        return ""
-    if len(text) <= limit:
-        return text
-    return text[: max(1, limit - 1)].rstrip() + "…"
-
-
-def _presentation_slot_label(slot_id: str, label: str) -> str:
-    if label:
-        return label
-    match = re.search(r"(\d+)$", slot_id)
-    if match:
-        try:
-            return f"P{int(match.group(1))}"
-        except Exception:
-            pass
-    return slot_id or "Presentation"
-
-
-def _render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
-    if not refs:
-        return []
-
-    lines = ["[cccc] References:"]
-    rendered = 0
-
-    for ref in refs:
-        if not isinstance(ref, dict):
-            continue
-        kind = str(ref.get("kind") or "").strip()
-        if kind == "task_ref":
-            task_id = _compact_delivery_text(ref.get("task_id"), limit=40)
-            title = _compact_delivery_text(ref.get("title"), limit=72)
-            status = _compact_delivery_text(ref.get("status"), limit=24)
-            if task_id:
-                label = f"- Task {task_id}"
-                if status:
-                    label += f" [{status}]"
-                if title:
-                    label += f" — {title}"
-                lines.append(label)
-                rendered += 1
-                if rendered >= 4:
-                    break
-                continue
-
-        if kind == "presentation_ref":
-            slot_id = _compact_delivery_text(ref.get("slot_id"), limit=32)
-            label = _presentation_slot_label(
-                slot_id,
-                _compact_delivery_text(ref.get("label"), limit=24),
-            )
-            locator_label = _compact_delivery_text(ref.get("locator_label"), limit=48)
-            title = _compact_delivery_text(ref.get("title"), limit=72)
-            header = f"- {label}"
-            if slot_id:
-                header += f" ({slot_id})"
-            if locator_label:
-                header += f" · {locator_label}"
-            if title:
-                header += f" — {title}"
-            lines.append(header)
-            excerpt = _compact_delivery_text(ref.get("excerpt"), limit=120)
-            if excerpt:
-                lines.append(f'  excerpt: "{excerpt}"')
-            href = _compact_delivery_text(ref.get("href"), limit=120)
-            if href:
-                lines.append(f"  href: {href}")
-            locator = ref.get("locator") if isinstance(ref.get("locator"), dict) else {}
-            locator_url = _compact_delivery_text(locator.get("url"), limit=120)
-            if locator_url and locator_url != href:
-                lines.append(f"  view_url: {locator_url}")
-            captured_at = _compact_delivery_text(locator.get("captured_at"), limit=48)
-            if captured_at:
-                lines.append(f"  captured_at: {captured_at}")
-            viewer_scroll_top = locator.get("viewer_scroll_top")
-            if isinstance(viewer_scroll_top, (int, float)) or str(viewer_scroll_top or "").strip():
-                try:
-                    scroll_value = int(float(viewer_scroll_top))
-                except Exception:
-                    scroll_value = None
-                if scroll_value is not None and scroll_value >= 0:
-                    lines.append(f"  scroll_top: {scroll_value}")
-            snapshot = ref.get("snapshot") if isinstance(ref.get("snapshot"), dict) else {}
-            snapshot_path = _compact_delivery_text(snapshot.get("path"), limit=120)
-            if snapshot_path:
-                width = snapshot.get("width")
-                height = snapshot.get("height")
-                size_label = ""
-                try:
-                    width_value = int(width)
-                    height_value = int(height)
-                    if width_value > 0 and height_value > 0:
-                        size_label = f" ({width_value}x{height_value})"
-                except Exception:
-                    size_label = ""
-                lines.append(f"  snapshot: {snapshot_path}{size_label}")
-            rendered += 1
-            if rendered >= 4:
-                break
-            continue
-
-        summary = _compact_delivery_text(
-            ref.get("title") or ref.get("path") or ref.get("url") or kind,
-            limit=96,
-        )
-        if summary:
-            prefix = kind or "ref"
-            lines.append(f"- {prefix}: {summary}")
-            rendered += 1
-        if rendered >= 4:
-            break
-
-    if rendered == 0:
-        return []
-    if len(refs) > rendered:
-        lines.append(f"- … ({len(refs) - rendered} more)")
-    return lines
 
 def _normalize_refs(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
@@ -463,6 +289,9 @@ def _notify_headless_targets(
             notify_priority = "urgent" if priority == "attention" else "high"
         for actor_id in headless_targets:
             if actor_id in skip_ids:
+                continue
+            actor = find_actor(group, actor_id)
+            if isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "web_model":
                 continue
             emit_system_notify(
                 group,
@@ -686,6 +515,7 @@ def handle_send(
             effective_runner_kind=effective_runner_kind,
             codex_headless_running=codex_app_supervisor.actor_running,
             claude_headless_running=claude_app_supervisor.actor_running,
+            web_model_browser_delivery_enabled=web_model_browser_delivery_enabled,
         )
         actor_id = decision.actor_id
         if decision.transport == TRANSPORT_CODEX_HEADLESS:
@@ -724,6 +554,14 @@ def handle_send(
                 ts=event_ts,
             )
             request_flush_pending_messages(group, actor_id=actor_id)
+        elif decision.transport == TRANSPORT_WEB_MODEL_BROWSER:
+            if schedule_web_model_browser_delivery(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                trigger_event_id=event_id,
+                logger=logger,
+            ):
+                skip_headless_notify_actor_ids.add(actor_id)
         else:
             if actor_id in woken and decision.reason in {"codex_headless_not_running", "claude_headless_not_running"}:
                 if schedule_headless_post_wake_delivery(
@@ -1166,6 +1004,7 @@ def handle_reply(
             effective_runner_kind=effective_runner_kind,
             codex_headless_running=codex_app_supervisor.actor_running,
             claude_headless_running=claude_app_supervisor.actor_running,
+            web_model_browser_delivery_enabled=web_model_browser_delivery_enabled,
         )
         actor_id = decision.actor_id
         if decision.transport == TRANSPORT_CODEX_HEADLESS:
@@ -1205,6 +1044,14 @@ def handle_reply(
                 ts=event_ts,
             )
             request_flush_pending_messages(group, actor_id=actor_id)
+        elif decision.transport == TRANSPORT_WEB_MODEL_BROWSER:
+            if schedule_web_model_browser_delivery(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                trigger_event_id=event_id,
+                logger=logger,
+            ):
+                skip_headless_notify_actor_ids.add(actor_id)
         elif actor_id in woken and decision.reason in {"codex_headless_not_running", "claude_headless_not_running"}:
             if schedule_headless_post_wake_delivery(
                 group_id=group.group_id,

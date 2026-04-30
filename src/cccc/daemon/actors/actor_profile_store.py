@@ -266,6 +266,8 @@ def _save_actor_profile(
     now = utc_now_iso()
     runtime = str(profile.get("runtime") if "runtime" in profile else existing.get("runtime") or "codex").strip() or "codex"
     runner = str(profile.get("runner") if "runner" in profile else existing.get("runner") or "pty").strip() or "pty"
+    if runtime == "web_model":
+        runner = "headless"
     submit = str(profile.get("submit") if "submit" in profile else existing.get("submit") or "enter").strip() or "enter"
     name = str(profile.get("name") if "name" in profile else existing.get("name") or "").strip()
 
@@ -278,7 +280,7 @@ def _save_actor_profile(
             env[str(key)] = str(value)
 
     command_in = profile.get("command") if "command" in profile else existing.get("command")
-    command = _normalize_profile_command(runtime=runtime, runner=runner, command=command_in)
+    command = [] if runtime == "web_model" else _normalize_profile_command(runtime=runtime, runner=runner, command=command_in)
 
     capability_defaults_in = profile.get("capability_defaults") if "capability_defaults" in profile else existing.get("capability_defaults")
     capability_defaults: Optional[Dict[str, Any]] = None

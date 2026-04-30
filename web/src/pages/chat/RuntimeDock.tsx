@@ -293,6 +293,13 @@ function RuntimeDockActorButton({
   const statusLabel = item.liveWorkCard
     ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
     : getRuntimeStatusLabel(isRunning, workingState, (key, options) => t(`actors:${key}`, options));
+  const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));
+  const queuedLabel = queuedCount > 0
+    ? t("chat:runtimeDockQueuedForNextTurn", {
+        count: queuedCount,
+        defaultValue: `${queuedCount} queued for next turn`,
+      })
+    : "";
   const ringFrameClassName = isSmallScreen
     ? "pointer-events-none absolute left-1/2 top-1/2 h-[35px] w-[35px] -translate-x-1/2 -translate-y-1/2"
     : "pointer-events-none absolute left-1/2 top-1/2 h-[39px] w-[39px] -translate-x-1/2 -translate-y-1/2";
@@ -366,10 +373,22 @@ function RuntimeDockActorButton({
             )}
           accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
         />
+        {queuedCount > 0 ? (
+          <span
+            className={classNames(
+              "pointer-events-none absolute -right-0.5 -top-0.5 z-20 flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none shadow-[0_8px_18px_-10px_rgba(15,23,42,0.7)]",
+              ringPresentation.unreadBadgeClassName,
+            )}
+            aria-hidden="true"
+            title={queuedLabel}
+          >
+            {queuedCount > 99 ? "99+" : queuedCount}
+          </span>
+        ) : null}
 
       </button>
       <span id={`runtime-dock-status-${item.actorId}`} className="sr-only">
-        {item.actorLabel} · {item.runtime} · {statusLabel}
+        {item.actorLabel} · {item.runtime} · {statusLabel}{queuedLabel ? ` · ${queuedLabel}` : ""}
       </span>
     </div>
   );

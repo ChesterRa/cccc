@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from .actor_runtime_cache import replace_group_runtime
+from .runner_state_ops import headless_state_running, read_headless_state
 from ..kernel.context import ContextStorage
 from ..kernel.working_state import (
     derive_effective_working_state,
@@ -337,7 +338,10 @@ def start_actor_activity_thread(
                             running = False
                             idle = None
                             headless_state = None
-                            if runtime == "codex" and effective_runner == "headless":
+                            if runtime == "web_model" and effective_runner == "headless":
+                                headless_state = read_headless_state(gid, aid)
+                                running = bool(headless_state_running(gid, aid))
+                            elif runtime == "codex" and effective_runner == "headless":
                                 headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))
                             elif runtime == "claude" and effective_runner == "headless" and claude_supervisor is not None:

@@ -22,6 +22,26 @@ def _scope_state_get(scope: Scope, key: str, default: object = None) -> object:
     return state.get(key, default)
 
 
+def _actual_request_scheme(request: Request) -> str:
+    force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")
+    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").strip().lower()
+    return "https" if force_secure else (
+        forwarded_proto if forwarded_proto in ("http", "https") else str(getattr(request.url, "scheme", "") or "").lower()
+    )
+
+
+def set_access_token_cookie(response: Response, request: Request, token: str) -> None:
+    actual_scheme = _actual_request_scheme(request)
+    response.set_cookie(
+        key="cccc_access_token",
+        value=token,
+        httponly=True,
+        samesite="none" if actual_scheme == "https" else "lax",
+        secure=actual_scheme == "https",
+        path="/",
+    )
+
+
 class AuthMiddleware:
     def __init__(
         self,
@@ -103,20 +123,8 @@ class AuthMiddleware:
                     and provided_token
                     and str(request.cookies.get("cccc_access_token") or "").strip() != provided_token
                 ):
-                    force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")
-                    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").strip().lower()
-                    actual_scheme = "https" if force_secure else (
-                        forwarded_proto if forwarded_proto in ("http", "https") else str(getattr(request.url, "scheme", "") or "").lower()
-                    )
                     temp = Response()
-                    temp.set_cookie(
-                        key="cccc_access_token",
-                        value=provided_token,
-                        httponly=True,
-                        samesite="none" if actual_scheme == "https" else "lax",
-                        secure=actual_scheme == "https",
-                        path="/",
-                    )
+                    set_access_token_cookie(temp, request, provided_token)
                     cookie_headers.extend(temp.raw_headers)
 
                 if cookie_headers:

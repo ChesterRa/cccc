@@ -20,12 +20,8 @@ DEFAULT_PREAMBLE_BODY = """Startup routes:
 - From bootstrap, inspect `context_hygiene`, `memory_recall_gate`, and inbox before planning.
 - Need colder group/project detail: use `cccc_context_get` / `cccc_project_info`.
 
-Working stance:
-- Work like a teammate, not a script.
+Execution default:
 - Reuse working paths first.
-- Prefer silence over low-signal chatter; speak for real changes, not filler or routine `@all` updates.
-- For chat, be brief and direct; intent is not progress.
-- Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.
 """
 
 

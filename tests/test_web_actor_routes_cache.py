@@ -498,6 +498,74 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_list_route_local_fallback_reports_web_model_queued_count(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.ledger import append_event
+
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            created = self._local_call_daemon(
+                {
+                    "op": "actor_add",
+                    "args": {
+                        "group_id": group_id,
+                        "actor_id": "web-1",
+                        "title": "Web 1",
+                        "runtime": "web_model",
+                        "runner": "headless",
+                        "command": [],
+                        "env": {},
+                        "by": "user",
+                    },
+                }
+            )
+            self.assertTrue(bool(created.get("ok")), created)
+            from cccc.daemon.runner_state_ops import write_headless_state
+            from cccc.kernel.group import load_group
+
+            write_headless_state(group_id, "web-1")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            active = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "active turn", "to": ["web-1"]},
+            )
+            wait = self._local_call_daemon(
+                {
+                    "op": "web_model_runtime_wait_next_turn",
+                    "args": {"group_id": group_id, "actor_id": "web-1", "limit": 1},
+                }
+            )
+            self.assertTrue(bool(wait.get("ok")), wait)
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "queued one", "to": ["web-1"]},
+            )
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list):
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/actors?include_unread=1")
+
+            self.assertEqual(resp.status_code, 200)
+            actor = resp.json()["result"]["actors"][0]
+            self.assertTrue(bool(actor["running"]))
+            self.assertEqual(actor["effective_working_state"], "working")
+            self.assertEqual(actor["web_model_queued_count"], 1)
+            self.assertEqual(actor["web_model_queued_after_event_id"], active["id"])
+            self.assertEqual(actor["unread_count"], 2)
+        finally:
+            cleanup()
+
     def test_actor_list_route_codex_pty_prefers_headless_state_file(self) -> None:
         _, cleanup = self._with_home()
         try:

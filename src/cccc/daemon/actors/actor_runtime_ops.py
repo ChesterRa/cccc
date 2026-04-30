@@ -96,6 +96,9 @@ def resolve_actor_launch_config(
     public_env = _coerce_string_env(actor.get("env")) if isinstance(actor.get("env"), dict) else _coerce_string_env(env)
     resolved_runner = str(actor.get("runner") or runner or "pty").strip() or "pty"
     resolved_runtime = str(actor.get("runtime") or runtime or "codex").strip() or "codex"
+    if resolved_runtime == "web_model":
+        resolved_runner = "headless"
+        resolved_command = []
     effective_runner = effective_runner_kind(resolved_runner)
     if resolved_runtime == "custom" and effective_runner != "headless" and not resolved_command:
         raise ValueError("custom runtime requires a command (PTY runner)")
@@ -262,7 +265,12 @@ def start_actor_process(
         return {"success": False, "error": runtime_error}
 
     try:
-        if runtime == "codex" and effective_runner == "headless":
+        if runtime == "web_model" and effective_runner == "headless":
+            try:
+                write_headless_state(group.group_id, actor_id)
+            except Exception:
+                pass
+        elif runtime == "codex" and effective_runner == "headless":
             codex_app_supervisor.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,

@@ -22,6 +22,7 @@ AgentRuntime = Literal[
     "gemini",
     "kimi",
     "neovate",
+    "web_model",
     "custom",
 ]
 InternalActorKind = Literal["pet", "voice_secretary"]

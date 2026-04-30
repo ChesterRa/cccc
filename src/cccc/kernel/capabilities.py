@@ -24,6 +24,7 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_tracked_send",
     "cccc_message_reply",
     "cccc_file",
+    "cccc_repo",
     "cccc_presentation",
     "cccc_context_get",
     "cccc_coordination",
@@ -60,8 +61,26 @@ VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = PET_CORE_TOOLS + (
     "cccc_voice_secretary_request",
 )
 
+WEB_MODEL_CORE_TOOLS: Tuple[str, ...] = CORE_BASIC_TOOLS + (
+    "cccc_runtime_wait_next_turn",
+    "cccc_runtime_complete_turn",
+    "cccc_repo_edit",
+    "cccc_shell",
+    "cccc_git",
+)
+
+# ChatGPT-style remote MCP clients parse the tool schema at connector setup and
+# may not reliably refresh later. Web Model actors therefore advertise a stable
+# built-in schema, while call-time permission checks still enforce actor role.
+WEB_MODEL_ADVERTISED_EXCLUDED_TOOLS: Tuple[str, ...] = (
+    "cccc_pet_decisions",
+    "cccc_voice_secretary_document",
+    "cccc_voice_secretary_request",
+    "cccc_voice_secretary_composer",
+)
+
 SPECIALIZED_CORE_TOOL_NAMES: Tuple[str, ...] = tuple(
-    sorted((set(PET_CORE_TOOLS) | set(VOICE_SECRETARY_CORE_TOOLS)) - set(CORE_TOOL_NAMES))
+    sorted((set(PET_CORE_TOOLS) | set(VOICE_SECRETARY_CORE_TOOLS) | set(WEB_MODEL_CORE_TOOLS)) - set(CORE_TOOL_NAMES))
 )
 
 
@@ -1098,16 +1117,25 @@ def all_pack_tool_name_set() -> Set[str]:
     return names
 
 
+def web_model_advertised_tool_names(all_tool_names: Iterable[str]) -> Set[str]:
+    """Return the stable built-in tool schema advertised to Web Model clients."""
+    excluded = set(WEB_MODEL_ADVERTISED_EXCLUDED_TOOLS)
+    return {str(name).strip() for name in all_tool_names if str(name).strip() and str(name).strip() not in excluded}
+
+
 def resolve_core_tool_names(
     *,
     actor_role: str = "",
     is_pet: bool = False,
     is_voice_secretary: bool = False,
+    is_web_model: bool = False,
 ) -> Set[str]:
     if bool(is_voice_secretary):
         return set(VOICE_SECRETARY_CORE_TOOLS)
     if bool(is_pet):
         return set(PET_CORE_TOOLS)
+    if bool(is_web_model):
+        return set(WEB_MODEL_CORE_TOOLS)
     role = str(actor_role or "").strip().lower()
     if role == "peer":
         return set(CORE_BASIC_TOOLS)
@@ -1120,11 +1148,13 @@ def resolve_visible_tool_names(
     actor_role: str = "",
     is_pet: bool = False,
     is_voice_secretary: bool = False,
+    is_web_model: bool = False,
 ) -> Set[str]:
     visible = resolve_core_tool_names(
         actor_role=actor_role,
         is_pet=is_pet,
         is_voice_secretary=is_voice_secretary,
+        is_web_model=is_web_model,
     )
     for cap_id in enabled_capability_ids:
         cap = BUILTIN_CAPABILITY_PACKS.get(str(cap_id))

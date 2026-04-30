@@ -240,7 +240,12 @@ def handle_group_start(
                         },
                     )
 
-            if runtime == "codex" and runner_effective == "headless":
+            if runtime == "web_model" and runner_effective == "headless":
+                try:
+                    write_headless_state(group.group_id, aid)
+                except Exception:
+                    pass
+            elif runtime == "codex" and runner_effective == "headless":
                 codex_app_supervisor.start_actor(
                     group_id=group.group_id,
                     actor_id=aid,

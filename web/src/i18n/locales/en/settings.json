@@ -1047,6 +1047,7 @@
     "localGoalBadge": "Machine only",
     "lanGoalBadge": "Private network",
     "publicTokenRequiredBadge": "Token required",
+    "publicTokenProtectedBadge": "Protected",
     "goals": {
       "local": {
         "title": "Local only",
@@ -1068,8 +1069,10 @@
     "goalPortHintLan": "Private-network peers will use this port once the running Web binding is applied.",
     "goalPortHintAdvanced": "Only change the port here if your public proxy or tunnel needs Web to listen elsewhere.",
     "goalPublicUrlHint": "Use the final browser URL that people should open, for example a reverse proxy or tunnel URL.",
-    "publicTokenRequiredTitle": "Public access is never tokenless",
-    "publicTokenRequiredHint": "As soon as a Public URL is set, CCCC forces Access Token protection for that route.",
+    "publicTokenRequiredTitle": "Create an Access Token before exposing this URL",
+    "publicTokenRequiredHint": "Public URL / tunnel mode always requires token sign-in. Create an Admin Access Token first, then save or apply the route.",
+    "publicTokenProtectedTitle": "Public access is protected",
+    "publicTokenProtectedHint": "An Access Token is already configured. Public URL routes stay behind token sign-in.",
     "saveChanges": "Save changes",
     "savedState": "Saved",
     "primaryActionSaveHint": "Save writes the new access goal and binding policy first. If the running Web socket still points at the old binding, you can apply or restart after saving.",

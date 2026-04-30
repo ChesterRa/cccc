@@ -9,6 +9,7 @@ from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
+from ..runner_state_ops import headless_state_running, web_model_group_running
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.time import utc_now_iso
@@ -110,6 +111,8 @@ def is_actor_running(group_id: str, actor_id: str, runner_kind: str) -> bool:
     group = load_group(group_id)
     actor = find_actor(group, actor_id) if group is not None else None
     runtime = str(actor.get("runtime") or "").strip().lower() if isinstance(actor, dict) else ""
+    if runtime == "web_model":
+        return bool(headless_state_running(group_id, actor_id))
     if runtime == "codex":
         return codex_app_supervisor.actor_running(group_id, actor_id)
     if runtime == "claude" and _effective_runner_kind(runner_kind) == "headless":
@@ -128,6 +131,7 @@ def is_group_running(group_id: str) -> bool:
         or
         pty_runner.SUPERVISOR.group_running(group_id)
         or headless_runner.SUPERVISOR.group_running(group_id)
+        or web_model_group_running(group_id)
     )
 
 

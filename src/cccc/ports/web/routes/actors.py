@@ -15,8 +15,9 @@ from starlette.concurrency import run_in_threadpool
 from ....daemon.server import call_daemon, get_daemon_endpoint
 from ....daemon.codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
+from ....daemon.actors.web_model_runtime_ops import decorate_web_model_queued_turn_info
 from ....daemon.context.context_ops import _agent_state_to_dict
-from ....daemon.runner_state_ops import headless_state_path, pty_state_path
+from ....daemon.runner_state_ops import headless_state_path, headless_state_running, pty_state_path, read_headless_state
 from ....kernel.group import load_group
 from ....kernel.actors import find_actor
 from ....kernel.context import ContextStorage
@@ -27,6 +28,7 @@ from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
 from ....util.fs import read_json
 from ....util.process import pid_is_alive
+from ....util.conv import coerce_bool
 from ..actor_avatar import (
     build_actor_web_payload,
     delete_actor_avatar,
@@ -56,7 +58,7 @@ _READONLY_ACTOR_HANDOFF_ONCE: set[str] = set()
 _READONLY_ACTOR_GENERATION: Dict[str, int] = {}
 _READONLY_ACTOR_CACHE_LOCK = threading.Lock()
 _READONLY_ACTOR_TTL_S = 0.8
-_STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude"})
+_STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude", "web_model"})
 
 
 def _pid_matches_actor_context(pid: int, *, group_id: str, actor_id: str) -> bool:
@@ -141,7 +143,10 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         running = False
         idle_seconds = None
         headless_state = None
-        if runtime.lower() == "codex":
+        if runtime.lower() == "web_model" and effective_runner == "headless":
+            headless_state = read_headless_state(gid, aid)
+            running = bool(coerce_bool(actor.get("enabled"), default=True) and headless_state_running(gid, aid))
+        if not running and runtime.lower() == "codex":
             try:
                 state_doc = read_json(headless_state_path(gid, aid))
             except Exception:
@@ -181,7 +186,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 and pid_is_alive(pid)
                 and str(state_doc.get("status") or "").strip().lower() != "stopped"
             )
-        if not running and effective_runner == "headless":
+        if not running and runtime.lower() != "web_model" and effective_runner == "headless":
             state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
             headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
             running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(gid, aid))
@@ -228,6 +233,8 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 headless_state=headless_state,
             )
         )
+        if runtime.lower() == "web_model":
+            decorate_web_model_queued_turn_info(actor, group, actor_id=aid, headless_state=headless_state)
 
     if include_unread:
         counts = get_indexed_unread_counts(group, actors=actors)
@@ -334,7 +341,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             status_code=400,
             detail={
                 "code": "headless_internal_only",
-                "message": "This headless runtime is internal-only. Standard Web headless mode currently supports codex and claude only.",
+                "message": "This headless runtime is internal-only. Standard Web headless mode currently supports codex, claude, and web_model.",
                 "details": {
                     "source": source,
                     "hint": "Use PTY for unsupported runtimes in standard Web mode. Other headless runtimes remain reserved for internal/developer workflows.",

@@ -71,6 +71,48 @@ class TestAccessTokenRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_first_admin_access_token_sets_login_cookie(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._create_client()
+            resp = client.post(
+                "/api/v1/access-tokens",
+                json={"user_id": "first-admin", "is_admin": True},
+            )
+            self.assertEqual(resp.status_code, 200)
+            created = resp.json()["result"]["access_token"]
+            token = str(created.get("token") or "")
+            self.assertTrue(token.startswith("acc_"))
+            set_cookie = str(resp.headers.get("set-cookie") or "")
+            self.assertIn("cccc_access_token=", set_cookie)
+            self.assertIn(token, set_cookie)
+
+            session = client.get("/api/v1/web_access/session")
+            self.assertEqual(session.status_code, 200)
+            data = ((session.json().get("result") or {}).get("web_access_session") or {})
+            self.assertTrue(bool(data.get("current_browser_signed_in")))
+            self.assertTrue(bool(data.get("can_access_global_settings")))
+            self.assertEqual(str(data.get("user_id") or ""), "first-admin")
+        finally:
+            cleanup()
+
+    def test_first_admin_access_token_cookie_honors_forwarded_https(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._create_client()
+            resp = client.post(
+                "/api/v1/access-tokens",
+                json={"user_id": "first-admin", "is_admin": True},
+                headers={"x-forwarded-proto": "https"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            set_cookie = str(resp.headers.get("set-cookie") or "").lower()
+            self.assertIn("cccc_access_token=", set_cookie)
+            self.assertIn("secure", set_cookie)
+            self.assertIn("samesite=none", set_cookie)
+        finally:
+            cleanup()
+
     def test_admin_access_token_ignores_allowed_groups_on_create(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 

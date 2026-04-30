@@ -81,6 +81,33 @@ class TestWebGroupsLocalProjection(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_groups_route_marks_web_model_marker_running(self) -> None:
+        cleanup = self._with_home()
+        try:
+            from cccc.daemon.runner_state_ops import write_headless_state
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import create_group, load_group
+            from cccc.kernel.registry import load_registry
+
+            reg = load_registry()
+            gid = create_group(reg, title="web-model-running", topic="").group_id
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="webpeer", title="Web Peer", runtime="web_model", runner="headless")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+            write_headless_state(gid, "webpeer")
+
+            with self._client() as client:
+                resp = client.get("/api/v1/groups")
+
+            self.assertEqual(resp.status_code, 200)
+            groups = resp.json()["result"]["groups"]
+            match = next(item for item in groups if str(item.get("group_id") or "") == gid)
+            self.assertTrue(bool(match.get("running")))
+            self.assertTrue(bool(((match.get("runtime_status") or {}).get("runtime_running"))))
+        finally:
+            cleanup()
+
     def test_groups_route_prefers_group_level_supervisor_running_signal(self) -> None:
         cleanup = self._with_home()
         try:

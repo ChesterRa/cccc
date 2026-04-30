@@ -77,6 +77,7 @@ from .runner_state_ops import (
     write_pty_state as _write_pty_state,
     remove_pty_state_if_pid as _remove_pty_state_if_pid,
     headless_state_path as _headless_state_path,
+    headless_state_running as _headless_state_running,
     write_headless_state as _write_headless_state,
     remove_headless_state as _remove_headless_state,
     cleanup_stale_pty_state as _cleanup_stale_pty_state,
@@ -317,6 +318,7 @@ SUPPORTED_RUNTIMES = (
     "gemini",
     "kimi",
     "neovate",
+    "web_model",
     "custom",
 )
 
@@ -845,6 +847,13 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
                     and claude_app_supervisor.actor_running(wake_group.group_id, actor_id)
                 )
                 or (
+                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() == "web_model"
+                    and _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
+                    and _headless_state_running(wake_group.group_id, actor_id)
+                )
+                or (
+                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() != "web_model"
+                    and
                     _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
                     and headless_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id)
                 )

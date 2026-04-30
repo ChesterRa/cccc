@@ -143,7 +143,6 @@ def render_role_system_prompt(
         "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs.",
         "- Terminal output is not delivery.",
         "- A status message, plan, or promise is not task progress; for action requests, either start the work now or state the exact blocker.",
-        "- Cold start or resume: call cccc_bootstrap first, then cccc_help.",
         "- At key transitions, sync shared control-plane state and your cccc_agent_state.",
         "- Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.",
         "- For strategy or scope discussion, align first; implement only after explicit action intent.",

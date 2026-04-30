@@ -85,10 +85,16 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: manual",
         "mcp_add_pattern": None,
     },
+    "web_model": {
+        "display_name": "Browser Web Model",
+        "command": "",
+        "capabilities": "Remote MCP connector; pull-based turns; no local process",
+        "mcp_add_pattern": None,
+    },
 }
 
 # First-class supported runtimes (CCCC manages startup defaults + MCP wiring)
-PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi"]
+PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi", "web_model"]
 def detect_runtime(name: str) -> RuntimeInfo:
     """Detect if a specific runtime is available on the system."""
     config = KNOWN_RUNTIMES.get(name)
@@ -110,6 +116,16 @@ def detect_runtime(name: str) -> RuntimeInfo:
             display_name=config["display_name"],
             command=config["command"],
             available=False,
+            path=None,
+            capabilities=config["capabilities"],
+            mcp_add_command=None,
+        )
+    if name == "web_model":
+        return RuntimeInfo(
+            name=name,
+            display_name=config["display_name"],
+            command=config["command"],
+            available=True,
             path=None,
             capabilities=config["capabilities"],
             mcp_add_command=None,
@@ -160,7 +176,7 @@ def get_runtime_command(name: str) -> List[str]:
     
     Returns the command as a list suitable for subprocess.
     """
-    if name == "custom":
+    if name in {"custom", "web_model"}:
         return []
     config = KNOWN_RUNTIMES.get(name)
     if not config:
@@ -216,6 +232,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "kimi": ["kimi", "--yolo"],
         "neovate": ["neovate"],
         "custom": [],
+        "web_model": [],
     }
     return commands.get(name, [name])
 
@@ -233,6 +250,11 @@ def runtime_start_preflight_error(runtime: str, command: Optional[List[str]] = N
 
     rt = str(runtime or "").strip()
     cmd = [str(part) for part in (command or []) if str(part).strip()]
+
+    if rt == "web_model":
+        if runner_kind != "headless":
+            return "web_model runtime uses a remote MCP connector and must use the headless runner"
+        return ""
 
     if rt == "custom":
         if not cmd:

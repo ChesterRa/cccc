@@ -110,6 +110,8 @@ def handle_actor_add(
                 raise ValueError("too many profile private env keys configured")
 
         runner = requested_runner or "pty"
+        if runtime == "web_model":
+            runner = "headless"
         if runner not in ("pty", "headless"):
             raise ValueError("invalid runner (must be 'pty' or 'headless')")
         if runtime not in supported_runtimes:
@@ -205,6 +207,9 @@ def handle_actor_add(
         else:
             if not command:
                 command = get_runtime_command_with_flags(runtime)
+        if runtime == "web_model":
+            runner = "headless"
+            command = []
 
         if runtime == "custom" and runner != "headless" and not command:
             raise ValueError("custom runtime requires a command (PTY runner)")

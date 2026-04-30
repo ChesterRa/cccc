@@ -12,6 +12,7 @@ from ...kernel.group import load_group
 from ...kernel.runtime import runtime_start_preflight_error
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..runner_state_ops import web_model_group_running
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -193,7 +194,9 @@ def autostart_running_groups(
                     str(launch_spec["runner"]),
                     effective_runner,
                 )
-                if runtime == "codex" and effective_runner == "headless":
+                if runtime == "web_model" and effective_runner == "headless":
+                    write_headless_state(group.group_id, actor_id)
+                elif runtime == "codex" and effective_runner == "headless":
                     codex_app_supervisor.start_actor(
                         group_id=group.group_id,
                         actor_id=actor_id,
@@ -238,7 +241,9 @@ def autostart_running_groups(
                 continue
 
             try:
-                if runtime == "codex" and effective_runner == "headless":
+                if runtime == "web_model" and effective_runner == "headless":
+                    pass
+                elif runtime == "codex" and effective_runner == "headless":
                     pass
                 elif runtime == "claude" and effective_runner == "headless":
                     pass
@@ -266,6 +271,7 @@ def autostart_running_groups(
                     or
                     pty_runner.SUPERVISOR.group_running(group.group_id)
                     or headless_runner.SUPERVISOR.group_running(group.group_id)
+                    or web_model_group_running(group.group_id)
                 )
             ):
                 automation_on_resume(group)

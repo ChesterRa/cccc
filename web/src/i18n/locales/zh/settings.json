@@ -1047,6 +1047,7 @@
     "localGoalBadge": "仅本机",
     "lanGoalBadge": "私有网络",
     "publicTokenRequiredBadge": "必须带令牌",
+    "publicTokenProtectedBadge": "已保护",
     "goals": {
       "local": {
         "title": "仅本机",
@@ -1068,8 +1069,10 @@
     "goalPortHintLan": "运行中的 Web 绑定应用后，私有网络里的设备会通过这个端口访问。",
     "goalPortHintAdvanced": "只有当你的公网代理或隧道要求 Web 监听到别的端口时，才需要改这里。",
     "goalPublicUrlHint": "填写用户最终应该打开的浏览器地址，比如反向代理或隧道分配出来的 URL。",
-    "publicTokenRequiredTitle": "公网暴露不能裸奔",
-    "publicTokenRequiredHint": "一旦设置了公网 URL，CCCC 会强制要求这条访问路径使用访问令牌。",
+    "publicTokenRequiredTitle": "先创建访问令牌，再暴露公网 URL",
+    "publicTokenRequiredHint": "公网 URL / 隧道模式始终要求登录令牌。请先创建一个管理员访问令牌，再保存或应用这条访问路径。",
+    "publicTokenProtectedTitle": "公网访问已启用令牌保护",
+    "publicTokenProtectedHint": "当前已有访问令牌；设置 Public URL 后，这条公网 / 隧道路径会继续强制登录。",
     "saveChanges": "保存更改",
     "savedState": "已保存",
     "primaryActionSaveHint": "先把新的访问目标和绑定策略保存下来。如果当前运行中的 Web 还停留在旧绑定上，保存后再去应用或重启即可。",

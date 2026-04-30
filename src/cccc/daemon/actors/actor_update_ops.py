@@ -301,7 +301,12 @@ def handle_actor_update(
                         return _error("runtime_unavailable", runtime_error)
 
                 if runner_effective == "headless":
-                    if runtime == "codex":
+                    if runtime == "web_model":
+                        try:
+                            write_headless_state(group.group_id, actor_id)
+                        except Exception:
+                            pass
+                    elif runtime == "codex":
                         codex_app_supervisor.start_actor(
                             group_id=group.group_id,
                             actor_id=actor_id,
@@ -349,7 +354,10 @@ def handle_actor_update(
             runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
             runner_effective = effective_runner_kind(runner_kind)
             runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-            if runtime == "codex" and runner_effective == "headless":
+            if runtime == "web_model" and runner_effective == "headless":
+                remove_headless_state(group.group_id, actor_id)
+                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            elif runtime == "codex" and runner_effective == "headless":
                 codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 remove_headless_state(group.group_id, actor_id)
                 remove_pty_state_if_pid(group.group_id, actor_id, pid=0)

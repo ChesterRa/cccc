@@ -51,6 +51,7 @@ Issues = "https://github.com/ChesterRa/cccc/issues"
 [project.scripts]
 cccc = "cccc.cli:main"
 ccccd = "cccc.daemon_main:main"
+cccc-web-model-browser-sidecar = "cccc.ports.web_model_browser_sidecar:main"
 
 [tool.setuptools]
 include-package-data = true

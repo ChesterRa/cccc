@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -33,6 +35,26 @@ class _RuntimeContext:
     home: str
     group_id: str
     actor_id: str
+
+
+_RUNTIME_CONTEXT_OVERRIDE: ContextVar[Optional[_RuntimeContext]] = ContextVar(
+    "cccc_mcp_runtime_context_override",
+    default=None,
+)
+
+
+@contextmanager
+def runtime_context_override(*, home: str = "", group_id: str = "", actor_id: str = "") -> Iterable[None]:
+    ctx = _RuntimeContext(
+        home=_normalize_home(str(home or "")),
+        group_id=str(group_id or "").strip(),
+        actor_id=str(actor_id or "").strip(),
+    )
+    token = _RUNTIME_CONTEXT_OVERRIDE.set(ctx)
+    try:
+        yield
+    finally:
+        _RUNTIME_CONTEXT_OVERRIDE.reset(token)
 
 
 def _proc_parent_pid_windows(pid: int) -> int:
@@ -219,6 +241,15 @@ def _find_runtime_binding_from_pty_state(home: str, ancestor_pids: Iterable[int]
 
 
 def _runtime_context() -> _RuntimeContext:
+    override = _RUNTIME_CONTEXT_OVERRIDE.get()
+    if override is not None and (override.group_id or override.actor_id or override.home):
+        default_home = _normalize_home(str(cccc_home()))
+        return _RuntimeContext(
+            home=override.home or default_home,
+            group_id=override.group_id,
+            actor_id=override.actor_id,
+        )
+
     home = _normalize_home(_env_str("CCCC_HOME"))
     gid = _env_str("CCCC_GROUP_ID")
     aid = _env_str("CCCC_ACTOR_ID")

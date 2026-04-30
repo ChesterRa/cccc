@@ -1,14 +1,31 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import socket
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from ....kernel.access_tokens import list_access_tokens
+from ....kernel.actors import find_actor
+from ....kernel.group import load_group
 from ....kernel.scope import detect_scope
-from ....kernel.settings import get_observability_settings, get_web_branding_settings
+from ....kernel.settings import get_observability_settings, get_web_branding_settings, resolve_remote_access_web_binding
+from ....kernel.web_model_connectors import (
+    create_web_model_connector,
+    load_web_model_connectors,
+    mask_web_model_connector,
+    record_web_model_connector_activity,
+    revoke_web_model_connector,
+    verify_web_model_connector_secret,
+)
+from ....daemon.runner_state_ops import headless_state_running
+from ....util.conv import coerce_bool
 from ..branding import (
     build_branding_payload,
     delete_branding_asset,
@@ -16,6 +33,7 @@ from ..branding import (
     resolve_branding_asset_path,
     store_branding_asset,
 )
+from ...mcp.common import runtime_context_override
 from ..schemas import (
     BrandingUpdateRequest,
     DebugClearLogsRequest,
@@ -24,11 +42,38 @@ from ..schemas import (
     RemoteAccessConfigureRequest,
     RouteContext,
     check_group,
+    check_admin,
     get_principal,
     require_admin,
     require_group,
     require_user,
+    resolve_websocket_principal,
+    websocket_tokens_active,
 )
+
+_WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
+
+
+class WebModelConnectorCreateRequest(BaseModel):
+    group_id: str
+    actor_id: str
+    provider: str = ""
+    label: str = ""
+
+
+class WebModelBrowserSessionRequest(BaseModel):
+    group_id: str
+    actor_id: str
+    visibility: str = "visible"
+    width: int = 1366
+    height: int = 900
+
+
+class WebModelBrowserBindRequest(BaseModel):
+    group_id: str
+    actor_id: str
+    conversation_url: str = ""
+    clear: bool = False
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -143,6 +188,563 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             result["home"] = str(ctx.home)
 
         return {"ok": daemon_ok, "result": result}
+
+    def _mcp_jsonrpc_error(req_id: Any, code: int, message: str) -> Dict[str, Any]:
+        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+
+    def _connector_base_url(request: Request) -> str:
+        binding = resolve_remote_access_web_binding()
+        public_url = str(binding.get("web_public_url") or "").strip()
+        if public_url:
+            base = public_url.rstrip("/")
+            if base.endswith("/ui"):
+                base = base[: -len("/ui")]
+            return base.rstrip("/")
+        return str(request.base_url).rstrip("/")
+
+    def _connector_url(request: Request, connector_id: str) -> str:
+        return f"{_connector_base_url(request)}/mcp/web-model/{connector_id}"
+
+    def _connector_url_with_token(connector_url: str, secret: str) -> str:
+        url = str(connector_url or "").strip()
+        token = str(secret or "").strip()
+        if not url or not token:
+            return ""
+        sep = "&" if "?" in url else "?"
+        from urllib.parse import urlencode
+
+        return f"{url}{sep}{urlencode({'token': token})}"
+
+    def _web_model_connector_web_payload(request: Request, item: Dict[str, Any]) -> Dict[str, Any]:
+        connector_id = str(item.get("connector_id") or "").strip()
+        entry = mask_web_model_connector(item)
+        connector_url = _connector_url(request, connector_id) if connector_id else ""
+        secret = str(item.get("secret") or "").strip()
+        entry["connector_url"] = connector_url
+        entry["secret_available"] = bool(secret)
+        token_url = _connector_url_with_token(connector_url, secret)
+        if token_url:
+            entry["connector_url_with_token"] = token_url
+        return entry
+
+    def _require_web_model_browser_actor(group_id: str, actor_id: str) -> None:
+        gid = str(group_id or "").strip()
+        aid = str(actor_id or "").strip()
+        if not gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "missing group_id", "details": {}})
+        if not aid:
+            raise HTTPException(status_code=400, detail={"code": "missing_actor_id", "message": "missing actor_id", "details": {}})
+        group = load_group(gid)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {gid}", "details": {}})
+        actor = find_actor(group, aid)
+        if not isinstance(actor, dict):
+            raise HTTPException(status_code=404, detail={"code": "actor_not_found", "message": f"actor not found: {aid}", "details": {}})
+        if str(actor.get("runtime") or "").strip().lower() != "web_model":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_actor_runtime",
+                    "message": "ChatGPT browser sessions can only be bound to actors using runtime=web_model",
+                    "details": {"group_id": gid, "actor_id": aid},
+                },
+            )
+
+    def _extract_bearer_or_query_token(request: Request) -> str:
+        auth = str(request.headers.get("authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            return str(auth[7:] or "").strip()
+        return str(request.query_params.get("token") or "").strip()
+
+    def _resolve_web_model_connector(request: Request, connector_id: str) -> Dict[str, Any]:
+        secret = _extract_bearer_or_query_token(request)
+        connector = verify_web_model_connector_secret(connector_id, secret)
+        if connector is None:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "unauthorized",
+                    "message": "invalid web-model connector credentials",
+                    "details": {"connector_id": str(connector_id or "").strip()},
+                },
+            )
+        connector_id_clean = str(connector.get("connector_id") or connector_id or "").strip()
+        group_id = str(connector.get("group_id") or "").strip()
+        actor_id = str(connector.get("actor_id") or "").strip()
+
+        def _reject_live_binding(code: str, message: str) -> None:
+            if connector_id_clean:
+                try:
+                    record_web_model_connector_activity(
+                        connector_id_clean,
+                        method=str(request.method or "").strip(),
+                        call_status="error",
+                        error=code,
+                    )
+                except Exception:
+                    pass
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": code,
+                    "message": message,
+                    "details": {"connector_id": connector_id_clean, "group_id": group_id, "actor_id": actor_id},
+                },
+            )
+
+        group = load_group(group_id)
+        if group is None:
+            _reject_live_binding("connector_group_unavailable", "web-model connector group is no longer available")
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict):
+            _reject_live_binding("connector_actor_unavailable", "web-model connector actor is no longer available")
+        if str(actor.get("runtime") or "").strip().lower() != "web_model":
+            _reject_live_binding("invalid_actor_runtime", "web-model connector actor is no longer runtime=web_model")
+        if str(actor.get("runner") or "headless").strip().lower() != "headless":
+            _reject_live_binding("invalid_actor_runner", "web-model connector actor is no longer headless")
+        if not coerce_bool(actor.get("enabled"), default=True) or not headless_state_running(group_id, actor_id):
+            _reject_live_binding("connector_actor_stopped", "web-model connector actor is stopped")
+        return connector
+
+    async def _handle_remote_mcp_payload(payload: Any, *, connector: Optional[Dict[str, Any]] = None) -> Response:
+        from ...mcp.main import handle_request as handle_mcp_request
+
+        def _tool_call_activity(item: Dict[str, Any], resp: Dict[str, Any]) -> Dict[str, str]:
+            method = str(item.get("method") or "").strip()
+            params = item.get("params") if isinstance(item.get("params"), dict) else {}
+            tool_name = str(params.get("name") or "").strip() if method == "tools/call" else ""
+            call_status = "error" if isinstance(resp, dict) and ("error" in resp or bool((resp.get("result") or {}).get("isError"))) else "ok"
+            wait_status = ""
+            turn_id = ""
+            error = ""
+            if isinstance(resp, dict) and isinstance(resp.get("error"), dict):
+                error = str((resp.get("error") or {}).get("message") or "").strip()
+            result = resp.get("result") if isinstance(resp, dict) else {}
+            if isinstance(result, dict):
+                content = result.get("content")
+                text = ""
+                if isinstance(content, list) and content and isinstance(content[0], dict):
+                    text = str(content[0].get("text") or "").strip()
+                if text:
+                    try:
+                        parsed = json.loads(text)
+                    except Exception:
+                        parsed = {}
+                    if isinstance(parsed, dict):
+                        if isinstance(parsed.get("error"), dict):
+                            error = str((parsed.get("error") or {}).get("message") or error).strip()
+                        if tool_name == "cccc_runtime_wait_next_turn":
+                            wait_status = str(parsed.get("status") or "").strip()
+                            turn = parsed.get("turn") if isinstance(parsed.get("turn"), dict) else {}
+                            turn_id = str(turn.get("turn_id") or "").strip() if isinstance(turn, dict) else ""
+                        elif tool_name == "cccc_runtime_complete_turn":
+                            wait_status = str(parsed.get("status") or "").strip()
+                            turn_id = str(parsed.get("turn_id") or "").strip()
+            return {
+                "method": method,
+                "tool_name": tool_name,
+                "call_status": call_status,
+                "wait_status": wait_status,
+                "turn_id": turn_id,
+                "error": error,
+            }
+
+        async def _handle_one(item: Any) -> Dict[str, Any]:
+            if not isinstance(item, dict):
+                return _mcp_jsonrpc_error(None, -32600, "Invalid Request")
+
+            def _run() -> Dict[str, Any]:
+                if not isinstance(connector, dict):
+                    return handle_mcp_request(item)
+                with runtime_context_override(
+                    home=str(ctx.home),
+                    group_id=str(connector.get("group_id") or ""),
+                    actor_id=str(connector.get("actor_id") or ""),
+                ):
+                    return handle_mcp_request(item)
+
+            resp = await run_in_threadpool(_run)
+            if isinstance(connector, dict):
+                connector_id = str(connector.get("connector_id") or "").strip()
+                if connector_id:
+                    activity = _tool_call_activity(item, resp if isinstance(resp, dict) else {})
+                    await run_in_threadpool(
+                        record_web_model_connector_activity,
+                        connector_id,
+                        method=activity["method"],
+                        tool_name=activity["tool_name"],
+                        call_status=activity["call_status"],
+                        wait_status=activity["wait_status"],
+                        turn_id=activity["turn_id"],
+                        error=activity["error"],
+                    )
+            return resp
+
+        if isinstance(payload, list):
+            responses = []
+            for item in payload:
+                resp = await _handle_one(item)
+                if resp:
+                    responses.append(resp)
+            if not responses:
+                return Response(status_code=202)
+            return JSONResponse(content=responses)
+        if not isinstance(payload, dict):
+            return JSONResponse(content=_mcp_jsonrpc_error(None, -32600, "Invalid Request"), status_code=400)
+        response = await _handle_one(payload)
+        if not response:
+            return Response(status_code=202)
+        return JSONResponse(content=response)
+
+    @global_router.post("/api/v1/mcp", dependencies=[Depends(require_admin)])
+    async def remote_mcp_jsonrpc(request: Request) -> Response:
+        """Experimental remote MCP JSON-RPC endpoint for website-model connectors."""
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid JSON body"}) from exc
+        return await _handle_remote_mcp_payload(payload)
+
+    @global_router.get("/api/v1/web-model/connectors", dependencies=[Depends(require_admin)])
+    async def web_model_connectors_list(request: Request) -> Dict[str, Any]:
+        connectors = []
+        items = list(load_web_model_connectors().values())
+        items.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("connector_id") or "")), reverse=True)
+        for item in items:
+            connectors.append(_web_model_connector_web_payload(request, item))
+        return {"ok": True, "result": {"connectors": connectors}}
+
+    @global_router.post("/api/v1/web-model/connectors", dependencies=[Depends(require_admin)])
+    async def web_model_connectors_create(req: WebModelConnectorCreateRequest, request: Request) -> Dict[str, Any]:
+        group_id = str(req.group_id or "").strip()
+        actor_id = str(req.actor_id or "").strip()
+        if not group_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "missing group_id", "details": {}})
+        if not actor_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_actor_id", "message": "missing actor_id", "details": {}})
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}", "details": {}})
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict):
+            raise HTTPException(status_code=404, detail={"code": "actor_not_found", "message": f"actor not found: {actor_id}", "details": {}})
+        if str(actor.get("runtime") or "").strip().lower() != "web_model":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_actor_runtime",
+                    "message": "web-model connectors can only be bound to actors using runtime=web_model",
+                    "details": {"group_id": group_id, "actor_id": actor_id},
+                },
+            )
+        try:
+            connector = create_web_model_connector(
+                group_id=group_id,
+                actor_id=actor_id,
+                provider=str(req.provider or "").strip(),
+                label=str(req.label or "").strip(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
+        connector_id = str(connector.get("connector_id") or "")
+        safe_connector = _web_model_connector_web_payload(request, connector)
+        replaced = connector.get("replaced_connector_ids") if isinstance(connector.get("replaced_connector_ids"), list) else []
+        return {
+            "ok": True,
+            "result": {
+                "connector": safe_connector,
+                "secret": str(connector.get("secret") or ""),
+                "replaced_connector_ids": [str(item or "").strip() for item in replaced if str(item or "").strip()],
+            },
+        }
+
+    @global_router.delete("/api/v1/web-model/connectors/{connector_id}", dependencies=[Depends(require_admin)])
+    async def web_model_connectors_revoke(connector_id: str) -> Dict[str, Any]:
+        if not revoke_web_model_connector(connector_id):
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "web-model connector not found", "details": {}})
+        return {"ok": True, "result": {"revoked": True, "connector_id": str(connector_id or "").strip()}}
+
+    async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any]) -> Dict[str, Any]:
+        from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
+        from ...web_model_browser_sidecar import chatgpt_browser_session_status
+
+        surface = browser_surface or await run_in_threadpool(
+            get_web_model_chatgpt_browser_session_state,
+            group_id=group_id,
+            actor_id=actor_id,
+        )
+        browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
+        return {"ok": True, "result": {"browser_session": browser, "browser_surface": surface}}
+
+    @global_router.get("/api/v1/web-model/browser-session", dependencies=[Depends(require_admin)])
+    async def web_model_browser_session_status(group_id: str, actor_id: str) -> Dict[str, Any]:
+        _require_web_model_browser_actor(group_id, actor_id)
+        return await _web_model_browser_payload(group_id, actor_id, {})
+
+    @global_router.post("/api/v1/web-model/browser-session/open", dependencies=[Depends(require_admin)])
+    async def web_model_browser_session_open(req: WebModelBrowserSessionRequest) -> Dict[str, Any]:
+        group_id = str(req.group_id or "").strip()
+        actor_id = str(req.actor_id or "").strip()
+        _require_web_model_browser_actor(group_id, actor_id)
+        from ....daemon.actors.web_model_browser_session import open_web_model_chatgpt_browser_session
+
+        try:
+            surface = await run_in_threadpool(
+                open_web_model_chatgpt_browser_session,
+                group_id=group_id,
+                actor_id=actor_id,
+                width=int(req.width or 1366),
+                height=int(req.height or 900),
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "web_model_browser_open_failed", "message": str(exc), "details": {}},
+            ) from exc
+        return await _web_model_browser_payload(group_id, actor_id, surface)
+
+    @global_router.post("/api/v1/web-model/browser-session/close", dependencies=[Depends(require_admin)])
+    async def web_model_browser_session_close(req: WebModelBrowserSessionRequest) -> Dict[str, Any]:
+        group_id = str(req.group_id or "").strip()
+        actor_id = str(req.actor_id or "").strip()
+        _require_web_model_browser_actor(group_id, actor_id)
+        from ....daemon.actors.web_model_browser_session import close_web_model_chatgpt_browser_session
+
+        result = await run_in_threadpool(
+            close_web_model_chatgpt_browser_session,
+            group_id=group_id,
+            actor_id=actor_id,
+        )
+        surface = result.get("browser_surface") if isinstance(result, dict) else {}
+        return await _web_model_browser_payload(group_id, actor_id, surface if isinstance(surface, dict) else {})
+
+    @global_router.post("/api/v1/web-model/browser-session/bind-current", dependencies=[Depends(require_admin)])
+    async def web_model_browser_session_bind_current(req: WebModelBrowserBindRequest) -> Dict[str, Any]:
+        group_id = str(req.group_id or "").strip()
+        actor_id = str(req.actor_id or "").strip()
+        _require_web_model_browser_actor(group_id, actor_id)
+        from ...web_model_browser_sidecar import _normalize_chatgpt_url, chatgpt_browser_session_status, record_chatgpt_browser_state
+
+        if bool(req.clear):
+            await run_in_threadpool(
+                record_chatgpt_browser_state,
+                group_id,
+                actor_id,
+                {
+                    "conversation_url": "",
+                    "bootstrap_seed_delivered_at": "",
+                    "bootstrap_seed_version": "",
+                    "bootstrap_seed_digest": "",
+                    "bootstrap_seed_conversation_url": "",
+                },
+            )
+            return await _web_model_browser_payload(group_id, actor_id, {})
+
+        browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
+        url = _normalize_chatgpt_url(
+            req.conversation_url or browser.get("tab_url") or browser.get("last_tab_url") or "",
+            require_conversation=True,
+        )
+        if not url:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "chatgpt_tab_not_found", "message": "open a ChatGPT conversation before binding", "details": {}},
+            )
+        await run_in_threadpool(
+            record_chatgpt_browser_state,
+            group_id,
+            actor_id,
+            {
+                "conversation_url": url,
+                "bootstrap_seed_delivered_at": "",
+                "bootstrap_seed_version": "",
+                "bootstrap_seed_digest": "",
+                "bootstrap_seed_conversation_url": "",
+            },
+        )
+        return await _web_model_browser_payload(group_id, actor_id, {})
+
+    @global_router.websocket("/api/v1/web-model/browser-session/ws")
+    async def web_model_browser_session_ws(websocket: WebSocket, group_id: str, actor_id: str) -> None:
+        await websocket.accept()
+
+        principal = resolve_websocket_principal(websocket)
+        websocket.state.principal = principal
+
+        auth_header = str((getattr(websocket, "headers", {}) or {}).get("authorization") or "").strip()
+        has_header_token = auth_header.lower().startswith("bearer ") and bool(str(auth_header[7:] or "").strip())
+        has_cookie_token = False
+        try:
+            cookies = getattr(websocket, "cookies", None) or {}
+            has_cookie_token = bool(str(cookies.get("cccc_access_token") or "").strip())
+        except Exception:
+            has_cookie_token = False
+        has_query_token = bool(str(websocket.query_params.get("token") or "").strip())
+        if (has_header_token or has_cookie_token or has_query_token) and str(getattr(principal, "kind", "anonymous") or "anonymous") != "user" and websocket_tokens_active():
+            try:
+                await websocket.send_json({"ok": False, "error": {"code": "auth_required", "message": "Invalid or missing authentication token"}})
+            except Exception:
+                pass
+            await websocket.close(code=4401)
+            return
+
+        try:
+            check_admin(websocket)
+            _require_web_model_browser_actor(group_id, actor_id)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"code": "permission_denied", "message": str(exc.detail or "permission denied")}
+            try:
+                await websocket.send_json({"ok": False, "error": detail})
+            except Exception:
+                pass
+            await websocket.close(code=1008)
+            return
+
+        if ctx.read_only:
+            try:
+                await websocket.send_json(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "read_only_browser_surface",
+                            "message": "Web-model browser surface is disabled in read-only mode.",
+                            "details": {},
+                        },
+                    }
+                )
+            except Exception:
+                pass
+            await websocket.close(code=1000)
+            return
+
+        from ....daemon.actors.web_model_browser_session import (
+            attach_web_model_chatgpt_browser_socket,
+            can_attach_web_model_chatgpt_browser_socket,
+        )
+
+        ok, info = can_attach_web_model_chatgpt_browser_socket(group_id=group_id, actor_id=actor_id)
+        if not ok:
+            try:
+                await websocket.send_json({"ok": False, "error": info})
+            except Exception:
+                pass
+            await websocket.close(code=1008)
+            return
+
+        try:
+            manager_sock, web_sock = socket.socketpair()
+        except Exception:
+            await websocket.send_json({"ok": False, "error": {"code": "browser_surface_attach_failed", "message": "socketpair unavailable"}})
+            await websocket.close(code=1011)
+            return
+
+        attached = False
+        web_sock_attached_to_asyncio = False
+        try:
+            attached = attach_web_model_chatgpt_browser_socket(group_id=group_id, actor_id=actor_id, sock=manager_sock)
+            if not attached:
+                try:
+                    manager_sock.close()
+                except Exception:
+                    pass
+                await websocket.send_json({"ok": False, "error": {"code": "browser_surface_attach_failed", "message": "browser surface attach failed"}})
+                await websocket.close(code=1008)
+                return
+
+            reader, writer = await asyncio.open_connection(sock=web_sock, limit=_WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES)
+            web_sock_attached_to_asyncio = True
+
+            async def _pump_out() -> None:
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    await websocket.send_text(line.decode("utf-8", errors="replace").rstrip("\n"))
+
+            async def _pump_in() -> None:
+                while True:
+                    raw = await websocket.receive_text()
+                    if not raw:
+                        continue
+                    writer.write((raw + "\n").encode("utf-8", errors="replace"))
+                    await writer.drain()
+
+            out_task = asyncio.create_task(_pump_out())
+            in_task = asyncio.create_task(_pump_in())
+            try:
+                done, pending = await asyncio.wait({out_task, in_task}, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    try:
+                        _ = task.result()
+                    except Exception:
+                        pass
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                try:
+                    await websocket.close(code=1000)
+                except Exception:
+                    pass
+        finally:
+            if not web_sock_attached_to_asyncio:
+                try:
+                    web_sock.close()
+                except Exception:
+                    pass
+            if not attached:
+                try:
+                    manager_sock.close()
+                except Exception:
+                    pass
+
+    @global_router.post("/mcp/web-model/{connector_id}")
+    async def web_model_mcp_jsonrpc(connector_id: str, request: Request) -> Response:
+        """Stable connector URL shape for the browser web-model runtime RFC."""
+        connector = _resolve_web_model_connector(request, connector_id)
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid JSON body"}) from exc
+        return await _handle_remote_mcp_payload(payload, connector=connector)
+
+    @global_router.get("/mcp/web-model/{connector_id}")
+    async def web_model_mcp_sse_probe(connector_id: str, request: Request) -> StreamingResponse:
+        """Streamable-HTTP probe path for remote MCP clients that open GET/SSE."""
+        connector = _resolve_web_model_connector(request, connector_id)
+        connector_id_clean = str(connector.get("connector_id") or "").strip()
+        if connector_id_clean:
+            await run_in_threadpool(
+                record_web_model_connector_activity,
+                connector_id_clean,
+                method="GET",
+                call_status="ok",
+            )
+
+        async def _events():
+            yield b": cccc web-model connector ready\n\n"
+
+        return StreamingResponse(
+            _events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @global_router.options("/mcp/web-model/{connector_id}")
+    async def web_model_mcp_options(connector_id: str) -> Response:
+        return Response(
+            status_code=204,
+            headers={
+                "Allow": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "authorization, content-type, accept, mcp-protocol-version, mcp-session-id",
+            },
+        )
 
     @global_router.get("/api/v1/web_access/session")
     async def web_access_session(request: Request) -> Dict[str, Any]:

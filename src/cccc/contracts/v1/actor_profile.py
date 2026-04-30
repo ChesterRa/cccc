@@ -44,6 +44,9 @@ class ActorProfile(BaseModel):
 
     @model_validator(mode="after")
     def _validate_scope_owner(self) -> "ActorProfile":
+        if self.runtime == "web_model":
+            self.runner = "headless"
+            self.command = []
         if self.scope == "global":
             self.owner_id = ""
             return self

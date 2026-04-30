@@ -7,7 +7,7 @@ flush, notify, or mark messages as delivered.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from ...kernel.inbox import is_message_for_actor
 
@@ -15,6 +15,7 @@ TRANSPORT_SKIP = "skip"
 TRANSPORT_PTY = "pty"
 TRANSPORT_CODEX_HEADLESS = "codex_headless"
 TRANSPORT_CLAUDE_HEADLESS = "claude_headless"
+TRANSPORT_WEB_MODEL_BROWSER = "web_model_browser"
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ def plan_actor_chat_delivery(
     effective_runner_kind: Callable[[str], str],
     codex_headless_running: Callable[[str, str], bool],
     claude_headless_running: Callable[[str, str], bool],
+    web_model_browser_delivery_enabled: Optional[Callable[[str, dict[str, Any]], bool]] = None,
 ) -> ActorDeliveryDecision:
     """Decide how one actor should receive one canonical chat event."""
 
@@ -65,6 +67,24 @@ def plan_actor_chat_delivery(
     group_id = str(getattr(group, "group_id", "") or "").strip()
 
     if runner_effective == "headless":
+        if runtime == "web_model":
+            if web_model_browser_delivery_enabled is not None and web_model_browser_delivery_enabled(group_id, actor):
+                return ActorDeliveryDecision(
+                    actor_id=actor_id,
+                    transport=TRANSPORT_WEB_MODEL_BROWSER,
+                    reason="web_model_browser_delivery",
+                    runtime=runtime,
+                    runner_kind=runner_kind,
+                    runner_effective=runner_effective,
+                )
+            return ActorDeliveryDecision(
+                actor_id=actor_id,
+                transport=TRANSPORT_SKIP,
+                reason="web_model_pull_runtime",
+                runtime=runtime,
+                runner_kind=runner_kind,
+                runner_effective=runner_effective,
+            )
         if runtime == "codex":
             if codex_headless_running(group_id, actor_id):
                 return ActorDeliveryDecision(

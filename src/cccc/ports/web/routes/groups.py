@@ -25,7 +25,7 @@ from ....kernel.headless_events import headless_events_path, read_headless_repla
 from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
 from ....kernel.query_projections import get_groups_projection
-from ....daemon.runner_state_ops import headless_state_path, pty_state_path
+from ....daemon.runner_state_ops import headless_state_path, pty_state_path, web_model_actor_running
 from ....kernel.group_template import parse_group_template
 from ....kernel.ledger import read_last_lines
 from ....kernel.prompt_files import (
@@ -105,6 +105,8 @@ def _actor_running_local(group_id: str, actor: Any) -> bool:
     runtime = str(actor.get("runtime") or "").strip().lower()
     runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
     effective_runner = "headless" if runner_kind == "headless" else "pty"
+    if runtime == "web_model" and effective_runner == "headless":
+        return web_model_actor_running(gid, actor)
     if runtime == "codex":
         if codex_app_supervisor.actor_running(gid, aid):
             return True

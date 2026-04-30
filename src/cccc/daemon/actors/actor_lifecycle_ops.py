@@ -121,7 +121,10 @@ def handle_actor_stop(
         runner_kind = str(actor.get("runner") or "pty").strip()
         runner_effective = effective_runner_kind(runner_kind)
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-        if runtime == "codex" and runner_effective == "headless":
+        if runtime == "web_model" and runner_effective == "headless":
+            remove_headless_state(group.group_id, actor_id)
+            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+        elif runtime == "codex" and runner_effective == "headless":
             codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
@@ -227,7 +230,10 @@ def handle_actor_restart(
         )
         runner_kind = str(actor.get("runner") or "pty").strip()
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-        if runtime == "codex" and effective_runner_kind(runner_kind) == "headless":
+        if runtime == "web_model" and effective_runner_kind(runner_kind) == "headless":
+            remove_headless_state(group.group_id, actor_id)
+            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+        elif runtime == "codex" and effective_runner_kind(runner_kind) == "headless":
             codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
@@ -347,7 +353,12 @@ def handle_actor_restart(
             if not mcp_ready:
                 return _error("actor_restart_failed", f"failed to install MCP for runtime: {runtime}")
 
-        if runtime == "codex" and runner_effective == "headless":
+        if runtime == "web_model" and runner_effective == "headless":
+            try:
+                write_headless_state(group.group_id, actor_id)
+            except Exception:
+                pass
+        elif runtime == "codex" and runner_effective == "headless":
             codex_app_supervisor.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,

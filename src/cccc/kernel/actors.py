@@ -210,19 +210,26 @@ def add_actor(
     if existing is not None:
         raise ValueError(f"Name already exists: {aid}")
 
+    runtime_name = str(runtime or "codex").strip() or "codex"
+    runner_kind = str(runner or "pty").strip() or "pty"
+    command_list = list(command or [])
+    if runtime_name == "web_model":
+        runner_kind = "headless"
+        command_list = []
+
     now = utc_now_iso()
     actor = Actor(
         id=aid,
         role=None,  # Role is auto-determined, not stored
         title=title.strip() if title else "",
-        command=list(command or []),
+        command=command_list,
         env=dict(env or {}),
         default_scope_key=default_scope_key.strip(),
         submit=submit,
         capability_autoload=_normalize_capability_id_list(capability_autoload or []),
         enabled=coerce_bool(enabled, default=True),
-        runner=runner,
-        runtime=runtime,
+        runner=runner_kind,  # type: ignore[arg-type]
+        runtime=runtime_name,  # type: ignore[arg-type]
         internal_kind=(str(internal_kind or "").strip() or None),
         created_at=now,
         updated_at=now,
@@ -361,16 +368,23 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
         runtime = patch.get("runtime")
         if runtime is None:
             item["runtime"] = "codex"
-        elif runtime in ("amp", "auggie", "claude", "codex", "droid", "gemini", "kimi", "neovate", "custom"):
+        elif runtime in ("amp", "auggie", "claude", "codex", "droid", "gemini", "kimi", "neovate", "web_model", "custom"):
             item["runtime"] = runtime
         else:
             raise ValueError("invalid runtime")
+        if str(item.get("runtime") or "").strip() == "web_model":
+            item["runner"] = "headless"
+            item["command"] = []
         if (
             str(item.get("runtime") or "").strip() == "custom"
             and str(item.get("runner") or "pty").strip() != "headless"
             and not item.get("command")
         ):
             raise ValueError("custom runtime requires a command (PTY runner)")
+
+    if str(item.get("runtime") or "").strip() == "web_model":
+        item["runner"] = "headless"
+        item["command"] = []
 
     if "internal_kind" in patch:
         internal_kind = str(patch.get("internal_kind") or "").strip()

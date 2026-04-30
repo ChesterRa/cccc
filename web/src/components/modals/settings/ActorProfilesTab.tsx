@@ -57,8 +57,11 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   gemini: "gemini --yolo",
   kimi: "kimi --yolo",
   neovate: "neovate",
+  web_model: "",
   custom: "",
 };
+
+const PROFILE_RUNTIME_OPTIONS = SUPPORTED_RUNTIMES.filter((runtime) => runtime !== "web_model");
 
 function defaultCommandForRuntime(runtime: string): string {
   const key = String(runtime || "").trim();
@@ -80,7 +83,7 @@ function modeButtonClass(selected: boolean): string {
 
 function buildEditor(profile?: ActorProfile | null): EditorState {
   const runtime = String(profile?.runtime || "codex");
-  const runner = supportsStandardWebHeadlessRuntime(runtime) ? normalizeActorRunner(profile?.runner) : "pty";
+  const runner = runtime === "web_model" ? "headless" : supportsStandardWebHeadlessRuntime(runtime) ? normalizeActorRunner(profile?.runner) : "pty";
   const command = formatCommand(profile?.command);
   const defaultCommand = defaultCommandForRuntime(runtime);
   const useDefaultCommand =
@@ -165,6 +168,10 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   );
   const editorSupportsHeadlessRunner = useMemo(
     () => supportsStandardWebHeadlessRuntime(editor.runtime),
+    [editor.runtime]
+  );
+  const editorIsWebModel = useMemo(
+    () => String(editor.runtime || "").trim() === "web_model",
     [editor.runtime]
   );
   const editorDefaultCommand = useMemo(
@@ -256,7 +263,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     return {
                       ...prev,
                       runtime: nextRuntime,
-                      runner: supportsStandardWebHeadlessRuntime(nextRuntime) ? prev.runner : "pty",
+                      runner: nextRuntime === "web_model"
+                        ? "headless"
+                        : supportsStandardWebHeadlessRuntime(nextRuntime) ? prev.runner : "pty",
                       useDefaultCommand: supportsDefault ? prev.useDefaultCommand : false,
                       command: supportsDefault && prev.useDefaultCommand ? "" : prev.command,
                     };
@@ -264,10 +273,20 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 }}
                 className={inputClass()}
               >
-                {SUPPORTED_RUNTIMES.map((rt) => (
+                {editorIsWebModel ? (
+                  <option value="web_model" disabled>
+                    {RUNTIME_INFO.web_model?.label || "Browser Web Model"} (actor-bound)
+                  </option>
+                ) : null}
+                {PROFILE_RUNTIME_OPTIONS.map((rt) => (
                   <option key={rt} value={rt}>{RUNTIME_INFO[rt]?.label || rt}</option>
                 ))}
               </select>
+              {editorIsWebModel ? (
+                <div className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                  Browser Web Model setup is actor-bound. Manage connectors and ChatGPT chats in Settings &gt; Web Models; new Runtime Profiles cannot use this runtime.
+                </div>
+              ) : null}
             </div>
 
             <div>
@@ -275,8 +294,12 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  className={modeButtonClass(editor.runner === "pty")}
-                  onClick={() => setEditor((prev) => ({ ...prev, runner: "pty" }))}
+                  className={`${modeButtonClass(editor.runner === "pty")} ${editorIsWebModel ? "opacity-50 cursor-not-allowed" : ""}`}
+                  onClick={() => {
+                    if (editorIsWebModel) return;
+                    setEditor((prev) => ({ ...prev, runner: "pty" }));
+                  }}
+                  disabled={editorIsWebModel}
                 >
                   {t("actorProfiles.pty")}
                 </button>
@@ -462,7 +485,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
           <button
             type="button"
             onClick={() => void handleSave()}
-            disabled={editorBusy}
+            disabled={editorBusy || editorIsWebModel}
             className={primaryButtonClass(editorBusy)}
           >
             {editorBusy ? t("common:saving") : t("common:save")}
@@ -574,6 +597,10 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const openDuplicate = async (profile: ActorProfile) => {
+    if (String(profile.runtime || "").trim().toLowerCase() === "web_model") {
+      setErr("Browser Web Model profiles are actor-bound and cannot be duplicated. Create a Web Model actor and configure it in Settings > Web Models.");
+      return;
+    }
     const sourceId = String(profile.id || "").trim();
     setEditor({
       ...buildEditor(profile),
@@ -701,6 +728,10 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const handleSave = async () => {
+    if (String(editor.runtime || "").trim().toLowerCase() === "web_model") {
+      setEditorErr("Browser Web Model setup is actor-bound. Manage it in Settings > Web Models instead of saving a Runtime Profile.");
+      return;
+    }
     const name = editor.name.trim();
     if (!name) {
       setEditorErr(t("actorProfiles.nameRequired"));
@@ -731,7 +762,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         scope: profileScope,
         owner_id: ownerId,
         runtime: editor.runtime,
-        runner: editorSupportsHeadlessRunner ? editor.runner : "pty",
+        runner: editorIsWebModel ? "headless" : editorSupportsHeadlessRunner ? editor.runner : "pty",
         command: editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
         submit: editor.submit,
         env: {},
@@ -894,6 +925,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     </button>
                     <button
                       onClick={() => void openDuplicate(profile)}
+                      disabled={String(profile.runtime || "").trim().toLowerCase() === "web_model"}
                       className={secondaryButtonClass("sm")}
                     >
                       {t("actorProfiles.duplicate")}

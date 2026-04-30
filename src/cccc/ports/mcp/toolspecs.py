@@ -34,6 +34,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_help",
         "description": _CCCC_HELP_DESCRIPTION,
+        "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({}),
     },
     {
@@ -64,11 +65,13 @@ MCP_TOOLS = [
     {
         "name": "cccc_project_info",
         "description": "Get PROJECT.md content for the active scope.",
+        "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({**_COMMON_GROUP}),
     },
     {
         "name": "cccc_inbox_list",
         "description": "List unread inbox entries (chat/notify/all).",
+        "annotations": {"readOnlyHint": True},
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -263,12 +266,12 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_file",
-        "description": "File operations: action=send(path,text,...) or action=blob_path(rel_path).",
+        "description": "File operations: action=send(path,text,...), blob_path(rel_path), info(rel_path), or read(rel_path).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
-                "action": {"type": "string", "enum": ["send", "blob_path"], "default": "send"},
+                "action": {"type": "string", "enum": ["send", "blob_path", "info", "read"], "default": "send"},
                 "path": {"type": "string", "description": "Required for action=send"},
                 "text": {"type": "string"},
                 "to": {
@@ -279,7 +282,102 @@ MCP_TOOLS = [
                 },
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
-                "rel_path": {"type": "string", "description": "Required for action=blob_path. Can be just the blob filename (e.g. 'sha256_image.png') or full relative path ('state/blobs/sha256_image.png')."},
+                "rel_path": {"type": "string", "description": "Required for action=blob_path/info/read. Can be just the blob filename (e.g. 'sha256_image.png') or full relative path ('state/blobs/sha256_image.png')."},
+                "max_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
+            }
+        ),
+    },
+    {
+        "name": "cccc_repo",
+        "description": (
+            "Read-only active workspace repository inspection for remote runtimes: "
+            "action=info|list|read. All paths are constrained to the group's active scope root. "
+            "Use cccc_repo_edit for write/apply_patch/mkdir/delete/move."
+        ),
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "action": {
+                    "type": "string",
+                    "enum": ["info", "list", "read"],
+                    "default": "info",
+                },
+                "path": {"type": "string", "description": "Relative path under the active workspace root."},
+                "file_path": {"type": "string", "description": "Alias for path."},
+                "max_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
+                "limit": {"type": "integer", "default": 200, "minimum": 1, "maximum": 500},
+                "include_hidden": {"type": "boolean", "default": False},
+            }
+        ),
+    },
+    {
+        "name": "cccc_repo_edit",
+        "description": (
+            "Write to the active workspace repository for remote runtimes: action=write|apply_patch|mkdir|delete|move. "
+            "Use cccc_repo for read-only info/list/read before editing. All paths are constrained to the group's active scope root."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "action": {
+                    "type": "string",
+                    "enum": ["write", "apply_patch", "mkdir", "delete", "move"],
+                    "default": "apply_patch",
+                },
+                "path": {"type": "string", "description": "Relative path under the active workspace root; required for write/delete/move/mkdir."},
+                "file_path": {"type": "string", "description": "Alias for path."},
+                "dest_path": {"type": "string", "description": "Destination path under the active workspace root; required for action=move."},
+                "to_path": {"type": "string", "description": "Alias for dest_path."},
+                "content": {"type": "string", "description": "Required for action=write."},
+                "patch": {"type": "string", "description": "Unified diff for action=apply_patch; applied with git apply."},
+                "recursive": {"type": "boolean", "default": False, "description": "Required true to delete directories."},
+                "exist_ok": {"type": "boolean", "default": True, "description": "For action=mkdir."},
+            }
+        ),
+    },
+    {
+        "name": "cccc_shell",
+        "description": (
+            "Web Model local-power shell execution in the group's active workspace. "
+            "Run tests, builds, rg, scripts, and other local commands from a cwd constrained to the active scope root."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "command": {"type": "string", "description": "Shell command to run under the active workspace root."},
+                "cwd": {"type": "string", "description": "Relative cwd under the active workspace root.", "default": "."},
+                "timeout_s": {"type": "integer", "default": 60, "minimum": 1, "maximum": 600},
+                "max_output_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
+                "env": {"type": "object", "additionalProperties": {"type": "string"}},
+            },
+            required=["command"],
+        ),
+    },
+    {
+        "name": "cccc_git",
+        "description": (
+            "Web Model local-power git operations in the group's active workspace: "
+            "action=status|diff|log|add|commit. Use cccc_shell for unusual git commands."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "diff", "log", "add", "commit"],
+                    "default": "status",
+                },
+                "path": {"type": "string", "description": "Optional single repo-relative path for diff/add."},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Optional repo-relative paths for diff/add."},
+                "staged": {"type": "boolean", "default": False, "description": "For action=diff."},
+                "all_changes": {"type": "boolean", "default": False, "description": "For action=add, stage all changes under the active workspace."},
+                "message": {"type": "string", "description": "Required for action=commit."},
+                "count": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100, "description": "For action=log."},
+                "max_output_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
             }
         ),
     },
@@ -363,7 +461,53 @@ MCP_TOOLS = [
     {
         "name": "cccc_runtime_list",
         "description": "List available runtimes and runtime pool configuration.",
+        "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({}),
+    },
+    {
+        "name": "cccc_runtime_wait_next_turn",
+        "description": (
+            "Pull one coalesced unread CCCC turn for a website-model runtime actor when no turn was "
+            "browser-delivered into the web chat. This does not mark messages read; call "
+            "cccc_runtime_complete_turn after processing."
+        ),
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 20},
+                "kind_filter": {
+                    "type": "string",
+                    "enum": ["all", "chat", "notify"],
+                    "default": "all",
+                },
+            }
+        ),
+    },
+    {
+        "name": "cccc_runtime_complete_turn",
+        "description": (
+            "Commit a processed website-model runtime turn, whether it was browser-delivered or pulled. "
+            "status=done or partial marks the supplied event_ids read for the actor; failed/cancelled "
+            "leaves them unread for retry."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "turn_id": {"type": "string"},
+                "event_ids": {"type": "array", "items": {"type": "string"}},
+                "latest_event_id": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": ["done", "partial", "failed", "cancelled"],
+                    "default": "done",
+                },
+                "summary": {"type": "string"},
+            },
+            required=["status"],
+        ),
     },
     {
         "name": "cccc_capability_search",

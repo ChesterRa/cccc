@@ -74,6 +74,23 @@ class TestMcpRuntimeContext(unittest.TestCase):
         self.assertEqual(ctx.group_id, "g_ancestor")
         self.assertEqual(ctx.actor_id, "foreman-ancestor")
 
+    def test_runtime_context_override_wins_without_mutating_env(self) -> None:
+        from cccc.ports.mcp.common import _runtime_context, runtime_context_override
+
+        with patch.dict(os.environ, {"CCCC_HOME": "", "CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False), patch(
+            "cccc.ports.mcp.common._iter_ancestor_pids",
+            return_value=[],
+        ):
+            with runtime_context_override(home="/tmp/cccc-override", group_id="g_override", actor_id="peer-override"):
+                ctx = _runtime_context()
+            after = _runtime_context()
+
+        self.assertEqual(ctx.home, "/tmp/cccc-override")
+        self.assertEqual(ctx.group_id, "g_override")
+        self.assertEqual(ctx.actor_id, "peer-override")
+        self.assertNotEqual(after.group_id, "g_override")
+        self.assertNotEqual(after.actor_id, "peer-override")
+
     def test_runtime_context_falls_back_to_pty_state(self) -> None:
         from cccc.ports.mcp.common import _runtime_context
 

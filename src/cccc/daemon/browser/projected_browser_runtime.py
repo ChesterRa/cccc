@@ -342,6 +342,7 @@ class PlaywrightProjectedRuntime:
         height: int,
         strategy: str,
         cleanup_callbacks: Iterable[Any] = (),
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._playwright_cm = playwright_cm
@@ -351,6 +352,7 @@ class PlaywrightProjectedRuntime:
         self.strategy = str(strategy or "playwright_chromium_cdp")
         self.width = int(width)
         self.height = int(height)
+        self.metadata = dict(metadata or {})
         self._cleanup_callbacks = list(cleanup_callbacks or [])
         self._page_history: list[Any] = []
         self._known_page_ids: set[int] = set()
@@ -551,6 +553,7 @@ def launch_projected_browser_runtime(
     headless: bool = False,
     channel_candidates: Iterable[str | None] = (None,),
     seed_storage_state: dict[str, Any] | None = None,
+    system_profile_subdir: str | None = None,
 ) -> PlaywrightProjectedRuntime:
     sync_playwright = ensure_sync_playwright()
     playwright_cm = sync_playwright()
@@ -574,7 +577,11 @@ def launch_projected_browser_runtime(
             return None
         for binary in binaries:
             port = _pick_free_port()
-            system_profile_dir = profile_dir / f"system_{channel}"
+            if system_profile_subdir is None:
+                system_profile_dir = profile_dir / f"system_{channel}"
+            else:
+                subdir = str(system_profile_subdir or "").strip()
+                system_profile_dir = profile_dir / subdir if subdir else profile_dir
             ensure_dir(system_profile_dir, 0o700)
             proc = None
             try:
@@ -618,6 +625,13 @@ def launch_projected_browser_runtime(
                     width=width,
                     height=height,
                     strategy=strategy,
+                    metadata={
+                        "cdp_port": int(port),
+                        "pid": int(getattr(proc, "pid", 0) or 0),
+                        "profile_dir": str(system_profile_dir),
+                        "browser_binary": str(binary),
+                        "channel": str(channel),
+                    },
                     cleanup_callbacks=[lambda proc=proc: _terminate_process(proc), *cleanup_callbacks],
                 )
             except Exception:
@@ -662,6 +676,13 @@ def launch_projected_browser_runtime(
             width=width,
             height=height,
             strategy=strategy,
+            metadata={
+                "cdp_port": 0,
+                "pid": 0,
+                "profile_dir": str(profile_dir),
+                "browser_binary": "",
+                "channel": str(channel or "playwright"),
+            },
             cleanup_callbacks=cleanup_callbacks,
         )
 
@@ -722,6 +743,7 @@ class ProjectedBrowserSession:
         height: int,
         headless: bool,
         channel_candidates: Iterable[str | None],
+        system_profile_subdir: str | None = None,
     ) -> None:
         self.session_key = str(session_key or "").strip()
         self.profile_dir = Path(profile_dir)
@@ -730,6 +752,7 @@ class ProjectedBrowserSession:
         self.height = max(480, min(int(height), 1600))
         self.headless = bool(headless)
         self.channel_candidates = tuple(channel_candidates or (None,))
+        self.system_profile_subdir = system_profile_subdir
         self._lock = threading.Lock()
         self._frame_cond = threading.Condition(self._lock)
         self._commands: "queue.Queue[tuple[str, dict[str, Any], Optional[queue.Queue[dict[str, Any]]]]]" = queue.Queue()
@@ -753,6 +776,7 @@ class ProjectedBrowserSession:
         self._last_frame_at = ""
         self._last_frame_bytes = b""
         self._seed_storage_state: dict[str, Any] | None = None
+        self._metadata: dict[str, Any] = {}
 
     def set_seed_storage_state(self, storage_state: dict[str, Any] | None) -> None:
         self._seed_storage_state = dict(storage_state or {}) if isinstance(storage_state, dict) else None
@@ -802,6 +826,7 @@ class ProjectedBrowserSession:
                 "last_frame_seq": self._last_frame_seq,
                 "last_frame_at": self._last_frame_at,
                 "controller_attached": bool(self._controller_attached),
+                "metadata": dict(self._metadata),
             }
 
     def can_attach(self) -> tuple[bool, dict[str, Any]]:
@@ -940,9 +965,11 @@ class ProjectedBrowserSession:
                 headless=self.headless,
                 channel_candidates=self.channel_candidates,
                 seed_storage_state=self._seed_storage_state,
+                system_profile_subdir=self.system_profile_subdir,
             )
             with self._lock:
                 self._strategy = str(getattr(runtime, "strategy", "") or "")
+                self._metadata = dict(getattr(runtime, "metadata", {}) or {})
                 self._url = str(runtime.current_url() or self.initial_url)
                 self._updated_at = utc_now_iso()
             self._set_state("ready", message=f"Browser surface ready ({self._strategy or 'chromium'}).")
@@ -1064,7 +1091,11 @@ class ProjectedBrowserSession:
                     if kind in {"disconnect", "close"}:
                         break
                     try:
-                        self.submit_command(kind, incoming, timeout=5.0)
+                        # Controller input is best-effort. During login flows the page can
+                        # briefly block Playwright commands while navigation or screenshot
+                        # capture is in progress; waiting synchronously here turns that
+                        # transient congestion into a user-visible error.
+                        self._commands.put((kind, incoming, None))
                     except Exception as exc:
                         if not _send_json_line(
                             sock,
@@ -1147,6 +1178,7 @@ class ProjectedBrowserSessionManager:
         headless: bool = False,
         channel_candidates: Iterable[str | None] = (None,),
         seed_storage_state: dict[str, Any] | None = None,
+        system_profile_subdir: str | None = None,
     ) -> dict[str, Any]:
         normalized_key = str(key or "").strip()
         replacement = ProjectedBrowserSession(
@@ -1157,6 +1189,7 @@ class ProjectedBrowserSessionManager:
             height=height,
             headless=headless,
             channel_candidates=channel_candidates,
+            system_profile_subdir=system_profile_subdir,
         )
         replacement.set_seed_storage_state(seed_storage_state)
         previous: Optional[ProjectedBrowserSession] = None

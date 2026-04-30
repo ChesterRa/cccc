@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -109,6 +110,71 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                         text="hello",
                     )
             self.assertEqual(cm.exception.code, "invalid_path")
+
+    def test_blob_read_reads_blob_attachment_with_limit(self) -> None:
+        from cccc.kernel.blobs import store_blob_bytes
+        from cccc.ports.mcp.handlers import cccc_messaging
+
+        class _FakeGroup:
+            def __init__(self, root: str) -> None:
+                self.group_id = "g_test"
+                self.path = Path(root)
+                self.doc = {}
+
+        with tempfile.TemporaryDirectory() as td:
+            group = _FakeGroup(td)
+            att = store_blob_bytes(group, data="hello world".encode("utf-8"), filename="note.txt", mime_type="text/plain")
+
+            with patch.object(cccc_messaging, "load_group", return_value=group):
+                out = cccc_messaging.blob_read(group_id="g_test", rel_path=str(att.get("path")), max_bytes=5)
+
+            self.assertEqual(out.get("text"), "hello")
+            self.assertTrue(out.get("truncated"))
+            self.assertEqual(out.get("bytes"), 11)
+            self.assertTrue(str(out.get("path") or "").endswith("note.txt"))
+
+    def test_repo_edit_requires_web_model_actor_even_when_called_directly(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        class _FakeGroup:
+            pass
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(mcp_server, "load_group", return_value=_FakeGroup()), patch.object(
+            mcp_server, "find_actor", return_value={"id": "peer1", "runtime": "codex", "runner": "headless"}
+        ), patch.object(
+            mcp_server, "repo_tool", return_value={"ok": True}
+        ) as mock_repo_tool:
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.handle_tool_call(
+                    "cccc_repo_edit",
+                    {"action": "write", "path": "notes.txt", "content": "blocked"},
+                )
+
+        self.assertEqual(cm.exception.code, "invalid_actor_runtime")
+        mock_repo_tool.assert_not_called()
+
+    def test_repo_edit_allows_web_model_actor(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        class _FakeGroup:
+            pass
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(mcp_server, "load_group", return_value=_FakeGroup()), patch.object(
+            mcp_server, "find_actor", return_value={"id": "peer1", "runtime": "web_model", "runner": "headless"}
+        ), patch.object(
+            mcp_server, "repo_tool", return_value={"ok": True}
+        ) as mock_repo_tool:
+            result = mcp_server.handle_tool_call(
+                "cccc_repo_edit",
+                {"action": "write", "path": "notes.txt", "content": "ok"},
+            )
+
+        self.assertEqual(result.get("ok"), True)
+        mock_repo_tool.assert_called_once()
 
     def test_message_send_normalizes_double_escaped_newlines(self) -> None:
         from cccc.ports.mcp import server as mcp_server

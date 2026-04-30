@@ -115,9 +115,12 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     try:
         require_actor_permission(group, by=by, action="actor.add")
         # Note: role is auto-determined by stable position (first visible actor = foreman)
-        if runner != "pty":
+        if runtime == "web_model":
+            runner = "headless"
+            command = []
+        elif runner != "pty":
             raise ValueError("invalid runner (must be 'pty')")
-        if runtime not in ("amp", "auggie", "claude", "codex", "droid", "gemini", "kimi", "neovate", "custom"):
+        if runtime not in ("amp", "auggie", "claude", "codex", "droid", "gemini", "kimi", "neovate", "web_model", "custom"):
             raise ValueError("invalid runtime")
         if runtime == "custom" and not command:
             raise ValueError("custom runtime requires a command (PTY runner)")

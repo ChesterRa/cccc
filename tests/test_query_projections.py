@@ -91,6 +91,34 @@ class TestQueryProjections(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
+    def test_groups_projection_marks_web_model_marker_running(self) -> None:
+        from cccc.daemon.ops.registry_ops import handle_groups
+        from cccc.daemon.runner_state_ops import write_headless_state
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                reg = load_registry()
+                group = create_group(reg, title="web-model-proj", topic="")
+                add_actor(group, actor_id="webpeer", title="Web Peer", runtime="web_model", runner="headless")  # type: ignore[arg-type]
+                write_headless_state(group.group_id, "webpeer")
+
+                resp = handle_groups({})
+
+                self.assertTrue(resp.ok)
+                items = (resp.result or {}).get("groups", [])
+                match = next(item for item in items if str(item.get("group_id") or "") == group.group_id)
+                self.assertTrue(bool(match.get("running")))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_actor_projection_refreshes_after_actor_update(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
         from cccc.kernel.actors import add_actor

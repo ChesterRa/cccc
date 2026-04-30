@@ -201,6 +201,53 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                 pass
             cleanup()
 
+    def test_controller_input_does_not_wait_for_command_ack(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.group import presentation_browser_runtime as runtime
+            from cccc.daemon.browser import projected_browser_runtime as browser_runtime
+
+            fake_runtime = _FakeRuntime()
+            with (
+                patch.object(browser_runtime, "launch_projected_browser_runtime", return_value=fake_runtime),
+                patch.object(browser_runtime.ProjectedBrowserSession, "submit_command") as submit_command,
+            ):
+                state = runtime.open_browser_surface_session(
+                    group_id="g_demo",
+                    slot_id="slot-1",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+                self.assertEqual(state.get("state"), "ready")
+
+                left, right = socket.socketpair()
+                try:
+                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", slot_id="slot-1", sock=left))
+                    _ = self._read_json_line(right)
+                    right.sendall((json.dumps({"t": "click", "x": 1, "y": 2, "button": "left"}) + "\n").encode("utf-8"))
+
+                    deadline = time.time() + 2.0
+                    while time.time() < deadline and not fake_runtime.actions:
+                        time.sleep(0.05)
+
+                    self.assertIn(("click", (1, 2, "left")), fake_runtime.actions)
+                    submit_command.assert_not_called()
+                finally:
+                    try:
+                        right.close()
+                    except Exception:
+                        pass
+                runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
+        finally:
+            try:
+                from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions
+
+                close_all_browser_surface_sessions()
+            except Exception:
+                pass
+            cleanup()
+
     def test_runtime_sessions_are_slot_scoped(self) -> None:
         _, cleanup = self._with_home()
         try:

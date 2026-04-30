@@ -1262,6 +1262,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
         actor = find_actor(group, actor_id) if actor_id and actor_id != "user" else None
         actor_is_pet = isinstance(actor, dict) and is_pet_actor(actor)
         actor_is_voice_secretary = actor_id == "voice-secretary" or (isinstance(actor, dict) and is_voice_secretary_actor(actor))
+        actor_is_web_model = isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "web_model"
         policy = _allowlist_policy()
         max_dynamic_tools_visible = _quota_limit(
             "CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE",
@@ -1369,6 +1370,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                     actor_role=actor_role,
                     is_pet=actor_is_pet,
                     is_voice_secretary=actor_is_voice_secretary,
+                    is_web_model=actor_is_web_model,
                 )
             )
             | {str(x.get("name") or "").strip() for x in dynamic_tools if isinstance(x, dict)}
@@ -1915,6 +1917,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                     actor_role=actor_role,
                     is_pet=actor_is_pet,
                     is_voice_secretary=actor_is_voice_secretary,
+                    is_web_model=actor_is_web_model,
                 )
             ),
             "visible_tool_count": len(visible_tools),

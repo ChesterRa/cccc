@@ -232,6 +232,10 @@ export type Actor = {
   profile_revision_applied?: number;
   updated_at?: string;
   unread_count?: number;
+  web_model_queued_count?: number;
+  web_model_queued_after_event_id?: string;
+  web_model_queued_latest_event_id?: string;
+  web_model_queued_latest_ts?: string;
 };
 
 export type ActorProfile = {
@@ -1243,6 +1247,7 @@ export const SUPPORTED_RUNTIMES = [
   "neovate",
   "gemini",
   "kimi",
+  "web_model",
   "custom",
 ] as const;
 
@@ -1257,6 +1262,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   gemini: { label: "Gemini CLI", desc: "" },
   kimi: { label: "Kimi CLI", desc: "" },
   neovate: { label: "Neovate Code", desc: "" },
+  web_model: { label: "Browser Web Model", desc: "Remote MCP connector; no local process" },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
 };
 
@@ -1306,6 +1312,10 @@ export const RUNTIME_COLORS: Record<string, {
   neovate: {
     bg: "bg-fuchsia-900/30", text: "text-fuchsia-300", border: "border-fuchsia-600/50", dot: "bg-fuchsia-400",
     bgLight: "bg-fuchsia-50", textLight: "text-fuchsia-700", borderLight: "border-fuchsia-300", dotLight: "bg-fuchsia-500"
+  },
+  web_model: {
+    bg: "bg-indigo-900/30", text: "text-indigo-300", border: "border-indigo-600/50", dot: "bg-indigo-400",
+    bgLight: "bg-indigo-50", textLight: "text-indigo-700", borderLight: "border-indigo-300", dotLight: "bg-indigo-500"
   },
   custom: {
     bg: "bg-zinc-800/50", text: "text-zinc-300", border: "border-zinc-500/50", dot: "bg-zinc-400",

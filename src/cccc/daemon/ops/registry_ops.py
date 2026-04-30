@@ -12,6 +12,7 @@ from ...kernel.group import load_group
 from ...kernel.query_projections import get_groups_projection
 from ...kernel.registry import load_registry
 from ...paths import ensure_home
+from ..runner_state_ops import web_model_group_running
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -62,6 +63,7 @@ def handle_groups(_: Dict[str, Any]) -> DaemonResponse:
             or
             (pty_runner.SUPERVISOR.group_running(gid) if gid else False)
             or (headless_runner.SUPERVISOR.group_running(gid) if gid else False)
+            or (web_model_group_running(gid) if gid else False)
         )
         item = dict(group_meta)
         item["running"] = bool(running)
