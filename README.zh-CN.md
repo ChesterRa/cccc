@@ -253,6 +253,17 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 |:----:|:----:|
 | ![Chat](screenshots/chat.png) | ![Terminal](screenshots/terminal.png) |
 
+### 桌面客户端（macOS · Windows · Linux）
+
+[`desktop/`](desktop/) 目录提供原生桌面套壳，基于 Tauri v2。
+无需打开浏览器，支持透明无边框标题栏与原生窗口拖动。
+
+```bash
+cd desktop && npm install && npm run build
+```
+
+详细说明见 [`desktop/README.zh-CN.md`](desktop/README.zh-CN.md)。
+
 ### 远程访问
 
 从外部访问 Web UI：
