@@ -49,6 +49,7 @@ import {
   type VoiceTranscriptPreviewPhase,
   upsertLiveVoiceStreamItem,
 } from "./voice-secretary/voiceStreamModel";
+import { resolveVoiceServiceReadiness } from "./voice-secretary/voiceServiceReadiness";
 
 type VoiceSecretaryComposerControlProps = {
   isDark: boolean;
@@ -1010,18 +1011,15 @@ export function VoiceSecretaryComposerControl({
     [assistant?.config?.auto_document_max_window_seconds],
   );
   const browserSpeechReady = recognitionBackend === "browser_asr";
-  const serviceAsrReady = recognitionBackend === "assistant_service_local_asr";
+  const serviceReadiness = resolveVoiceServiceReadiness({
+    assistant,
+    serviceRuntimesById,
+    streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
+  });
+  const serviceAsrReady = serviceReadiness.serviceAsrReady;
   const serviceHealth = recordFromUnknown(assistant?.health?.service);
-  const serviceManagedModel = recordFromUnknown(serviceHealth.managed_model);
-  const serviceStreamingBackend = recordFromUnknown(serviceHealth.streaming_backend);
-  const streamingRuntimeReady = String(serviceRuntimesById[STREAMING_ASR_RUNTIME_ID]?.status || "").trim() === "ready";
-  const serviceAsrConfigured = Boolean(
-    serviceStreamingBackend.ready
-    || serviceHealth.asr_command_configured
-    || serviceHealth.asr_mock_configured
-    || serviceHealth.managed_asr_command_configured
-    || serviceManagedModel.command_ready,
-  );
+  const streamingRuntimeReady = serviceReadiness.streamingRuntimeReady;
+  const serviceAsrConfigured = serviceReadiness.serviceAsrConfigured;
   const browserSpeechSupportIssue = browserSpeechReady ? getBrowserSpeechSupportIssue() : "";
   const serviceAudioSupportIssue = serviceAsrReady ? getBrowserAudioSupportIssue() : "";
   const getBrowserSpeechIssueMessage = useCallback((issue: BrowserSpeechSupportIssue) => {
@@ -2482,18 +2480,35 @@ export function VoiceSecretaryComposerControl({
 
   const startServiceAudio = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
-    if (!assistantEnabled) {
+    let latestReadiness = resolveVoiceServiceReadiness({
+      assistant,
+      serviceRuntimesById,
+      streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
+    });
+    if (gid) {
+      const resp = await fetchAssistant(gid, "voice_secretary");
+      if (resp.ok) {
+        setAssistant(resp.result.assistant || null);
+        setServiceRuntimesById(resp.result.service_runtimes_by_id || {});
+        latestReadiness = resolveVoiceServiceReadiness({
+          assistant: resp.result.assistant || null,
+          serviceRuntimesById: resp.result.service_runtimes_by_id || {},
+          streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
+        });
+      }
+    }
+    if (!latestReadiness.assistantEnabled) {
       showError(t("voiceSecretaryEnableFirst", { defaultValue: "Enable Voice Secretary first." }));
       return;
     }
-    if (!serviceAsrReady) {
+    if (!latestReadiness.serviceAsrReady) {
       showError(t("voiceSecretaryServiceBackendRequired", {
         defaultValue: "Switch recognition to Assistant service local ASR in Assistants settings first.",
       }));
       return;
     }
-    if (!serviceAsrConfigured) {
-      showError(streamingRuntimeReady
+    if (!latestReadiness.serviceAsrConfigured) {
+      showError(latestReadiness.streamingRuntimeReady
         ? t("voiceSecretaryStreamingRuntimeNotConnected", {
           defaultValue: "Streaming ASR runtime is installed, but the live streaming transcription backend is not connected yet. Use Browser ASR until the streaming backend is enabled.",
         })
@@ -2770,8 +2785,10 @@ export function VoiceSecretaryComposerControl({
     open,
     selectedAudioDeviceId,
     selectedGroupId,
+    assistant,
     serviceAsrReady,
     serviceAsrConfigured,
+    serviceRuntimesById,
     showError,
     streamingRuntimeReady,
     t,
