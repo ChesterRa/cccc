@@ -289,6 +289,18 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     self.assertTrue(bool(append_body.get("ok")), append_body)
                     result = append_body.get("result") or {}
                     self.assertTrue(str(result.get("segment_path") or "").endswith("segments.jsonl"))
+
+                    session_resp = client.get(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest",
+                    )
+                    self.assertEqual(session_resp.status_code, 200)
+                    session_body = session_resp.json()
+                    self.assertTrue(bool(session_body.get("ok")), session_body)
+                    session = ((session_body.get("result") or {}).get("session")) or {}
+                    self.assertEqual(str(session.get("session_id") or ""), "web-session-1")
+                    segments = session.get("segments") or []
+                    self.assertEqual(len(segments), 1)
+                    self.assertEqual(str(segments[0].get("text") or ""), "please inspect the web transcript segment route")
         finally:
             cleanup()
 
@@ -406,6 +418,75 @@ class TestWebAssistantRoutes(unittest.TestCase):
             self.assertTrue(bool(state_body.get("ok")), state_body)
             documents = ((state_body.get("result") or {}).get("documents_by_id")) or {}
             self.assertIn(document_id, documents)
+        finally:
+            cleanup()
+
+    def test_web_voice_secretary_transcript_segment_route_acks_live_segments_without_daemon(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._add_foreman(group_id)
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon) as daemon_mock:
+                with TestClient(create_app()) as client:
+                    settings_resp = client.put(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/settings",
+                        json={
+                            "enabled": True,
+                            "config": {
+                                "capture_mode": "browser",
+                                "recognition_backend": "browser_asr",
+                                "recognition_language": "en-US",
+                                "retention_ttl_seconds": 120,
+                                "auto_document_enabled": True,
+                                "document_default_dir": "docs/voice-secretary",
+                                "tts_enabled": False,
+                            },
+                        },
+                    )
+                    self.assertEqual(settings_resp.status_code, 200)
+                    self.assertTrue(bool(settings_resp.json().get("ok")), settings_resp.json())
+
+                    daemon_mock.side_effect = AssertionError("live transcript segment should not call daemon")
+                    append_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcript_segments",
+                        json={
+                            "session_id": "web-live-session-1",
+                            "segment_id": "seg-live-1",
+                            "text": "live segment should be acknowledged immediately",
+                            "language": "en-US",
+                            "is_final": True,
+                            "flush": False,
+                            "trigger": {
+                                "mode": "meeting",
+                                "trigger_kind": "service_streaming_transcript",
+                                "capture_mode": "service",
+                                "recognition_backend": "assistant_service_local_asr_streaming",
+                                "input_device_label": "mock mic",
+                                "language": "en-US",
+                            },
+                            "by": "user",
+                        },
+                    )
+                    self.assertEqual(append_resp.status_code, 200)
+                    append_body = append_resp.json()
+                    self.assertTrue(bool(append_body.get("ok")), append_body)
+                    append_result = append_body.get("result") or {}
+                    self.assertFalse(bool(append_result.get("document_updated")), append_result)
+                    self.assertTrue(bool(append_result.get("deferred_document_update")), append_result)
+
+                    session_resp = client.get(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/web-live-session-1",
+                    )
+                    self.assertEqual(session_resp.status_code, 200)
+                    segments = (((session_resp.json().get("result") or {}).get("session") or {}).get("segments")) or []
+                    self.assertEqual(len(segments), 1)
+                    self.assertEqual(str(segments[0].get("text") or ""), "live segment should be acknowledged immediately")
         finally:
             cleanup()
 

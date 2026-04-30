@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type {
   AssistantVoiceAskFeedback,
   AssistantVoiceDocument,
+  AssistantVoiceMeetingSession,
   AssistantVoicePromptDraft,
   AssistantServiceRuntime,
   AssistantVoiceTranscriptSegmentResult,
@@ -12,8 +13,7 @@ import type {
   LedgerEvent,
 } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { ChevronDownIcon, CloseIcon, CopyIcon, MaximizeIcon, MicrophoneIcon, SparklesIcon, StopIcon } from "../../components/Icons";
-import { MarkdownDocumentSurface } from "../../components/document/MarkdownDocumentSurface";
+import { ChevronDownIcon, CloseIcon, CopyIcon, MaximizeIcon, MicrophoneIcon, RefreshIcon, SparklesIcon, StopIcon } from "../../components/Icons";
 import { GroupCombobox } from "../../components/GroupCombobox";
 import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
@@ -24,8 +24,8 @@ import {
   archiveVoiceAssistantDocument,
   clearVoiceAssistantAskRequests,
   fetchAssistant,
+  fetchLatestVoiceAssistantMeetingSession,
   saveVoiceAssistantDocument,
-  selectVoiceAssistantDocument,
   sendVoiceAssistantDocumentInstruction,
   updateAssistantSettings,
   withAuthToken,
@@ -34,6 +34,21 @@ import { useGroupStore, useUIStore } from "../../stores";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { AnimatedShinyText } from "../../registry/magicui/animated-shiny-text";
 import { copyTextToClipboard } from "../../utils/copy";
+import { VoiceSecretaryDocumentListPanel } from "./voice-secretary/VoiceSecretaryDocumentListPanel";
+import { VoiceSecretaryRequestPanel } from "./voice-secretary/VoiceSecretaryRequestPanel";
+import { VoiceSecretaryWorkspacePanel } from "./voice-secretary/VoiceSecretaryWorkspacePanel";
+import type { VoiceWorkspaceView } from "./voice-secretary/VoiceSecretaryWorkspacePanel";
+import { useVoiceCaptureTargetDocumentSelection } from "./voice-secretary/useVoiceCaptureTargetDocumentSelection";
+import {
+  appendFinalVoiceStreamItem,
+  createVoiceStreamMessage,
+  createVoiceTranscriptPreview,
+  type VoiceDiarizationStreamItem,
+  type VoiceStreamItem,
+  type VoiceTranscriptPreview,
+  type VoiceTranscriptPreviewPhase,
+  upsertLiveVoiceStreamItem,
+} from "./voice-secretary/voiceStreamModel";
 
 type VoiceSecretaryComposerControlProps = {
   isDark: boolean;
@@ -107,21 +122,6 @@ type VoiceCaptureChannelMessage = {
   sentAt?: number;
 };
 
-type VoiceTranscriptPreviewPhase = "interim" | "final";
-
-type VoiceTranscriptPreview = {
-  id: string;
-  phase: VoiceTranscriptPreviewPhase;
-  text: string;
-  pendingFinalText?: string;
-  interimText?: string;
-  mode: VoiceSecretaryCaptureMode;
-  documentTitle?: string;
-  documentPath?: string;
-  language?: string;
-  updatedAt: number;
-};
-
 type VoiceDocumentActivityStatus = "queued" | "updated";
 
 type VoiceDocumentActivityItem = {
@@ -134,10 +134,7 @@ type VoiceDocumentActivityItem = {
   createdAt: number;
 };
 
-type VoiceActivityFeedItem =
-  | { kind: "ask"; id: string; sortAt: number; item: AssistantVoiceAskFeedback }
-  | { kind: "document"; id: string; sortAt: number; item: VoiceDocumentActivityItem }
-  | { kind: "prompt"; id: string; sortAt: number; status: "waiting" | "ready"; text: string };
+type VoiceDiarizationActivityItem = VoiceDiarizationStreamItem;
 
 type AssistantVoiceDocumentLedgerData = {
   action?: unknown;
@@ -148,11 +145,6 @@ type AssistantVoiceDocumentLedgerData = {
   status?: unknown;
   title?: unknown;
   workspace_path?: unknown;
-};
-
-type StreamTextAnimateProps = {
-  text: string;
-  className?: string;
 };
 
 type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
@@ -174,7 +166,6 @@ const BROWSER_SPEECH_RESTART_MAX_MS = 8000;
 const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
-const SERVICE_STREAMING_PARTIAL_COMMIT_MS = 2500;
 const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
 const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 60_000;
 const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 60_000;
@@ -236,6 +227,13 @@ function formatVoiceActivityFullTimeMs(value: number): string {
   return date.toLocaleString();
 }
 
+function formatVoiceOffsetMs(value: number): string {
+  const totalSeconds = Math.max(0, Math.floor(Number(value || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function compactVoiceTranscriptSummaryText(value: string): string {
   const text = normalizeBrowserTranscriptChunk(value);
   if (text.length <= VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS) return text;
@@ -283,7 +281,7 @@ function displayAskFeedbackStatus(item: AssistantVoiceAskFeedback, nowMs: number
 function askFeedbackDisplayText(item: AssistantVoiceAskFeedback): string {
   return String(item.reply_text || item.request_preview || item.request_text || "").trim();
 }
-const VOICE_LANGUAGE_OPTION_VALUES = ["auto", "zh-CN", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES"] as const;
+const VOICE_LANGUAGE_OPTION_VALUES = ["mixed", "auto", "zh-CN", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES"] as const;
 
 function slugifyVoiceDocumentDownloadName(value: string): string {
   return (
@@ -519,18 +517,50 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function float32To16kPcm16(input: Float32Array, inputSampleRate: number): Uint8Array {
-  const sourceRate = Math.max(1, Number(inputSampleRate) || 48000);
-  const targetRate = 16000;
-  const ratio = sourceRate / targetRate;
-  const outputLength = Math.max(0, Math.floor(input.length / ratio));
-  const output = new Int16Array(outputLength);
-  for (let index = 0; index < outputLength; index += 1) {
-    const sourceIndex = Math.min(input.length - 1, Math.floor(index * ratio));
-    const sample = Math.max(-1, Math.min(1, input[sourceIndex] || 0));
-    output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+class Pcm16Resampler {
+  private readonly ratio: number;
+  private carry = new Float32Array(0);
+  private gain = 1.8;
+
+  constructor(inputSampleRate: number) {
+    const sourceRate = Math.max(1, Number(inputSampleRate) || 48000);
+    this.ratio = sourceRate / 16000;
   }
-  return new Uint8Array(output.buffer);
+
+  push(input: Float32Array): Uint8Array {
+    if (!input.length) return new Uint8Array(0);
+    const samples = this.carry.length ? new Float32Array(this.carry.length + input.length) : input;
+    if (this.carry.length) {
+      samples.set(this.carry, 0);
+      samples.set(input, this.carry.length);
+    }
+    const outputLength = Math.max(0, Math.floor(samples.length / this.ratio));
+    const consumedSamples = Math.min(samples.length, Math.floor(outputLength * this.ratio));
+    this.carry = consumedSamples < samples.length ? samples.slice(consumedSamples) : new Float32Array(0);
+    if (outputLength <= 0) return new Uint8Array(0);
+    const output = new Int16Array(outputLength);
+    for (let index = 0; index < outputLength; index += 1) {
+      const start = index * this.ratio;
+      const end = Math.min(samples.length, (index + 1) * this.ratio);
+      const startIndex = Math.floor(start);
+      const endIndex = Math.max(startIndex + 1, Math.ceil(end));
+      let total = 0;
+      let totalWeight = 0;
+      for (let sourceIndex = startIndex; sourceIndex < endIndex; sourceIndex += 1) {
+        const sampleStart = Math.max(start, sourceIndex);
+        const sampleEnd = Math.min(end, sourceIndex + 1);
+        const weight = Math.max(0, sampleEnd - sampleStart);
+        if (weight > 0) {
+          total += (samples[sourceIndex] || 0) * weight;
+          totalWeight += weight;
+        }
+      }
+      const averaged = totalWeight > 0 ? total / totalWeight : 0;
+      const sample = Math.max(-1, Math.min(1, averaged * this.gain));
+      output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+    return new Uint8Array(output.buffer);
+  }
 }
 
 function voiceLanguageOptionValues(configuredLanguage: string): string[] {
@@ -548,6 +578,120 @@ function numberFromUnknown(value: unknown, fallback: number, min: number, max: n
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function voiceSessionTimestampMs(value: unknown, fallback: number): number {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function voiceStreamItemsFromMeetingSession(session: AssistantVoiceMeetingSession): VoiceStreamItem[] {
+  const segments = Array.isArray(session.segments) ? session.segments : [];
+  const items = segments.map((segment, index): VoiceStreamItem | null => {
+    const record = recordFromUnknown(segment);
+    const text = normalizeBrowserTranscriptChunk(String(record.text || ""));
+    if (!text) return null;
+    const createdAt = voiceSessionTimestampMs(record.created_at, Date.now() - index);
+    const trigger = recordFromUnknown(record.trigger);
+    const mode = String(trigger.mode || "document").trim() as VoiceSecretaryCaptureMode;
+    return {
+      id: String(record.segment_id || `persisted-${index}`).trim() || `persisted-${index}`,
+      phase: "final",
+      text,
+      mode: mode === "instruction" || mode === "prompt" ? mode : "document",
+      documentPath: String(record.document_path || trigger.document_path || "").trim() || undefined,
+      language: String(record.language || trigger.language || session.language || "").trim() || undefined,
+      startMs: Number.isFinite(Number(record.start_ms)) ? Number(record.start_ms) : undefined,
+      endMs: Number.isFinite(Number(record.end_ms)) ? Number(record.end_ms) : undefined,
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }).filter((item): item is VoiceStreamItem => item !== null);
+
+  const partial = normalizeBrowserTranscriptChunk(String(session.latest_partial || ""));
+  if (partial) {
+    const updatedAt = voiceSessionTimestampMs(session.updated_at, Date.now());
+    items.unshift({
+      id: `${session.session_id}:latest-partial`,
+      phase: "interim",
+      text: partial,
+      mode: "document",
+      language: String(session.language || "").trim() || undefined,
+      documentPath: String(session.document_path || "").trim() || undefined,
+      createdAt: updatedAt,
+      updatedAt,
+    });
+  }
+  return items;
+}
+
+function diarizationItemFromMeetingSession(session: AssistantVoiceMeetingSession): VoiceDiarizationStreamItem | null {
+  const diarization = recordFromUnknown(session.diarization);
+  const artifact = recordFromUnknown(diarization.artifact_path ? diarization : session.diarization);
+  const segments = Array.isArray(diarization.segments)
+    ? diarization.segments
+    : Array.isArray(artifact.segments)
+      ? artifact.segments
+      : [];
+  const normalizedSegments = segments.map((item) => {
+    const record = recordFromUnknown(item);
+    return {
+      speaker_label: String(record.speaker_label || "").trim(),
+      start_ms: Number(record.start_ms || 0),
+      end_ms: Number(record.end_ms || 0),
+    };
+  }).filter((item) => item.speaker_label && item.end_ms > item.start_ms);
+  const speakerTranscriptSegments = (Array.isArray(diarization.speaker_transcript_segments)
+    ? diarization.speaker_transcript_segments
+    : Array.isArray(artifact.speaker_transcript_segments)
+      ? artifact.speaker_transcript_segments
+      : []
+  ).map((item) => {
+    const record = recordFromUnknown(item);
+    return {
+      speaker_label: String(record.speaker_label || "").trim(),
+      start_ms: Number(record.start_ms || 0),
+      end_ms: Number(record.end_ms || 0),
+      text: String(record.text || "").trim(),
+    };
+  }).filter((item) => item.speaker_label && item.text && item.end_ms > item.start_ms);
+  const error = recordFromUnknown(session.error || artifact.speaker_transcript_error);
+  if (!normalizedSegments.length && !Object.keys(error).length && !session.diarization_artifact_path) return null;
+  const diarizationReady = Boolean(session.diarization_ready) || String(artifact.status || diarization.status || "").trim() === "ready";
+  const speakerLabels = normalizedSegments
+    .map((item) => item.speaker_label || "")
+    .filter((label, index, labels) => label && labels.indexOf(label) === index);
+  return {
+    id: `diarization-${session.session_id}`,
+    status: Object.keys(error).length ? "failed" : diarizationReady || normalizedSegments.length ? "ready" : "working",
+    speakerCount: speakerLabels.length,
+    preview: normalizedSegments.slice(0, 4).map((item) => `${item.speaker_label} ${formatVoiceOffsetMs(item.start_ms || 0)}-${formatVoiceOffsetMs(item.end_ms || 0)}`).join("\n"),
+    segments: normalizedSegments,
+    speakerTranscriptSegments,
+    artifactPath: String(session.diarization_artifact_path || diarization.artifact_path || "").trim() || undefined,
+    error: String(error.message || "").trim() || undefined,
+    createdAt: voiceSessionTimestampMs(session.updated_at, Date.now()),
+  };
+}
+
+function mergeRestoredDiarizationActivity(
+  currentItems: VoiceDiarizationActivityItem[],
+  restoredItem: VoiceDiarizationActivityItem,
+): VoiceDiarizationActivityItem[] {
+  const existingIndex = currentItems.findIndex((item) => item.id === restoredItem.id);
+  if (existingIndex < 0) return [restoredItem, ...currentItems].slice(0, VOICE_ACTIVITY_FEED_LIMIT);
+  const existing = currentItems[existingIndex];
+  const shouldReplace =
+    existing.status === "working"
+    || existing.status === "provisional"
+    || restoredItem.status === "ready"
+    || restoredItem.status === "failed"
+    || restoredItem.createdAt >= existing.createdAt;
+  if (!shouldReplace) return currentItems;
+  return [
+    restoredItem,
+    ...currentItems.filter((item) => item.id !== restoredItem.id),
+  ].slice(0, VOICE_ACTIVITY_FEED_LIMIT);
 }
 
 function normalizeBrowserTranscriptChunk(value: string): string {
@@ -594,44 +738,6 @@ function hashComposerSnapshot(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-function splitStreamText(value: string): string[] {
-  const text = String(value || "");
-  if (!text) return [];
-  const segmenterConstructor = typeof Intl !== "undefined"
-    ? (Intl as typeof Intl & { Segmenter?: new (locale?: string, options?: { granularity?: "grapheme" }) => { segment: (input: string) => Iterable<{ segment: string }> } }).Segmenter
-    : undefined;
-  if (segmenterConstructor) {
-    try {
-      const segmenter = new segmenterConstructor(undefined, { granularity: "grapheme" });
-      return Array.from(segmenter.segment(text), (item) => item.segment);
-    } catch {
-      // Fall back to Array.from below.
-    }
-  }
-  return Array.from(text);
-}
-
-function StreamTextAnimate({ text, className }: StreamTextAnimateProps) {
-  const segments = useMemo(() => splitStreamText(text), [text]);
-  if (!segments.length) return null;
-  return (
-    <span className={classNames("stream-text-animate", className || "")}>
-      {segments.map((segment, index) => {
-        if (!segment.trim()) return segment;
-        return (
-          <span
-            key={`${index}-${segment}`}
-            className="stream-text-animate-segment"
-            style={{ animationDelay: `${Math.min(index, 36) * 12}ms` }}
-          >
-            {segment}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
 function abortBrowserSpeechRecognition(recognition: BrowserSpeechRecognition | null): void {
   if (!recognition) return;
   recognition.onend = null;
@@ -673,10 +779,14 @@ export function VoiceSecretaryComposerControl({
   const serviceAudioProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const serviceAudioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const serviceAudioWsRef = useRef<WebSocket | null>(null);
+  const serviceAudioResamplerRef = useRef<Pcm16Resampler | null>(null);
   const serviceAudioSeqRef = useRef(0);
   const serviceFinalTranscriptRef = useRef("");
   const serviceLatestPartialTranscriptRef = useRef("");
   const serviceCommittedTranscriptRef = useRef("");
+  const serviceAudioDurationMsRef = useRef(0);
+  const serviceCommittedEndMsRef = useRef(0);
+  const serviceFinalSpeakerSegmentsRef = useRef<Record<string, unknown>[]>([]);
   const servicePartialCommitTimerRef = useRef<number | null>(null);
   const voiceCaptureOwnerIdRef = useRef(createVoiceCaptureOwnerId());
   const recordingRef = useRef(false);
@@ -703,13 +813,15 @@ export function VoiceSecretaryComposerControl({
   const documentBaseContentRef = useRef("");
   const documentTitleDraftRef = useRef("");
   const documentDraftRef = useRef("");
+  const voiceStreamItemIdRef = useRef("");
   const archivedDocumentIdsRef = useRef<Set<string>>(new Set());
   const documentUpdatedSignatureByPathRef = useRef<Map<string, string>>(new Map());
   const [open, setOpen] = useState(false);
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [actionBusy, setActionBusy] = useState<"" | "enable" | "voice_language" | "transcribe" | "save_doc" | "new_doc" | "instruct_doc" | "instruct_ask" | "archive_doc" | "capture_target" | "clear_ask">("");
+  const [actionBusy, setActionBusy] = useState<"" | "enable" | "transcribe" | "save_doc" | "new_doc" | "instruct_doc" | "instruct_ask" | "archive_doc" | "clear_ask">("");
+  const [recognitionLanguageSaving, setRecognitionLanguageSaving] = useState(false);
   const [assistant, setAssistant] = useState<BuiltinAssistant | null>(null);
   const [serviceRuntimesById, setServiceRuntimesById] = useState<Record<string, AssistantServiceRuntime>>({});
   const [documents, setDocuments] = useState<AssistantVoiceDocument[]>([]);
@@ -720,6 +832,7 @@ export function VoiceSecretaryComposerControl({
   const [documentBaseTitle, setDocumentBaseTitle] = useState("");
   const [documentBaseContent, setDocumentBaseContent] = useState("");
   const [documentEditing, setDocumentEditing] = useState(false);
+  const [voiceWorkspaceView, setVoiceWorkspaceView] = useState<VoiceWorkspaceView>("document");
   const [documentRemoteChanged, setDocumentRemoteChanged] = useState(false);
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [newDocumentTitleDraft, setNewDocumentTitleDraft] = useState("");
@@ -736,7 +849,9 @@ export function VoiceSecretaryComposerControl({
   const [askFeedbackItems, setAskFeedbackItems] = useState<AssistantVoiceAskFeedback[]>([]);
   const [askFeedbackClockMs, setAskFeedbackClockMs] = useState(() => Date.now());
   const [liveTranscriptPreview, setLiveTranscriptPreview] = useState<VoiceTranscriptPreview | null>(null);
+  const [voiceStreamItems, setVoiceStreamItems] = useState<VoiceStreamItem[]>([]);
   const [documentActivityItems, setDocumentActivityItems] = useState<VoiceDocumentActivityItem[]>([]);
+  const [diarizationActivityItems, setDiarizationActivityItems] = useState<VoiceDiarizationActivityItem[]>([]);
   const [activityClockMs, setActivityClockMs] = useState(() => Date.now());
   const [voiceReplyBubbleRequestId, setVoiceReplyBubbleRequestId] = useState("");
   const [copiedVoiceReplyRequestId, setCopiedVoiceReplyRequestId] = useState("");
@@ -754,6 +869,10 @@ export function VoiceSecretaryComposerControl({
 
   useEffect(() => {
     recordingRef.current = recording;
+    if (recording) {
+      voiceStreamItemIdRef.current = "";
+      setVoiceWorkspaceView("stream");
+    }
   }, [recording]);
 
   useEffect(() => {
@@ -806,16 +925,22 @@ export function VoiceSecretaryComposerControl({
   const documentHasUnsavedEdits = documentDraft !== documentBaseContent;
   const assistantEnabled = !!assistant?.enabled;
   const recognitionBackend = String(assistant?.config?.recognition_backend || "browser_asr").trim();
-  const configuredRecognitionLanguage = String(assistant?.config?.recognition_language || "auto").trim() || "auto";
+  const configuredRecognitionLanguage = String(assistant?.config?.recognition_language || "mixed").trim() || "mixed";
   const effectiveRecognitionLanguage = configuredRecognitionLanguage === "auto"
     ? (typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US")
     : configuredRecognitionLanguage;
+  const browserRecognitionLanguage =
+    configuredRecognitionLanguage === "mixed"
+      ? (typeof navigator !== "undefined" && navigator.language ? navigator.language : "zh-CN")
+      : effectiveRecognitionLanguage;
   const voiceLanguageOptions = useMemo(
     () => voiceLanguageOptionValues(configuredRecognitionLanguage),
     [configuredRecognitionLanguage],
   );
   const voiceLanguageLabel = useCallback((value: string) => {
     switch (value) {
+      case "mixed":
+        return t("voiceSecretaryLanguageMixed", { defaultValue: "Mixed" });
       case "auto":
         return t("voiceSecretaryLanguageAuto", { defaultValue: "System default" });
       case "zh-CN":
@@ -838,6 +963,8 @@ export function VoiceSecretaryComposerControl({
   }, [t]);
   const voiceLanguageShortLabel = useCallback((value: string) => {
     switch (value) {
+      case "mixed":
+        return t("voiceSecretaryLanguageShortMixed", { defaultValue: "MIX" });
       case "auto":
         return t("voiceSecretaryLanguageShortAuto", { defaultValue: "SYS" });
       case "zh-CN":
@@ -1059,31 +1186,58 @@ export function VoiceSecretaryComposerControl({
     });
   }, [pushDocumentActivity]);
 
-  const updateLiveTranscriptPreview = useCallback((text: string, phase: VoiceTranscriptPreviewPhase) => {
+  const updateLiveTranscriptPreview = useCallback((text: string, phase: VoiceTranscriptPreviewPhase, opts?: { startMs?: number; endMs?: number }) => {
     const clean = normalizeBrowserTranscriptChunk(text);
     if (!clean) return;
     const now = Date.now();
+    const streamId = voiceStreamItemIdRef.current || `voice-stream-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    voiceStreamItemIdRef.current = streamId;
     const pendingFinalText = normalizeBrowserTranscriptChunk(browserFinalTranscriptBufferRef.current);
-    const interimText = phase === "interim" ? clean : "";
-    const previewText = pendingFinalText
-      ? interimText
-        ? `${pendingFinalText}\n${interimText}`
-        : pendingFinalText
-      : clean;
-    setLiveTranscriptPreview({
-      id: "live",
+    const preview = createVoiceTranscriptPreview({
+      id: streamId,
+      cleanText: clean,
       phase,
-      text: previewText,
       pendingFinalText,
-      interimText,
-      mode: captureMode,
-      documentTitle: captureTargetDocumentTitle,
-      documentPath: effectiveCaptureTargetDocumentPath,
-      language: effectiveRecognitionLanguage,
-      updatedAt: now,
+      metadata: {
+        mode: captureMode,
+        documentTitle: captureTargetDocumentTitle,
+        documentPath: effectiveCaptureTargetDocumentPath,
+        language: effectiveRecognitionLanguage,
+      },
+      timing: opts,
+      now,
     });
+    setLiveTranscriptPreview(preview);
+    setVoiceStreamItems((prev) => upsertLiveVoiceStreamItem(prev, preview));
     setActivityClockMs(now);
   }, [captureMode, effectiveCaptureTargetDocumentPath, captureTargetDocumentTitle, effectiveRecognitionLanguage]);
+
+  const pushVoiceStreamMessage = useCallback((text: string, opts?: { startMs?: number; endMs?: number; documentPath?: string }) => {
+    const clean = normalizeBrowserTranscriptChunk(text);
+    if (!clean) return;
+    const now = Date.now();
+    const liveId = voiceStreamItemIdRef.current;
+    voiceStreamItemIdRef.current = "";
+    setLiveTranscriptPreview(null);
+    const documentPath = String(opts?.documentPath || effectiveCaptureTargetDocumentPath || "").trim();
+    const documentTitle = documentPath
+      ? String(findVoiceDocument(documents, documentPath)?.title || "").trim() || captureTargetDocumentTitle
+      : captureTargetDocumentTitle;
+    const item = createVoiceStreamMessage({
+      id: `voice-message-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      cleanText: clean,
+      metadata: {
+        mode: captureMode,
+        documentTitle,
+        documentPath,
+        language: effectiveRecognitionLanguage,
+      },
+      timing: opts,
+      now,
+    });
+    setVoiceStreamItems((prev) => appendFinalVoiceStreamItem(prev, item, liveId));
+    setActivityClockMs(now);
+  }, [captureMode, documents, effectiveCaptureTargetDocumentPath, captureTargetDocumentTitle, effectiveRecognitionLanguage]);
 
   const loadAudioDevices = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
@@ -1206,6 +1360,20 @@ export function VoiceSecretaryComposerControl({
       } else {
         loadDocumentDraft(null);
       }
+      if (!recordingRef.current) {
+        const sessionResp = await fetchLatestVoiceAssistantMeetingSession(gid);
+        if (seq !== refreshSeq.current) return;
+        if (sessionResp.ok && sessionResp.result.session) {
+          const restoredItems = voiceStreamItemsFromMeetingSession(sessionResp.result.session);
+          if (restoredItems.length) {
+            setVoiceStreamItems((prev) => (prev.length ? prev : restoredItems));
+          }
+          const restoredDiarization = diarizationItemFromMeetingSession(sessionResp.result.session);
+          if (restoredDiarization) {
+            setDiarizationActivityItems((prev) => mergeRestoredDiarizationActivity(prev, restoredDiarization));
+          }
+        }
+      }
     } finally {
       if (seq === refreshSeq.current && !quiet) setLoading(false);
     }
@@ -1244,10 +1412,14 @@ export function VoiceSecretaryComposerControl({
         });
       }
     }
+    if (kind === "assistant.voice.session") {
+      void refreshAssistant({ quiet: true });
+    }
   }, [
     latestVoiceLedgerEvent,
     open,
     pushDocumentUpdatedActivity,
+    refreshAssistant,
   ]);
 
   useEffect(() => {
@@ -1355,6 +1527,7 @@ export function VoiceSecretaryComposerControl({
     setOpen(false);
     setLoading(false);
     setActionBusy("");
+    setRecognitionLanguageSaving(false);
     setAssistant(null);
     setDocuments([]);
     setViewedDocumentPath("");
@@ -1376,6 +1549,8 @@ export function VoiceSecretaryComposerControl({
     setPendingPromptDraft(null);
     setAskFeedbackItems([]);
     setLiveTranscriptPreview(null);
+    setVoiceStreamItems([]);
+    voiceStreamItemIdRef.current = "";
     setDocumentActivityItems([]);
     setActivityClockMs(Date.now());
     documentUpdatedSignatureByPathRef.current = new Map();
@@ -1397,6 +1572,10 @@ export function VoiceSecretaryComposerControl({
     browserFinalTranscriptBufferRef.current = "";
     serviceLatestPartialTranscriptRef.current = "";
     serviceCommittedTranscriptRef.current = "";
+    serviceAudioResamplerRef.current = null;
+    serviceAudioDurationMsRef.current = 0;
+    serviceCommittedEndMsRef.current = 0;
+    serviceFinalSpeakerSegmentsRef.current = [];
     if (browserSpeechRestartTimerRef.current !== null) {
       window.clearTimeout(browserSpeechRestartTimerRef.current);
       browserSpeechRestartTimerRef.current = null;
@@ -1496,7 +1675,16 @@ export function VoiceSecretaryComposerControl({
 
   const appendTranscriptSegment = useCallback(async (
     text: string,
-    opts?: { flush?: boolean; triggerKind?: string; source?: string; inputDeviceLabel?: string; documentPath?: string },
+    opts?: {
+      flush?: boolean;
+      triggerKind?: string;
+      source?: string;
+      inputDeviceLabel?: string;
+      documentPath?: string;
+      startMs?: number;
+      endMs?: number;
+      speakerSegments?: Record<string, unknown>[];
+    },
   ) => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid || !assistantEnabled) return;
@@ -1515,6 +1703,8 @@ export function VoiceSecretaryComposerControl({
         language: effectiveRecognitionLanguage,
         isFinal: true,
         flush,
+        startMs: opts?.startMs,
+        endMs: opts?.endMs,
         trigger: {
           mode: "meeting",
           trigger_kind: opts?.triggerKind || (flush ? "push_to_talk_stop" : "meeting_window"),
@@ -1524,6 +1714,7 @@ export function VoiceSecretaryComposerControl({
           input_device_label: opts?.inputDeviceLabel || (serviceAsrReady ? selectedAudioDeviceLabel : BROWSER_DEFAULT_MIC_LABEL),
           language: effectiveRecognitionLanguage,
           document_path: targetDocumentPath,
+          speaker_segments: opts?.speakerSegments || [],
         },
         by: "user",
       });
@@ -1721,6 +1912,7 @@ export function VoiceSecretaryComposerControl({
       inputDeviceLabel: BROWSER_DEFAULT_MIC_LABEL,
       documentPath,
     });
+    pushVoiceStreamMessage(text, { documentPath });
   }, [
     appendTranscriptSegment,
     captureMode,
@@ -1728,6 +1920,7 @@ export function VoiceSecretaryComposerControl({
     clearTranscriptMaxFlushTimer,
     requestPromptRefine,
     sendInstructionTranscript,
+    pushVoiceStreamMessage,
     takeBrowserFinalTranscriptBuffer,
   ]);
 
@@ -1813,6 +2006,10 @@ export function VoiceSecretaryComposerControl({
     serviceFinalTranscriptRef.current = "";
     serviceLatestPartialTranscriptRef.current = "";
     serviceCommittedTranscriptRef.current = "";
+    serviceAudioResamplerRef.current = null;
+    serviceAudioDurationMsRef.current = 0;
+    serviceCommittedEndMsRef.current = 0;
+    serviceFinalSpeakerSegmentsRef.current = [];
     clearServicePartialCommitTimer();
     releaseVoiceCaptureLock(voiceCaptureOwnerIdRef.current);
     setRecording(false);
@@ -1891,8 +2088,9 @@ export function VoiceSecretaryComposerControl({
   }, [stopBrowserSpeech, stopServiceAudio]);
 
   const closePanel = useCallback(() => {
+    if (recordingRef.current) stopCurrentRecording();
     setOpen(false);
-  }, []);
+  }, [stopCurrentRecording]);
   const { modalRef } = useModalA11y(open, closePanel);
 
   useEffect(() => {
@@ -2051,7 +2249,7 @@ export function VoiceSecretaryComposerControl({
         const recognition = new SpeechRecognitionCtor();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = effectiveRecognitionLanguage;
+        recognition.lang = browserRecognitionLanguage;
         recognition.maxAlternatives = 1;
         recognition.onspeechstart = () => {
           clearTranscriptFlushTimer();
@@ -2215,7 +2413,7 @@ export function VoiceSecretaryComposerControl({
     clearBrowserSpeechRestartTimer,
     clearBrowserSpeechStopFinalizeTimer,
     clearTranscriptFlushTimer,
-    effectiveRecognitionLanguage,
+    browserRecognitionLanguage,
     flushBrowserTranscriptWindow,
     getAudioCaptureErrorMessage,
     getAudioSupportIssueMessage,
@@ -2236,25 +2434,39 @@ export function VoiceSecretaryComposerControl({
     const committed = normalizeBrowserTranscriptChunk(serviceCommittedTranscriptRef.current);
     if (committed && (committed === clean || committed.endsWith(clean))) {
       serviceFinalTranscriptRef.current = committed;
-      updateLiveTranscriptPreview(committed, "final");
+      const liveId = voiceStreamItemIdRef.current;
+      setLiveTranscriptPreview(null);
+      voiceStreamItemIdRef.current = "";
+      if (liveId) {
+        setVoiceStreamItems((prev) => prev.filter((item) => item.id !== liveId));
+      }
       return;
     }
     const newText = committed && clean.startsWith(committed)
       ? clean.slice(committed.length).trim()
       : clean;
     serviceFinalTranscriptRef.current = mergeTranscriptChunks(serviceFinalTranscriptRef.current, clean);
-    updateLiveTranscriptPreview(serviceFinalTranscriptRef.current, "final");
     if (captureMode === "prompt") {
+      updateLiveTranscriptPreview(newText || clean, "final");
       await requestPromptRefine(newText, "service_prompt_refine");
     } else if (captureMode === "instruction") {
+      updateLiveTranscriptPreview(newText || clean, "final");
       await sendInstructionTranscript(newText, { triggerKind: "service_voice_instruction" });
     } else {
+      const startMs = serviceCommittedEndMsRef.current;
+      const endMs = Math.max(startMs, serviceAudioDurationMsRef.current);
+      const documentPath = String(captureTargetDocumentPathRef.current || "").trim();
       await appendTranscriptSegment(newText, {
         flush: false,
+        documentPath,
         source: "assistant_service_local_asr_streaming",
         triggerKind: "service_streaming_transcript",
         inputDeviceLabel: selectedAudioDeviceLabel,
+        startMs,
+        endMs,
       });
+      pushVoiceStreamMessage(newText, { startMs, endMs, documentPath });
+      serviceCommittedEndMsRef.current = endMs;
     }
     serviceCommittedTranscriptRef.current = mergeTranscriptChunks(committed, newText);
   }, [
@@ -2265,36 +2477,8 @@ export function VoiceSecretaryComposerControl({
     selectedAudioDeviceLabel,
     sendInstructionTranscript,
     updateLiveTranscriptPreview,
+    pushVoiceStreamMessage,
   ]);
-
-  const commitServiceStreamingPartial = useCallback(async (triggerKind = "service_streaming_partial") => {
-    const partial = normalizeBrowserTranscriptChunk(serviceLatestPartialTranscriptRef.current);
-    if (!partial) return;
-    const committed = normalizeBrowserTranscriptChunk(serviceCommittedTranscriptRef.current);
-    if (committed && (committed === partial || committed.endsWith(partial))) return;
-    const newText = committed && partial.startsWith(committed)
-      ? partial.slice(committed.length).trim()
-      : partial;
-    if (!newText) return;
-    if (captureMode === "prompt") return;
-    if (captureMode === "instruction") return;
-    await appendTranscriptSegment(newText, {
-      flush: false,
-      source: "assistant_service_local_asr_streaming",
-      triggerKind,
-      inputDeviceLabel: selectedAudioDeviceLabel,
-    });
-    serviceCommittedTranscriptRef.current = mergeTranscriptChunks(committed, newText);
-  }, [appendTranscriptSegment, captureMode, selectedAudioDeviceLabel]);
-
-  const scheduleServicePartialCommit = useCallback(() => {
-    if (captureMode !== "document") return;
-    clearServicePartialCommitTimer();
-    servicePartialCommitTimerRef.current = window.setTimeout(() => {
-      servicePartialCommitTimerRef.current = null;
-      void commitServiceStreamingPartial();
-    }, SERVICE_STREAMING_PARTIAL_COMMIT_MS);
-  }, [captureMode, clearServicePartialCommitTimer, commitServiceStreamingPartial]);
 
   const startServiceAudio = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
@@ -2335,9 +2519,15 @@ export function VoiceSecretaryComposerControl({
       return;
     }
     try {
-      const constraints: MediaStreamConstraints = selectedAudioDeviceId
-        ? { audio: { deviceId: { exact: selectedAudioDeviceId } } }
-        : { audio: true };
+      const audioConstraints: MediaTrackConstraints = {
+        channelCount: { ideal: 1 },
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true },
+        sampleRate: { ideal: 48000 },
+      };
+      if (selectedAudioDeviceId) audioConstraints.deviceId = { exact: selectedAudioDeviceId };
+      const constraints: MediaStreamConstraints = { audio: audioConstraints };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextConstructor) {
@@ -2358,13 +2548,24 @@ export function VoiceSecretaryComposerControl({
       serviceFinalTranscriptRef.current = "";
       serviceLatestPartialTranscriptRef.current = "";
       serviceCommittedTranscriptRef.current = "";
+      serviceAudioResamplerRef.current = new Pcm16Resampler(audioContext.sampleRate);
+      serviceAudioDurationMsRef.current = 0;
+      serviceCommittedEndMsRef.current = 0;
+      serviceFinalSpeakerSegmentsRef.current = [];
+      setDiarizationActivityItems([]);
       clearServicePartialCommitTimer();
       processor.onaudioprocess = (event) => {
         const activeWs = serviceAudioWsRef.current;
         if (!activeWs || activeWs.readyState !== WebSocket.OPEN || !recordingRef.current) return;
         const input = event.inputBuffer.getChannelData(0);
-        const pcm = float32To16kPcm16(input, audioContext.sampleRate);
+        let resampler = serviceAudioResamplerRef.current;
+        if (!resampler) {
+          resampler = new Pcm16Resampler(audioContext.sampleRate);
+          serviceAudioResamplerRef.current = resampler;
+        }
+        const pcm = resampler.push(input);
         if (!pcm.byteLength) return;
+        serviceAudioDurationMsRef.current += Math.round((pcm.byteLength / 2 / 16000) * 1000);
         serviceAudioSeqRef.current += 1;
         activeWs.send(JSON.stringify({
           type: "audio",
@@ -2379,6 +2580,7 @@ export function VoiceSecretaryComposerControl({
         ws.send(JSON.stringify({
           type: "start",
           seq: serviceAudioSeqRef.current,
+          session_id: voiceCaptureOwnerIdRef.current,
           sample_rate: 16000,
           language: effectiveRecognitionLanguage,
           by: "user",
@@ -2396,8 +2598,10 @@ export function VoiceSecretaryComposerControl({
             const text = String(payload.text || "").trim();
             if (text) {
               serviceLatestPartialTranscriptRef.current = text;
-              updateLiveTranscriptPreview(text, "interim");
-              scheduleServicePartialCommit();
+              updateLiveTranscriptPreview(text, "interim", {
+                startMs: serviceCommittedEndMsRef.current,
+                endMs: serviceAudioDurationMsRef.current,
+              });
             }
             return;
           }
@@ -2405,8 +2609,98 @@ export function VoiceSecretaryComposerControl({
             await handleServiceStreamingFinal(String(payload.text || ""));
             return;
           }
+          if (type === "diarization_started" || type === "diarization_status") {
+            const id = `diarization-${voiceCaptureOwnerIdRef.current}`;
+            const status = String(payload.status || "").trim();
+            const preview = status === "transcribing_speakers"
+              ? t("voiceSecretaryDiarizationTranscribing", { defaultValue: "Transcribing speaker turns..." })
+              : t("voiceSecretaryDiarizationWorking", { defaultValue: "Separating speakers..." });
+            setDiarizationActivityItems((prev) => [
+              {
+                id,
+                status: "working" as const,
+                speakerCount: 0,
+                preview,
+                artifactPath: String(payload.artifact_path || "").trim() || undefined,
+                createdAt: Date.now(),
+              },
+              ...prev.filter((item) => item.id !== id),
+            ].slice(0, VOICE_ACTIVITY_FEED_LIMIT));
+            return;
+          }
+          if (type === "diarization_delta" || type === "diarization") {
+            if (type === "diarization_delta") return;
+            const id = `diarization-${voiceCaptureOwnerIdRef.current}`;
+            if (payload.ok === false) {
+              const error = recordFromUnknown(payload.error);
+              setDiarizationActivityItems((prev) => [
+                {
+                  id,
+                  status: "failed" as const,
+                speakerCount: 0,
+                preview: "",
+                error: String(error.message || "") || t("voiceSecretaryDiarizationFailed", { defaultValue: "Speaker separation failed." }),
+                artifactPath: String(payload.artifact_path || "").trim() || undefined,
+                createdAt: Date.now(),
+              },
+              ...prev.filter((item) => item.id !== id),
+              ].slice(0, VOICE_ACTIVITY_FEED_LIMIT));
+              return;
+            }
+            const result = recordFromUnknown(payload.result);
+            const rawSegments = Array.isArray(result.segments) ? result.segments : [];
+            const rawSpeakerTranscriptSegments = Array.isArray(result.speaker_transcript_segments)
+              ? result.speaker_transcript_segments
+              : [];
+            const provisional = Boolean(result.provisional);
+            if (!provisional) {
+              serviceFinalSpeakerSegmentsRef.current = rawSegments
+                .map((item) => recordFromUnknown(item))
+                .filter((item) => Object.keys(item).length > 0);
+            }
+            const speakerLabels = rawSegments
+              .map((item) => String(recordFromUnknown(item).speaker_label || "").trim())
+              .filter((label, index, labels) => label && labels.indexOf(label) === index);
+            const preview = rawSegments.slice(0, 4).map((item) => {
+              const record = recordFromUnknown(item);
+              const label = String(record.speaker_label || "").trim() || "Speaker";
+              const startMs = Number(record.start_ms || 0);
+              const endMs = Number(record.end_ms || 0);
+              return `${label} ${formatVoiceOffsetMs(startMs)}-${formatVoiceOffsetMs(endMs)}`;
+            }).join("\n");
+            setDiarizationActivityItems((prev) => [
+              {
+                id,
+                status: provisional ? "provisional" as const : "ready" as const,
+                speakerCount: speakerLabels.length,
+                preview: preview || (provisional
+                  ? t("voiceSecretaryDiarizationEstimating", { defaultValue: "Estimating speakers..." })
+                  : t("voiceSecretaryDiarizationNoSpeech", { defaultValue: "No speaker turn detected." })),
+                segments: rawSegments.map((item) => {
+                  const record = recordFromUnknown(item);
+                  return {
+                    speaker_label: String(record.speaker_label || "").trim(),
+                    start_ms: Number(record.start_ms || 0),
+                    end_ms: Number(record.end_ms || 0),
+                  };
+                }),
+                speakerTranscriptSegments: rawSpeakerTranscriptSegments.map((item) => {
+                  const record = recordFromUnknown(item);
+                  return {
+                    speaker_label: String(record.speaker_label || "").trim(),
+                    start_ms: Number(record.start_ms || 0),
+                    end_ms: Number(record.end_ms || 0),
+                    text: String(record.text || "").trim(),
+                  };
+                }),
+                artifactPath: String(result.artifact_path || "").trim() || undefined,
+                createdAt: Date.now(),
+              },
+              ...prev.filter((item) => item.id !== id),
+            ].slice(0, VOICE_ACTIVITY_FEED_LIMIT));
+            return;
+          }
           if (type === "closed") {
-            await commitServiceStreamingPartial("push_to_talk_stop");
             cleanupServiceAudio();
             if (captureMode === "document") {
               void appendTranscriptSegment("", {
@@ -2414,8 +2708,12 @@ export function VoiceSecretaryComposerControl({
                 source: "assistant_service_local_asr_streaming",
                 triggerKind: "push_to_talk_stop",
                 inputDeviceLabel: selectedAudioDeviceLabel,
+                speakerSegments: serviceFinalSpeakerSegmentsRef.current,
               });
             }
+            window.setTimeout(() => {
+              if (open) void refreshAssistant({ quiet: true });
+            }, 1800);
             return;
           }
           if (type === "error" || payload.ok === false) {
@@ -2463,13 +2761,13 @@ export function VoiceSecretaryComposerControl({
     getAudioCaptureErrorMessage,
     getAudioSupportIssueMessage,
     handleServiceStreamingFinal,
-    commitServiceStreamingPartial,
     clearServicePartialCommitTimer,
     loadAudioDevices,
     effectiveRecognitionLanguage,
     appendTranscriptSegment,
     captureMode,
-    scheduleServicePartialCommit,
+    refreshAssistant,
+    open,
     selectedAudioDeviceId,
     selectedGroupId,
     serviceAsrReady,
@@ -2531,7 +2829,7 @@ export function VoiceSecretaryComposerControl({
     setAssistant((current) => current
       ? { ...current, config: { ...(current.config || {}), recognition_language: language } }
       : current);
-    setActionBusy("voice_language");
+    setRecognitionLanguageSaving(true);
     try {
       const resp = await updateAssistantSettings(gid, "voice_secretary", {
         config: nextConfig,
@@ -2547,7 +2845,7 @@ export function VoiceSecretaryComposerControl({
       setAssistant(previousAssistant || null);
       showError(t("voiceSecretaryLanguageSaveFailed", { defaultValue: "Failed to update Voice Secretary language." }));
     } finally {
-      setActionBusy("");
+      setRecognitionLanguageSaving(false);
     }
   }, [
     assistant,
@@ -2560,14 +2858,25 @@ export function VoiceSecretaryComposerControl({
   const clearAskFeedbackHistory = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) {
+      setLiveTranscriptPreview(null);
+      setVoiceStreamItems([]);
+      voiceStreamItemIdRef.current = "";
       setDocumentActivityItems([]);
+      setDiarizationActivityItems([]);
       return;
     }
-    if (!askFeedbackItems.length && !documentActivityItems.length) return;
+    if (!askFeedbackItems.length && !documentActivityItems.length && !diarizationActivityItems.length && !liveTranscriptPreview && !voiceStreamItems.length) return;
     const previousItems = askFeedbackItems;
+    const previousLiveTranscriptPreview = liveTranscriptPreview;
+    const previousVoiceStreamItems = voiceStreamItems;
     const previousDocumentActivityItems = documentActivityItems;
+    const previousDiarizationActivityItems = diarizationActivityItems;
     setAskFeedbackItems([]);
+    setLiveTranscriptPreview(null);
+    setVoiceStreamItems([]);
+    voiceStreamItemIdRef.current = "";
     setDocumentActivityItems([]);
+    setDiarizationActivityItems([]);
     if (voiceReplyBubbleRequestId) {
       setVoiceReplyBubbleRequestId("");
     }
@@ -2577,7 +2886,10 @@ export function VoiceSecretaryComposerControl({
       const resp = await clearVoiceAssistantAskRequests(gid, { keepActive: false, by: "user" });
       if (!resp.ok) {
         setAskFeedbackItems(previousItems);
+        setLiveTranscriptPreview(previousLiveTranscriptPreview);
+        setVoiceStreamItems(previousVoiceStreamItems);
         setDocumentActivityItems(previousDocumentActivityItems);
+        setDiarizationActivityItems(previousDiarizationActivityItems);
         showError(resp.error.message);
         return;
       }
@@ -2594,18 +2906,24 @@ export function VoiceSecretaryComposerControl({
       }
     } catch {
       setAskFeedbackItems(previousItems);
+      setLiveTranscriptPreview(previousLiveTranscriptPreview);
+      setVoiceStreamItems(previousVoiceStreamItems);
       setDocumentActivityItems(previousDocumentActivityItems);
+      setDiarizationActivityItems(previousDiarizationActivityItems);
       showError(t("voiceSecretaryClearRequestsFailed", { defaultValue: "Failed to clear Voice Secretary requests." }));
     } finally {
       setActionBusy("");
     }
   }, [
     askFeedbackItems,
+    diarizationActivityItems,
     documentActivityItems,
+    liveTranscriptPreview,
     selectedGroupId,
     showError,
     t,
     voiceReplyBubbleRequestId,
+    voiceStreamItems,
   ]);
 
   const persistCurrentDocument = useCallback(async (): Promise<AssistantVoiceDocument | null> => {
@@ -2832,51 +3150,20 @@ export function VoiceSecretaryComposerControl({
     t,
   ]);
 
-  const setCaptureTargetDocument = useCallback(async (document: AssistantVoiceDocument) => {
-    const nextPath = voiceDocumentPath(document);
-    const currentPath = String(captureTargetDocumentPathRef.current || "").trim();
-    if (!nextPath || nextPath === currentPath) return;
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid) return;
-    setActionBusy("capture_target");
-    try {
-      clearTranscriptFlushTimer();
-      clearTranscriptMaxFlushTimer();
-      if (recording && currentPath) {
-        await flushBrowserTranscriptWindow("document_switch", { documentPath: currentPath });
-      }
-      const resp = await selectVoiceAssistantDocument(gid, nextPath, { by: "user" });
-      if (!resp.ok) {
-        showError(resp.error.message);
-        await refreshAssistant({ quiet: true });
-        return;
-      }
-      setCaptureTargetDocumentPath(nextPath);
-      captureTargetDocumentPathRef.current = nextPath;
-      applyDocumentMutationResult(resp.result.document, resp.result.assistant);
-      showNotice({
-        message: t("voiceSecretaryCaptureTargetChanged", {
-          title: String(resp.result.document?.title || document.title || ""),
-          defaultValue: "Default document changed to {{title}}.",
-        }),
-      });
-    } catch {
-      showError(t("voiceSecretaryCaptureTargetChangeFailed", { defaultValue: "Failed to change the default document." }));
-    } finally {
-      setActionBusy("");
-    }
-  }, [
-    applyDocumentMutationResult,
-    clearTranscriptMaxFlushTimer,
-    clearTranscriptFlushTimer,
-    flushBrowserTranscriptWindow,
-    recording,
-    refreshAssistant,
+  const setCaptureTargetDocument = useVoiceCaptureTargetDocumentSelection({
     selectedGroupId,
+    recording,
+    captureTargetDocumentPathRef,
+    getDocumentPath: voiceDocumentPath,
+    setCaptureTargetDocumentPath,
+    clearTranscriptFlushTimer,
+    clearTranscriptMaxFlushTimer,
+    flushBrowserTranscriptWindow,
+    refreshAssistant,
     showError,
     showNotice,
     t,
-  ]);
+  });
 
   const archiveDocument = useCallback(async (targetDocument?: AssistantVoiceDocument | null) => {
     const gid = String(selectedGroupId || "").trim();
@@ -2929,7 +3216,7 @@ export function VoiceSecretaryComposerControl({
   }, [activeDocument, documentDisplayTitle, documentDraft, showNotice, t]);
 
   const workspaceRecordLabel = recording
-    ? t("voiceSecretaryStopShort", { defaultValue: "Stop" })
+    ? t("voiceSecretaryStopAndSaveShort", { defaultValue: "Stop & save" })
     : t("voiceSecretaryRecordShort", { defaultValue: "Record" });
   const captureStartTitle = captureMode === "prompt"
     ? t("voiceSecretaryPromptModeStartHint", { defaultValue: "Click to quickly polish speech into a ready-to-send prompt" })
@@ -3006,9 +3293,6 @@ export function VoiceSecretaryComposerControl({
     && (recording || activityClockMs - liveTranscriptPreview.updatedAt <= VOICE_LIVE_TRANSCRIPT_VISIBLE_MS)
     ? liveTranscriptPreview
     : null;
-  const liveTranscriptPhaseLabel = recording
-    ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
-    : t("voiceSecretaryTranscriptHeard", { defaultValue: "Heard" });
   const liveTranscriptDisplayText = currentLiveTranscript
     ? normalizeBrowserTranscriptChunk(currentLiveTranscript.text)
     : "";
@@ -3020,12 +3304,6 @@ export function VoiceSecretaryComposerControl({
   const liveTranscriptSummaryText = currentLiveTranscript
     && liveTranscriptSummaryPreview
     ? `${voiceModeLabel(currentLiveTranscript.mode)} · ${liveTranscriptSummaryPreview}`
-    : "";
-  const liveTranscriptTimeLabel = currentLiveTranscript
-    ? formatVoiceActivityTimeMs(currentLiveTranscript.updatedAt)
-    : "";
-  const liveTranscriptFullTimeLabel = currentLiveTranscript
-    ? formatVoiceActivityFullTimeMs(currentLiveTranscript.updatedAt)
     : "";
   const recentDocumentActivity = documentActivityItems.find(
     (item) => activityClockMs - item.createdAt <= VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS,
@@ -3059,10 +3337,14 @@ export function VoiceSecretaryComposerControl({
       : captureMode === "instruction"
         ? t("voiceSecretaryAskRequestButton", { defaultValue: "Send ask" })
         : t("voiceSecretaryApplyInstruction", { defaultValue: "Send request" });
+  const requestPanelCollapsed = recording && captureMode === "document";
+  const requestPanelCollapsedHint = t("voiceSecretaryDocumentRequestCollapsedWhileRecording", {
+    defaultValue: "Recording is writing into the document. Requests can be sent after capture stops.",
+  });
   const pendingAskFeedback = pendingAskRequestId
     ? askFeedbackItems.find((item) => item.request_id === pendingAskRequestId) || null
     : askFeedbackItems.find((item) => isActiveAskFeedbackStatus(item.status)) || null;
-  const canClearAskFeedbackHistory = askFeedbackItems.length > 0 || documentActivityItems.length > 0;
+  const canClearAskFeedbackHistory = askFeedbackItems.length > 0 || documentActivityItems.length > 0 || diarizationActivityItems.length > 0 || !!liveTranscriptPreview || voiceStreamItems.length > 0;
   const pendingAskFeedbackStatus = pendingAskFeedback
     ? displayAskFeedbackStatus(pendingAskFeedback, askFeedbackClockMs)
     : "";
@@ -3097,46 +3379,6 @@ export function VoiceSecretaryComposerControl({
       && !showLiveTranscriptSummary
       && documentActivitySummaryText,
   );
-  const activityFeedItems = useMemo<VoiceActivityFeedItem[]>(() => {
-    const items: VoiceActivityFeedItem[] = [];
-    if (pendingPromptRequestId || pendingPromptDraft) {
-      items.push({
-        kind: "prompt",
-        id: `prompt-${pendingPromptDraft?.request_id || pendingPromptRequestId}`,
-        sortAt: assistantVoiceTimestampMs(pendingPromptDraft?.updated_at) || activityClockMs,
-        status: pendingPromptDraft ? "ready" : "waiting",
-        text: pendingPromptDraft?.draft_preview || pendingPromptDraft?.draft_text || promptDraftWaitingTitle,
-      });
-    }
-    askFeedbackItems.forEach((item) => {
-      const timestamp = assistantVoiceTimestampMs(item.updated_at) || assistantVoiceTimestampMs(item.created_at) || activityClockMs;
-      items.push({
-        kind: "ask",
-        id: `ask-${item.request_id}`,
-        sortAt: timestamp,
-        item,
-      });
-    });
-    documentActivityItems.forEach((item) => {
-      items.push({
-        kind: "document",
-        id: item.id,
-        sortAt: item.createdAt,
-        item,
-      });
-    });
-    return items
-      .sort((left, right) => right.sortAt - left.sortAt)
-      .slice(0, VOICE_ACTIVITY_FEED_LIMIT);
-  }, [
-    activityClockMs,
-    askFeedbackItems,
-    documentActivityItems,
-    pendingPromptDraft,
-    pendingPromptRequestId,
-    promptDraftWaitingTitle,
-  ]);
-  const activityFeedCount = activityFeedItems.length + (currentLiveTranscript ? 1 : 0);
   const latestVoiceReplyFeedback = useMemo(
     () => askFeedbackItems.find((item) => hasFinalAskReply(item)) || null,
     [askFeedbackItems],
@@ -3201,7 +3443,7 @@ export function VoiceSecretaryComposerControl({
       ? t("voiceSecretaryWorkspaceHintInstruction", { defaultValue: "Speech is sent as a request to Voice Secretary." })
       : t("voiceSecretaryWorkspaceHintDocument", { defaultValue: "Speech is written into the default document." });
   const assistantRowControlLabel = recording
-    ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
+    ? t("voiceSecretaryStopAndSave", { defaultValue: "Stop and save recording" })
     : !assistantEnabled
       ? t("voiceSecretaryTurnOnAndRecord", { defaultValue: "Turn on and start recording" })
       : captureStartTitle;
@@ -3301,8 +3543,8 @@ export function VoiceSecretaryComposerControl({
               "shrink-0 border-b px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3",
               isDark ? "border-white/10" : "border-black/10",
             )}>
-              <div className="flex flex-wrap items-end justify-between gap-4 pr-8">
-                <div className="min-w-0 flex-1">
+              <div className="grid gap-3 pr-8 lg:grid-cols-[minmax(16rem,1fr)_auto_auto] lg:items-end">
+                <div className="min-w-0">
                   <div className={classNames("text-lg font-semibold tracking-[-0.02em]", isDark ? "text-slate-100" : "text-gray-900")}>
                     {t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
                   </div>
@@ -3363,43 +3605,43 @@ export function VoiceSecretaryComposerControl({
                     </span>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
-                  {onCaptureModeChange ? (
-                    <div
-                      className={classNames(
-                        "inline-flex min-h-[38px] items-center rounded-full border p-0.5",
-                        isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
-                      )}
-                      role="group"
-                      aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
-                    >
-                      {assistantRowModeOptions.map((option) => {
-                        const active = option.key === captureMode;
-                        return (
-                          <button
-                            key={option.key}
-                            type="button"
-                            className={classNames(
-                              "rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
-                              active
-                                ? isDark
-                                  ? "bg-white text-slate-950 shadow-sm"
-                                  : "bg-[rgb(35,36,37)] text-white shadow-sm"
-                                : isDark
-                                  ? "text-slate-300 hover:bg-white/10 hover:text-white"
-                                  : "text-gray-600 hover:bg-black/5 hover:text-gray-900",
-                            )}
-                            onClick={() => handleAssistantRowModeChange(option.key)}
-                            disabled={recording || controlDisabled}
-                            aria-pressed={active}
-                            title={modeChangeDisabledReason || option.description}
-                          >
-                            {option.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
+                {onCaptureModeChange ? (
+                  <div
+                    className={classNames(
+                      "inline-flex min-h-[38px] w-full items-center rounded-full border p-0.5 sm:w-auto lg:justify-self-center",
+                      isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
+                    )}
+                    role="group"
+                    aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
+                  >
+                    {assistantRowModeOptions.map((option) => {
+                      const active = option.key === captureMode;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          className={classNames(
+                            "min-w-0 flex-1 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none",
+                            active
+                              ? isDark
+                                ? "bg-white text-slate-950 shadow-sm"
+                                : "bg-[rgb(35,36,37)] text-white shadow-sm"
+                              : isDark
+                                ? "text-slate-300 hover:bg-white/10 hover:text-white"
+                                : "text-gray-600 hover:bg-black/5 hover:text-gray-900",
+                          )}
+                          onClick={() => handleAssistantRowModeChange(option.key)}
+                          disabled={recording || controlDisabled}
+                          aria-pressed={active}
+                          title={modeChangeDisabledReason || option.description}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 lg:justify-end">
                   {assistantEnabled ? (
                     <>
                       <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)]">
@@ -3422,25 +3664,27 @@ export function VoiceSecretaryComposerControl({
                               : "border-black/10 bg-white text-gray-800 focus:border-black/25",
                           )}
                           contentClassName="p-0"
-                          disabled={recording || !!actionBusy}
+                          disabled={recording || recognitionLanguageSaving}
                           searchable={false}
                           matchTriggerWidth
                         />
                       </label>
                       {serviceAsrReady ? (
                         <>
-                          <label className="inline-flex min-w-[13rem] items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                            <span>{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
+                          <label className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                            <span className="hidden xl:inline">{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
                             <select
                               value={selectedAudioDeviceId}
                               onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
                               className={classNames(
-                                "min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[11px] outline-none transition-colors",
+                                "h-[38px] w-[11.5rem] truncate rounded-full border px-3 py-1.5 text-xs font-semibold outline-none transition-colors sm:w-[13rem] lg:w-[14rem]",
                                 isDark
                                   ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-white/30"
                                   : "border-black/10 bg-white text-gray-800 focus:border-black/25",
                               )}
                               disabled={recording || !!actionBusy}
+                              aria-label={t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}
+                              title={selectedAudioDeviceLabel}
                             >
                               <option value="">
                                 {t("voiceSecretaryDefaultMic", { defaultValue: "System default microphone" })}
@@ -3458,20 +3702,22 @@ export function VoiceSecretaryComposerControl({
                           <button
                             type="button"
                             className={classNames(
-                              "inline-flex min-h-[34px] items-center rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+                              "inline-flex h-[38px] w-[38px] items-center justify-center rounded-full border text-[var(--color-text-secondary)] transition-colors disabled:opacity-60",
                               isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
                             )}
                             onClick={() => void loadAudioDevices()}
                             disabled={recording || !!actionBusy}
+                            aria-label={t("voiceSecretaryRefreshDevices", { defaultValue: "Refresh devices" })}
+                            title={t("voiceSecretaryRefreshDevices", { defaultValue: "Refresh devices" })}
                           >
-                            {t("voiceSecretaryRefreshDevices", { defaultValue: "Refresh devices" })}
+                            <RefreshIcon size={15} aria-hidden="true" />
                           </button>
                         </>
                       ) : null}
                       <button
                         type="button"
                         className={classNames(
-                          "inline-flex min-h-[38px] items-center gap-2.5 rounded-full border px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+                          "inline-flex min-h-[38px] items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
                           recording
                             ? isDark
                               ? "border-rose-300/35 bg-rose-500/15 text-rose-100 hover:bg-rose-500/22"
@@ -3487,7 +3733,7 @@ export function VoiceSecretaryComposerControl({
                         }}
                         disabled={!!actionBusy || (!recording && !dictationSupported)}
                         title={recording
-                          ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
+                          ? t("voiceSecretaryStopAndSave", { defaultValue: "Stop and save recording" })
                           : captureStartTitle}
                       >
                         <span
@@ -3502,7 +3748,7 @@ export function VoiceSecretaryComposerControl({
                           {recording ? <StopIcon size={12} /> : <span className="h-2.5 w-2.5 rounded-full bg-rose-600" />}
                         </span>
                         {recording
-                          ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
+                          ? t("voiceSecretaryStopAndSaveShort", { defaultValue: "Stop & save" })
                           : workspaceRecordLabel}
                       </button>
                     </>
@@ -3543,726 +3789,73 @@ export function VoiceSecretaryComposerControl({
             ) : null}
 
             <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-auto scrollbar-hide px-4 py-4 sm:px-5 sm:py-5 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden">
-            <aside
-              className={classNames(
-                "flex min-h-0 flex-col rounded-[26px] border",
-                isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-[rgb(250,250,250)]",
-              )}
-            >
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-3.5 py-3">
-                <div className="min-w-0">
-                  <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                    {t("voiceSecretaryDocumentsTitle", { defaultValue: "Working documents" })}
-                  </div>
-                  <div className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                    {documentsCountLabel}
-                    {documents.length ? (
-                      <span>
-                        {" · "}
-                        {t("voiceSecretaryDefaultDocumentLegend", {
-                          defaultValue: "default gets new transcript",
-                        })}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={startCreateDocument}
-                  disabled={!!actionBusy}
-                  className={classNames(
-                    "rounded-full border px-3 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
-                    isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
-                  )}
-                >
-                  {actionBusy === "new_doc"
-                    ? t("voiceSecretaryCreatingDocument", { defaultValue: "Creating..." })
-                    : t("voiceSecretaryNewDocumentShort", { defaultValue: "New" })}
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 space-y-1.5 overflow-auto scrollbar-hide p-2.5">
-                {creatingDocument ? (
-                  <div
-                    className={classNames(
-                      "mb-2 space-y-2 rounded-2xl border p-2.5",
-                      isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
-                    )}
-                  >
-                    <input
-                      value={newDocumentTitleDraft}
-                      autoFocus
-                      onChange={(event) => setNewDocumentTitleDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void createDocument();
-                        }
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          cancelCreateDocument();
-                        }
-                      }}
-                      placeholder={t("voiceSecretaryNewDocumentNamePlaceholder", {
-                        defaultValue: "Document name",
-                      })}
-                      className={classNames(
-                        "w-full rounded-lg border px-2.5 py-1.5 text-xs outline-none transition-colors",
-                        isDark
-                          ? "border-white/10 bg-black/20 text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                          : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
-                      )}
-                    />
-                    <div className="flex items-center justify-end gap-1.5">
-                      <button
-                        type="button"
-                        onClick={cancelCreateDocument}
-                        disabled={actionBusy === "new_doc"}
-                        className={classNames(
-                          "rounded-full px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-60",
-                          isDark ? "text-slate-400 hover:bg-white/8" : "text-gray-500 hover:bg-black/5",
-                        )}
-                      >
-                        {t("cancel", { defaultValue: "Cancel" })}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void createDocument()}
-                        disabled={actionBusy === "new_doc"}
-                        className={classNames(
-                          "rounded-full px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                          isDark ? "bg-white text-[rgb(20,20,22)] hover:bg-white/90" : "bg-[rgb(35,36,37)] text-white hover:bg-black",
-                        )}
-                      >
-                        {actionBusy === "new_doc"
-                          ? t("voiceSecretaryCreatingDocument", { defaultValue: "Creating..." })
-                          : t("voiceSecretaryCreateDocument", { defaultValue: "Create" })}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-                {documents.length ? documents.map((document) => {
-                  const docId = voiceDocumentKey(document);
-                  const docPath = voiceDocumentPath(document);
-                  const viewing = docPath && docPath === String(activeDocumentWritePath || viewedDocumentPath || "").trim();
-                  const captureTarget = docPath && docPath === String(captureTargetDocumentPath || "").trim();
-                  return (
-                    <div
-                      key={docId || document.title}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => void selectDocument(document)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        void selectDocument(document);
-                      }}
-                      className={classNames(
-                        "group flex w-full min-w-0 flex-col gap-1.5 rounded-2xl border px-3 py-2.5 text-left transition-colors",
-                        viewing
-                          ? isDark
-                            ? "border-white/14 bg-white/[0.08] text-white shadow-[0_10px_30px_-24px_rgba(255,255,255,0.32)]"
-                            : "border-black/12 bg-white text-[rgb(35,36,37)] shadow-[0_10px_30px_-24px_rgba(15,23,42,0.14)]"
-                          : isDark
-                            ? "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/8"
-                            : "border-transparent text-gray-700 hover:border-black/10 hover:bg-white",
-                      )}
-                    >
-                      <span className="flex min-w-0 items-center justify-between gap-2">
-                        <span className="truncate text-sm font-semibold">{document.title || docId}</span>
-                        <span className="flex shrink-0 items-center gap-1">
-                          <button
-                            type="button"
-                            aria-label={t("voiceSecretaryArchiveDocumentItemAriaLabel", {
-                              title: document.title || docId,
-                              defaultValue: "Archive {{title}}",
-                            })}
-                            title={t("voiceSecretaryArchiveDocument", { defaultValue: "Archive viewed" })}
-                            disabled={!docPath || actionBusy === "archive_doc"}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void archiveDocument(document);
-                            }}
-                            onKeyDown={(event) => {
-                              event.stopPropagation();
-                            }}
-                            className={classNames(
-                              "inline-flex h-6 items-center justify-center rounded-full border px-2 transition-all disabled:cursor-default",
-                              viewing ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                              isDark
-                                ? "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/10 hover:text-slate-100 disabled:opacity-35"
-                                : "border-black/10 bg-white text-gray-500 hover:bg-black/5 hover:text-gray-900 disabled:opacity-35",
-                            )}
-                          >
-                            <span className="text-[10px] font-semibold leading-none">
-                              {t("voiceSecretaryArchiveShort", { defaultValue: "Archive" })}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={!!captureTarget}
-                            aria-label={captureTarget
-                              ? t("voiceSecretaryDefaultDocumentActiveAriaLabel", {
-                                  title: document.title || docId,
-                                  defaultValue: "{{title}} is the default document for new transcript",
-                                })
-                              : t("voiceSecretarySetDefaultDocumentAriaLabel", {
-                                  title: document.title || docId,
-                                  defaultValue: "Set {{title}} as the default document for new transcript",
-                                })}
-                            title={captureTarget
-                              ? t("voiceSecretaryDefaultDocumentHint", {
-                                  defaultValue: "New transcript is written here by default",
-                                })
-                              : t("voiceSecretarySetDefaultDocumentHint", {
-                                  defaultValue: "Set as the default document for new transcript",
-                                })}
-                            disabled={!docPath || !!captureTarget || actionBusy === "capture_target"}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void setCaptureTargetDocument(document);
-                            }}
-                            onKeyDown={(event) => {
-                              event.stopPropagation();
-                            }}
-                            className={classNames(
-                              "relative flex h-5 w-5 items-center justify-center rounded-full border transition-colors disabled:cursor-default",
-                              captureTarget
-                                ? isDark
-                                  ? "border-white/70 bg-white/10 shadow-[0_0_0_3px_rgba(255,255,255,0.08)]"
-                                  : "border-[rgb(35,36,37)] bg-white shadow-[0_0_0_3px_rgba(35,36,37,0.08)]"
-                                : isDark
-                                  ? "border-white/25 bg-white/[0.03] hover:border-white/50 hover:bg-white/[0.08] disabled:opacity-45"
-                                  : "border-gray-300 bg-white hover:border-[rgb(35,36,37)]/35 hover:bg-[rgb(245,245,245)] disabled:opacity-45",
-                            )}
-                          >
-                            {captureTarget ? (
-                              <span
-                                aria-hidden="true"
-                                className={classNames(
-                                  "h-2.5 w-2.5 rounded-full",
-                                  isDark ? "bg-white" : "bg-[rgb(35,36,37)]",
-                                )}
-                              />
-                            ) : null}
-                          </button>
-                        </span>
-                      </span>
-                      {document.workspace_path ? (
-                        <span className="truncate text-[11px] text-[var(--color-text-muted)]">{document.workspace_path}</span>
-                      ) : null}
-                    </div>
-                  );
-                }) : (
-                  <div className="flex h-full items-center justify-center px-3 text-center text-xs text-[var(--color-text-muted)]">
-                    {t("voiceSecretaryNoDocumentsHint", { defaultValue: "Start recording or create a document." })}
-                  </div>
-                )}
-              </div>
-            </aside>
+            <VoiceSecretaryDocumentListPanel
+              actionBusy={actionBusy}
+              activeDocumentPath={String(activeDocumentWritePath || viewedDocumentPath || "").trim()}
+              captureTargetDocumentPath={String(captureTargetDocumentPath || "").trim()}
+              creatingDocument={creatingDocument}
+              documents={documents}
+              documentsCountLabel={documentsCountLabel}
+              isDark={isDark}
+              newDocumentTitleDraft={newDocumentTitleDraft}
+              t={t}
+              documentKey={voiceDocumentKey}
+              documentPath={voiceDocumentPath}
+              onArchiveDocument={(document) => void archiveDocument(document)}
+              onCancelCreateDocument={cancelCreateDocument}
+              onCreateDocument={() => void createDocument()}
+              onNewDocumentTitleChange={setNewDocumentTitleDraft}
+              onSelectDocument={(document) => void selectDocument(document)}
+              onSetCaptureTargetDocument={(document) => void setCaptureTargetDocument(document)}
+              onStartCreateDocument={startCreateDocument}
+            />
 
-            <section
-              className={classNames(
-                "flex min-h-0 flex-col rounded-[28px] border p-4",
-                isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
-              )}
-            >
-              <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] pb-4">
-                <div className="min-w-0 flex-1">
-                  <div className={classNames("break-words text-xl font-semibold tracking-[-0.02em]", isDark ? "text-slate-100" : "text-gray-900")}>
-                    {documentDisplayTitle}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-100" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
-                      {t("voiceSecretaryMarkdownBadge", { defaultValue: "Markdown" })}
-                    </span>
-                    <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", activeDocumentPath ? (isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]") : (isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-600"))}>
-                      {activeDocumentPath
-                        ? t("voiceSecretaryRepoBackedBadge", { defaultValue: "Repo-backed" })
-                        : t("voiceSecretaryWaitingTranscriptBadge", { defaultValue: "Waiting for transcript" })}
-                    </span>
-                    {activeDocumentWritePath && activeDocumentWritePath === captureTargetDocumentPath ? (
-                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
-                        {t("voiceSecretaryDefaultDocumentBadge", { defaultValue: "Default document" })}
-                      </span>
-                    ) : null}
-                    {documentHasUnsavedEdits ? (
-                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-amber-500/10 text-amber-200" : "bg-amber-50 text-amber-700")}>
-                        {t("voiceSecretaryUnsavedEditsBadge", { defaultValue: "Unsaved edits" })}
-                      </span>
-                    ) : null}
-                    {documentRemoteChanged ? (
-                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
-                        {t("voiceSecretaryRemoteChangedBadge", { defaultValue: "Remote update available" })}
-                      </span>
-                    ) : null}
-                    <span
-                      className={classNames(
-                        "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                        isDark ? "bg-black/20 text-slate-300" : "bg-[rgb(245,245,245)] text-gray-600",
-                      )}
-                      title={activeDocumentPath || undefined}
-                    >
-                      <span className="shrink-0">
-                        {activeDocumentPath
-                          ? t("voiceSecretaryRepoMarkdownLabel", { defaultValue: "Repo markdown" })
-                          : t("voiceSecretaryWorkingDocumentPendingShort", { defaultValue: "Auto-create on transcript" })}
-                      </span>
-                      {activeDocumentPath ? (
-                        <span className="min-w-0 truncate font-normal text-[var(--color-text-muted)]">
-                          {activeDocumentPath}
-                        </span>
-                      ) : null}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                  {documentRemoteChanged ? (
-                    <button
-                      type="button"
-                      className={classNames(
-                        "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                        isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
-                      )}
-                      onClick={() => loadDocumentDraft(activeDocument)}
-                      disabled={!activeDocument}
-                      title={t("voiceSecretaryLoadLatestDocumentHint", {
-                        defaultValue: "Load the latest document from the daemon. Unsaved local edits in this panel will be replaced.",
-                      })}
-                    >
-                      {t("voiceSecretaryLoadLatestDocument", { defaultValue: "Load latest" })}
-                    </button>
-                  ) : null}
-                  {documentEditing || documentHasUnsavedEdits ? (
-                    <button
-                      type="button"
-                      className={classNames(
-                        "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                        isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
-                      )}
-                      onClick={() => void saveDocument()}
-                      disabled={!!actionBusy}
-                    >
-                      {actionBusy === "save_doc"
-                        ? t("voiceSecretarySavingDocument", { defaultValue: "Saving..." })
-                        : t("voiceSecretarySaveDocument", { defaultValue: "Save edits" })}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={downloadCurrentDocument}
-                    disabled={!activeDocument}
-                    className={classNames(
-                      "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
-                      isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
-                    )}
-                  >
-                    {t("voiceSecretaryDownloadDocument", { defaultValue: "Download .md" })}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDocumentEditing((value) => !value)}
-                    className={classNames(
-                      "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
-                      isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
-                    )}
-                  >
-                    {documentEditing
-                      ? t("voiceSecretaryPreviewDocument", { defaultValue: "Preview" })
-                      : t("voiceSecretaryEditDocument", { defaultValue: "Edit" })}
-                  </button>
-                </div>
-              </div>
+            <VoiceSecretaryWorkspacePanel
+              activeDocumentPath={activeDocumentPath}
+              activeDocumentWritePath={activeDocumentWritePath}
+              actionBusy={actionBusy}
+              canClearActivity={canClearAskFeedbackHistory}
+              captureTargetDocumentPath={captureTargetDocumentPath}
+              documentDisplayTitle={documentDisplayTitle}
+              documentDraft={documentDraft}
+              documentEditing={documentEditing}
+              documentHasUnsavedEdits={documentHasUnsavedEdits}
+              documentRemoteChanged={documentRemoteChanged}
+              isDark={isDark}
+              latestDiarization={diarizationActivityItems[0] || null}
+              liveTranscriptId={liveTranscriptPreview?.id || ""}
+              recording={recording}
+              t={t}
+              voiceStreamItems={voiceStreamItems}
+              view={voiceWorkspaceView}
+              onChangeView={setVoiceWorkspaceView}
+              onClearActivity={() => void clearAskFeedbackHistory()}
+              onDownloadDocument={downloadCurrentDocument}
+              onEditDocumentChange={updateDocumentDraft}
+              onLoadLatestDocument={() => loadDocumentDraft(activeDocument)}
+              onSaveDocument={() => void saveDocument()}
+              onToggleDocumentEditing={() => setDocumentEditing((value) => !value)}
+              voiceModeLabel={voiceModeLabel}
+              formatTime={formatVoiceActivityTimeMs}
+              formatFullTime={formatVoiceActivityFullTimeMs}
+              formatOffset={formatVoiceOffsetMs}
+              normalizeTranscriptText={normalizeBrowserTranscriptChunk}
+            />
 
-              <MarkdownDocumentSurface
-                className="mt-4 min-h-0 flex-1 overflow-auto scrollbar-subtle"
-                content={documentDraft}
-                editValue={documentDraft}
-                editing={documentEditing}
-                editAriaLabel={t("voiceSecretaryDocumentEditAriaLabel", { defaultValue: "Edit Voice Secretary working document markdown" })}
-                editPlaceholder={t("voiceSecretaryDocumentPlaceholder", {
-                  defaultValue: "Voice Secretary will maintain a markdown working document here as transcript arrives. You can edit it directly.",
-                })}
-                emptyLabel={t("voiceSecretaryDocumentPreviewEmpty", {
-                  defaultValue: "Transcript and Voice Secretary edits will appear here.",
-                })}
-                isDark={isDark}
-                minHeightClassName="min-h-[280px] lg:min-h-0"
-                onEditValueChange={updateDocumentDraft}
-              />
-            </section>
-
-            <aside
-              className={classNames(
-                "flex min-h-0 flex-col gap-4 rounded-[26px] border p-3.5",
-                isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-[rgb(250,250,250)]",
-              )}
-            >
-              <div
-                className={classNames(
-                  "shrink-0 rounded-2xl border p-3",
-                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
-                )}
-              >
-                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                  {panelRequestTitle}
-                </div>
-                {captureMode === "prompt" ? (
-                  <div
-                    className={classNames(
-                      "mt-3 rounded-2xl border px-3 py-2 text-xs leading-5",
-                      isDark ? "border-white/10 bg-white/[0.04] text-slate-300" : "border-black/10 bg-white text-gray-700",
-                    )}
-                  >
-                    {panelRequestPlaceholder}
-                  </div>
-                ) : (
-                  <textarea
-                    value={documentInstruction}
-                    onChange={(event) => setDocumentInstruction(event.target.value)}
-                    placeholder={panelRequestPlaceholder}
-                    className={classNames(
-                      "mt-3 min-h-[96px] w-full resize-y rounded-2xl border px-3 py-2 text-xs leading-5 outline-none transition-colors",
-                      isDark
-                        ? "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                        : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
-                    )}
-                  />
-                )}
-                {captureMode !== "prompt" ? (
-                  <button
-                    type="button"
-                    className={classNames(
-                      "mt-3 w-full rounded-2xl border px-3 py-2.5 text-xs font-semibold transition-colors disabled:opacity-60",
-                      isDark
-                        ? "border-white bg-white text-[rgb(20,20,22)] hover:bg-white/90"
-                        : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-black",
-                    )}
-                    onClick={() => void sendPanelRequest()}
-                    disabled={!!actionBusy || !documentInstruction.trim()}
-                  >
-                    {panelRequestButtonLabel}
-                  </button>
-                ) : null}
-              </div>
-
-              <div
-                className={classNames(
-                  "flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border p-3",
-                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                    {t("voiceSecretaryActivityFeedTitle", { defaultValue: "Activity" })}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {activityFeedCount ? (
-                      <span className="text-[10px] font-semibold text-[var(--color-text-muted)]">
-                        {t("voiceSecretaryActivityFeedCount", { count: activityFeedCount, defaultValue: "{{count}} recent" })}
-                      </span>
-                    ) : null}
-                    {canClearAskFeedbackHistory ? (
-                      <button
-                        type="button"
-                        className={classNames(
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-default disabled:opacity-40",
-                          isDark ? "text-slate-300 hover:bg-white/10" : "text-gray-600 hover:bg-black/5",
-                        )}
-                        onClick={() => void clearAskFeedbackHistory()}
-                        disabled={!canClearAskFeedbackHistory || actionBusy === "clear_ask"}
-                        title={t("voiceSecretaryClearRequestsTitle", { defaultValue: "Clear visible request history. New replies can still appear." })}
-                      >
-                        {actionBusy === "clear_ask"
-                          ? t("voiceSecretaryClearingRequests", { defaultValue: "Clearing..." })
-                          : t("voiceSecretaryClearRequests", { defaultValue: "Clear" })}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable]">
-                  {currentLiveTranscript ? (
-                    <div
-                      className={classNames(
-                        "rounded-2xl border px-2.5 py-2",
-                        isDark ? "border-cyan-300/20 bg-cyan-400/10" : "border-cyan-200 bg-cyan-50/70",
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={classNames(
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                          isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-white text-cyan-800",
-                        )}>
-                          {liveTranscriptPhaseLabel}
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-                          <span className="min-w-0 truncate">{voiceModeLabel(currentLiveTranscript.mode)}</span>
-                          {liveTranscriptTimeLabel ? (
-                            <time
-                              className="shrink-0 tabular-nums"
-                              dateTime={new Date(currentLiveTranscript.updatedAt).toISOString()}
-                              title={liveTranscriptFullTimeLabel}
-                            >
-                              {liveTranscriptTimeLabel}
-                            </time>
-                          ) : null}
-                        </span>
-                      </div>
-                      <div className={classNames(
-                        "mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4",
-                        isDark ? "text-cyan-50" : "text-cyan-950",
-                      )}>
-                        <StreamTextAnimate text={liveTranscriptDisplayText || currentLiveTranscript.text} />
-                      </div>
-                      {currentLiveTranscript.documentTitle || currentLiveTranscript.documentPath ? (
-                        <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
-                          {currentLiveTranscript.documentTitle || currentLiveTranscript.documentPath}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {activityFeedItems.map((feedItem) => {
-                    if (feedItem.kind === "prompt") {
-                      const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
-                      const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
-                      return (
-                        <div
-                          key={feedItem.id}
-                          className={classNames(
-                            "rounded-2xl border px-2.5 py-2",
-                            isDark ? "border-indigo-300/15 bg-indigo-400/10" : "border-indigo-100 bg-indigo-50/70",
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={classNames(
-                              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                              feedItem.status === "ready"
-                                ? isDark ? "bg-emerald-400/14 text-emerald-100" : "bg-emerald-50 text-emerald-800"
-                                : isDark ? "bg-amber-400/14 text-amber-100" : "bg-amber-50 text-amber-800",
-                            )}>
-                              {feedItem.status === "ready" ? promptDraftReadyTitle : promptDraftWaitingTitle}
-                            </span>
-                            <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-                              <span className="min-w-0 truncate">{voiceModeLabel("prompt")}</span>
-                              {timeLabel ? (
-                                <time
-                                  className="shrink-0 tabular-nums"
-                                  dateTime={new Date(feedItem.sortAt).toISOString()}
-                                  title={fullTimeLabel}
-                                >
-                                  {timeLabel}
-                                </time>
-                              ) : null}
-                            </span>
-                          </div>
-                          {feedItem.text ? (
-                            <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-200" : "text-gray-800")}>
-                              <StreamTextAnimate text={feedItem.text} />
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    }
-                    if (feedItem.kind === "document") {
-                      const item = feedItem.item;
-                      const title = String(item.documentTitle || item.documentPath || "").trim();
-                      const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
-                      const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
-                      return (
-                        <div
-                          key={feedItem.id}
-                          className={classNames(
-                            "rounded-2xl border px-2.5 py-2",
-                            isDark ? "border-white/10 bg-black/10" : "border-black/[0.08] bg-[rgb(248,248,248)]",
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={classNames(
-                              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                              item.status === "updated"
-                                ? isDark ? "bg-emerald-400/14 text-emerald-100" : "bg-emerald-50 text-emerald-800"
-                                : isDark ? "bg-cyan-400/14 text-cyan-100" : "bg-cyan-50 text-cyan-800",
-                            )}>
-                              {documentActivityStatusLabel(item.status)}
-                            </span>
-                            <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-                              <span className="min-w-0 truncate">{voiceModeLabel(item.mode)}</span>
-                              {timeLabel ? (
-                                <time
-                                  className="shrink-0 tabular-nums"
-                                  dateTime={new Date(feedItem.sortAt).toISOString()}
-                                  title={fullTimeLabel}
-                                >
-                                  {timeLabel}
-                                </time>
-                              ) : null}
-                            </span>
-                          </div>
-                          {item.preview ? (
-                            <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-300" : "text-gray-700")}>
-                              <StreamTextAnimate text={item.preview} />
-                            </div>
-                          ) : null}
-                          {title ? (
-                            <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
-                              {title}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    }
-                    const item = feedItem.item;
-                    const displayStatus = displayAskFeedbackStatus(item, askFeedbackClockMs);
-                    const requestPreview = String(item.request_preview || item.request_text || "").trim();
-                    const replyPreview = String(item.reply_text || "").trim();
-                    const sourceSummary = String(item.source_summary || "").trim();
-                    const checkedAt = String(item.checked_at || "").trim();
-                    const checkedAtMs = checkedAt ? Date.parse(checkedAt) : NaN;
-                    const checkedAtLabel = Number.isFinite(checkedAtMs) ? formatVoiceActivityTimeMs(checkedAtMs) : checkedAt;
-                    const checkedAtFullLabel = Number.isFinite(checkedAtMs) ? formatVoiceActivityFullTimeMs(checkedAtMs) : checkedAt;
-                    const sourceUrls = (item.source_urls || []).map((url) => String(url || "").trim()).filter((url, index, urls) => url && urls.indexOf(url) === index);
-                    const artifactPaths = [
-                      String(item.document_path || "").trim(),
-                      ...((item.artifact_paths || []).map((path) => String(path || "").trim())),
-                    ].filter((path, index, paths) => path && paths.indexOf(path) === index);
-                    const artifactItems = artifactPaths.map((path) => {
-                      const linkedDocument = documents.find((document) => (
-                        voiceDocumentKey(document) === path
-                        || String(document.document_path || document.workspace_path || "").trim() === path
-                      )) || null;
-                      return { path, linkedDocument };
-                    });
-                    const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
-                    const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
-                    return (
-                      <div
-                        key={item.request_id}
-                        className={classNames(
-                          "rounded-2xl border px-2.5 py-2",
-                          isDark ? "border-white/10 bg-black/10" : "border-black/[0.08] bg-[rgb(248,248,248)]",
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          {displayStatus ? (
-                            <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-semibold", askFeedbackStatusClassName(displayStatus))}>
-                              {askFeedbackStatusLabel(displayStatus)}
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)] dark:bg-white/10">
-                              {t("voiceSecretaryRequestLabel", { defaultValue: "Request" })}
-                            </span>
-                          )}
-                          <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-                            {item.handoff_target ? (
-                              <span className="min-w-0 truncate">{item.handoff_target}</span>
-                            ) : null}
-                            {timeLabel ? (
-                              <time
-                                className="shrink-0 tabular-nums"
-                                dateTime={new Date(feedItem.sortAt).toISOString()}
-                                title={fullTimeLabel}
-                              >
-                                {timeLabel}
-                              </time>
-                            ) : null}
-                          </span>
-                        </div>
-                        {requestPreview ? (
-                          <div className="mt-1.5">
-                            <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                              {t("voiceSecretaryRequestLabel", { defaultValue: "Request" })}
-                            </div>
-                            <div className={classNames("mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-300" : "text-gray-700")}>
-                              <StreamTextAnimate text={requestPreview} />
-                            </div>
-                          </div>
-                        ) : null}
-                        {replyPreview ? (
-                          <div className="mt-1.5">
-                            <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                              {t("voiceSecretaryReplyLabel", { defaultValue: "Reply" })}
-                            </div>
-                            <div className={classNames("mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-200" : "text-gray-800")}>
-                              <StreamTextAnimate text={replyPreview} />
-                            </div>
-                          </div>
-                        ) : null}
-                        {artifactItems.length ? (
-                          <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
-                            {artifactItems.map(({ path, linkedDocument }) => (
-                              <button
-                                key={path}
-                                type="button"
-                                disabled={!linkedDocument}
-                                onClick={() => {
-                                  if (!linkedDocument) return;
-                                  void selectDocument(linkedDocument);
-                                }}
-                                className={classNames(
-                                  "max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-default disabled:opacity-70",
-                                  linkedDocument
-                                    ? isDark
-                                      ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/16"
-                                      : "border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
-                                    : isDark
-                                      ? "border-white/10 bg-white/[0.04] text-slate-400"
-                                      : "border-black/10 bg-black/[0.03] text-gray-500",
-                                )}
-                                title={linkedDocument
-                                  ? t("voiceSecretaryOpenLinkedDocument", { defaultValue: "Open linked document" })
-                                  : path}
-                              >
-                                {path}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        {(sourceSummary || checkedAtLabel || sourceUrls.length) ? (
-                          <div className={classNames("mt-1.5 rounded-xl px-2 py-1.5 text-[10px] leading-4", isDark ? "bg-white/[0.04] text-slate-300" : "bg-black/[0.03] text-gray-600")}>
-                            <div className="mb-0.5 font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                              {t("voiceSecretarySourcesLabel", { defaultValue: "Sources" })}
-                            </div>
-                            {sourceSummary ? (
-                              <div className="whitespace-pre-wrap break-words">{sourceSummary}</div>
-                            ) : null}
-                            {checkedAtLabel ? (
-                              <div className="mt-0.5 text-[var(--color-text-muted)]" title={checkedAtFullLabel}>
-                                {t("voiceSecretaryCheckedAtLabel", { defaultValue: "Checked" })}: {checkedAtLabel}
-                              </div>
-                            ) : null}
-                            {sourceUrls.length ? (
-                              <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-                                {sourceUrls.map((url) => (
-                                  <a
-                                    key={url}
-                                    href={url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className={classNames(
-                                      "max-w-full truncate rounded-full border px-1.5 py-0.5 transition-colors",
-                                      isDark
-                                        ? "border-white/10 bg-white/[0.04] text-cyan-100 hover:bg-white/[0.08]"
-                                        : "border-black/10 bg-white text-cyan-700 hover:bg-cyan-50",
-                                    )}
-                                    title={url}
-                                  >
-                                    {url.replace(/^https?:\/\//i, "")}
-                                  </a>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                  {!activityFeedCount ? (
-                    <div className="rounded-2xl border border-dashed border-[var(--glass-border-subtle)] px-2.5 py-3 text-center text-[11px] text-[var(--color-text-muted)]">
-                      {t("voiceSecretaryActivityFeedEmpty", { defaultValue: "Live transcript, queued requests, and replies will appear here." })}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </aside>
+            <VoiceSecretaryRequestPanel
+              actionBusy={actionBusy}
+              captureMode={captureMode}
+              documentInstruction={documentInstruction}
+              isDark={isDark}
+              panelRequestButtonLabel={panelRequestButtonLabel}
+              panelRequestCollapsed={requestPanelCollapsed}
+              panelRequestCollapsedHint={requestPanelCollapsedHint}
+              panelRequestPlaceholder={panelRequestPlaceholder}
+              panelRequestTitle={panelRequestTitle}
+              t={t}
+              onDocumentInstructionChange={setDocumentInstruction}
+              onSendPanelRequest={() => void sendPanelRequest()}
+            />
           </div>
           <button
             type="button"
@@ -4514,7 +4107,7 @@ export function VoiceSecretaryComposerControl({
                       ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                       : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
                   )}
-                  disabled={controlDisabled || !assistantEnabled || recording || !!actionBusy}
+                  disabled={controlDisabled || !assistantEnabled || recording || recognitionLanguageSaving}
                   title={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
                   aria-label={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
                 >

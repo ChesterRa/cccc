@@ -5,11 +5,15 @@ import importlib.resources
 import json
 import os
 import shlex
+import shutil
+import ssl
 import stat
+import subprocess
 import tarfile
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from email.message import Message
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List
@@ -21,6 +25,7 @@ from ...util.time import utc_now_iso
 
 
 VOICE_MODEL_KIND_ASR = "asr"
+VOICE_MODEL_KIND_DIARIZATION = "diarization"
 VOICE_MODEL_STATUS_NOT_INSTALLED = "not_installed"
 VOICE_MODEL_STATUS_DOWNLOADING = "downloading"
 VOICE_MODEL_STATUS_READY = "ready"
@@ -28,9 +33,16 @@ VOICE_MODEL_STATUS_FAILED = "failed"
 _INSTALL_STATE_FILENAME = "install-state.json"
 _INSTALL_LOCK_FILENAME = ".install.lock"
 _READ_CHUNK_BYTES = 1024 * 1024
+_URL_OPEN_TIMEOUT_SECONDS = 60
+_DOWNLOADING_STALE_SECONDS = 300
 _DEFAULT_MANIFEST_RESOURCE = "voice-models.default.json"
 _LOCAL_MANIFEST_REL_PATH = ("config", "voice-models.json")
 _SHA256_HEX_LENGTH = 64
+_CA_CERT_CANDIDATES = (
+    "/etc/ssl/cert.pem",
+    "/opt/homebrew/etc/ca-certificates/cert.pem",
+    "/opt/homebrew/etc/openssl@3/cert.pem",
+)
 
 
 class VoiceModelError(Exception):
@@ -164,14 +176,19 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
     kind = str(item.get("kind") or VOICE_MODEL_KIND_ASR).strip() or VOICE_MODEL_KIND_ASR
     command_template = item.get("command_template")
     streaming = item.get("streaming")
+    diarization = item.get("diarization")
     if not model_id:
         raise VoiceModelError("voice_model_manifest_invalid", "model_id is required")
-    if kind != VOICE_MODEL_KIND_ASR:
+    if kind not in {VOICE_MODEL_KIND_ASR, VOICE_MODEL_KIND_DIARIZATION}:
         raise VoiceModelError("voice_model_manifest_invalid", f"unsupported voice model kind: {kind}")
-    if (not isinstance(command_template, (str, list)) or not command_template) and not isinstance(streaming, dict):
+    if (
+        (not isinstance(command_template, (str, list)) or not command_template)
+        and not isinstance(streaming, dict)
+        and not isinstance(diarization, dict)
+    ):
         raise VoiceModelError(
             "voice_model_manifest_invalid",
-            f"model {model_id} requires command_template or streaming config",
+            f"model {model_id} requires command_template, streaming config, or diarization config",
         )
     artifacts = item.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
@@ -203,7 +220,7 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
             "num_threads": int(streaming.get("num_threads") or 2),
             "provider": str(streaming.get("provider") or "cpu").strip() or "cpu",
         }
-        for key in ("model", "encoder", "decoder", "bpe_vocab"):
+        for key in ("model", "encoder", "decoder", "joiner", "bpe_vocab"):
             value = str(streaming.get(key) or "").strip().lstrip("/")
             if value:
                 streaming_config[key] = value
@@ -212,12 +229,39 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
                 "voice_model_manifest_invalid",
                 f"model {model_id} zipformer2_ctc streaming config requires model",
             )
+        if engine == "transducer" and (
+            not streaming_config.get("encoder") or not streaming_config.get("decoder") or not streaming_config.get("joiner")
+        ):
+            raise VoiceModelError(
+                "voice_model_manifest_invalid",
+                f"model {model_id} transducer streaming config requires encoder, decoder and joiner",
+            )
         if engine == "paraformer" and (not streaming_config.get("encoder") or not streaming_config.get("decoder")):
             raise VoiceModelError(
                 "voice_model_manifest_invalid",
                 f"model {model_id} paraformer streaming config requires encoder and decoder",
             )
         normalized["streaming"] = streaming_config
+    if isinstance(diarization, dict):
+        segmentation_model = str(diarization.get("segmentation_model") or "").strip().lstrip("/")
+        embedding_model = str(diarization.get("embedding_model") or "").strip().lstrip("/")
+        if not segmentation_model or not embedding_model:
+            raise VoiceModelError(
+                "voice_model_manifest_invalid",
+                f"model {model_id} diarization config requires segmentation_model and embedding_model",
+            )
+        normalized["diarization"] = {
+            "engine": str(diarization.get("engine") or "offline_speaker_diarization").strip() or "offline_speaker_diarization",
+            "segmentation_model": segmentation_model,
+            "embedding_model": embedding_model,
+            "sample_rate": int(diarization.get("sample_rate") or 16000),
+            "num_threads": int(diarization.get("num_threads") or 2),
+            "provider": str(diarization.get("provider") or "cpu").strip() or "cpu",
+            "num_speakers": int(diarization.get("num_speakers") or -1),
+            "cluster_threshold": float(diarization.get("cluster_threshold") or 0.5),
+            "min_duration_on": float(diarization.get("min_duration_on") or 0.3),
+            "min_duration_off": float(diarization.get("min_duration_off") or 0.5),
+        }
     required_files = item.get("required_files")
     if isinstance(required_files, list):
         normalized["required_files"] = [str(path or "").strip().lstrip("/") for path in required_files if str(path or "").strip()]
@@ -272,6 +316,19 @@ def _write_install_state(model_id: str, payload: Dict[str, Any]) -> None:
     atomic_write_json(_install_state_path(model_id), payload, indent=2)
 
 
+def _updated_at_age_seconds(state: Dict[str, Any]) -> float | None:
+    raw = str(state.get("updated_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        updated_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - updated_at).total_seconds())
+
+
 def _voice_runtime_id_for_model(model_id: str) -> str:
     if str(model_id or "").strip().startswith("sherpa_onnx_"):
         from .voice_runtime_deps import VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
@@ -300,6 +357,72 @@ def _render_command_template(command_template: Any, *, model_id: str, model_dir:
     return text
 
 
+def _https_context() -> ssl.SSLContext:
+    env_cafile = str(os.environ.get("SSL_CERT_FILE") or "").strip()
+    if env_cafile and Path(env_cafile).exists():
+        try:
+            return ssl.create_default_context(cafile=env_cafile)
+        except OSError:
+            pass
+    for candidate in _CA_CERT_CANDIDATES:
+        if Path(candidate).exists():
+            try:
+                return ssl.create_default_context(cafile=candidate)
+            except OSError:
+                pass
+    return ssl.create_default_context()
+
+
+def _urlopen(target: Any, *, timeout: int = _URL_OPEN_TIMEOUT_SECONDS):
+    raw_url = str(getattr(target, "full_url", "") or target or "")
+    if raw_url.startswith("https://"):
+        return urllib.request.urlopen(target, timeout=timeout, context=_https_context())
+    return urllib.request.urlopen(target, timeout=timeout)
+
+
+def _download_with_curl(url: str, tmp_path: Path, *, progress: Callable[[int], None] | None = None) -> int | None:
+    curl = shutil.which("curl")
+    if not curl or not (url.startswith("http://") or url.startswith("https://")):
+        return None
+    env = os.environ.copy()
+    for key in ("SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE"):
+        env.pop(key, None)
+    command = [
+        curl,
+        "--fail",
+        "--location",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "30",
+        "--output",
+        str(tmp_path),
+        url,
+    ]
+    process = subprocess.Popen(command, env=env, stderr=subprocess.PIPE, text=True)
+    last_progress = -1
+    while process.poll() is None:
+        try:
+            size = tmp_path.stat().st_size
+        except FileNotFoundError:
+            size = 0
+        if progress is not None and size != last_progress:
+            progress(size)
+            last_progress = size
+        time.sleep(0.5)
+    stderr = process.stderr.read() if process.stderr is not None else ""
+    if process.returncode != 0:
+        raise VoiceModelError(
+            "voice_model_download_failed",
+            "voice model artifact download failed",
+            details={"url": url, "error": stderr.strip(), "returncode": process.returncode},
+        )
+    size = tmp_path.stat().st_size
+    if progress is not None:
+        progress(size)
+    return int(size)
+
+
 def _header_sha256(headers: Message) -> str:
     candidates = [
         headers.get("x-linked-etag"),
@@ -320,7 +443,7 @@ def _validate_remote_artifact_metadata(artifact: Dict[str, Any]) -> None:
         return
     request = urllib.request.Request(url, method="HEAD")
     try:
-        with urllib.request.urlopen(request, timeout=20) as resp:
+        with _urlopen(request, timeout=20) as resp:
             headers = resp.headers
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
         return
@@ -364,16 +487,41 @@ def _download_artifact(
     tmp_path = output_path.with_suffix(output_path.suffix + ".part")
     hasher = hashlib.sha256()
     bytes_written = 0
-    with urllib.request.urlopen(str(artifact["url"])) as resp, tmp_path.open("wb") as handle:
-        while True:
-            chunk = resp.read(_READ_CHUNK_BYTES)
-            if not chunk:
-                break
-            hasher.update(chunk)
-            handle.write(chunk)
-            bytes_written += len(chunk)
-            if progress is not None:
-                progress(bytes_written)
+    try:
+        curl_bytes = _download_with_curl(str(artifact["url"]), tmp_path, progress=progress)
+        if curl_bytes is None:
+            with _urlopen(str(artifact["url"])) as resp, tmp_path.open("wb") as handle:
+                while True:
+                    chunk = resp.read(_READ_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    handle.write(chunk)
+                    bytes_written += len(chunk)
+                    if progress is not None:
+                        progress(bytes_written)
+        else:
+            bytes_written = curl_bytes
+            with tmp_path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(_READ_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        raise VoiceModelError(
+            "voice_model_download_failed",
+            f"voice model artifact download failed: {artifact['path']}",
+            details={
+                "path": str(artifact["path"]),
+                "url": str(artifact["url"]),
+                "error": str(exc),
+            },
+        ) from exc
     digest = hasher.hexdigest()
     if digest != str(artifact["sha256"]):
         try:
@@ -489,6 +637,19 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
         }
     state = _read_install_state(model_id)
     status = str(state.get("status") or VOICE_MODEL_STATUS_NOT_INSTALLED).strip() or VOICE_MODEL_STATUS_NOT_INSTALLED
+    if status == VOICE_MODEL_STATUS_DOWNLOADING:
+        age_seconds = _updated_at_age_seconds(state)
+        if age_seconds is not None and age_seconds > _DOWNLOADING_STALE_SECONDS:
+            status = VOICE_MODEL_STATUS_FAILED
+            state = {
+                **state,
+                "status": status,
+                "error": {
+                    "code": "voice_model_install_stale",
+                    "message": "voice model install did not report progress and appears to have stopped",
+                    "details": {"age_seconds": int(age_seconds)},
+                },
+            }
     state_manifest_sha256 = str(state.get("manifest_sha256") or "").strip()
     manifest_sha256 = str(entry.get("manifest_sha256") or "").strip()
     if state_manifest_sha256 and manifest_sha256 and state_manifest_sha256 != manifest_sha256:
@@ -503,7 +664,11 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
     required_paths = [str(path) for path in (entry.get("required_files") or [])]
     if not required_paths and isinstance(entry.get("streaming"), dict):
         streaming = entry["streaming"]
-        required_paths = [str(streaming.get(key) or "") for key in ("tokens", "model", "encoder", "decoder", "bpe_vocab")]
+        required_paths = [str(streaming.get(key) or "") for key in ("tokens", "model", "encoder", "decoder", "joiner", "bpe_vocab")]
+        required_paths = [path for path in required_paths if path]
+    if not required_paths and isinstance(entry.get("diarization"), dict):
+        diarization = entry["diarization"]
+        required_paths = [str(diarization.get(key) or "") for key in ("segmentation_model", "embedding_model")]
         required_paths = [path for path in required_paths if path]
     for artifact in entry.get("artifacts") or []:
         if not (install_dir / str(artifact["path"])).exists():
@@ -531,7 +696,9 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
         "manifest_sha256": str(entry.get("manifest_sha256") or ""),
         "command_ready": bool(status == VOICE_MODEL_STATUS_READY and entry.get("command_template")),
         "streaming_ready": bool(status == VOICE_MODEL_STATUS_READY and entry.get("streaming")),
+        "diarization_ready": bool(status == VOICE_MODEL_STATUS_READY and entry.get("diarization")),
         "streaming": entry.get("streaming") if isinstance(entry.get("streaming"), dict) else {},
+        "diarization": entry.get("diarization") if isinstance(entry.get("diarization"), dict) else {},
         "downloaded_bytes": int(state.get("downloaded_bytes") or 0),
         "total_size_bytes": int(state.get("total_size_bytes") or 0),
         "progress_percent": float(state.get("progress_percent") or 0.0),
@@ -657,6 +824,24 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
             }
         )
         raise
+    except Exception as exc:
+        current = _read_install_state(model_id)
+        _write_install_state(
+            model_id,
+            _install_progress_state(
+                model_id=model_id,
+                entry=entry,
+                status=VOICE_MODEL_STATUS_FAILED,
+                downloaded_bytes=int(current.get("downloaded_bytes") or 0),
+                total_bytes=int(current.get("total_size_bytes") or total_expected_bytes),
+                error={
+                    "code": "voice_model_install_failed",
+                    "message": str(exc),
+                    "details": {"error_type": type(exc).__name__},
+                },
+            ),
+        )
+        raise
     finally:
         release_lockfile(lock_handle)
 
@@ -724,8 +909,40 @@ def resolve_installed_voice_model_streaming_config(model_id: str, *, source: str
         "num_threads": int(streaming.get("num_threads") or 2),
         "provider": str(streaming.get("provider") or "cpu").strip() or "cpu",
     }
-    for key in ("tokens", "model", "encoder", "decoder", "bpe_vocab"):
+    for key in ("tokens", "model", "encoder", "decoder", "joiner", "bpe_vocab"):
         value = str(streaming.get(key) or "").strip()
+        if value:
+            resolved[key] = str(model_dir / value)
+    return resolved
+
+
+def resolve_installed_voice_model_diarization_config(model_id: str, *, source: str = "") -> Dict[str, Any]:
+    model_id = str(model_id or "").strip()
+    if not model_id:
+        return {}
+    status = get_voice_model_status(model_id, source=source)
+    if str(status.get("status") or "") != VOICE_MODEL_STATUS_READY:
+        return {}
+    catalog = load_voice_model_catalog(source)
+    entry = catalog.get(model_id) or {}
+    diarization = entry.get("diarization") if isinstance(entry.get("diarization"), dict) else {}
+    if not diarization:
+        return {}
+    model_dir = voice_model_dir(model_id)
+    resolved: Dict[str, Any] = {
+        "model_id": model_id,
+        "model_dir": str(model_dir),
+        "engine": str(diarization.get("engine") or "offline_speaker_diarization"),
+        "sample_rate": int(diarization.get("sample_rate") or 16000),
+        "num_threads": int(diarization.get("num_threads") or 2),
+        "provider": str(diarization.get("provider") or "cpu").strip() or "cpu",
+        "num_speakers": int(diarization.get("num_speakers") or -1),
+        "cluster_threshold": float(diarization.get("cluster_threshold") or 0.5),
+        "min_duration_on": float(diarization.get("min_duration_on") or 0.3),
+        "min_duration_off": float(diarization.get("min_duration_off") or 0.5),
+    }
+    for key in ("segmentation_model", "embedding_model"):
+        value = str(diarization.get(key) or "").strip()
         if value:
             resolved[key] = str(model_dir / value)
     return resolved

@@ -269,6 +269,9 @@ class AssistantVoiceTranscriptSegmentRequest(BaseModel):
     language: str = Field(default="")
     is_final: bool = Field(default=True)
     flush: bool = Field(default=False)
+    start_ms: Optional[int] = None
+    end_ms: Optional[int] = None
+    speaker_label: str = Field(default="")
     trigger: Dict[str, Any] = Field(default_factory=dict)
     by: str = Field(default="user")
 

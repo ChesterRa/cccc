@@ -6,6 +6,7 @@ import type {
   AssistantVoiceDocumentMutationResult,
   AssistantVoiceAskFeedback,
   AssistantVoiceInputResult,
+  AssistantVoiceMeetingSession,
   AssistantVoicePromptDraft,
   AssistantVoicePromptDraftMutationResult,
   AssistantVoiceTranscriptSegmentResult,
@@ -189,6 +190,10 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     installed_at: asOptionalString(record.installed_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
     command_ready: typeof record.command_ready === "boolean" ? record.command_ready : undefined,
+    streaming_ready: typeof record.streaming_ready === "boolean" ? record.streaming_ready : undefined,
+    diarization_ready: typeof record.diarization_ready === "boolean" ? record.diarization_ready : undefined,
+    streaming: asRecord(record.streaming) ?? undefined,
+    diarization: asRecord(record.diarization) ?? undefined,
     manifest_sha256: asOptionalString(record.manifest_sha256) || undefined,
     downloaded_bytes: Number.isFinite(Number(record.downloaded_bytes)) ? Number(record.downloaded_bytes) : undefined,
     total_size_bytes: Number.isFinite(Number(record.total_size_bytes)) ? Number(record.total_size_bytes) : undefined,
@@ -224,6 +229,32 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     installed_at: asOptionalString(record.installed_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
     error: asRecord(record.error) ?? undefined,
+  };
+}
+
+function normalizeAssistantVoiceMeetingSession(value: unknown): AssistantVoiceMeetingSession | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const sessionId = asString(record.session_id).trim();
+  if (!sessionId) return undefined;
+  return {
+    schema: Number.isFinite(Number(record.schema)) ? Number(record.schema) : undefined,
+    group_id: asOptionalString(record.group_id) || undefined,
+    session_id: sessionId,
+    status: asOptionalString(record.status) || undefined,
+    created_at: asOptionalString(record.created_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    sample_rate: Number.isFinite(Number(record.sample_rate)) ? Number(record.sample_rate) : undefined,
+    audio_duration_ms: Number.isFinite(Number(record.audio_duration_ms)) ? Number(record.audio_duration_ms) : undefined,
+    language: asOptionalString(record.language) || undefined,
+    document_path: asOptionalString(record.document_path) || undefined,
+    latest_partial: asOptionalString(record.latest_partial) || undefined,
+    last_final_text: asOptionalString(record.last_final_text) || undefined,
+    diarization_ready: typeof record.diarization_ready === "boolean" ? record.diarization_ready : undefined,
+    diarization_artifact_path: asOptionalString(record.diarization_artifact_path) || undefined,
+    segments: Array.isArray(record.segments) ? record.segments.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item) : [],
+    diarization: asRecord(record.diarization) ?? undefined,
+    error: asRecord(record.error),
   };
 }
 
@@ -340,7 +371,10 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     prompt_draft: normalizeAssistantVoicePromptDraft(record.prompt_draft),
     ask_requests: askRequests,
     latest_ask_request: normalizeAssistantVoiceAskFeedback(record.latest_ask_request) || askRequests[0],
-    service_models: Object.values(serviceModelsById).sort((a, b) => a.model_id.localeCompare(b.model_id)),
+    service_models: [
+      ...serviceModels,
+      ...Object.values(serviceModelsById).filter((model) => !serviceModels.some((item) => item.model_id === model.model_id)),
+    ],
     service_models_by_id: serviceModelsById,
     service_runtime: primaryServiceRuntime,
     service_runtimes: Object.values(serviceRuntimesById).sort((a, b) => a.runtime_id.localeCompare(b.runtime_id)),
@@ -561,6 +595,24 @@ export async function transcribeVoiceAssistantAudio(
   return { ok: true, result: normalizeAssistantVoiceTranscriptionResult(gid, resp.result) };
 }
 
+export async function fetchLatestVoiceAssistantMeetingSession(
+  groupId: string,
+): Promise<ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>> {
+  const gid = String(groupId || "").trim();
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/latest`,
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
+  const record = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      group_id: asString(record.group_id).trim() || gid,
+      session: normalizeAssistantVoiceMeetingSession(record.session),
+    },
+  };
+}
+
 export async function installVoiceAssistantModel(
   groupId: string,
   payload: { modelId: string; by?: string; background?: boolean },
@@ -633,6 +685,9 @@ export async function appendVoiceAssistantTranscriptSegment(
     isFinal?: boolean;
     flush?: boolean;
     trigger?: Record<string, unknown>;
+    startMs?: number;
+    endMs?: number;
+    speakerLabel?: string;
     by?: string;
   },
 ): Promise<ApiResponse<AssistantVoiceTranscriptSegmentResult>> {
@@ -651,6 +706,9 @@ export async function appendVoiceAssistantTranscriptSegment(
         is_final: payload.isFinal !== false,
         flush: Boolean(payload.flush),
         trigger: payload.trigger || {},
+        start_ms: Number.isFinite(Number(payload.startMs)) ? Math.max(0, Math.round(Number(payload.startMs))) : null,
+        end_ms: Number.isFinite(Number(payload.endMs)) ? Math.max(0, Math.round(Number(payload.endMs))) : null,
+        speaker_label: String(payload.speakerLabel || "").trim(),
         by: String(payload.by || "user").trim() || "user",
       }),
     },

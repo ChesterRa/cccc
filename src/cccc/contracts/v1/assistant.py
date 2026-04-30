@@ -80,6 +80,18 @@ class AssistantVoiceRequestData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AssistantVoiceSessionData(BaseModel):
+    assistant_id: str
+    session_id: str
+    action: str
+    status: str = ""
+    artifact_path: str = ""
+    error_code: str = ""
+    error_message: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AssistantVoiceInputData(BaseModel):
     assistant_id: str
     input_kind: str

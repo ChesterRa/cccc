@@ -27,6 +27,8 @@ _INSTALL_TIMEOUT_SECONDS = 3600
 _SUPPORTED_PYTHON_COMMANDS = ("python3.12", "python3.11", "python3.10", "python3.9")
 _SHERPA_ONNX_STREAMING_PACKAGES = ("sherpa-onnx", "numpy")
 _SHERPA_ONNX_STREAMING_MODULES = ("sherpa_onnx", "numpy")
+_STATUS_CACHE_TTL_SECONDS = 2.0
+_STATUS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 
 
 class VoiceRuntimeDepsError(Exception):
@@ -68,6 +70,7 @@ def _write_state(runtime_id: str, payload: Dict[str, Any]) -> None:
     root = _runtime_root(runtime_id)
     root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(_state_path(runtime_id), payload, indent=2)
+    _STATUS_CACHE.pop(str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING, None)
 
 
 def _runtime_packages(runtime_id: str) -> tuple[str, ...]:
@@ -175,6 +178,12 @@ def _module_status(python_path: Path, modules: tuple[str, ...]) -> Dict[str, boo
 
 def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING) -> Dict[str, Any]:
     runtime_id = str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    now = time.monotonic()
+    cached = _STATUS_CACHE.get(runtime_id)
+    if cached is not None:
+        cached_at, cached_status = cached
+        if now - cached_at < _STATUS_CACHE_TTL_SECONDS:
+            return dict(cached_status)
     modules = _runtime_modules(runtime_id)
     packages = _runtime_packages(runtime_id)
     state = _read_state(runtime_id)
@@ -185,7 +194,7 @@ def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STRE
     status = VOICE_RUNTIME_STATUS_READY if not missing else (state_status or VOICE_RUNTIME_STATUS_NOT_INSTALLED)
     if status == VOICE_RUNTIME_STATUS_READY and missing:
         status = VOICE_RUNTIME_STATUS_NOT_INSTALLED
-    return {
+    result = {
         "runtime_id": runtime_id,
         "status": status,
         "available": True,
@@ -199,6 +208,8 @@ def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STRE
         "installed_at": str(state.get("installed_at") or ""),
         "error": state.get("error") if isinstance(state.get("error"), dict) else {},
     }
+    _STATUS_CACHE[runtime_id] = (now, dict(result))
+    return result
 
 
 def resolve_voice_runtime_python(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING) -> str:

@@ -698,6 +698,10 @@ export type AssistantServiceModel = {
   installed_at?: string;
   updated_at?: string;
   command_ready?: boolean;
+  streaming_ready?: boolean;
+  diarization_ready?: boolean;
+  streaming?: Record<string, unknown>;
+  diarization?: Record<string, unknown>;
   manifest_sha256?: string;
   downloaded_bytes?: number;
   total_size_bytes?: number;
@@ -809,6 +813,26 @@ export type AssistantVoiceTranscriptSegmentResult = {
   actor_wake_error?: string;
   actor_notify_delivered?: boolean;
   actor_notify_delivery_error?: string;
+};
+
+export type AssistantVoiceMeetingSession = {
+  schema?: number;
+  group_id?: string;
+  session_id: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  sample_rate?: number;
+  audio_duration_ms?: number;
+  language?: string;
+  document_path?: string;
+  latest_partial?: string;
+  last_final_text?: string;
+  diarization_ready?: boolean;
+  diarization_artifact_path?: string;
+  segments?: Record<string, unknown>[];
+  diarization?: Record<string, unknown>;
+  error?: Record<string, unknown> | null;
 };
 
 export type AssistantVoiceDocumentMutationResult = {

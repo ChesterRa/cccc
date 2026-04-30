@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 from pathlib import Path
@@ -30,7 +31,12 @@ class SherpaStreamingAsrError(Exception):
 def resolve_sherpa_streaming_model_id(selected_model_id: str = "") -> str:
     selected = str(selected_model_id or "").strip()
     if selected:
-        return selected
+        selected_status = get_voice_model_status(selected)
+        if (
+            str(selected_status.get("runtime_id") or "") == VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+            and bool(selected_status.get("streaming_ready"))
+        ):
+            return selected
     for item in list_voice_models():
         if not isinstance(item, dict):
             continue
@@ -166,6 +172,8 @@ async def open_sherpa_streaming_session(selected_model_id: str = "") -> SherpaSt
         argv.extend(["--encoder", str(config["encoder"])])
     if config.get("decoder"):
         argv.extend(["--decoder", str(config["decoder"])])
+    if config.get("joiner"):
+        argv.extend(["--joiner", str(config["joiner"])])
     env = os.environ.copy()
     env["CCCC_HOME"] = str(ensure_home())
     source_root = str(Path(__file__).resolve().parents[3])
@@ -191,3 +199,57 @@ async def open_sherpa_streaming_session(selected_model_id: str = "") -> SherpaSt
     if str(ready.get("type") or "") != "ready":
         raise SherpaStreamingAsrError("asr_backend_failed", "ASR worker did not become ready", details={"response": ready})
     return session
+
+
+async def transcribe_sherpa_streaming_pcm16(
+    pcm16_audio: bytes,
+    *,
+    selected_model_id: str = "",
+    sample_rate: int = 16000,
+) -> str:
+    if not pcm16_audio:
+        return ""
+    session = await open_sherpa_streaming_session(selected_model_id)
+    final_text = ""
+    partial_text = ""
+    try:
+        await session.send(
+            {
+                "type": "audio",
+                "seq": 1,
+                "sample_rate": int(sample_rate or 16000),
+                "audio_base64": base64.b64encode(pcm16_audio).decode("ascii"),
+            }
+        )
+        while True:
+            try:
+                event = await session.receive(timeout=0.05)
+            except SherpaStreamingAsrError as exc:
+                if exc.code == "asr_backend_timeout":
+                    break
+                raise
+            event_type = str(event.get("type") or "")
+            if event_type == "partial":
+                partial_text = str(event.get("text") or "").strip()
+            elif event_type == "final":
+                final_text = str(event.get("text") or "").strip()
+        await session.send({"type": "stop", "seq": 2})
+        while True:
+            event = await session.receive(timeout=5.0)
+            event_type = str(event.get("type") or "")
+            if event_type == "partial":
+                partial_text = str(event.get("text") or "").strip()
+            elif event_type == "final":
+                final_text = str(event.get("text") or "").strip()
+            elif event_type == "closed":
+                break
+            elif event_type == "error":
+                error = event.get("error") if isinstance(event.get("error"), dict) else {}
+                raise SherpaStreamingAsrError(
+                    str(error.get("code") or "asr_backend_failed"),
+                    str(error.get("message") or "ASR worker failed"),
+                    details=error.get("details") if isinstance(error.get("details"), dict) else {},
+                )
+        return final_text or partial_text
+    finally:
+        await session.close()

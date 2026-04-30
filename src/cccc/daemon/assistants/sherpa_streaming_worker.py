@@ -34,6 +34,13 @@ def _build_recognizer(args: argparse.Namespace) -> Any:
             model=args.model,
             **common,
         )
+    if args.engine == "transducer":
+        return sherpa_onnx.OnlineRecognizer.from_transducer(
+            encoder=args.encoder,
+            decoder=args.decoder,
+            joiner=args.joiner,
+            **common,
+        )
     if args.engine == "paraformer":
         return sherpa_onnx.OnlineRecognizer.from_paraformer(
             encoder=args.encoder,
@@ -56,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="")
     parser.add_argument("--encoder", default="")
     parser.add_argument("--decoder", default="")
+    parser.add_argument("--joiner", default="")
     parser.add_argument("--sample-rate", type=int, default=16000)
     parser.add_argument("--num-threads", type=int, default=2)
     parser.add_argument("--provider", default="cpu")

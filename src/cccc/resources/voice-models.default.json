@@ -1,31 +1,70 @@
 {
   "voice_secretary_asr_models": [
     {
-      "model_id": "sherpa_onnx_streaming_zipformer_small_ctc_zh_int8",
+      "model_id": "sherpa_onnx_streaming_zipformer_zh_int8",
       "kind": "asr",
-      "title": "sherpa-onnx streaming Zipformer CTC small zh int8",
-      "description": "Small Chinese streaming ASR model for real-time Voice Secretary transcription.",
+      "title": "sherpa-onnx streaming Zipformer zh int8",
+      "description": "Chinese streaming Zipformer transducer ASR model for higher-quality real-time Voice Secretary transcription.",
       "streaming": {
-        "engine": "zipformer2_ctc",
-        "model": "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01/model.int8.onnx",
-        "tokens": "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01/tokens.txt",
-        "bpe_vocab": "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01/bbpe.model",
+        "engine": "transducer",
+        "encoder": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/encoder.int8.onnx",
+        "decoder": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/decoder.onnx",
+        "joiner": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/joiner.int8.onnx",
+        "tokens": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/tokens.txt",
         "sample_rate": 16000,
         "num_threads": 2,
         "provider": "cpu"
       },
       "required_files": [
-        "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01/model.int8.onnx",
-        "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01/tokens.txt",
-        "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01/bbpe.model"
+        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/encoder.int8.onnx",
+        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/decoder.onnx",
+        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/joiner.int8.onnx",
+        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/tokens.txt"
       ],
       "artifacts": [
         {
-          "path": "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2",
-          "sha256": "b3b309f7ce4a737195fcc6963ea19b0653a7d3401580af5ae0d3e284cbb71f0b",
-          "size_bytes": 21264113,
+          "path": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
+          "sha256": "5a2832047ea1f97dd0dc595b816c230c4bafad65cfc0341fa57517cadc50afd0",
+          "size_bytes": 132634597,
           "archive": "tar.bz2"
+        }
+      ]
+    },
+    {
+      "model_id": "sherpa_onnx_diarization_pyannote_3dspeaker_zh",
+      "kind": "diarization",
+      "title": "sherpa-onnx speaker diarization pyannote + 3D-Speaker zh",
+      "description": "Offline speaker diarization model for Voice Secretary meeting speaker labels.",
+      "diarization": {
+        "engine": "offline_speaker_diarization",
+        "segmentation_model": "sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
+        "embedding_model": "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+        "sample_rate": 16000,
+        "num_threads": 2,
+        "provider": "cpu",
+        "num_speakers": -1,
+        "cluster_threshold": 0.5,
+        "min_duration_on": 0.3,
+        "min_duration_off": 0.5
+      },
+      "required_files": [
+        "sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
+        "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+      ],
+      "artifacts": [
+        {
+          "path": "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+          "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+          "size_bytes": 6958444,
+          "archive": "tar.bz2"
+        },
+        {
+          "path": "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+          "sha256": "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b",
+          "size_bytes": 39593761
         }
       ]
     }

@@ -188,6 +188,48 @@ class TestAssistantOps(unittest.TestCase):
                 _download_artifact(artifact, output_path=Path(td) / "model.pt")
         self.assertEqual(cm.exception.code, "voice_model_manifest_hash_invalid")
 
+    def test_default_voice_catalog_prefers_zipformer_transducer_model(self) -> None:
+        from cccc.daemon.assistants.voice_models import load_voice_model_catalog
+
+        catalog = load_voice_model_catalog()
+        model_ids = list(catalog.keys())
+        self.assertGreater(len(model_ids), 0)
+        self.assertEqual(model_ids[0], "sherpa_onnx_streaming_zipformer_zh_int8")
+        streaming = catalog[model_ids[0]].get("streaming") or {}
+        self.assertEqual(streaming.get("engine"), "transducer")
+        self.assertTrue(str(streaming.get("encoder") or "").endswith("encoder.int8.onnx"))
+        self.assertTrue(str(streaming.get("decoder") or "").endswith("decoder.onnx"))
+        self.assertTrue(str(streaming.get("joiner") or "").endswith("joiner.int8.onnx"))
+        self.assertTrue(str(streaming.get("tokens") or "").endswith("tokens.txt"))
+
+    def test_sherpa_streaming_model_resolution_falls_back_from_invalid_selection(self) -> None:
+        from cccc.daemon.assistants import sherpa_streaming_asr
+
+        def _status(model_id: str) -> dict:
+            if model_id == "ready_streaming":
+                return {
+                    "model_id": model_id,
+                    "runtime_id": "sherpa_onnx_streaming",
+                    "streaming_ready": True,
+                }
+            return {"model_id": model_id, "status": "unknown", "available": False}
+
+        with patch.object(sherpa_streaming_asr, "get_voice_model_status", side_effect=_status), patch.object(
+            sherpa_streaming_asr,
+            "list_voice_models",
+            return_value=[
+                {
+                    "model_id": "ready_streaming",
+                    "runtime_id": "sherpa_onnx_streaming",
+                    "streaming_ready": True,
+                }
+            ],
+        ):
+            self.assertEqual(
+                sherpa_streaming_asr.resolve_sherpa_streaming_model_id("sensevoice_small"),
+                "ready_streaming",
+            )
+
     def test_voice_capture_result_idle_counts_as_continuous(self) -> None:
         from cccc.daemon.assistants.assistant_ops import _voice_capture_continuity
 
@@ -213,6 +255,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertFalse(bool(assistants_by_id["voice_secretary"].get("enabled")))
             self.assertEqual(assistants_by_id["voice_secretary"].get("lifecycle"), "disabled")
             self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_backend"), "browser_asr")
+            self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_language"), "mixed")
         finally:
             cleanup()
 
@@ -267,6 +310,38 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(updated_config.get("auto_document_max_window_seconds"), 10)
             self.assertNotIn("dispatch_mode", updated_config)
             self.assertNotIn("auto_proposal_enabled", updated_config)
+        finally:
+            cleanup()
+
+    def test_voice_state_read_does_not_flush_stale_session_windows(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            with patch(
+                "cccc.daemon.assistants.assistant_ops._flush_stale_voice_session_windows",
+                side_effect=AssertionError("assistant_state must not flush stale voice windows"),
+            ):
+                state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+        finally:
+            cleanup()
+
+    def test_voice_document_list_does_not_flush_stale_session_windows(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            with patch(
+                "cccc.daemon.assistants.assistant_ops._flush_stale_voice_session_windows",
+                side_effect=AssertionError("document list must not flush stale voice windows"),
+            ):
+                documents, _ = self._call("assistant_voice_document_list", {"group_id": group_id})
+
+            self.assertTrue(documents.ok, getattr(documents, "error", None))
         finally:
             cleanup()
 
@@ -1425,7 +1500,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(state.ok, getattr(state, "error", None))
             self.assertFalse(bool((state.result or {}).get("new_input_available")), state.result)
             input_timing = (state.result or {}).get("input_timing") if isinstance(state.result, dict) else {}
-            self.assertEqual(input_timing.get("secretary_delivery_cursor"), 1)
+            self.assertEqual(input_timing.get("secretary_delivery_cursor"), 0)
 
             read, _ = self._call(
                 "assistant_voice_document_input_read",
@@ -1434,6 +1509,11 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("兜底入口", input_text)
+            group_after_read = load_group(group_id)
+            self.assertIsNotNone(group_after_read)
+            assert group_after_read is not None
+            input_timing_after_read = assistant_ops._load_voice_input_state(group_after_read)
+            self.assertEqual(input_timing_after_read.get("secretary_delivery_cursor"), 1)
         finally:
             cleanup()
 
