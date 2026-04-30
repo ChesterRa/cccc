@@ -1,5 +1,5 @@
 # Stage 1: Build WebUI
-FROM node:20-slim AS web-builder
+FROM node:20-bookworm-slim AS web-builder
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
@@ -10,30 +10,32 @@ COPY web/ ./
 RUN npm run build
 
 # Stage 2: Final image
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
 
 ENV CCCC_BROWSER_TOOLS="xvfb fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-scalable fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf"
-ENV CCCC_BROWSER_DEPS_DEBIAN12="libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2"
-ENV CCCC_BROWSER_DEPS_DEBIAN13="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2"
+ENV CCCC_BROWSER_DEPS="libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2"
 
-# Install dependencies + Node.js + minimal Chromium shared libraries for projected browser/runtime auth.
+# Install OS dependencies plus minimal Chromium shared libraries for projected browser/runtime auth.
 RUN set -eux; \
-    . /etc/os-release; \
-    BROWSER_DEPS="${CCCC_BROWSER_DEPS_DEBIAN12}"; \
-    if [ "${ID:-}" = "debian" ] && [ "${VERSION_ID:-}" = "13" ]; then \
-      BROWSER_DEPS="${CCCC_BROWSER_DEPS_DEBIAN13}"; \
-    fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      curl ca-certificates git bash \
+      curl ca-certificates git bash libstdc++6 \
       ${CCCC_BROWSER_TOOLS} \
-      ${BROWSER_DEPS}; \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; \
-    apt-get install -y --no-install-recommends nodejs; \
+      ${CCCC_BROWSER_DEPS}; \
     rm -rf /var/lib/apt/lists/*
+
+# Reuse the already-pinned Node.js 20 runtime from the Web build stage.
+# This avoids NodeSource/Debian package fallback drift and guarantees npm is present.
+COPY --from=web-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=web-builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node --version \
+    && npm --version \
+    && npx --version
 
 # Install Claude Code CLI and move to global path
 RUN curl -fsSL https://claude.ai/install.sh | bash \

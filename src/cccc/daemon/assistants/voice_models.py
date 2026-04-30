@@ -4,6 +4,7 @@ import hashlib
 import importlib.resources
 import json
 import os
+import re
 import shlex
 import shutil
 import ssl
@@ -15,7 +16,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.message import Message
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Iterable, List
 
 from ...paths import ensure_home
@@ -38,6 +39,7 @@ _DOWNLOADING_STALE_SECONDS = 300
 _DEFAULT_MANIFEST_RESOURCE = "voice-models.default.json"
 _LOCAL_MANIFEST_REL_PATH = ("config", "voice-models.json")
 _SHA256_HEX_LENGTH = 64
+_VOICE_MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _CA_CERT_CANDIDATES = (
     "/etc/ssl/cert.pem",
     "/opt/homebrew/etc/ca-certificates/cert.pem",
@@ -59,6 +61,50 @@ def _voice_models_root() -> Path:
 
 def _local_manifest_path() -> Path:
     return ensure_home().joinpath(*_LOCAL_MANIFEST_REL_PATH)
+
+
+def _normalize_model_id(value: Any) -> str:
+    model_id = str(value or "").strip()
+    if not model_id or not _VOICE_MODEL_ID_RE.match(model_id):
+        raise VoiceModelError(
+            "voice_model_manifest_invalid",
+            "model_id must be a simple slug",
+            details={"model_id": model_id},
+        )
+    return model_id
+
+
+def _normalize_rel_model_path(value: Any, *, field: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise VoiceModelError(
+            "voice_model_manifest_invalid",
+            f"{field} must be a non-empty relative path",
+        )
+    if any(ord(ch) < 32 for ch in raw):
+        raise VoiceModelError(
+            "voice_model_manifest_invalid",
+            f"{field} contains control characters",
+            details={"path": raw},
+        )
+    if "\\" in raw:
+        raise VoiceModelError(
+            "voice_model_manifest_invalid",
+            f"{field} must use POSIX-style relative paths",
+            details={"path": raw},
+        )
+    path = PurePosixPath(raw)
+    if (
+        path.as_posix() == "."
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} or ":" in part for part in path.parts)
+    ):
+        raise VoiceModelError(
+            "voice_model_manifest_invalid",
+            f"{field} must stay inside the voice model directory",
+            details={"path": raw},
+        )
+    return path.as_posix()
 
 
 def _load_builtin_manifest() -> Any:
@@ -135,7 +181,7 @@ def _manifest_source(source: str = "") -> Any:
 def _normalize_artifact(item: Any) -> Dict[str, Any]:
     if not isinstance(item, dict):
         raise VoiceModelError("voice_model_manifest_invalid", "artifact entry must be an object")
-    rel_path = str(item.get("path") or "").strip().lstrip("/")
+    rel_path = _normalize_rel_model_path(item.get("path"), field="artifact path")
     url = str(item.get("url") or "").strip()
     sha256 = str(item.get("sha256") or "").strip().lower()
     if not rel_path or not url or not sha256:
@@ -171,7 +217,7 @@ def _normalize_artifact(item: Any) -> Dict[str, Any]:
 def _normalize_model_entry(item: Any) -> Dict[str, Any]:
     if not isinstance(item, dict):
         raise VoiceModelError("voice_model_manifest_invalid", "model entry must be an object")
-    model_id = str(item.get("model_id") or "").strip()
+    model_id = _normalize_model_id(item.get("model_id"))
     title = str(item.get("title") or model_id).strip()
     kind = str(item.get("kind") or VOICE_MODEL_KIND_ASR).strip() or VOICE_MODEL_KIND_ASR
     command_template = item.get("command_template")
@@ -207,7 +253,7 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
     }
     if isinstance(streaming, dict):
         engine = str(streaming.get("engine") or "").strip()
-        tokens = str(streaming.get("tokens") or "").strip().lstrip("/")
+        tokens = _normalize_rel_model_path(streaming.get("tokens"), field=f"model {model_id} streaming.tokens")
         if not engine or not tokens:
             raise VoiceModelError(
                 "voice_model_manifest_invalid",
@@ -221,9 +267,9 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
             "provider": str(streaming.get("provider") or "cpu").strip() or "cpu",
         }
         for key in ("model", "encoder", "decoder", "joiner", "bpe_vocab"):
-            value = str(streaming.get(key) or "").strip().lstrip("/")
+            value = str(streaming.get(key) or "").strip()
             if value:
-                streaming_config[key] = value
+                streaming_config[key] = _normalize_rel_model_path(value, field=f"model {model_id} streaming.{key}")
         if engine == "zipformer2_ctc" and not streaming_config.get("model"):
             raise VoiceModelError(
                 "voice_model_manifest_invalid",
@@ -243,8 +289,14 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
             )
         normalized["streaming"] = streaming_config
     if isinstance(diarization, dict):
-        segmentation_model = str(diarization.get("segmentation_model") or "").strip().lstrip("/")
-        embedding_model = str(diarization.get("embedding_model") or "").strip().lstrip("/")
+        segmentation_model = _normalize_rel_model_path(
+            diarization.get("segmentation_model"),
+            field=f"model {model_id} diarization.segmentation_model",
+        )
+        embedding_model = _normalize_rel_model_path(
+            diarization.get("embedding_model"),
+            field=f"model {model_id} diarization.embedding_model",
+        )
         if not segmentation_model or not embedding_model:
             raise VoiceModelError(
                 "voice_model_manifest_invalid",
@@ -264,7 +316,11 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
         }
     required_files = item.get("required_files")
     if isinstance(required_files, list):
-        normalized["required_files"] = [str(path or "").strip().lstrip("/") for path in required_files if str(path or "").strip()]
+        normalized["required_files"] = [
+            _normalize_rel_model_path(path, field=f"model {model_id} required_files")
+            for path in required_files
+            if str(path or "").strip()
+        ]
     normalized["manifest_sha256"] = hashlib.sha256(
         json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -294,7 +350,7 @@ def load_voice_model_catalog(source: str = "") -> Dict[str, Dict[str, Any]]:
 
 
 def voice_model_dir(model_id: str) -> Path:
-    return _voice_models_root() / str(model_id or "").strip()
+    return _voice_models_root() / _normalize_model_id(model_id)
 
 
 def _install_state_path(model_id: str) -> Path:
@@ -560,7 +616,13 @@ def _safe_extract_tar(archive_path: Path, output_dir: Path) -> None:
     with tarfile.open(archive_path) as archive:
         members = archive.getmembers()
         for member in members:
-            target = (output_root / member.name).resolve()
+            if not (member.isfile() or member.isdir()):
+                raise VoiceModelError(
+                    "voice_model_archive_invalid",
+                    f"voice model archive contains an unsupported entry type: {member.name}",
+                )
+            member_name = _normalize_rel_model_path(member.name, field="archive member path")
+            target = (output_root / member_name).resolve()
             try:
                 target.relative_to(output_root)
             except ValueError as exc:

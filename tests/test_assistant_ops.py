@@ -1,8 +1,10 @@
 import base64
 import hashlib
+import io
 import json
 import os
 import shutil
+import tarfile
 import tempfile
 import time
 import unittest
@@ -187,6 +189,58 @@ class TestAssistantOps(unittest.TestCase):
             with self.assertRaises(VoiceModelError) as cm:
                 _download_artifact(artifact, output_path=Path(td) / "model.pt")
         self.assertEqual(cm.exception.code, "voice_model_manifest_hash_invalid")
+
+    def test_voice_model_manifest_rejects_unsafe_install_paths(self) -> None:
+        from cccc.daemon.assistants.voice_models import VoiceModelError, load_voice_model_catalog
+
+        digest = "a" * 64
+
+        def manifest(**entry_overrides: object) -> str:
+            entry = {
+                "model_id": "safe_asr",
+                "kind": "asr",
+                "title": "Safe ASR",
+                "command_template": ["{python}", "{model_dir}/adapter.py", "{audio_path}"],
+                "artifacts": [{"path": "adapter.py", "url": "file:///tmp/adapter.py", "sha256": digest}],
+            }
+            entry.update(entry_overrides)
+            return json.dumps({"voice_secretary_asr_models": [entry]})
+
+        cases = [
+            {"model_id": "../escape"},
+            {"artifacts": [{"path": "../escape.py", "url": "file:///tmp/adapter.py", "sha256": digest}]},
+            {
+                "streaming": {
+                    "engine": "zipformer2_ctc",
+                    "tokens": "../tokens.txt",
+                    "model": "model.onnx",
+                }
+            },
+            {"required_files": ["../../outside.onnx"]},
+        ]
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(VoiceModelError) as cm:
+                    load_voice_model_catalog(manifest(**overrides))
+                self.assertEqual(cm.exception.code, "voice_model_manifest_invalid")
+
+    def test_voice_model_archive_rejects_links_and_special_entries(self) -> None:
+        from cccc.daemon.assistants.voice_models import VoiceModelError, _safe_extract_tar
+
+        with tempfile.TemporaryDirectory() as td:
+            archive_path = Path(td) / "bad.tar"
+            with tarfile.open(archive_path, "w") as archive:
+                info = tarfile.TarInfo("safe.txt")
+                payload = b"ok"
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+                link = tarfile.TarInfo("escape-link")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "/etc/passwd"
+                archive.addfile(link)
+            with self.assertRaises(VoiceModelError) as cm:
+                _safe_extract_tar(archive_path, Path(td) / "out")
+        self.assertEqual(cm.exception.code, "voice_model_archive_invalid")
 
     def test_default_voice_catalog_prefers_zipformer_transducer_model(self) -> None:
         from cccc.daemon.assistants.voice_models import load_voice_model_catalog

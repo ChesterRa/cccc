@@ -1023,9 +1023,6 @@ export function VoiceSecretaryComposerControl({
     streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
   });
   const serviceAsrReady = serviceReadiness.serviceAsrReady;
-  const serviceHealth = recordFromUnknown(assistant?.health?.service);
-  const streamingRuntimeReady = serviceReadiness.streamingRuntimeReady;
-  const serviceAsrConfigured = serviceReadiness.serviceAsrConfigured;
   const browserSpeechSupportIssue = browserSpeechReady ? getBrowserSpeechSupportIssue() : "";
   const serviceAudioSupportIssue = serviceAsrReady ? getBrowserAudioSupportIssue() : "";
   const getBrowserSpeechIssueMessage = useCallback((issue: BrowserSpeechSupportIssue) => {
@@ -2808,7 +2805,6 @@ export function VoiceSecretaryComposerControl({
       showError(message);
     }
   }, [
-    assistantEnabled,
     cleanupServiceAudio,
     getAudioCaptureErrorMessage,
     getAudioSupportIssueMessage,
@@ -2823,11 +2819,8 @@ export function VoiceSecretaryComposerControl({
     selectedAudioDeviceId,
     selectedGroupId,
     assistant,
-    serviceAsrReady,
-    serviceAsrConfigured,
     serviceRuntimesById,
     showError,
-    streamingRuntimeReady,
     t,
     selectedAudioDeviceLabel,
     updateLiveTranscriptPreview,

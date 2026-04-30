@@ -16,6 +16,10 @@ import { findPresentationSlot } from "../../utils/presentation";
 import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
 import { clampPresentationSplitWidth } from "../../utils/presentationSplitLayout";
+import {
+  getMobileMessageTopInsetPx,
+  MOBILE_FLOATING_CONTROLS_TOP_INSET_PX,
+} from "../../utils/responsiveLayout";
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
 import { buildLiveWorkCards } from "./liveWorkCards";
 
@@ -35,8 +39,6 @@ const EMPTY_LIVE_WORK_ACTIVITIES: Record<string, StreamingActivity[]> = {};
 const EMPTY_LIVE_WORK_SESSIONS: Record<string, StreamingReplySession> = {};
 const EMPTY_LIVE_WORK_PREVIEW_SESSIONS: Record<string, HeadlessPreviewSession[]> = {};
 const EMPTY_LATEST_LIVE_WORK_PREVIEW: Record<string, HeadlessPreviewSession> = {};
-const MOBILE_FILTER_TOP_INSET_PX = 68;
-const MOBILE_MESSAGE_TOP_INSET_PX = 128;
 
 function ChatLazyFallback({ className }: { className?: string }) {
   return <div className={classNames("min-h-0", className)} />;
@@ -433,6 +435,11 @@ export function ChatTab({
     ["task", t('filterNeedReply')],
   ];
   const showMessageFilters = !readOnly && !chatWindowProps && hasAnyChatMessages;
+  const hasPresentationCards = (groupPresentation?.slots || []).some((slot) => !!slot?.card);
+  const showMobilePresentationAction =
+    isSmallScreen && !chatWindowProps && !!selectedGroupId && (hasPresentationCards || hasPresentationAttention);
+  const showMobileFloatingControls = isSmallScreen && (showMessageFilters || showMobilePresentationAction);
+  const mobileMessageTopInsetPx = isSmallScreen ? getMobileMessageTopInsetPx(showMobileFloatingControls) : 0;
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-transparent">
@@ -516,53 +523,54 @@ export function ChatTab({
         <div ref={splitLayoutRef} className="relative flex min-h-0 flex-1">
           {(!isSmallScreen || mobileSurface === "messages") ? (
             <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              {isSmallScreen && showMessageFilters && (
-                  <div
-                    className={classNames(
-                      "pointer-events-none absolute inset-x-0 z-30 px-3",
-                    )}
-                    style={{ top: MOBILE_FILTER_TOP_INSET_PX }}
-                  >
-                    <div className="flex items-center gap-3">
-                        <div
-                          className={classNames(
-                            "pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide",
-                          )}
-                          role="tablist"
-                          aria-label={t('chatFilters')}
-                        >
-                          <div className={classNames(
-                            "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
-                            isDark
-                              ? "border-white/10 bg-black/10"
-                              : "border-black/10 bg-white/35"
-                          )}>
-                            {filterOptions.map(([key, label]) => {
-                              const active = chatFilter === key;
-                              return (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  className={classNames(
-                                    "touch-target-sm min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
-                                    active
-                                      ? isDark
-                                        ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
-                                        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
-                                      : isDark
-                                        ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                        : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]"
-                                  )}
-                                  onClick={() => setChatFilter(key)}
-                                  aria-pressed={active}
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </div>
+              {showMobileFloatingControls && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 z-30 px-3"
+                  style={{ top: MOBILE_FLOATING_CONTROLS_TOP_INSET_PX }}
+                >
+                  <div className="flex items-center gap-3">
+                    {showMessageFilters ? (
+                      <div
+                        className="pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide"
+                        role="tablist"
+                        aria-label={t('chatFilters')}
+                      >
+                        <div className={classNames(
+                          "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
+                          isDark
+                            ? "border-white/10 bg-black/10"
+                            : "border-black/10 bg-white/35"
+                        )}>
+                          {filterOptions.map(([key, label]) => {
+                            const active = chatFilter === key;
+                            return (
+                              <button
+                                key={key}
+                                type="button"
+                                className={classNames(
+                                  "touch-target-sm min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
+                                  active
+                                    ? isDark
+                                      ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
+                                      : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
+                                    : isDark
+                                      ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
+                                      : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]"
+                                )}
+                                onClick={() => setChatFilter(key)}
+                                aria-pressed={active}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
                         </div>
+                      </div>
+                    ) : (
+                      <div className="min-w-0 flex-1" aria-hidden="true" />
+                    )}
 
+                    {showMobilePresentationAction ? (
                       <button
                         type="button"
                         onClick={() => selectedGroupId && setChatMobileSurface(selectedGroupId, "presentation")}
@@ -597,8 +605,9 @@ export function ChatTab({
                           </>
                         ) : null}
                       </button>
-                    </div>
+                    ) : null}
                   </div>
+                </div>
               )}
 
               {showMessageFilters && (
@@ -696,7 +705,7 @@ export function ChatTab({
                   initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
                   highlightEventId={chatHighlightEventId}
                   scrollRef={scrollRef}
-                  topInsetPx={isSmallScreen && showMessageFilters ? MOBILE_MESSAGE_TOP_INSET_PX : 0}
+                  topInsetPx={mobileMessageTopInsetPx}
                   onReply={startReply}
                   onShowRecipients={showRecipients}
                   onCopyLink={copyMessageLink}
