@@ -1,0 +1,2 @@
+export const MOBILE_VIEWPORT_MAX_WIDTH_PX = 767;
+export const MOBILE_VIEWPORT_MEDIA_QUERY = `(max-width: ${MOBILE_VIEWPORT_MAX_WIDTH_PX}px)`;

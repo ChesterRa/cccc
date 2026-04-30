@@ -258,7 +258,7 @@ export function AppShell({
 
       <main
         className={`absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto ${
-          isDark ? "bg-black/75" : "bg-white/80"
+          isDark ? "bg-transparent md:bg-black/75" : "bg-transparent md:bg-white/80"
         }`}
       >
         <AppHeader

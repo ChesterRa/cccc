@@ -1184,6 +1184,19 @@ select {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+@media (max-width: 767px) {
+  .glass-header {
+    background: transparent;
+    border-bottom-color: transparent;
+    box-shadow: none;
+  }
+
+  .dark .glass-header {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
 /* Liquid shimmer animation */
 @keyframes liquid-shimmer {
   0% {

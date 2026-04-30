@@ -677,12 +677,20 @@ def _build_pet_context_payload(
     help_prompt: Dict[str, Any],
     context_payload: Dict[str, Any],
     *,
+    fresh: bool = False,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     help_content = str(help_prompt.get("content") or "")
     persona = str(help_prompt.get("persona") or "").strip()
     source = str(help_prompt.get("pet_source") or "default").strip() or "default"
-    signals = load_pet_signals(group, context_payload=context_payload)
+    signals = load_pet_signals(
+        group,
+        context_payload=context_payload,
+        recent_chat_limit=50 if verbose or fresh else 10,
+        recent_chat_source="active_tail",
+        context_sync_limit=0,
+        include_reply_obligation_status=False,
+    )
     enriched_context_payload = dict(context_payload)
     enriched_context_payload["pet_signals"] = signals
     parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=enriched_context_payload)
@@ -1832,6 +1840,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     group,
                     help_prompt,
                     context_payload,
+                    fresh=fresh,
                     verbose=verbose,
                 ),
             },

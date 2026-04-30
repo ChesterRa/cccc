@@ -234,7 +234,7 @@ export function ScrollFade({
       <div
         ref={scrollRef}
         className={classNames(
-          isH ? "overflow-x-auto scrollbar-hide touch-pan-y" : "overflow-y-auto scrollbar-hide",
+          isH ? "overflow-x-auto scrollbar-hide touch-pan-x" : "overflow-y-auto scrollbar-hide",
           innerClassName
         )}
       >

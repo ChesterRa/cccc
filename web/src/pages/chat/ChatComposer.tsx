@@ -888,10 +888,10 @@ export function ChatComposer({
             {/* Row 3 — Action bar */}
             <div
               className={classNames(
-                "flex items-center justify-between gap-2 px-2 pb-2 pt-1",
+                "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2 pt-1",
               )}
             >
-              <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pr-1 scrollbar-hide touch-pan-x">
                 <button
                   className={classNames(
                     "glass-btn flex h-9 w-9 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60",
@@ -958,7 +958,7 @@ export function ChatComposer({
                 />
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex shrink-0 items-center gap-1.5">
                 <div ref={modeMenuRef} className="relative z-20">
                   <button
                     type="button"

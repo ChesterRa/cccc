@@ -52,6 +52,15 @@ class TestWebPetContextRoute(unittest.TestCase):
                 "cccc.ports.web.routes.groups._get_summary_context_fast",
                 return_value=local_summary,
             ) as summary_fast, patch(
+                "cccc.ports.web.routes.groups.load_pet_signals",
+                return_value={
+                    "signals": [],
+                    "reply_pressure": {},
+                    "coordination_rhythm": {},
+                    "task_pressure": {},
+                    "proposal_ready": {},
+                },
+            ) as load_signals, patch(
                 "cccc.ports.web.app.call_daemon",
                 side_effect=AssertionError("pet-context should not call daemon"),
             ):
@@ -63,6 +72,11 @@ class TestWebPetContextRoute(unittest.TestCase):
             self.assertTrue(bool(body.get("ok")), body)
             self.assertIn("snapshot", body.get("result") or {})
             summary_fast.assert_called_once()
+            _, kwargs = load_signals.call_args
+            self.assertEqual(kwargs.get("recent_chat_limit"), 10)
+            self.assertEqual(kwargs.get("recent_chat_source"), "active_tail")
+            self.assertEqual(kwargs.get("context_sync_limit"), 0)
+            self.assertIs(kwargs.get("include_reply_obligation_status"), False)
         finally:
             cleanup()
 
@@ -86,7 +100,16 @@ class TestWebPetContextRoute(unittest.TestCase):
             ) as rebuild, patch(
                 "cccc.ports.web.routes.groups.ContextStorage.load_summary_snapshot",
                 return_value={"result": fresh_summary},
-            ) as load_summary:
+            ) as load_summary, patch(
+                "cccc.ports.web.routes.groups.load_pet_signals",
+                return_value={
+                    "signals": [],
+                    "reply_pressure": {},
+                    "coordination_rhythm": {},
+                    "task_pressure": {},
+                    "proposal_ready": {},
+                },
+            ) as load_signals:
                 with self._client() as client:
                     resp = client.get(f"/api/v1/groups/{group_id}/pet-context?fresh=1")
 
@@ -96,5 +119,10 @@ class TestWebPetContextRoute(unittest.TestCase):
             self.assertIn("snapshot", body.get("result") or {})
             rebuild.assert_called_once_with(group_id)
             load_summary.assert_called_once()
+            _, kwargs = load_signals.call_args
+            self.assertEqual(kwargs.get("recent_chat_limit"), 50)
+            self.assertEqual(kwargs.get("recent_chat_source"), "active_tail")
+            self.assertEqual(kwargs.get("context_sync_limit"), 0)
+            self.assertIs(kwargs.get("include_reply_obligation_status"), False)
         finally:
             cleanup()

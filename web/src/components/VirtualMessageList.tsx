@@ -19,6 +19,7 @@ import {
   shouldDetachChatFollowOnScroll,
   shouldUseVirtualizedMessageList,
 } from "./virtualMessageListHelpers";
+import { classNames } from "../utils/classNames";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
   void previousMessage;
@@ -51,6 +52,8 @@ export interface VirtualMessageListProps {
   initialScrollAnchorId?: string;
   initialScrollAnchorOffsetPx?: number;
   highlightEventId?: string;
+  className?: string;
+  topInsetPx?: number;
   scrollRef?: MutableRefObject<HTMLDivElement | null>;
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
@@ -193,6 +196,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   initialScrollAnchorId,
   initialScrollAnchorOffsetPx,
   highlightEventId,
+  className,
+  topInsetPx = 0,
   scrollRef,
   onReply,
   onShowRecipients,
@@ -226,6 +231,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   // divergent streaming-order cache locally.
   const displayMessages = messages;
   const shouldVirtualize = shouldUseVirtualizedMessageList(displayMessages.length);
+  const topInset = Math.max(0, Number(topInsetPx) || 0);
 
   const agentStateById = useMemo(() => {
     const m = new Map<string, AgentState>();
@@ -315,7 +321,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     getItemKey: (index) => getStableMessageKey(displayMessages[index], index),
     estimateSize: getEstimatedSize,
     overscan: 10,
-    paddingStart: 72,
+    paddingStart: 72 + topInset,
   });
 
 
@@ -929,7 +935,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         parentRef.current = el;
         if (scrollRef) scrollRef.current = el;
       }}
-      className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
+      className={classNames("flex-1 min-h-0 overflow-auto px-4 py-4 relative", className)}
       style={{ overflowAnchor: "none" }}
       onScroll={displayMessages.length > 0 ? handleScroll : undefined}
       role="log"
@@ -985,7 +991,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       ) : (
         <>
           {(isLoadingHistory || (!hasMoreHistory && !isLoadingHistory)) && (
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center py-3">
+            <div
+              className="pointer-events-none absolute inset-x-0 z-10 flex justify-center py-3"
+              style={{ top: topInset }}
+            >
               {isLoadingHistory ? (
                 <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-md ${isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600"
                   }`}>
@@ -1002,7 +1011,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           )}
 
           {replyJumpNotice ? (
-            <div className="pointer-events-none absolute inset-x-0 top-12 z-20 flex justify-center px-4">
+            <div
+              className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-4"
+              style={{ top: topInset + 48 }}
+            >
               <div
                 className={`rounded-full px-3 py-1 text-xs shadow-sm ${isDark
                   ? "bg-slate-900/90 text-slate-300 ring-1 ring-white/10"
@@ -1060,7 +1072,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               })}
             </div>
           ) : (
-            <div ref={contentRef} className="w-full">
+            <div ref={contentRef} className="w-full" style={{ marginTop: topInset }}>
               {displayMessages.map((message, index) => {
                 const previousMessage = index > 0 ? displayMessages[index - 1] : undefined;
                 const grouping = getMessageRowGrouping(previousMessage, message);

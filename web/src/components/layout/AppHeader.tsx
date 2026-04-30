@@ -186,7 +186,7 @@ export function AppHeader({
   };
   return (
     <header
-      className="z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:px-5"
+      className="absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:relative md:inset-auto md:px-5"
     >
       <div className="flex min-w-0 items-center gap-2">
         <button

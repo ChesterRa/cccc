@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from statistics import median
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
@@ -16,10 +17,56 @@ _RECENT_CHAT_LIMIT = 240
 _RECENT_PAGE_SIZE = 120
 _TREND_WINDOW_SECONDS = 3600
 _RECENT_CONTEXT_SYNC_LIMIT = 120
+_ACTIVE_TAIL_SCAN_LINES = 240
 
 
-def _iter_recent_chat_events(group: Group, *, limit: int = _RECENT_CHAT_LIMIT) -> Iterable[Dict[str, Any]]:
+def _read_active_ledger_tail_lines(group: Group, *, max_lines: int = _ACTIVE_TAIL_SCAN_LINES) -> List[str]:
+    path = group.ledger_path
+    if not path.exists():
+        return []
+    wanted = max(1, int(max_lines or _ACTIVE_TAIL_SCAN_LINES))
+    chunks: List[bytes] = []
+    line_count = 0
+    chunk_size = 8192
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            pos = handle.tell()
+            while pos > 0 and line_count <= wanted:
+                read_size = min(chunk_size, pos)
+                pos -= read_size
+                handle.seek(pos)
+                chunk = handle.read(read_size)
+                chunks.append(chunk)
+                line_count += chunk.count(b"\n")
+    except Exception:
+        return []
+    raw = b"".join(reversed(chunks))
+    return [line for line in raw.decode("utf-8", errors="replace").splitlines()[-wanted:] if line.strip()]
+
+
+def _iter_recent_chat_events(
+    group: Group,
+    *,
+    limit: int = _RECENT_CHAT_LIMIT,
+    source: str = "indexed",
+) -> Iterable[Dict[str, Any]]:
     remaining = max(1, int(limit or _RECENT_CHAT_LIMIT))
+    if str(source or "").strip().lower() == "active_tail":
+        found = 0
+        for line in reversed(_read_active_ledger_tail_lines(group, max_lines=max(_ACTIVE_TAIL_SCAN_LINES, remaining * 20))):
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(event, dict) or str(event.get("kind") or "") != "chat.message":
+                continue
+            yield event
+            found += 1
+            if found >= remaining:
+                break
+        return
+
     before_id = ""
     while remaining > 0:
         page_limit = min(_RECENT_PAGE_SIZE, remaining)
@@ -98,7 +145,12 @@ def _is_within_window(ts: str, *, window_seconds: int = _TREND_WINDOW_SECONDS) -
     return 0 <= delta <= int(window_seconds)
 
 
-def _build_reply_pressure_signal(group: Group, chat_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _build_reply_pressure_signal(
+    group: Group,
+    chat_events: List[Dict[str, Any]],
+    *,
+    include_obligation_status: bool = True,
+) -> Dict[str, Any]:
     relevant = []
     for event in chat_events:
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -106,7 +158,14 @@ def _build_reply_pressure_signal(group: Group, chat_events: List[Dict[str, Any]]
             continue
         relevant.append(event)
 
-    status_by_message = get_obligation_status_batch(group, relevant)
+    status_by_message = get_obligation_status_batch(group, relevant) if include_obligation_status else {}
+    local_replies_by_message: Dict[str, str] = {}
+    if not include_obligation_status:
+        for event in chat_events:
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            reply_to = str(data.get("reply_to") or "").strip()
+            if reply_to:
+                local_replies_by_message.setdefault(reply_to, str(event.get("ts") or "").strip())
     now_iso = utc_now_iso()
     pending_ages: List[float] = []
     reply_latencies: List[float] = []
@@ -117,6 +176,18 @@ def _build_reply_pressure_signal(group: Group, chat_events: List[Dict[str, Any]]
     for event in relevant:
         event_id = str(event.get("id") or "").strip()
         if not event_id:
+            continue
+        if not include_obligation_status:
+            reply_ts = local_replies_by_message.get(event_id, "")
+            if reply_ts:
+                latency_seconds = _safe_seconds(str(event.get("ts") or ""), reply_ts)
+                if latency_seconds is not None:
+                    reply_latencies.append(latency_seconds)
+            else:
+                pending_count += 1
+                age_seconds = _safe_seconds(str(event.get("ts") or ""), now_iso)
+                if age_seconds is not None:
+                    pending_ages.append(age_seconds)
             continue
         status = status_by_message.get(event_id) if isinstance(status_by_message.get(event_id), dict) else {}
         pending_for_any = False
@@ -262,7 +333,7 @@ def _build_task_pressure_signal(context_payload: Dict[str, Any]) -> Dict[str, An
     }
 
 
-def _collect_recent_task_op_counts(group: Group) -> Dict[str, int]:
+def _collect_recent_task_op_counts(group: Group, *, limit: int = _RECENT_CONTEXT_SYNC_LIMIT) -> Dict[str, int]:
     counts = {
         "task_create": 0,
         "task_update": 0,
@@ -272,7 +343,10 @@ def _collect_recent_task_op_counts(group: Group) -> Dict[str, int]:
         "task_changes": 0,
         "context_sync_events": 0,
     }
-    for event in _iter_recent_context_sync_events(group):
+    if int(limit or 0) <= 0:
+        return counts
+
+    for event in _iter_recent_context_sync_events(group, limit=limit):
         if not _is_within_window(str(event.get("ts") or "")):
             continue
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -410,12 +484,24 @@ def _build_proposal_ready_signal(
     }
 
 
-def load_pet_signals(group: Group, *, context_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def load_pet_signals(
+    group: Group,
+    *,
+    context_payload: Optional[Dict[str, Any]] = None,
+    recent_chat_limit: int = _RECENT_CHAT_LIMIT,
+    recent_chat_source: str = "indexed",
+    context_sync_limit: int = _RECENT_CONTEXT_SYNC_LIMIT,
+    include_reply_obligation_status: bool = True,
+) -> Dict[str, Any]:
     effective_context = context_payload if isinstance(context_payload, dict) else {}
-    chat_events = list(_iter_recent_chat_events(group))
-    reply_pressure = _build_reply_pressure_signal(group, chat_events)
+    chat_events = list(_iter_recent_chat_events(group, limit=recent_chat_limit, source=recent_chat_source))
+    reply_pressure = _build_reply_pressure_signal(
+        group,
+        chat_events,
+        include_obligation_status=include_reply_obligation_status,
+    )
     coordination_rhythm = _build_coordination_rhythm_signal(group, chat_events)
-    recent_task_ops = _collect_recent_task_op_counts(group)
+    recent_task_ops = _collect_recent_task_op_counts(group, limit=context_sync_limit)
     task_pressure = _merge_task_pressure_with_ledger_trend(
         _build_task_pressure_signal(effective_context),
         recent_task_ops=recent_task_ops,

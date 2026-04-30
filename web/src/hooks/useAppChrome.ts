@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "../services/api";
 import { useGroupStore, useObservabilityStore } from "../stores";
 import type { DirSuggestion } from "../types";
+import { MOBILE_VIEWPORT_MEDIA_QUERY } from "../utils/responsiveLayout";
 
 type UseAppChromeOptions = {
   parseUrlDeepLink: () => void;
@@ -74,7 +75,7 @@ export function useAppChrome({
   }, []);
 
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 639px)");
+    const mq = window.matchMedia(MOBILE_VIEWPORT_MEDIA_QUERY);
     const update = () => setSmallScreen(mq.matches);
     update();
     mq.addEventListener("change", update);

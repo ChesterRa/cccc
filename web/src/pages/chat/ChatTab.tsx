@@ -35,6 +35,8 @@ const EMPTY_LIVE_WORK_ACTIVITIES: Record<string, StreamingActivity[]> = {};
 const EMPTY_LIVE_WORK_SESSIONS: Record<string, StreamingReplySession> = {};
 const EMPTY_LIVE_WORK_PREVIEW_SESSIONS: Record<string, HeadlessPreviewSession[]> = {};
 const EMPTY_LATEST_LIVE_WORK_PREVIEW: Record<string, HeadlessPreviewSession> = {};
+const MOBILE_FILTER_TOP_INSET_PX = 68;
+const MOBILE_MESSAGE_TOP_INSET_PX = 128;
 
 function ChatLazyFallback({ className }: { className?: string }) {
   return <div className={classNames("min-h-0", className)} />;
@@ -514,28 +516,26 @@ export function ChatTab({
         <div ref={splitLayoutRef} className="relative flex min-h-0 flex-1">
           {(!isSmallScreen || mobileSurface === "messages") ? (
             <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              {isSmallScreen && (
-                <>
+              {isSmallScreen && showMessageFilters && (
                   <div
                     className={classNames(
-                      "flex-shrink-0 px-3 py-2 border-b",
-                      isDark ? "border-white/5" : "border-black/5"
+                      "pointer-events-none absolute inset-x-0 z-30 px-3",
                     )}
+                    style={{ top: MOBILE_FILTER_TOP_INSET_PX }}
                   >
                     <div className="flex items-center gap-3">
-                      {showMessageFilters ? (
                         <div
                           className={classNames(
-                            "min-w-0 flex-1 overflow-x-auto scrollbar-hide",
+                            "pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide",
                           )}
                           role="tablist"
                           aria-label={t('chatFilters')}
                         >
                           <div className={classNames(
-                            "inline-flex min-w-max items-center gap-1 rounded-full border p-1 backdrop-blur-md",
+                            "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
                             isDark
-                              ? "border-slate-700/50 bg-transparent"
-                              : "border-gray-200/70 bg-transparent"
+                              ? "border-white/10 bg-black/10"
+                              : "border-black/10 bg-white/35"
                           )}>
                             {filterOptions.map(([key, label]) => {
                               const active = chatFilter === key;
@@ -544,7 +544,7 @@ export function ChatTab({
                                   key={key}
                                   type="button"
                                   className={classNames(
-                                    "min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
+                                    "touch-target-sm min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
                                     active
                                       ? isDark
                                         ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
@@ -562,7 +562,6 @@ export function ChatTab({
                             })}
                           </div>
                         </div>
-                      ) : <div className="flex-1" />}
 
                       <button
                         type="button"
@@ -570,8 +569,8 @@ export function ChatTab({
                         className={classNames(
                           "relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border backdrop-blur-xl transition-all duration-200",
                           isDark
-                            ? "border-white/10 bg-transparent text-slate-100"
-                            : "border-black/10 bg-transparent text-gray-900",
+                            ? "border-white/10 bg-black/10 text-slate-100"
+                            : "border-black/10 bg-white/35 text-gray-900 shadow-sm",
                           hasPresentationAttention &&
                             (isDark
                               ? "presentation-slot-attention presentation-slot-attention-dark"
@@ -600,13 +599,11 @@ export function ChatTab({
                       </button>
                     </div>
                   </div>
-
-                </>
               )}
 
               {showMessageFilters && (
                 <div
-                  className="hidden sm:block absolute top-4 left-4 z-20 pointer-events-none"
+                  className="hidden md:block absolute top-4 left-4 z-20 pointer-events-none"
                   style={{ width: "calc(100% - 32px)" }}
                 >
                   <div
@@ -699,6 +696,7 @@ export function ChatTab({
                   initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
                   highlightEventId={chatHighlightEventId}
                   scrollRef={scrollRef}
+                  topInsetPx={isSmallScreen && showMessageFilters ? MOBILE_MESSAGE_TOP_INSET_PX : 0}
                   onReply={startReply}
                   onShowRecipients={showRecipients}
                   onCopyLink={copyMessageLink}
