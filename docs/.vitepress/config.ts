@@ -97,19 +97,19 @@ export default defineConfig({
           text: 'Release Hub',
           items: [
             { text: 'Overview', link: '/release/' },
-            { text: 'v0.4.0 Release Notes', link: '/release/v0.4.0_release_notes' },
-            { text: 'Technical Debt Board (0.4.0)', link: '/release/DEBT_BOARD_0_4_0' },
-            { text: 'RC19 Release Board', link: '/release/RC19_RELEASE_BOARD' },
-            { text: 'Audit Method', link: '/release/RC19_AUDIT_METHOD' },
-            { text: 'Owner Map', link: '/release/RC19_OWNER_MAP' },
-            { text: 'Findings Register', link: '/release/RC19_FINDINGS_REGISTER' },
-            { text: 'Quality Gates', link: '/release/RC19_GATES' },
-            { text: 'Execution Checklist', link: '/release/RC19_EXECUTION_CHECKLIST' },
-            { text: 'Contract Gap Baseline', link: '/release/rc19_contract_gap' },
-            { text: 'Core Findings (R3)', link: '/release/rc19_core_findings' },
-            { text: 'Port Parity Findings (R4)', link: '/release/rc19_port_parity' },
-            { text: 'Rehearsal Report (R8)', link: '/release/rc19_rehearsal_report' },
-            { text: 'File Matrix', link: '/release/rc19_file_matrix' }
+            { text: 'v0.4.12 Release Notes', link: '/release/v0.4.12_release_notes' },
+            { text: 'v0.4.11 Release Notes', link: '/release/v0.4.11_release_notes' },
+            { text: 'v0.4.10 Release Notes', link: '/release/v0.4.10_release_notes' },
+            { text: 'v0.4.9 Release Notes', link: '/release/v0.4.9_release_notes' },
+            { text: 'v0.4.8 Release Notes', link: '/release/v0.4.8_release_notes' },
+            { text: 'v0.4.7 Release Notes', link: '/release/v0.4.7_release_notes' },
+            { text: 'v0.4.6 Release Notes', link: '/release/v0.4.6_release_notes' },
+            { text: 'v0.4.5 Release Notes', link: '/release/v0.4.5_release_notes' },
+            { text: 'v0.4.4 Release Notes', link: '/release/v0.4.4_release_notes' },
+            { text: 'v0.4.3 Release Notes', link: '/release/v0.4.3_release_notes' },
+            { text: 'v0.4.2 Release Notes', link: '/release/v0.4.2_release_notes' },
+            { text: 'v0.4.1 Release Notes', link: '/release/v0.4.1_release_notes' },
+            { text: 'v0.4.0 Release Notes', link: '/release/v0.4.0_release_notes' }
           ]
         }
       ]
