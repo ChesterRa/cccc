@@ -147,7 +147,7 @@ class TestSystemNotifyOps(unittest.TestCase):
                 kind="info",
                 priority="normal",
                 title="Voice Secretary input available",
-                message='New Secretary input is waiting. Call cccc_voice_secretary_document(action="read_new_input").',
+                message='New Secretary input is waiting. Call MCP tool cccc_voice_secretary_document(action="read_new_input").',
                 target_actor_id="voice-secretary",
                 requires_ack=False,
                 context={

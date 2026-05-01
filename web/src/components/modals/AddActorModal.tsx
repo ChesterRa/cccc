@@ -379,7 +379,7 @@ export function AddActorModal({
                       </select>
                       {!actorProfilesBusy && actorProfiles.length > 0 && selectableActorProfiles.length === 0 ? (
                         <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
-                          Browser Web Model profiles are actor-bound and are managed in Settings &gt; Web Models.
+                          ChatGPT Web Model is managed directly in Settings &gt; ChatGPT Web Model.
                         </div>
                       ) : null}
                     </div>
@@ -481,7 +481,7 @@ export function AddActorModal({
                         </div>
                         <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
                           {webModelRunnerLockedToHeadless
-                            ? t("runnerModeWebModelNote", { defaultValue: "Browser Web Model runs through a remote MCP connector, so it is fixed to Headless." })
+                            ? t("runnerModeWebModelNote", { defaultValue: "ChatGPT Web Model runs through browser delivery and a remote MCP connector, so it is fixed to Headless." })
                             : customRunnerLockedToPty
                             ? t("runnerModeHeadlessNote", { defaultValue: "Only some runtimes, such as codex and claude, support Headless mode. Other runtimes are fixed to PTY." })
                             : t("runnerModeHint", { defaultValue: "PTY uses terminal interaction; Headless uses structured event flow." })}
@@ -492,12 +492,12 @@ export function AddActorModal({
 	                    {newActorRuntime === "web_model" ? (
 	                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
 	                        <div className="font-medium">
-	                          {t("webModelActorBoundConnectorTitle", { defaultValue: "Actor-bound connector" })}
+	                          {t("webModelActorBoundConnectorTitle", { defaultValue: "Single ChatGPT Web Model actor" })}
 	                        </div>
 	                        <div className="mt-1">
 	                          {t("webModelActorBoundConnectorHint", {
 	                            defaultValue:
-	                              "Create this actor first, then open Settings > Web Models to generate its remote MCP connector. One connector represents one actor.",
+	                              "CCCC supports one ChatGPT Web Model actor in this instance. Create it first, then open Settings > ChatGPT Web Model to copy the MCP URL and bind a ChatGPT conversation.",
 	                          })}
 	                        </div>
 	                      </div>
@@ -650,7 +650,7 @@ export function AddActorModal({
 
                   {webModelSetupIsActorBound ? (
                     <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
-                      Browser Web Model setup is actor-bound. Create the actor, then manage its connector and ChatGPT chat in Settings &gt; Web Models.
+                      ChatGPT Web Model is a single actor for this CCCC instance. Create it, then manage the MCP URL and target ChatGPT chat in Settings &gt; ChatGPT Web Model.
                     </div>
                   ) : (
                     <details className={`group ${nestedCardClass}`}>

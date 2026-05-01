@@ -46,7 +46,8 @@ Both approaches require:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
   - [Codex CLI](https://github.com/openai/codex)
   - [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
-  - Or a custom runtime command if you wire MCP manually
+- Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
+- Or a custom runtime command if you wire MCP manually
 
 ## Installation
 

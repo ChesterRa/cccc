@@ -7,6 +7,16 @@ export default defineConfig({
   // GitHub Pages base path
   base: '/cccc/',
 
+  // Keep local-only planning/archive notes out of the published docs build.
+  srcExclude: [
+    '_archive_local/**',
+    'ITERATION_PLAN.md',
+    'plan/**',
+    'review/**',
+    'superpowers/**',
+    'voice-secretary/**'
+  ],
+
   // Ignore dead links in legacy vnext docs
   ignoreDeadLinks: [
     /archive/,
@@ -52,7 +62,7 @@ export default defineConfig({
             { text: 'Workflows', link: '/guide/workflows' },
             { text: 'Operations Runbook', link: '/guide/operations' },
             { text: 'Web UI', link: '/guide/web-ui' },
-            { text: 'Browser Web Model Runtime', link: '/guide/web-model-runtime' },
+            { text: 'ChatGPT Web Model Runtime', link: '/guide/web-model-runtime' },
             { text: 'Group Space + NotebookLM', link: '/guide/group-space-notebooklm' },
             { text: 'Best Practices', link: '/guide/best-practices' },
             { text: 'FAQ', link: '/guide/faq' }

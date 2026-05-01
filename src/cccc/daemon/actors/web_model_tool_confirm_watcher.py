@@ -38,8 +38,9 @@ def _key(group_id: str, actor_id: str) -> tuple[str, str]:
 
 
 def _active_cdp_port(group_id: str, actor_id: str) -> int:
+    _ = (group_id, actor_id)
     try:
-        state = browser_sidecar.read_chatgpt_browser_state(group_id, actor_id)
+        state = browser_sidecar.read_chatgpt_browser_process_state()
     except Exception:
         return 0
     try:
@@ -121,7 +122,8 @@ def _record_auto_confirm_scan(group_id: str, actor_id: str, result: Dict[str, An
 
 def auto_confirm_chatgpt_tool_prompts(group_id: str, actor_id: str) -> Dict[str, Any]:
     state = browser_sidecar.read_chatgpt_browser_state(group_id, actor_id)
-    port = int(state.get("cdp_port") or 0)
+    process_state = browser_sidecar.read_chatgpt_browser_process_state()
+    port = int(process_state.get("cdp_port") or 0)
     if port <= 0 or not _wait_cdp_endpoint(port, timeout_seconds=0.4):
         return {"browser_active": False, "clicked": 0, "details": []}
     target_url = browser_sidecar._normalize_chatgpt_url(state.get("conversation_url"))

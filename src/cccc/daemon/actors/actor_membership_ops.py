@@ -17,6 +17,7 @@ from ...util.conv import coerce_bool
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..context.context_ops import _schedule_summary_snapshot_rebuild
+from .web_model_browser_session import clear_web_model_chatgpt_browser_actor_runtime
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -50,6 +51,11 @@ def handle_actor_remove(
         if isinstance(actor_doc, dict):
             avatar_rel_path = str(actor_doc.get("avatar_asset_path") or "").strip()
         remove_actor(group, actor_id)
+        if isinstance(actor_doc, dict) and str(actor_doc.get("runtime") or "").strip() == "web_model":
+            try:
+                clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=actor_id)
+            except Exception:
+                pass
         codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
         claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
         pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)

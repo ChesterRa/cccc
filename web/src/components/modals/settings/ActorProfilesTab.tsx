@@ -275,7 +275,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               >
                 {editorIsWebModel ? (
                   <option value="web_model" disabled>
-                    {RUNTIME_INFO.web_model?.label || "Browser Web Model"} (actor-bound)
+                    {RUNTIME_INFO.web_model?.label || "ChatGPT Web Model"} (single actor)
                   </option>
                 ) : null}
                 {PROFILE_RUNTIME_OPTIONS.map((rt) => (
@@ -284,7 +284,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               </select>
               {editorIsWebModel ? (
                 <div className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                  Browser Web Model setup is actor-bound. Manage connectors and ChatGPT chats in Settings &gt; Web Models; new Runtime Profiles cannot use this runtime.
+                  ChatGPT Web Model is managed as one CCCC actor in Settings &gt; ChatGPT Web Model; new Runtime Profiles cannot use this runtime.
                 </div>
               ) : null}
             </div>
@@ -598,7 +598,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
 
   const openDuplicate = async (profile: ActorProfile) => {
     if (String(profile.runtime || "").trim().toLowerCase() === "web_model") {
-      setErr("Browser Web Model profiles are actor-bound and cannot be duplicated. Create a Web Model actor and configure it in Settings > Web Models.");
+      setErr("ChatGPT Web Model is managed as a single actor and cannot be duplicated as a Runtime Profile. Configure it in Settings > ChatGPT Web Model.");
       return;
     }
     const sourceId = String(profile.id || "").trim();
@@ -729,7 +729,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
 
   const handleSave = async () => {
     if (String(editor.runtime || "").trim().toLowerCase() === "web_model") {
-      setEditorErr("Browser Web Model setup is actor-bound. Manage it in Settings > Web Models instead of saving a Runtime Profile.");
+      setEditorErr("ChatGPT Web Model is managed in Settings > ChatGPT Web Model instead of being saved as a Runtime Profile.");
       return;
     }
     const name = editor.name.trim();

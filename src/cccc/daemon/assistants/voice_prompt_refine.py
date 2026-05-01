@@ -71,7 +71,14 @@ def build_voice_prompt_refine_input_text(
     context_lines = voice_composer_context_lines(composer_context)
     if context_lines:
         parts.extend(["Context (not task):", *context_lines, ""])
-    parts.extend(["Output constraint:", "Return only the composer text to insert."])
-    if not replace_operation:
-        parts.append("Append mode: return only the text to add; do not repeat useful existing draft text.")
+    parts.extend(
+        [
+            "draft_text rule:",
+            "Put only composer text in the cccc_voice_secretary_composer draft_text argument; do not print the draft in chat or console.",
+        ]
+    )
+    if replace_operation:
+        parts.append("Replacement mode: draft_text must contain the complete replacement prompt.")
+    else:
+        parts.append("Append mode: draft_text must contain only the text to add; do not repeat useful existing draft text.")
     return "\n".join(parts)

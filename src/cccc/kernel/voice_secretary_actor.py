@@ -103,22 +103,32 @@ def ensure_voice_secretary_actor(group: Group, *, seed: Optional[Dict[str, Any]]
             runtime=str(seed["runtime"]),  # type: ignore[arg-type]
             internal_kind=INTERNAL_KIND_VOICE_SECRETARY,
         )
-    return update_actor(
-        group,
-        VOICE_SECRETARY_ACTOR_ID,
-        {
-            "title": seed["title"],
-            "command": seed["command"],
-            "env": seed["env"],
-            "capability_autoload": seed["capability_autoload"],
-            "default_scope_key": seed["default_scope_key"],
-            "submit": seed["submit"],
-            "enabled": seed["enabled"],
-            "runner": seed["runner"],
-            "runtime": seed["runtime"],
-            "internal_kind": INTERNAL_KIND_VOICE_SECRETARY,
-        },
-    )
+
+    patch: Dict[str, Any] = {
+        "title": seed["title"],
+        "default_scope_key": seed["default_scope_key"],
+        "enabled": seed["enabled"],
+        "internal_kind": INTERNAL_KIND_VOICE_SECRETARY,
+    }
+    # Actor profiles are runtime templates, not identity templates. When the
+    # Voice Secretary is linked to a profile, preserve profile-controlled
+    # launch fields while still enforcing its internal actor identity.
+    if not str(current.get("profile_id") or "").strip():
+        patch.update(
+            {
+                "command": seed["command"],
+                "env": seed["env"],
+                "capability_autoload": seed["capability_autoload"],
+                "submit": seed["submit"],
+                "runner": seed["runner"],
+                "runtime": seed["runtime"],
+            }
+        )
+    update_actor(group, VOICE_SECRETARY_ACTOR_ID, patch)
+    actor = get_voice_secretary_actor(group)
+    if isinstance(actor, dict):
+        return actor
+    raise ValueError("failed to sync voice-secretary actor")
 
 
 def sync_voice_secretary_actor(group: Group) -> Optional[Dict[str, Any]]:

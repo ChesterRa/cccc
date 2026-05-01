@@ -70,7 +70,7 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("Visible replies must go through MCP: cccc_message_send / cccc_message_reply.", prompt)
             self.assertNotIn("your final answer streams to Chat automatically", prompt)
             self.assertIn("A status message, plan, or promise is not task progress", prompt)
-            self.assertIn("Cold start or resume: run `cccc_bootstrap`, then `cccc_help`.", prompt)
+            self.assertIn("Cold start or resume: use MCP tools `cccc_bootstrap`, then `cccc_help`.", prompt)
             self.assertIn("At key transitions, sync shared control-plane state and your cccc_agent_state.", prompt)
             self.assertIn("Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.", prompt)
             self.assertIn("For strategy or scope discussion, align first; implement only after explicit action intent.", prompt)

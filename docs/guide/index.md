@@ -19,7 +19,7 @@ Use this section based on your role and goal.
 - [Operations Runbook](/guide/operations) for triage, recovery, and upgrade flow
 - [Web UI Guide](/guide/web-ui) for control-plane behavior
 - [Capability Allowlist Baseline](/guide/capability-allowlist) for MCP/skill curation levels
-- [Browser Web Model Runtime](/guide/web-model-runtime) for ChatGPT/Claude remote MCP setup
+- [ChatGPT Web Model Runtime](/guide/web-model-runtime) for ChatGPT Web / GPT-5.x/GPT-5.x Pro remote MCP setup
 - [IM Bridge](/guide/im-bridge/) for mobile/remote operations
 
 ## If You Need Troubleshooting

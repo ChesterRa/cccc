@@ -935,7 +935,7 @@ export function SettingsModal({
     ...(globalSettingsEnabled ? [
       { id: "branding" as const, label: t("tabs.branding") },
       { id: "webAccess" as const, label: t("tabs.webAccess") },
-      { id: "webModels" as const, label: t("tabs.webModels", { defaultValue: "Web Models" }) },
+      { id: "webModels" as const, label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }) },
       { id: "developer" as const, label: t("tabs.developer") },
     ] : []),
   ], [globalSettingsEnabled, currentBrowserSignedIn, t]);

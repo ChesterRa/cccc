@@ -33,7 +33,7 @@ Three commands to go. Zero infrastructure, production-grade power.
 - **Durable coordination**: working state lives in an append-only ledger, not in terminal scrollback.
 - **Visible delivery semantics**: messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
 - **One control plane**: Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
-- **Multi-runtime by default**: Claude Code, Codex CLI, Gemini CLI, and the rest of the first-class runtimes can collaborate in one group.
+- **Multi-runtime by default**: Claude Code, Codex CLI, ChatGPT Web, Gemini CLI, and the rest of the first-class runtimes can collaborate in one group.
 - **Local-first operations**: one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
 ## The Problem
@@ -56,7 +56,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, ChatGPT Web, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -140,8 +140,9 @@ graph TB
         direction LR
         A1["Claude Code"]
         A2["Codex CLI"]
-        A3["Gemini CLI"]
-        A4["+ 5 more + custom"]
+        A3["ChatGPT Web<br/>GPT-5.x/GPT-5.x Pro"]
+        A4["Gemini CLI"]
+        A5["+ 5 more + custom"]
     end
 
     subgraph Daemon["CCCC Daemon · single writer"]
@@ -170,7 +171,11 @@ graph TB
         WX["Weixin"]
     end
 
-    Agents <-->|MCP tools| Daemon
+    A1 <-->|MCP tools<br/>PTY/headless| Daemon
+    A2 <-->|MCP tools<br/>PTY/headless| Daemon
+    A3 <-->|Browser delivery<br/>Remote MCP| Daemon
+    A4 <-->|MCP tools| Daemon
+    A5 <-->|MCP tools| Daemon
     Daemon <--> Ports
     Web <--> IM
 
@@ -185,19 +190,20 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 8 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 9 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
-| Runtime | Auto MCP Setup | Command |
-|---------|:--------------:|---------|
-| Claude Code | ✅ | `claude` |
-| Codex CLI | ✅ | `codex` |
-| Gemini CLI | ✅ | `gemini` |
-| Droid | ✅ | `droid` |
-| Amp | ✅ | `amp` |
-| Auggie | ✅ | `auggie` |
-| Kimi CLI | ✅ | `kimi` |
-| Neovate | ✅ | `neovate` |
-| Custom | — | Any command |
+| Runtime | Integration | Command / Surface |
+|---------|-------------|-------------------|
+| Claude Code | Auto MCP setup | `claude` |
+| Codex CLI | Auto MCP setup | `codex` |
+| ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
+| Gemini CLI | Auto MCP setup | `gemini` |
+| Droid | Auto MCP setup | `droid` |
+| Amp | Auto MCP setup | `amp` |
+| Auggie | Auto MCP setup | `auggie` |
+| Kimi CLI | Auto MCP setup | `kimi` |
+| Neovate | Auto MCP setup | `neovate` |
+| Custom | Manual | Any command |
 
 ```bash
 cccc setup --runtime claude    # auto-configures MCP for this runtime
@@ -206,6 +212,23 @@ cccc doctor                    # verify environment and runtime availability
 ```
 
 Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code and Codex CLI support both modes; headless gives the daemon tighter delivery and streaming control.
+
+### ChatGPT Web / GPT-5.x/GPT-5.x Pro local development
+
+ChatGPT Web can join a CCCC group as a real actor, not just an external chat window. CCCC delivers group messages into one explicitly bound ChatGPT conversation through browser delivery, while ChatGPT calls back into CCCC through a single actor-bound remote MCP connector.
+
+That means a ChatGPT conversation using **GPT-5.x/GPT-5.x Pro** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents.
+
+Shortest setup path:
+
+1. Expose `cccc web` through a public HTTPS URL or tunnel.
+2. Create an Admin Access Token in `Settings > Global > Web Access`.
+3. Add an actor with runtime `ChatGPT Web Model`.
+4. In `Settings > Global > ChatGPT Web Model`, create/copy the single MCP URL for that actor.
+5. In ChatGPT Developer mode, create a custom MCP connector with that URL and `No Auth`.
+6. Bind a specific `https://chatgpt.com/c/...` conversation to the actor, then choose GPT-5.x/GPT-5.x Pro inside that chat.
+
+Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
 ## Messaging & Coordination
 
@@ -251,6 +274,7 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 - **Automation rule editor** — configure triggers, schedules, and actions visually
 - **Context panel** — shared vision, sketch, milestones, and tasks
 - **Group Space** — NotebookLM integration for shared knowledge management
+- **ChatGPT Web Model setup** — connect one ChatGPT Web conversation as a CCCC actor
 - **IM bridge configuration** — connect to Telegram/Slack/Discord/Feishu/DingTalk/WeCom/Weixin
 - **Settings** — messaging policies, delivery tuning, terminal transcript controls
 - **Text scale** — 90% / 100% / 125% font size with per-browser persistence
@@ -383,6 +407,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk, WeCom, Weixin |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
+| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect ChatGPT Web / GPT-5.x/GPT-5.x Pro as a CCCC actor |
 | [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP capability governance |
 | [Best Practices](https://chesterra.github.io/cccc/guide/best-practices) | Recommended patterns and workflows |
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | Frequently asked questions |

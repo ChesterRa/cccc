@@ -417,14 +417,14 @@ def repair_control_text(*, text: str, diagnostics: Dict[str, Any]) -> str:
         lines.extend(
             [
                 "[CCCC] REPAIR HINT: previous legacy pointer turn did not fetch the secretary input.",
-                "Call cccc_voice_secretary_document(action=\"read_new_input\") before doing other work, then complete every missing action below:",
+                "Call MCP tool cccc_voice_secretary_document(action=\"read_new_input\") before doing other work, then complete every missing action below:",
             ]
         )
     else:
         lines.extend(
             [
                 "[CCCC] REPAIR HINT: previous Voice Secretary turn did not complete the required output.",
-                "Use the daemon-delivered input_envelope already included in this control turn; call read_new_input only for a legacy pointer with no envelope.",
+                "Use the daemon-delivered input_envelope already included in this control turn; use MCP tool cccc_voice_secretary_document(action=\"read_new_input\") only for a legacy pointer with no envelope.",
                 "Complete every missing action below before ending the turn:",
             ]
         )

@@ -128,6 +128,121 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(_conversation_url_from_tab("https://evilchatgpt.com/c/abc123"), "")
         self.assertEqual(_conversation_url_from_tab("https://chatgpt.com.evil.test/c/abc123"), "")
 
+    def test_chatgpt_profile_is_shared_while_actor_state_stays_separate(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            chatgpt_browser_profile_dir,
+            read_chatgpt_browser_state,
+            record_chatgpt_browser_state,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            profile_a = chatgpt_browser_profile_dir("g-one", "peer1")
+            profile_b = chatgpt_browser_profile_dir("g-two", "peer2")
+
+            self.assertEqual(profile_a, profile_b)
+            (profile_a / "login-cookie-marker").write_text("shared", encoding="utf-8")
+            self.assertTrue((profile_b / "login-cookie-marker").exists())
+
+            record_chatgpt_browser_state("g-one", "peer1", {"conversation_url": "https://chatgpt.com/c/a"})
+            record_chatgpt_browser_state("g-two", "peer2", {"conversation_url": "https://chatgpt.com/c/b"})
+
+            self.assertEqual(read_chatgpt_browser_state("g-one", "peer1").get("conversation_url"), "https://chatgpt.com/c/a")
+            self.assertEqual(read_chatgpt_browser_state("g-two", "peer2").get("conversation_url"), "https://chatgpt.com/c/b")
+        finally:
+            cleanup()
+
+    def test_chatgpt_shared_profile_migrates_existing_actor_profile(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import chatgpt_browser_actor_state_root, chatgpt_browser_profile_dir
+
+        _, cleanup = self._with_home()
+        try:
+            legacy = chatgpt_browser_actor_state_root("g-old", "web_model-1") / "chrome_profile"
+            legacy.mkdir(parents=True, exist_ok=True)
+            (legacy / "legacy-login-marker").write_text("migrate", encoding="utf-8")
+
+            migrated = chatgpt_browser_profile_dir("g-new", "chatgpt-web-1")
+
+            self.assertTrue((migrated / "legacy-login-marker").exists())
+        finally:
+            cleanup()
+
+    def test_resolve_pending_chatgpt_conversation_binds_from_state_url(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            read_chatgpt_browser_state,
+            record_chatgpt_browser_state,
+            resolve_pending_chatgpt_conversation,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": "https://chatgpt.com/",
+                    "pending_new_chat_bind_started_at": "2026-05-01T00:00:00Z",
+                    "pending_new_chat_submitted": True,
+                    "pending_new_chat_submitted_at": "2026-05-01T00:00:10Z",
+                    "pending_new_chat_delivery_id": "browser:test",
+                    "pending_new_chat_last_turn_id": "turn-1",
+                    "pending_new_chat_last_event_ids": ["evt-1"],
+                    "last_tab_url": "https://chatgpt.com/c/newly-created?model=gpt-5",
+                    "bootstrap_seed_delivered_at": "2026-05-01T00:00:11Z",
+                    "bootstrap_seed_conversation_url": "https://chatgpt.com/",
+                },
+            )
+
+            result = resolve_pending_chatgpt_conversation("g-test", "peer1")
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertTrue(result.get("resolved"), result)
+            self.assertEqual(result.get("conversation_url"), "https://chatgpt.com/c/newly-created")
+            state = read_chatgpt_browser_state("g-test", "peer1")
+            self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/newly-created")
+            self.assertEqual(state.get("pending_new_chat_bind"), False)
+            self.assertEqual(state.get("pending_new_chat_submitted"), False)
+            self.assertEqual(state.get("pending_new_chat_delivery_id"), "")
+            self.assertEqual(state.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/c/newly-created")
+        finally:
+            cleanup()
+
+    def test_resolve_pending_chatgpt_conversation_ignores_stale_tab_before_submit(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            read_chatgpt_browser_state,
+            record_chatgpt_browser_state,
+            resolve_pending_chatgpt_conversation,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "",
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": "https://chatgpt.com/",
+                    "pending_new_chat_bind_started_at": "2026-05-01T00:00:00Z",
+                    "pending_new_chat_submitted": False,
+                    "last_tab_url": "https://chatgpt.com/c/old-chat",
+                },
+            )
+
+            result = resolve_pending_chatgpt_conversation("g-test", "peer1")
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertFalse(result.get("resolved"), result)
+            self.assertTrue(result.get("pending"), result)
+            self.assertFalse(result.get("submitted"), result)
+            state = read_chatgpt_browser_state("g-test", "peer1")
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("pending_new_chat_bind"), True)
+            self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
+        finally:
+            cleanup()
+
     def test_browser_launch_command_supports_true_headless_opt_in(self) -> None:
         from cccc.ports.web_model_browser_sidecar import _browser_launch_command
 
@@ -243,9 +358,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         _, cleanup = self._with_home()
         try:
             root = sidecar.chatgpt_browser_profile_root("g-test", "peer1")
-            sidecar.record_chatgpt_browser_state(
-                "g-test",
-                "peer1",
+            sidecar.record_chatgpt_browser_process_state(
                 {
                     "pid": 1234,
                     "cdp_port": 9222,

@@ -19,7 +19,7 @@ cccc
 
 1. Open the Web UI at http://127.0.0.1:8848/
 2. Start the agent
-3. Send tasks via chat: "Implement the login feature"
+3. Send quick requests via chat, and use task-backed delegation when the work needs an owner, outcome, or evidence trail
 4. Watch the agent work in the terminal tab
 5. Review changes and provide feedback
 
@@ -37,7 +37,7 @@ cccc group start
 
 ### Workflow
 
-1. Send implementation tasks to `@implementer`
+1. Send implementation tasks to `@implementer`, or use task-backed delegation when the work needs completion evidence
 2. When complete, ask `@reviewer` to review the changes
 3. Iterate based on review feedback
 
@@ -128,7 +128,10 @@ cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
 cccc im start
 
 # Start the task
-cccc send "Please refactor the entire authentication module. Report progress every hour." --to @foreman
+cccc tracked-send "Please refactor the authentication module and report progress every hour." \
+  --to @foreman \
+  --title "Refactor authentication module" \
+  --outcome "Refactor is complete, risks are reported, and validation evidence is provided"
 ```
 
 ### Monitoring

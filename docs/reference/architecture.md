@@ -16,7 +16,7 @@
 
 - **Foreman**: Coordinator + Executor (the first enabled actor automatically becomes foreman)
 - **Peer**: Independent expert (other actors)
-- Supports PTY (terminal) and Headless (MCP-only) runners
+- Supports PTY (terminal), Headless (MCP-only), and Web Model browser/remote-MCP delivery paths
 
 ### Ledger
 
@@ -52,6 +52,7 @@ Default: `CCCC_HOME=~/.cccc`
 ├─────────────────────────────────────────────────────────┤
 │                    Daemon (ccccd)                        │
 │   IPC Server  │  Delivery  │  Automation  │  Runners    │
+│               │            │              │  Browser    │
 ├─────────────────────────────────────────────────────────┤
 │                      Kernel                              │
 │   Group  │  Actor  │  Ledger  │  Inbox  │  Permissions  │
@@ -76,12 +77,13 @@ Default: `CCCC_HOME=~/.cccc`
 
 - Single-writer principle: all ledger writes go through the daemon
 - IPC + supervision + delivery/automation
-- Manages actor lifecycle
+- Manages actor lifecycle, including CLI runtimes and ChatGPT Web Model browser delivery
 
 ### Ports (Entry)
 
 - Only interact with daemon via IPC
 - Hold no business state
+- Web Model remote MCP is an actor-bound web port surface; authorization still resolves through the daemon and group actor state
 
 ## Ledger Schema (v1)
 

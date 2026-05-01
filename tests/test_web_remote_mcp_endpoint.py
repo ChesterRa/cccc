@@ -816,12 +816,60 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     "peer1",
                     {
                         "conversation_url": "https://chatgpt.com/c/test-chat",
+                        "pending_new_chat_bind": False,
+                        "pending_new_chat_url": "",
+                        "pending_new_chat_bind_started_at": "",
+                        "pending_new_chat_submitted": False,
+                        "pending_new_chat_submitted_at": "",
+                        "pending_new_chat_delivery_id": "",
+                        "pending_new_chat_last_turn_id": "",
+                        "pending_new_chat_last_event_ids": [],
+                        "pending_new_chat_last_tab_url": "",
+                        "new_chat_bound_at": "",
                         "bootstrap_seed_delivered_at": "",
                         "bootstrap_seed_version": "",
                         "bootstrap_seed_digest": "",
                         "bootstrap_seed_conversation_url": "",
+                        "last_error": "",
                     },
                 )
+        finally:
+            cleanup()
+
+    def test_web_model_browser_session_can_arm_new_chat_auto_bind(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            admin = str(create_access_token("admin", is_admin=True).get("token") or "")
+            client = self._client()
+
+            with (
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
+                    return_value={"active": True, "tab_url": "https://chatgpt.com/"},
+                ),
+                patch("cccc.ports.web_model_browser_sidecar.record_chatgpt_browser_state") as record_browser_state,
+                patch("cccc.daemon.actors.web_model_browser_session.get_web_model_chatgpt_browser_session_state", return_value={"active": True, "state": "ready"}),
+            ):
+                resp = client.post(
+                    "/api/v1/web-model/browser-session/bind-current",
+                    headers={"Authorization": f"Bearer {admin}"},
+                    json={"group_id": group.group_id, "actor_id": "peer1"},
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            call = record_browser_state.call_args.args
+            self.assertEqual(call[0], group.group_id)
+            self.assertEqual(call[1], "peer1")
+            state = call[2]
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("pending_new_chat_bind"), True)
+            self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
+            self.assertEqual(state.get("pending_new_chat_submitted"), False)
+            self.assertEqual(state.get("pending_new_chat_delivery_id"), "")
+            self.assertTrue(str(state.get("pending_new_chat_bind_started_at") or ""))
         finally:
             cleanup()
 

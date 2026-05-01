@@ -366,6 +366,83 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_web_model_actor_recreate_resets_browser_binding_state(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            chatgpt_browser_profile_dir,
+            read_chatgpt_browser_state,
+            record_chatgpt_browser_state,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "web-model-recreate", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            profile_dir = chatgpt_browser_profile_dir(group_id, "peer1")
+            marker = profile_dir / "login-marker"
+            marker.write_text("keep login profile", encoding="utf-8")
+            record_chatgpt_browser_state(
+                group_id,
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/old-chat",
+                    "bootstrap_seed_delivered_at": "2026-04-29T00:00:00Z",
+                    "bootstrap_seed_version": "old",
+                    "bootstrap_seed_digest": "old-digest",
+                    "bootstrap_seed_conversation_url": "https://chatgpt.com/c/old-chat",
+                    "last_turn_id": "old-turn",
+                    "last_event_ids": ["old-event"],
+                },
+            )
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Web Model",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            state_after_add = read_chatgpt_browser_state(group_id, "peer1")
+            self.assertEqual(state_after_add.get("conversation_url"), "")
+            self.assertEqual(state_after_add.get("bootstrap_seed_delivered_at"), "")
+            self.assertEqual(state_after_add.get("bootstrap_seed_digest"), "")
+            self.assertEqual(state_after_add.get("last_turn_id"), "")
+            self.assertEqual(state_after_add.get("last_event_ids"), [])
+            self.assertTrue(marker.exists())
+
+            record_chatgpt_browser_state(
+                group_id,
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/current-chat",
+                    "bootstrap_seed_delivered_at": "2026-04-29T01:00:00Z",
+                    "bootstrap_seed_version": "current",
+                    "bootstrap_seed_digest": "current-digest",
+                    "bootstrap_seed_conversation_url": "https://chatgpt.com/c/current-chat",
+                    "last_turn_id": "current-turn",
+                    "last_event_ids": ["current-event"],
+                },
+            )
+
+            remove, _ = self._call("actor_remove", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
+            self.assertTrue(remove.ok, getattr(remove, "error", None))
+            state_after_remove = read_chatgpt_browser_state(group_id, "peer1")
+            self.assertEqual(state_after_remove.get("conversation_url"), "")
+            self.assertEqual(state_after_remove.get("bootstrap_seed_delivered_at"), "")
+            self.assertEqual(state_after_remove.get("bootstrap_seed_digest"), "")
+            self.assertEqual(state_after_remove.get("last_turn_id"), "")
+            self.assertEqual(state_after_remove.get("last_event_ids"), [])
+            self.assertTrue(marker.exists())
+        finally:
+            cleanup()
+
     def test_actor_add_and_remove_schedule_summary_snapshot_rebuild(self) -> None:
         _, cleanup = self._with_home()
         try:

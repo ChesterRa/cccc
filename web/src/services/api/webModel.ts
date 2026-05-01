@@ -46,6 +46,10 @@ export type WebModelBrowserSession = {
   tab_url?: string;
   last_tab_url?: string;
   conversation_url?: string;
+  pending_new_chat_bind?: boolean;
+  pending_new_chat_url?: string;
+  pending_new_chat_bind_started_at?: string;
+  new_chat_bound_at?: string;
   bootstrap_seed_delivered_at?: string;
   auto_confirm_scan_at?: string;
   auto_confirm_pages_seen?: number;
@@ -197,6 +201,7 @@ export async function bindCurrentWebModelBrowserConversation(args: {
   groupId: string;
   actorId: string;
   conversationUrl?: string;
+  newChat?: boolean;
   clear?: boolean;
 }): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
   const resp = await apiJson<WebModelBrowserSurfaceResult>("/api/v1/web-model/browser-session/bind-current", {
@@ -205,6 +210,7 @@ export async function bindCurrentWebModelBrowserConversation(args: {
       group_id: String(args.groupId || "").trim(),
       actor_id: String(args.actorId || "").trim(),
       conversation_url: String(args.conversationUrl || "").trim(),
+      new_chat: Boolean(args.newChat),
       clear: Boolean(args.clear),
     }),
   });

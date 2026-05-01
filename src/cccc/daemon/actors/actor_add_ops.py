@@ -17,6 +17,8 @@ from ..context.context_ops import _schedule_summary_snapshot_rebuild
 from .actor_runtime_ops import resolve_actor_launch_config
 from .actor_profile_runtime import actor_profile_ref, apply_profile_link_to_actor
 from .actor_profile_store import ProfileResolver, get_actor_profile_by_ref, normalize_actor_profile_ref
+from .web_model_actor_policy import require_no_other_chatgpt_web_model_actor
+from .web_model_browser_session import clear_web_model_chatgpt_browser_actor_runtime
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -208,6 +210,7 @@ def handle_actor_add(
             if not command:
                 command = get_runtime_command_with_flags(runtime)
         if runtime == "web_model":
+            require_no_other_chatgpt_web_model_actor(group_id=group.group_id)
             runner = "headless"
             command = []
 
@@ -228,6 +231,12 @@ def handle_actor_add(
         )
 
         effective_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
+
+        if runtime == "web_model":
+            try:
+                clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=effective_actor_id)
+            except Exception:
+                pass
 
         if linked_profile_id and isinstance(linked_profile, dict):
             actor = apply_profile_link_to_actor(

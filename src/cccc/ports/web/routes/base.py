@@ -24,8 +24,10 @@ from ....kernel.web_model_connectors import (
     revoke_web_model_connector,
     verify_web_model_connector_secret,
 )
+from ....daemon.actors.web_model_actor_policy import require_no_other_chatgpt_web_model_actor
 from ....daemon.runner_state_ops import headless_state_running
 from ....util.conv import coerce_bool
+from ....util.time import utc_now_iso
 from ..branding import (
     build_branding_payload,
     delete_branding_asset,
@@ -73,6 +75,7 @@ class WebModelBrowserBindRequest(BaseModel):
     group_id: str
     actor_id: str
     conversation_url: str = ""
+    new_chat: bool = False
     clear: bool = False
 
 
@@ -438,6 +441,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 },
             )
         try:
+            require_no_other_chatgpt_web_model_actor(group_id=group_id, actor_id=actor_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "chatgpt_web_model_singleton", "message": str(exc), "details": {"group_id": group_id, "actor_id": actor_id}},
+            ) from exc
+        try:
             connector = create_web_model_connector(
                 group_id=group_id,
                 actor_id=actor_id,
@@ -523,7 +533,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id)
-        from ...web_model_browser_sidecar import _normalize_chatgpt_url, chatgpt_browser_session_status, record_chatgpt_browser_state
+        from ...web_model_browser_sidecar import (
+            CHATGPT_URL,
+            _conversation_url_from_tab,
+            _normalize_chatgpt_url,
+            chatgpt_browser_session_status,
+            record_chatgpt_browser_state,
+        )
 
         if bool(req.clear):
             await run_in_threadpool(
@@ -532,34 +548,60 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 actor_id,
                 {
                     "conversation_url": "",
+                    "pending_new_chat_bind": False,
+                    "pending_new_chat_url": "",
+                    "pending_new_chat_bind_started_at": "",
+                    "pending_new_chat_submitted": False,
+                    "pending_new_chat_submitted_at": "",
+                    "pending_new_chat_delivery_id": "",
+                    "pending_new_chat_last_turn_id": "",
+                    "pending_new_chat_last_event_ids": [],
+                    "pending_new_chat_last_tab_url": "",
+                    "new_chat_bound_at": "",
                     "bootstrap_seed_delivered_at": "",
                     "bootstrap_seed_version": "",
                     "bootstrap_seed_digest": "",
                     "bootstrap_seed_conversation_url": "",
+                    "last_error": "",
                 },
             )
             return await _web_model_browser_payload(group_id, actor_id, {})
 
         browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
-        url = _normalize_chatgpt_url(
-            req.conversation_url or browser.get("tab_url") or browser.get("last_tab_url") or "",
-            require_conversation=True,
-        )
-        if not url:
+        raw_url = str(req.conversation_url or browser.get("tab_url") or browser.get("last_tab_url") or "").strip()
+        conversation_url = _conversation_url_from_tab(raw_url)
+        pending_url = _normalize_chatgpt_url(raw_url) if raw_url else ""
+        if bool(req.new_chat):
+            conversation_url = ""
+            if not pending_url:
+                pending_url = CHATGPT_URL
+        if not conversation_url and not pending_url:
             raise HTTPException(
                 status_code=400,
-                detail={"code": "chatgpt_tab_not_found", "message": "open a ChatGPT conversation before binding", "details": {}},
+                detail={"code": "chatgpt_tab_not_found", "message": "open ChatGPT or paste a ChatGPT conversation URL before binding", "details": {}},
             )
+        pending_new_chat = not bool(conversation_url)
         await run_in_threadpool(
             record_chatgpt_browser_state,
             group_id,
             actor_id,
             {
-                "conversation_url": url,
+                "conversation_url": conversation_url,
+                "pending_new_chat_bind": pending_new_chat,
+                "pending_new_chat_url": pending_url if pending_new_chat else "",
+                "pending_new_chat_bind_started_at": utc_now_iso() if pending_new_chat else "",
+                "pending_new_chat_submitted": False,
+                "pending_new_chat_submitted_at": "",
+                "pending_new_chat_delivery_id": "",
+                "pending_new_chat_last_turn_id": "",
+                "pending_new_chat_last_event_ids": [],
+                "pending_new_chat_last_tab_url": "",
+                "new_chat_bound_at": "",
                 "bootstrap_seed_delivered_at": "",
                 "bootstrap_seed_version": "",
                 "bootstrap_seed_digest": "",
                 "bootstrap_seed_conversation_url": "",
+                "last_error": "",
             },
         )
         return await _web_model_browser_payload(group_id, actor_id, {})

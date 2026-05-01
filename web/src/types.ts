@@ -1330,7 +1330,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   gemini: { label: "Gemini CLI", desc: "" },
   kimi: { label: "Kimi CLI", desc: "" },
   neovate: { label: "Neovate Code", desc: "" },
-  web_model: { label: "Browser Web Model", desc: "Remote MCP connector; no local process" },
+  web_model: { label: "ChatGPT Web Model", desc: "ChatGPT browser delivery + remote MCP connector" },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
 };
 

@@ -91,6 +91,8 @@ def generate_actor_id(group: Group, prefix: str = "agent", runtime: str = "") ->
     # Use runtime as prefix if provided and valid
     if runtime:
         prefix = runtime
+    if runtime == "web_model":
+        prefix = "chatgpt-web"
     
     existing = {str(a.get("id", "")) for a in list_actors(group)}
     for i in range(1, 1000):

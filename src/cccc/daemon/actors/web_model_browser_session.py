@@ -14,8 +14,11 @@ from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
     chatgpt_browser_profile_dir,
     close_chatgpt_browser_session,
+    read_chatgpt_browser_process_state,
     read_chatgpt_browser_state,
+    record_chatgpt_browser_process_state,
     record_chatgpt_browser_state,
+    reset_chatgpt_browser_actor_runtime_state,
 )
 from .web_model_tool_confirm_watcher import (
     ensure_web_model_tool_confirm_watcher,
@@ -44,16 +47,20 @@ def _record_sidecar_state(group_id: str, actor_id: str, snapshot: dict[str, Any]
     if cdp_port <= 0:
         return
     profile_dir = chatgpt_browser_profile_dir(group_id, actor_id)
+    process_update = {
+        "pid": int(meta.get("pid") or 0),
+        "cdp_port": cdp_port,
+        "browser_binary": str(meta.get("browser_binary") or ""),
+        "profile_dir": str(profile_dir),
+        "visibility": "projected",
+        "started_at": str(snapshot.get("started_at") or ""),
+        "last_tab_url": str(snapshot.get("url") or CHATGPT_URL),
+    }
+    record_chatgpt_browser_process_state(process_update)
     record_chatgpt_browser_state(
         group_id,
         actor_id,
         {
-            "pid": int(meta.get("pid") or 0),
-            "cdp_port": cdp_port,
-            "browser_binary": str(meta.get("browser_binary") or ""),
-            "profile_dir": str(profile_dir),
-            "visibility": "projected",
-            "started_at": str(snapshot.get("started_at") or ""),
             "last_tab_url": str(snapshot.get("url") or CHATGPT_URL),
         },
     )
@@ -62,19 +69,25 @@ def _record_sidecar_state(group_id: str, actor_id: str, snapshot: dict[str, Any]
 def _clear_sidecar_state_if_matching(group_id: str, actor_id: str, snapshot: dict[str, Any]) -> None:
     meta = _metadata(snapshot)
     cdp_port = int(meta.get("cdp_port") or 0)
-    current = read_chatgpt_browser_state(group_id, actor_id)
+    current = read_chatgpt_browser_process_state()
+    actor_state = read_chatgpt_browser_state(group_id, actor_id)
     current_port = int(current.get("cdp_port") or 0)
     current_visibility = str(current.get("visibility") or "").strip().lower()
     if cdp_port > 0 and current_port not in {0, cdp_port} and current_visibility != "projected":
         return
-    record_chatgpt_browser_state(
-        group_id,
-        actor_id,
+    record_chatgpt_browser_process_state(
         {
             "pid": 0,
             "cdp_port": 0,
             "visibility": "projected",
             "last_tab_url": str(snapshot.get("url") or current.get("last_tab_url") or CHATGPT_URL),
+        }
+    )
+    record_chatgpt_browser_state(
+        group_id,
+        actor_id,
+        {
+            "last_tab_url": str(snapshot.get("url") or actor_state.get("last_tab_url") or current.get("last_tab_url") or CHATGPT_URL),
         },
     )
 
@@ -128,6 +141,14 @@ def close_web_model_chatgpt_browser_session(*, group_id: str, actor_id: str) -> 
     except Exception:
         _clear_sidecar_state_if_matching(group_id, actor_id, before)
     return result
+
+
+def clear_web_model_chatgpt_browser_actor_runtime(*, group_id: str, actor_id: str) -> None:
+    """Drop browser-delivery binding state for an actor without clearing ChatGPT login."""
+    try:
+        close_web_model_chatgpt_browser_session(group_id=group_id, actor_id=actor_id)
+    finally:
+        reset_chatgpt_browser_actor_runtime_state(group_id, actor_id)
 
 
 def close_all_web_model_chatgpt_browser_sessions() -> None:

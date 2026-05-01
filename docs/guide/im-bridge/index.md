@@ -21,12 +21,13 @@ The IM Bridge allows you to:
 | [Feishu/Lark](./feishu) | ✅ | Enterprise (China/Global) |
 | [DingTalk](./dingtalk) | ✅ | Enterprise (China) — AI Card Streaming supported |
 | [WeCom](./wecom) | ✅ | Enterprise (China) — Long connection Bot ID / Secret flow |
+| Weixin / WeChat | ✅ | Personal and group chat access via the Python Weixin adapter |
 
 ## Design Principles
 
 - **1 Group = 1 Bot**: Each working group connects to one bot instance for simplicity and isolation
 - **Explicit subscription**: Users must `/subscribe` before receiving messages
-- **Thin ports**: IM bridges only forward messages; the daemon is the single source of truth
+- **Thin ports**: IM bridges forward messages and commands; the daemon remains the single source of truth
 
 ## Common Commands
 
@@ -49,6 +50,8 @@ Once subscribed to any platform, these commands work universally:
 ::: tip Implicit Send
 On all platforms, @mentioning the bot (in groups) or sending a direct message with plain text is automatically treated as `/send` to the **foreman**. You only need the explicit `/send` command when targeting specific agents.
 :::
+
+Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints. Use plain text, `/send @foreman <message>`, or a specific actor target for routine coordination.
 
 ## CLI Commands
 
@@ -83,3 +86,4 @@ WeCom currently uses the same start/stop/status CLI controls, but credentials ar
 - [Feishu/Lark Setup](./feishu) - Enterprise (China/Global)
 - [DingTalk Setup](./dingtalk) - Enterprise (China)
 - [WeCom Setup](./wecom) - Enterprise (China)
+- Weixin / WeChat setup is configured from the Web IM Bridge settings surface.

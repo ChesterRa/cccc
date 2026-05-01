@@ -1838,20 +1838,20 @@ def _voice_input_required_outputs(group_item: Dict[str, Any]) -> list[str]:
     )
     if target_kind == "secretary" and request_ids:
         return [
-            f"cccc_voice_secretary_request(action=\"report\", request_id=\"{request_arg}\", status=\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\")."
+            f"Use MCP tool cccc_voice_secretary_request(action=\"report\", request_id=\"{request_arg}\", status=\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\")."
         ]
     if target_kind == "composer" and request_ids:
         if composer_replace_operation:
             return [
-                f"cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"{request_arg}\", draft_text=\"...\"). Return a complete replacement prompt."
+                f"Use MCP tool cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"{request_arg}\", draft_text=\"...\")."
             ]
         return [
-            f"cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"{request_arg}\", draft_text=\"...\"). Return append-ready text only."
+            f"Use MCP tool cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"{request_arg}\", draft_text=\"...\")."
         ]
     if target_kind == "document":
         if bool(group_item.get("requires_report")):
             return [
-                f"Edit the repository markdown directly, then cccc_voice_secretary_request(action=\"report\", request_id=\"{request_arg}\", status=\"done\", reply_text=\"...\")."
+                f"Edit the repository markdown directly, then use MCP tool cccc_voice_secretary_request(action=\"report\", request_id=\"{request_arg}\", status=\"done\", reply_text=\"...\")."
             ]
         return ["Edit the repository markdown directly."]
     return []
@@ -4908,6 +4908,7 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
         if not request_record:
             return _error("prompt_request_not_found", f"prompt request not found: {request_id}")
         operation = raw_operation or str(request_record.get("operation") or "").strip() or "append_to_composer_end"
+        request_snapshot_hash = str(request_record.get("composer_snapshot_hash") or "").strip()
         drafts = state.setdefault("voice_prompt_drafts", {})
         existing = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
         record = {
@@ -4920,7 +4921,7 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
             "draft_text": draft_text,
             "draft_preview": _clean_multiline_text(draft_text, max_len=240),
             "summary": summary,
-            "composer_snapshot_hash": composer_snapshot_hash,
+            "composer_snapshot_hash": composer_snapshot_hash or request_snapshot_hash,
             "created_at": str(existing.get("created_at") or now) if isinstance(existing, dict) else now,
             "updated_at": now,
             "by": _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY),

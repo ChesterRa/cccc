@@ -22,8 +22,14 @@ from ...kernel.inbox import unread_messages
 from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...kernel.web_model_connectors import list_web_model_connectors
-from ...util.time import utc_now_iso
-from ...ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
+from ...util.time import parse_utc_iso, utc_now_iso
+from ...ports.web_model_browser_sidecar import (
+    CHATGPT_URL,
+    _conversation_url_from_tab,
+    read_chatgpt_browser_state,
+    record_chatgpt_browser_state,
+    resolve_pending_chatgpt_conversation,
+)
 from ..messaging.actor_turn_rendering import render_actor_event_batch_for_delivery
 from ..messaging.delivery import MCP_REMINDER_LINE
 from ..runner_state_ops import update_headless_state
@@ -52,6 +58,7 @@ _BROWSER_MODES = {"browser", "chatgpt", "chatgpt_browser", "browser_delivery"}
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 _PROMPT_TEXT_LIMIT = 48_000
 _MAX_BROWSER_DELIVERY_EVENTS = 20
+_PENDING_NEW_CHAT_RETRY_AFTER_SECONDS = 60.0
 _BOOTSTRAP_SEED_VERSION = "web-model-bootstrap-normal-system-prompt-v2"
 
 
@@ -250,6 +257,7 @@ def _sidecar_payload(
     target_url: str = "",
     bootstrap_seed: bool = False,
     bootstrap_seed_digest: str = "",
+    auto_bind_new_chat: bool = False,
 ) -> Dict[str, Any]:
     return {
         "schema": "cccc.web_model_browser_delivery.v1",
@@ -265,6 +273,7 @@ def _sidecar_payload(
         "trigger_event_id": str(trigger_event_id or "").strip(),
         "browser_visibility": _setting({}, ("CCCC_WEB_MODEL_BROWSER_VISIBILITY", "CCCC_WEB_MODEL_BROWSER_MODE", "CCCC_WEB_MODEL_BROWSER_HEADLESS")),
         "target_url": str(target_url or "").strip(),
+        "auto_bind_new_chat": bool(auto_bind_new_chat),
         "bootstrap_seed": bool(bootstrap_seed),
         "bootstrap_seed_version": _BOOTSTRAP_SEED_VERSION if bool(bootstrap_seed) else "",
         "bootstrap_seed_digest": str(bootstrap_seed_digest or "").strip() if bool(bootstrap_seed) else "",
@@ -354,6 +363,66 @@ def _target_chat_url(group_id: str, actor_id: str, actor: Dict[str, Any]) -> str
     return str(state.get("conversation_url") or "").strip()
 
 
+def _pending_new_chat_state(group_id: str, actor_id: str) -> Dict[str, Any]:
+    try:
+        state = read_chatgpt_browser_state(group_id, actor_id)
+    except Exception:
+        return {}
+    if not bool(state.get("pending_new_chat_bind")):
+        return {}
+    if bool(state.get("pending_new_chat_submitted")):
+        try:
+            resolved = resolve_pending_chatgpt_conversation(group_id, actor_id)
+        except Exception as exc:
+            resolved = {"ok": False, "error": str(exc)}
+        conversation_url = str(resolved.get("conversation_url") or "").strip() if isinstance(resolved, dict) else ""
+        if conversation_url:
+            return {
+                "target_url": conversation_url,
+                "auto_bind_new_chat": False,
+                "resolved_pending_new_chat": True,
+            }
+        submitted_at = parse_utc_iso(str(state.get("pending_new_chat_submitted_at") or ""))
+        now = parse_utc_iso(utc_now_iso())
+        if submitted_at is not None and now is not None:
+            age_seconds = (now - submitted_at).total_seconds()
+        else:
+            age_seconds = 0.0
+        if age_seconds >= _PENDING_NEW_CHAT_RETRY_AFTER_SECONDS:
+            record_chatgpt_browser_state(
+                group_id,
+                actor_id,
+                {
+                    "pending_new_chat_submitted": False,
+                    "pending_new_chat_submitted_at": "",
+                    "pending_new_chat_delivery_id": "",
+                    "pending_new_chat_last_turn_id": "",
+                    "pending_new_chat_last_event_ids": [],
+                    "pending_new_chat_last_tab_url": "",
+                    "bootstrap_seed_delivered_at": "",
+                    "bootstrap_seed_version": "",
+                    "bootstrap_seed_digest": "",
+                    "bootstrap_seed_conversation_url": "",
+                    "last_error": "conversation_url_pending_retry",
+                },
+            )
+            return {
+                "target_url": str(state.get("pending_new_chat_url") or CHATGPT_URL).strip() or CHATGPT_URL,
+                "auto_bind_new_chat": True,
+                "retry_pending_new_chat": True,
+            }
+        return {
+            "status": "target_chat_binding_pending",
+            "error": str((resolved or {}).get("error") or "target_chat_binding_pending") if isinstance(resolved, dict) else "target_chat_binding_pending",
+            "auto_bind_new_chat": False,
+            "pending_new_chat_submitted": True,
+        }
+    return {
+        "target_url": str(state.get("pending_new_chat_url") or CHATGPT_URL).strip() or CHATGPT_URL,
+        "auto_bind_new_chat": True,
+    }
+
+
 def _bootstrap_seed_required(group_id: str, actor_id: str, *, target_url: str = "", seed_digest: str = "") -> bool:
     try:
         state = read_chatgpt_browser_state(group_id, actor_id)
@@ -399,6 +468,20 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         return {"ok": False, "error": "browser_delivery_disabled"}
     aid = str(actor_id or "").strip()
     target_url = _target_chat_url(group.group_id, aid, actor)
+    pending_new_chat = {}
+    if not target_url:
+        pending_new_chat = _pending_new_chat_state(group.group_id, aid)
+        target_url = str(pending_new_chat.get("target_url") or "").strip()
+    auto_bind_new_chat = bool(pending_new_chat.get("auto_bind_new_chat"))
+    pending_status = str(pending_new_chat.get("status") or "").strip()
+    if pending_status == "target_chat_binding_pending" and not target_url:
+        update_headless_state(group.group_id, aid, status="waiting", active_turn_id="", latest_event_id="")
+        return {
+            "ok": True,
+            "status": "target_chat_binding_pending",
+            "error": str(pending_new_chat.get("error") or pending_status),
+            "reschedule": False,
+        }
     if not target_url:
         update_headless_state(group.group_id, aid, status="waiting", active_turn_id="", latest_event_id="")
         return {"ok": False, "status": "target_chat_required", "error": "target_chat_required"}
@@ -424,6 +507,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         target_url=target_url,
         bootstrap_seed=bootstrap_seed,
         bootstrap_seed_digest=seed_digest,
+        auto_bind_new_chat=auto_bind_new_chat,
     )
     try:
         sidecar_result = _run_sidecar(command, payload, timeout_seconds=_timeout_seconds(actor), env=_sidecar_env(actor))
@@ -433,6 +517,26 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         sidecar_result = {"ok": False, "error": str(exc)}
 
     ok = bool(sidecar_result.get("ok", True))
+    browser_result = sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {}
+    delivered_conversation_url = str(browser_result.get("conversation_url") or "").strip() or _conversation_url_from_tab(
+        browser_result.get("tab_url")
+    )
+    pending_conversation_url = bool(
+        ok
+        and auto_bind_new_chat
+        and not delivered_conversation_url
+        and (
+            bool(browser_result.get("pending_conversation_url"))
+            or bool(browser_result.get("submitted_without_conversation_url"))
+        )
+    )
+    if ok and auto_bind_new_chat and not delivered_conversation_url and not pending_conversation_url:
+        ok = False
+        sidecar_result = {
+            **sidecar_result,
+            "ok": False,
+            "error": "new ChatGPT chat did not produce a conversation URL",
+        }
     if ok:
         try:
             from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher
@@ -448,8 +552,65 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             active_turn_id="",
             latest_event_id="",
         )
-        if bootstrap_seed:
-            _mark_bootstrap_seed_delivered(group.group_id, aid, target_url=target_url, seed_digest=seed_digest)
+        if bootstrap_seed and not pending_conversation_url:
+            _mark_bootstrap_seed_delivered(
+                group.group_id,
+                aid,
+                target_url=delivered_conversation_url or target_url,
+                seed_digest=seed_digest,
+            )
+        if auto_bind_new_chat and delivered_conversation_url:
+            record_chatgpt_browser_state(
+                group.group_id,
+                aid,
+                {
+                    "conversation_url": delivered_conversation_url,
+                    "pending_new_chat_bind": False,
+                    "pending_new_chat_url": "",
+                    "pending_new_chat_bind_started_at": "",
+                    "pending_new_chat_submitted": False,
+                    "pending_new_chat_submitted_at": "",
+                    "pending_new_chat_delivery_id": "",
+                    "pending_new_chat_last_turn_id": "",
+                    "pending_new_chat_last_event_ids": [],
+                    "pending_new_chat_last_tab_url": "",
+                    "new_chat_bound_at": utc_now_iso(),
+                    "last_error": "",
+                },
+            )
+        elif pending_conversation_url:
+            pending_seed_state = (
+                {
+                    "bootstrap_seed_delivered_at": utc_now_iso(),
+                    "bootstrap_seed_version": _BOOTSTRAP_SEED_VERSION,
+                    "bootstrap_seed_digest": str(seed_digest or "").strip(),
+                    "bootstrap_seed_conversation_url": target_url or CHATGPT_URL,
+                }
+                if bootstrap_seed
+                else {
+                    "bootstrap_seed_delivered_at": "",
+                    "bootstrap_seed_version": "",
+                    "bootstrap_seed_digest": "",
+                    "bootstrap_seed_conversation_url": "",
+                }
+            )
+            record_chatgpt_browser_state(
+                group.group_id,
+                aid,
+                {
+                    "conversation_url": "",
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": target_url or CHATGPT_URL,
+                    "pending_new_chat_submitted": True,
+                    "pending_new_chat_submitted_at": utc_now_iso(),
+                    "pending_new_chat_delivery_id": str(sidecar_result.get("delivery_id") or ""),
+                    "pending_new_chat_last_turn_id": str(turn.get("turn_id") or ""),
+                    "pending_new_chat_last_event_ids": list(turn.get("event_ids") or []),
+                    "pending_new_chat_last_tab_url": str(browser_result.get("tab_url") or ""),
+                    **pending_seed_state,
+                    "last_error": "conversation_url_pending",
+                },
+            )
         event = _append_delivery_event(
             group=group,
             actor_id=aid,
@@ -464,6 +625,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
                 "bootstrap_seed": bool(bootstrap_seed),
                 "target_url": target_url,
+                "auto_bind_new_chat": bool(auto_bind_new_chat),
+                "bound_conversation_url": delivered_conversation_url,
+                "pending_conversation_url": bool(pending_conversation_url),
                 "browser": sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {},
             },
         )

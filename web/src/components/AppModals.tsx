@@ -1150,7 +1150,7 @@ export function AppModals({
   const suggestedActorId = (() => {
     const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
     const profileRuntime = String(selectedProfile?.runtime || "").trim();
-    const prefix = newActorUseProfile ? (profileRuntime || "actor") : newActorRuntime;
+    const prefix = newActorUseProfile ? (profileRuntime || "actor") : (newActorRuntime === "web_model" ? "chatgpt-web" : newActorRuntime);
     const existing = new Set(actors.map((a) => String(a.id || "")));
     for (let i = 1; i <= 999; i++) {
       const candidate = `${prefix}-${i}`;
@@ -1158,10 +1158,14 @@ export function AppModals({
     }
     return `${prefix}-${Date.now()}`;
   })();
+  const currentGroupHasChatGptWebModelActor = actors.some(
+    (actor) => String(actor.runtime || "").trim().toLowerCase() === "web_model"
+  );
 
   const canAddActor = (() => {
     if (busy === "actor-add") return false;
     if (newActorUseProfile) return Boolean(String(newActorProfileId || "").trim());
+    if (newActorRuntime === "web_model" && currentGroupHasChatGptWebModelActor) return false;
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
     if (!newActorUseDefaultCommand && !newActorCommand.trim()) return false;
@@ -1174,6 +1178,9 @@ export function AppModals({
     if (busy === "actor-add") return "";
     if (newActorUseProfile && !String(newActorProfileId || "").trim()) {
       return t("profileRequired");
+    }
+    if (!newActorUseProfile && newActorRuntime === "web_model" && currentGroupHasChatGptWebModelActor) {
+      return "This group already has the ChatGPT Web Model actor. Use Settings > ChatGPT Web Model to configure it.";
     }
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;

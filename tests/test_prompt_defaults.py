@@ -90,7 +90,7 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("avoid routine @all", MCP_REMINDER_LINE)
         self.assertIn("communication obligation, not the whole job", MCP_REMINDER_LINE)
         self.assertIn("resume active work unless priority changed", MCP_REMINDER_LINE)
-        self.assertIn("run cccc_help", MCP_REMINDER_LINE)
+        self.assertIn("use MCP tool cccc_help", MCP_REMINDER_LINE)
         self.assertNotIn("Help: cccc_help", MCP_REMINDER_LINE)
 
     def test_default_standup_stays_short_ritual(self) -> None:

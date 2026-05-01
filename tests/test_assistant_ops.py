@@ -449,7 +449,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Voice Secretary Runtime Actor", prompt)
             self.assertIn("not the foreman", prompt)
             self.assertIn("secretary-scope", prompt)
-            self.assertIn("call cccc_bootstrap first, then cccc_help", prompt)
+            self.assertIn("use MCP tools cccc_bootstrap, then cccc_help", prompt)
             self.assertIn("daemon-delivered input_envelope", prompt)
             self.assertIn("Work order", prompt)
             self.assertIn("Context (not task)", prompt)
@@ -596,6 +596,178 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(actor.get("submit"), "newline")
             private_env = load_actor_private_env(group_id, VOICE_SECRETARY_ACTOR_ID)
             self.assertEqual(private_env.get("API_KEY"), "voice-secret")
+        finally:
+            cleanup()
+
+    def test_voice_settings_sync_preserves_linked_voice_profile_runtime_config(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "id": "voice-profile",
+                        "name": "Voice PTY",
+                        "scope": "global",
+                        "runtime": "codex",
+                        "runner": "pty",
+                        "command": ["codex", "-m", "gpt-5.3-codex-spark"],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            from cccc.kernel.group import load_group
+            from cccc.kernel.actors import INTERNAL_KIND_VOICE_SECRETARY
+            from cccc.kernel.voice_secretary_actor import get_voice_secretary_actor
+
+            link, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "voice-secretary",
+                    "profile_id": "voice-profile",
+                },
+            )
+            self.assertTrue(link.ok, getattr(link, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(actor.get("profile_id"), "voice-profile")
+            self.assertEqual(actor.get("internal_kind"), INTERNAL_KIND_VOICE_SECRETARY)
+            self.assertEqual(actor.get("runtime"), "codex")
+            self.assertEqual(actor.get("runner"), "pty")
+            self.assertEqual(actor.get("command"), ["codex", "-m", "gpt-5.3-codex-spark"])
+            self.assertEqual(actor.get("submit"), "newline")
+
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_language": "zh-CN"}},
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(actor.get("profile_id"), "voice-profile")
+            self.assertEqual(actor.get("profile_scope"), "global")
+            self.assertEqual(actor.get("internal_kind"), INTERNAL_KIND_VOICE_SECRETARY)
+            self.assertEqual(actor.get("runtime"), "codex")
+            self.assertEqual(actor.get("runner"), "pty")
+            self.assertEqual(actor.get("command"), ["codex", "-m", "gpt-5.3-codex-spark"])
+            self.assertEqual(actor.get("submit"), "newline")
+        finally:
+            cleanup()
+
+    def test_voice_actor_update_allows_runtime_profile_link_without_losing_voice_tools(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "id": "voice-pty-profile",
+                        "name": "Voice PTY",
+                        "scope": "global",
+                        "runtime": "codex",
+                        "runner": "pty",
+                        "command": ["codex"],
+                        "submit": "enter",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            from cccc.kernel.group import load_group
+            from cccc.kernel.voice_secretary_actor import get_voice_secretary_actor
+            from cccc.ports.mcp.server import list_tools_for_caller
+
+            update_profile, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "voice-secretary",
+                    "profile_id": "voice-pty-profile",
+                },
+            )
+            self.assertTrue(update_profile.ok, getattr(update_profile, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(actor.get("profile_id"), "voice-pty-profile")
+            self.assertEqual(actor.get("runtime"), "codex")
+            self.assertEqual(actor.get("runner"), "pty")
+            self.assertEqual(actor.get("internal_kind"), "voice_secretary")
+
+            with patch.dict(os.environ, {"CCCC_GROUP_ID": group_id, "CCCC_ACTOR_ID": "voice-secretary"}, clear=False), patch(
+                "cccc.ports.mcp.server._call_daemon_or_raise",
+                side_effect=RuntimeError("daemon unavailable"),
+            ):
+                tools = list_tools_for_caller()
+            names = {str(item.get("name") or "") for item in tools if isinstance(item, dict)}
+            self.assertIn("cccc_voice_secretary_document", names)
+            self.assertIn("cccc_voice_secretary_request", names)
+            self.assertIn("cccc_voice_secretary_composer", names)
+
+            convert, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "voice-secretary",
+                    "profile_action": "convert_to_custom",
+                },
+            )
+            self.assertTrue(convert.ok, getattr(convert, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertNotIn("profile_id", actor)
+
+            update_runtime, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "voice-secretary",
+                    "patch": {"runner": "pty", "runtime": "codex"},
+                },
+            )
+            self.assertTrue(update_runtime.ok, getattr(update_runtime, "error", None))
+            actor = (update_runtime.result or {}).get("actor") if isinstance(update_runtime.result, dict) else {}
+            self.assertEqual(actor.get("runtime"), "codex")
+            self.assertEqual(actor.get("runner"), "pty")
         finally:
             cleanup()
 
@@ -1879,6 +2051,9 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("重点看看风险和副作用", input_text)
             self.assertIn("Recent context", input_text)
             self.assertIn("需要补验收标准", input_text)
+            self.assertIn("Use MCP tool cccc_voice_secretary_composer", input_text)
+            self.assertIn("draft_text must contain only the text to add", input_text)
+            self.assertNotIn("Return only the composer text to insert", input_text)
             self.assertNotIn("Execution rules:", input_text)
             self.assertNotIn("Do not write meta lead-ins", input_text)
 
@@ -1888,7 +2063,6 @@ class TestAssistantOps(unittest.TestCase):
                     "group_id": group_id,
                     "by": "assistant:voice_secretary",
                     "request_id": "voice-prompt-test",
-                    "composer_snapshot_hash": "abc123",
                     "draft_text": "请基于第一性原理检查这套方案，重点评估风险、副作用和验证路径。",
                     "summary": "Clarified the review ask.",
                 },
@@ -2057,7 +2231,8 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Operation: replace_with_refined_prompt", input_text)
-            self.assertIn("Return a complete replacement prompt", input_text)
+            self.assertIn("Use MCP tool cccc_voice_secretary_composer", input_text)
+            self.assertIn("draft_text must contain the complete replacement prompt", input_text)
             self.assertNotIn("Do not return only an incremental addition", input_text)
             self.assertNotIn("Append mode", input_text)
 
@@ -2110,7 +2285,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Operation: replace_with_refined_prompt", input_text)
             self.assertIn("帮我让大家汇报进展", input_text)
             self.assertIn("optimize current composer draft directly", input_text)
-            self.assertIn("Return a complete replacement prompt", input_text)
+            self.assertIn("draft_text must contain the complete replacement prompt", input_text)
         finally:
             cleanup()
 
@@ -3216,7 +3391,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Target: secretary", input_text)
             self.assertIn(f"Request id: {request_id}", input_text)
             self.assertIn("Required output:", input_text)
-            self.assertIn("cccc_voice_secretary_request(action=\"report\"", input_text)
+            self.assertIn("Use MCP tool cccc_voice_secretary_request(action=\"report\"", input_text)
             self.assertIn("Task:", input_text)
             self.assertIn("刚才的总结有没有遗漏", input_text)
             self.assertEqual((read.result or {}).get("documents"), [])
@@ -4045,7 +4220,7 @@ class TestAssistantOps(unittest.TestCase):
             document_input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Mode: document", document_input_text)
             self.assertIn("Required output:", document_input_text)
-            self.assertIn("Edit the repository markdown directly, then cccc_voice_secretary_request", document_input_text)
+            self.assertIn("Edit the repository markdown directly, then use MCP tool cccc_voice_secretary_request", document_input_text)
             self.assertIn("Task:", document_input_text)
             self.assertIn("concise launch-risk summary", document_input_text)
             batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []

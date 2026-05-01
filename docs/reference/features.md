@@ -78,6 +78,8 @@ The `chat.stream` event type represents real-time streaming content from agents.
 | Discord | ✅ Complete | `token_env` |
 | Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
 | DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
+| WeCom | ✅ Complete | Web-configured Bot ID / Secret flow |
+| Weixin / WeChat | ✅ Complete | Web-configured account/login flow |
 
 ### Configuration
 
@@ -111,6 +113,7 @@ im:
 
 Notes:
 - In direct chats and in group chats where the bot is @mentioned, plain text is treated as implicit send to the default recipient policy (default: foreman).
+- Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints.
 - In channels (Slack/Discord), mention the bot and then use `/send` (to avoid platform slash-commands).
 - You can configure the default recipient behavior in Web UI: Settings → Messaging → Default Recipient.
 
@@ -299,8 +302,8 @@ Recommended options:
 
 ### Supported Runtimes
 
-| Runtime | Command | Description |
-|---------|---------|-------------|
+| Runtime | Integration | Description |
+|---------|-------------|-------------|
 | amp | `amp` | Amp |
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
@@ -309,9 +312,10 @@ Recommended options:
 | gemini | `gemini` | Gemini CLI |
 | kimi | `kimi --yolo` | Kimi CLI |
 | neovate | `neovate` | Neovate Code |
+| web_model | Remote MCP + browser delivery | ChatGPT Web conversation, including GPT-5.x/GPT-5.x Pro when selected in ChatGPT |
 | custom | Custom | Any command |
 
-CCCC first-class runtime support is the eight named CLIs above. `custom` remains the manual fallback for any other command.
+CCCC first-class runtime support is the nine named runtimes above. `custom` remains the manual fallback for any other command.
 
 ### Setup Commands
 
@@ -326,6 +330,8 @@ cccc setup --runtime gemini
 cccc setup --runtime kimi
 cccc setup --runtime custom
 ```
+
+`web_model` does not use `cccc setup`; create the single `ChatGPT Web Model` actor, copy its remote MCP URL from Web Settings, and bind one specific ChatGPT conversation.
 
 ### Runtime Detection
 

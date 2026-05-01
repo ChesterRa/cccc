@@ -537,7 +537,7 @@ MCP_REMINDER_LINE = (
     "[cccc] If you respond: use MCP (cccc_message_send / cccc_message_reply); "
     "terminal output isn't delivered. Verify reply_to/to; avoid routine @all. "
     "A reply handles the communication obligation, not the whole job; "
-    "resume active work unless priority changed. If unsure, run cccc_help."
+    "resume active work unless priority changed. If unsure, use MCP tool cccc_help."
 )
 
 
@@ -606,7 +606,7 @@ def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData, grou
             return "Voice Secretary input is available in the daemon-delivered input_envelope."
         blocks = [
             "Secretary input ready.",
-            "Legacy pointer notification: call cccc_voice_secretary_document(action=\"read_new_input\") before doing other work.",
+            "Legacy pointer notification: call MCP tool cccc_voice_secretary_document(action=\"read_new_input\") before doing other work.",
             "Pointer only; fetch the input text through read_new_input.",
         ]
         if reason:

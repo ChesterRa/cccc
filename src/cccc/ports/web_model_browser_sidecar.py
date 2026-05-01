@@ -177,6 +177,16 @@ def _conversation_url_from_tab(value: Any) -> str:
     return _normalize_chatgpt_url(value, require_conversation=True)
 
 
+def _wait_for_conversation_url(page: Any, *, timeout_seconds: float = 15.0) -> str:
+    deadline = time.time() + max(1.0, float(timeout_seconds))
+    while time.time() < deadline:
+        url = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
+        if url:
+            return url
+        time.sleep(0.25)
+    return _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
+
+
 def _default_delivery_visibility() -> str:
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         return "background"
@@ -193,14 +203,24 @@ def _safe_token(value: str, fallback: str) -> str:
     return cleaned[:96] or fallback
 
 
-def _profile_root(payload: dict[str, Any]) -> Path:
+def _actor_state_root(payload: dict[str, Any]) -> Path:
     group_id = _safe_token(str(payload.get("group_id") or ""), "group")
     actor_id = _safe_token(str(payload.get("actor_id") or ""), "actor")
     return ensure_home() / "state" / "web_model_browser" / group_id / actor_id
 
 
-def chatgpt_browser_profile_root(group_id: str, actor_id: str) -> Path:
-    return _profile_root({"group_id": group_id, "actor_id": actor_id})
+def chatgpt_browser_actor_state_root(group_id: str, actor_id: str) -> Path:
+    return _actor_state_root({"group_id": group_id, "actor_id": actor_id})
+
+
+def chatgpt_browser_profile_root(group_id: str = "", actor_id: str = "") -> Path:
+    """Return the shared ChatGPT browser profile root.
+
+    ChatGPT Web Model is a single runtime seat, so login cookies must be tied to
+    the ChatGPT browser surface rather than to a replaceable CCCC actor id.
+    """
+    _ = (group_id, actor_id)
+    return ensure_home() / "state" / "web_model_browser" / "_shared" / "chatgpt_web"
 
 
 def _state_path(profile_root: Path) -> Path:
@@ -214,17 +234,103 @@ def _profile_dir(profile_root: Path) -> Path:
 
 
 def chatgpt_browser_profile_dir(group_id: str, actor_id: str) -> Path:
+    _ensure_shared_profile_migrated(group_id, actor_id)
     return _profile_dir(chatgpt_browser_profile_root(group_id, actor_id))
 
 
+def _dir_has_content(path: Path) -> bool:
+    try:
+        return any(path.iterdir())
+    except Exception:
+        return False
+
+
+def _candidate_legacy_profile_dirs(group_id: str, actor_id: str) -> list[Path]:
+    roots: list[Path] = []
+    direct = _actor_state_root({"group_id": group_id, "actor_id": actor_id}) / "chrome_profile"
+    if direct.exists():
+        roots.append(direct)
+    base = ensure_home() / "state" / "web_model_browser"
+    try:
+        for candidate in base.glob("*/*/chrome_profile"):
+            if "_shared" in candidate.parts:
+                continue
+            if candidate not in roots:
+                roots.append(candidate)
+    except Exception:
+        pass
+    return sorted(
+        [item for item in roots if item.exists() and _dir_has_content(item)],
+        key=lambda item: item.stat().st_mtime if item.exists() else 0,
+        reverse=True,
+    )
+
+
+def _ensure_shared_profile_migrated(group_id: str, actor_id: str) -> None:
+    shared = chatgpt_browser_profile_root(group_id, actor_id) / "chrome_profile"
+    if _dir_has_content(shared):
+        return
+    candidates = _candidate_legacy_profile_dirs(group_id, actor_id)
+    if not candidates:
+        ensure_dir(shared, 0o700)
+        return
+    ensure_dir(shared.parent, 0o700)
+    try:
+        shutil.copytree(candidates[0], shared, dirs_exist_ok=True)
+    except Exception:
+        ensure_dir(shared, 0o700)
+
+
 def record_chatgpt_browser_state(group_id: str, actor_id: str, state: dict[str, Any]) -> None:
-    profile_root = chatgpt_browser_profile_root(group_id, actor_id)
-    current = _load_state(profile_root)
-    _write_state(profile_root, {**current, **dict(state or {})})
+    state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
+    current = _load_state(state_root)
+    _write_state(state_root, {**current, **dict(state or {})})
 
 
 def read_chatgpt_browser_state(group_id: str, actor_id: str) -> dict[str, Any]:
-    return _load_state(chatgpt_browser_profile_root(group_id, actor_id))
+    return _load_state(chatgpt_browser_actor_state_root(group_id, actor_id))
+
+
+def record_chatgpt_browser_process_state(state: dict[str, Any]) -> None:
+    root = chatgpt_browser_profile_root()
+    current = _load_state(root)
+    _write_state(root, {**current, **dict(state or {})})
+
+
+def read_chatgpt_browser_process_state() -> dict[str, Any]:
+    return _load_state(chatgpt_browser_profile_root())
+
+
+def reset_chatgpt_browser_actor_runtime_state(group_id: str, actor_id: str) -> None:
+    """Clear actor binding/delivery state while preserving the Chrome login profile."""
+    state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
+    current = _load_state(state_root)
+    _write_state(
+        state_root,
+        {
+            **current,
+            "conversation_url": "",
+            "pending_new_chat_bind": False,
+            "pending_new_chat_url": "",
+            "pending_new_chat_bind_started_at": "",
+            "pending_new_chat_submitted": False,
+            "pending_new_chat_submitted_at": "",
+            "pending_new_chat_delivery_id": "",
+            "pending_new_chat_last_turn_id": "",
+            "pending_new_chat_last_event_ids": [],
+            "pending_new_chat_last_tab_url": "",
+            "new_chat_bound_at": "",
+            "bootstrap_seed_delivered_at": "",
+            "bootstrap_seed_version": "",
+            "bootstrap_seed_digest": "",
+            "bootstrap_seed_conversation_url": "",
+            "last_delivery_at": "",
+            "last_turn_id": "",
+            "last_event_ids": [],
+            "last_delivery_id": "",
+            "last_error": "",
+        },
+    )
 
 
 def _browser_channel_candidates() -> list[str]:
@@ -596,11 +702,17 @@ def _inspect_chatgpt_browser(
         context = contexts[0] if contexts else browser.new_context()
         pages = list(getattr(context, "pages", []) or [])
         page = next((item for item in pages if _normalize_chatgpt_url(str(item.url or ""))), None)
+        fallback_url = str(getattr(pages[0], "url", "") or "") if pages else ""
         if page is None and ensure_page:
             page = context.new_page()
             page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=30000)
         if page is None:
-            return {"tab_url": "", "ready": False, "login_required": True, "message": "ChatGPT tab is not open"}
+            return {
+                "tab_url": fallback_url,
+                "ready": False,
+                "login_required": True,
+                "message": "ChatGPT sign-in is required" if fallback_url else "ChatGPT tab is not open",
+            }
         if bring_to_front:
             page.bring_to_front()
         if not _normalize_chatgpt_url(str(page.url or "")):
@@ -620,14 +732,22 @@ def _inspect_chatgpt_browser(
         }
 
 
-def _session_payload(profile_root: Path, state: dict[str, Any], inspection: dict[str, Any] | None = None) -> dict[str, Any]:
+def _combined_session_state(actor_state: dict[str, Any], browser_state: dict[str, Any]) -> dict[str, Any]:
+    out = dict(actor_state or {})
+    for key in ("pid", "cdp_port", "browser_binary", "profile_dir", "visibility", "started_at"):
+        if key in browser_state:
+            out[key] = browser_state.get(key)
+    return out
+
+
+def _session_payload(state: dict[str, Any], inspection: dict[str, Any] | None = None) -> dict[str, Any]:
     port = int(state.get("cdp_port") or 0)
     alive = port > 0 and _wait_cdp_endpoint(port, timeout_seconds=0.4)
     payload = {
         "active": alive,
         "pid": int(state.get("pid") or 0),
         "cdp_port": port,
-        "profile_dir": str(_profile_dir(profile_root)),
+        "profile_dir": str(chatgpt_browser_profile_dir("", "")),
         "visibility": _normalize_visibility(str(state.get("visibility") or "visible")),
         "started_at": str(state.get("started_at") or ""),
         "updated_at": str(state.get("updated_at") or ""),
@@ -635,6 +755,18 @@ def _session_payload(profile_root: Path, state: dict[str, Any], inspection: dict
         "last_turn_id": str(state.get("last_turn_id") or ""),
         "last_tab_url": str(state.get("last_tab_url") or ""),
         "conversation_url": str(state.get("conversation_url") or ""),
+        "pending_new_chat_bind": bool(state.get("pending_new_chat_bind")),
+        "pending_new_chat_url": str(state.get("pending_new_chat_url") or ""),
+        "pending_new_chat_bind_started_at": str(state.get("pending_new_chat_bind_started_at") or ""),
+        "pending_new_chat_submitted": bool(state.get("pending_new_chat_submitted")),
+        "pending_new_chat_submitted_at": str(state.get("pending_new_chat_submitted_at") or ""),
+        "pending_new_chat_delivery_id": str(state.get("pending_new_chat_delivery_id") or ""),
+        "pending_new_chat_last_turn_id": str(state.get("pending_new_chat_last_turn_id") or ""),
+        "pending_new_chat_last_event_ids": state.get("pending_new_chat_last_event_ids")
+        if isinstance(state.get("pending_new_chat_last_event_ids"), list)
+        else [],
+        "pending_new_chat_last_tab_url": str(state.get("pending_new_chat_last_tab_url") or ""),
+        "new_chat_bound_at": str(state.get("new_chat_bound_at") or ""),
         "bootstrap_seed_delivered_at": str(state.get("bootstrap_seed_delivered_at") or ""),
         "auto_confirm_scan_at": str(state.get("auto_confirm_scan_at") or ""),
         "auto_confirm_pages_seen": int(state.get("auto_confirm_pages_seen") or 0),
@@ -654,53 +786,175 @@ def _session_payload(profile_root: Path, state: dict[str, Any], inspection: dict
 
 
 def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, Any]:
-    profile_root = _profile_root({"group_id": group_id, "actor_id": actor_id})
-    state = _load_state(profile_root)
-    port = int(state.get("cdp_port") or 0)
+    try:
+        resolve_pending_chatgpt_conversation(group_id, actor_id)
+    except Exception:
+        pass
+    actor_state = read_chatgpt_browser_state(group_id, actor_id)
+    browser_state = read_chatgpt_browser_process_state()
+    state = _combined_session_state(actor_state, browser_state)
+    port = int(browser_state.get("cdp_port") or 0)
     if port <= 0 or not _wait_cdp_endpoint(port, timeout_seconds=0.4):
-        return _session_payload(profile_root, state)
+        return _session_payload(state)
     try:
         inspection = _inspect_chatgpt_browser(port, input_timeout_seconds=0.8)
     except Exception as exc:
         inspection = {"ready": False, "login_required": True, "error": str(exc)[:1000]}
-    return _session_payload(profile_root, state, inspection)
+    return _session_payload(state, inspection)
+
+
+def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conversation_url: str) -> dict[str, Any]:
+    normalized = _conversation_url_from_tab(conversation_url)
+    if not normalized:
+        return {"ok": False, "resolved": False, "error": "invalid_conversation_url"}
+    now = utc_now_iso()
+    pending_url = _normalize_chatgpt_url(state.get("pending_new_chat_url")) or CHATGPT_URL
+    seed_url = _normalize_chatgpt_url(state.get("bootstrap_seed_conversation_url"))
+    update = {
+        "conversation_url": normalized,
+        "pending_new_chat_bind": False,
+        "pending_new_chat_url": "",
+        "pending_new_chat_bind_started_at": "",
+        "pending_new_chat_submitted": False,
+        "pending_new_chat_submitted_at": "",
+        "pending_new_chat_delivery_id": "",
+        "pending_new_chat_last_turn_id": "",
+        "pending_new_chat_last_event_ids": [],
+        "pending_new_chat_last_tab_url": "",
+        "new_chat_bound_at": now,
+        "last_tab_url": normalized,
+        "last_error": "",
+    }
+    if seed_url and seed_url == pending_url and str(state.get("bootstrap_seed_delivered_at") or "").strip():
+        update["bootstrap_seed_conversation_url"] = normalized
+    _write_state(state_root, {**state, **update})
+    return {"ok": True, "resolved": True, "conversation_url": normalized}
+
+
+def _page_pending_delivery_id(page: Any) -> str:
+    try:
+        value = page.evaluate("() => sessionStorage.getItem('cccc_pending_new_chat_delivery_id') || ''")
+    except Exception:
+        return ""
+    return str(value or "").strip()
+
+
+def _mark_page_pending_delivery(page: Any, delivery_id: str) -> None:
+    token = str(delivery_id or "").strip()
+    if not token:
+        return
+    try:
+        page.evaluate("value => sessionStorage.setItem('cccc_pending_new_chat_delivery_id', value)", token)
+    except Exception:
+        pass
+
+
+def resolve_pending_chatgpt_conversation(group_id: str, actor_id: str) -> dict[str, Any]:
+    """Resolve a previously submitted new ChatGPT chat once ChatGPT assigns /c/..."""
+    state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
+    state = _load_state(state_root)
+    if not bool(state.get("pending_new_chat_bind")):
+        conversation_url = _conversation_url_from_tab(state.get("conversation_url"))
+        return {"ok": True, "resolved": bool(conversation_url), "conversation_url": conversation_url, "pending": False}
+    if not bool(state.get("pending_new_chat_submitted")):
+        return {"ok": True, "resolved": False, "pending": True, "submitted": False}
+    candidates = (
+        state.get("conversation_url"),
+        state.get("last_tab_url"),
+        state.get("auto_confirm_last_page_url"),
+        state.get("pending_new_chat_last_tab_url"),
+    )
+    for candidate in candidates:
+        conversation_url = _conversation_url_from_tab(candidate)
+        if conversation_url:
+            return _record_pending_new_chat_bound(state_root, state, conversation_url)
+    browser_state = read_chatgpt_browser_process_state()
+    port = int(browser_state.get("cdp_port") or 0)
+    if port <= 0 or not _wait_cdp_endpoint(port, timeout_seconds=0.4):
+        return {"ok": True, "resolved": False, "pending": True, "submitted": True, "browser_active": False}
+    expected_delivery_id = str(state.get("pending_new_chat_delivery_id") or "").strip()
+    sync_playwright = ensure_sync_playwright()
+    with sync_playwright() as pw:
+        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        contexts = list(getattr(browser, "contexts", []) or [])
+        matching: list[str] = []
+        fallback: list[str] = []
+        for context in contexts:
+            for page in list(getattr(context, "pages", []) or []):
+                page_url = str(getattr(page, "url", "") or "")
+                conversation_url = _conversation_url_from_tab(page_url)
+                if not conversation_url:
+                    continue
+                if expected_delivery_id and _page_pending_delivery_id(page) == expected_delivery_id:
+                    matching.append(conversation_url)
+                else:
+                    fallback.append(conversation_url)
+        unique_matching = list(dict.fromkeys(matching))
+        if len(unique_matching) == 1:
+            return _record_pending_new_chat_bound(state_root, state, unique_matching[0])
+        unique_fallback = list(dict.fromkeys(fallback))
+        if not expected_delivery_id and len(unique_fallback) == 1:
+            return _record_pending_new_chat_bound(state_root, state, unique_fallback[0])
+    return {
+        "ok": True,
+        "resolved": False,
+        "pending": True,
+        "submitted": True,
+        "browser_active": True,
+        "ambiguous": True,
+    }
 
 
 def open_chatgpt_browser_session(group_id: str, actor_id: str, *, visibility: str = "visible") -> dict[str, Any]:
-    profile_root = _profile_root({"group_id": group_id, "actor_id": actor_id})
+    _ensure_shared_profile_migrated(group_id, actor_id)
+    browser_root = chatgpt_browser_profile_root(group_id, actor_id)
     normalized_visibility = _normalize_visibility(visibility)
-    state = _start_or_reuse_browser(profile_root, visibility=normalized_visibility)
+    state = _start_or_reuse_browser(browser_root, visibility=normalized_visibility)
     port = int(state.get("cdp_port") or 0)
     inspection = _inspect_chatgpt_browser(
         port,
         bring_to_front=normalized_visibility == "visible",
         ensure_page=True,
     )
-    _write_state(profile_root, {**state, "last_tab_url": str(inspection.get("tab_url") or "")})
-    return _session_payload(profile_root, _load_state(profile_root), inspection)
+    record_chatgpt_browser_process_state({**state, "last_tab_url": str(inspection.get("tab_url") or "")})
+    record_chatgpt_browser_state(group_id, actor_id, {"last_tab_url": str(inspection.get("tab_url") or "")})
+    actor_state = read_chatgpt_browser_state(group_id, actor_id)
+    browser_state = read_chatgpt_browser_process_state()
+    return _session_payload(_combined_session_state(actor_state, browser_state), inspection)
 
 
 def close_chatgpt_browser_session(group_id: str, actor_id: str) -> dict[str, Any]:
-    profile_root = _profile_root({"group_id": group_id, "actor_id": actor_id})
-    state = _load_state(profile_root)
+    actor_state = read_chatgpt_browser_state(group_id, actor_id)
+    state = read_chatgpt_browser_process_state()
     _stop_browser_state(state)
     next_state = {**state, "pid": 0, "cdp_port": 0}
-    _write_state(profile_root, next_state)
-    return _session_payload(profile_root, next_state)
+    record_chatgpt_browser_process_state(next_state)
+    return _session_payload(_combined_session_state(actor_state, next_state))
 
 
 def submit_to_chatgpt(payload: dict[str, Any]) -> dict[str, Any]:
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         raise RuntimeError("payload.prompt is required")
-    profile_root = _profile_root(payload)
-    prior_state = _load_state(profile_root)
+    group_id = str(payload.get("group_id") or "").strip()
+    actor_id = str(payload.get("actor_id") or "").strip()
+    _ensure_shared_profile_migrated(group_id, actor_id)
+    browser_root = chatgpt_browser_profile_root(group_id, actor_id)
+    actor_state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
+    prior_state = _load_state(actor_state_root)
     visibility = _normalize_visibility(str(payload.get("browser_visibility") or "") or _browser_visibility_from_env(_default_delivery_visibility()))
-    target_url = _normalize_chatgpt_url(payload.get("target_url")) or _normalize_chatgpt_url(prior_state.get("conversation_url"))
-    browser_state = _start_or_reuse_browser(profile_root, visibility=visibility)
+    auto_bind_new_chat = bool(payload.get("auto_bind_new_chat"))
+    pending_url = _normalize_chatgpt_url(prior_state.get("pending_new_chat_url")) if auto_bind_new_chat else ""
+    target_url = (
+        _normalize_chatgpt_url(payload.get("target_url"))
+        or pending_url
+        or _normalize_chatgpt_url(prior_state.get("conversation_url"))
+    )
+    browser_state = _start_or_reuse_browser(browser_root, visibility=visibility)
     cdp_port = int(browser_state.get("cdp_port") or 0)
     if cdp_port <= 0:
         raise RuntimeError("browser CDP port is unavailable")
+    delivery_id = f"browser:{uuid.uuid4().hex}"
 
     sync_playwright = ensure_sync_playwright()
     with sync_playwright() as pw:
@@ -724,43 +978,94 @@ def submit_to_chatgpt(payload: dict[str, Any]) -> dict[str, Any]:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
             elif not _normalize_chatgpt_url(str(page.url or "")):
                 page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=30000)
+        current_chatgpt_url = _normalize_chatgpt_url(str(page.url or ""))
+        if not current_chatgpt_url:
+            raise RuntimeError(f"ChatGPT sign-in required before delivery; current page is {str(page.url or '')[:200]}")
+        if auto_bind_new_chat:
+            _mark_page_pending_delivery(page, delivery_id)
         submit = _submit_prompt(
             page,
             prompt,
             input_timeout_seconds=float(os.environ.get("CCCC_WEB_MODEL_BROWSER_INPUT_TIMEOUT_SECONDS") or 30.0),
         )
+        conversation_url = _conversation_url_from_tab(str(page.url or ""))
+        if auto_bind_new_chat and not conversation_url:
+            conversation_url = _wait_for_conversation_url(
+                page,
+                timeout_seconds=float(os.environ.get("CCCC_WEB_MODEL_NEW_CHAT_BIND_TIMEOUT_SECONDS") or 20.0),
+            )
         tab_url = str(page.url or "")
-        conversation_url = _conversation_url_from_tab(tab_url) or target_url
+        pending_conversation_url = bool(auto_bind_new_chat and not conversation_url)
+        conversation_url = conversation_url or ("" if pending_conversation_url else target_url)
 
+    now = utc_now_iso()
+    pending_url_for_state = _normalize_chatgpt_url(target_url) or pending_url or CHATGPT_URL
     _write_state(
-        profile_root,
+        actor_state_root,
         {
-            **browser_state,
+            **prior_state,
             **({"conversation_url": conversation_url} if conversation_url else {}),
-            "last_delivery_at": utc_now_iso(),
+            **(
+                {
+                    "pending_new_chat_bind": False,
+                    "pending_new_chat_url": "",
+                    "pending_new_chat_bind_started_at": "",
+                    "pending_new_chat_submitted": False,
+                    "pending_new_chat_submitted_at": "",
+                    "pending_new_chat_delivery_id": "",
+                    "pending_new_chat_last_turn_id": "",
+                    "pending_new_chat_last_event_ids": [],
+                    "pending_new_chat_last_tab_url": "",
+                    "new_chat_bound_at": utc_now_iso(),
+                    "last_error": "",
+                }
+                if auto_bind_new_chat and conversation_url
+                else {}
+            ),
+            **(
+                {
+                    "conversation_url": "",
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": pending_url_for_state,
+                    "pending_new_chat_submitted": True,
+                    "pending_new_chat_submitted_at": now,
+                    "pending_new_chat_delivery_id": delivery_id,
+                    "pending_new_chat_last_turn_id": str(payload.get("turn_id") or ""),
+                    "pending_new_chat_last_event_ids": list(payload.get("event_ids") or []),
+                    "pending_new_chat_last_tab_url": tab_url,
+                    "last_error": "conversation_url_pending",
+                }
+                if pending_conversation_url
+                else {}
+            ),
+            "last_delivery_at": now,
             "last_turn_id": str(payload.get("turn_id") or ""),
             "last_event_ids": list(payload.get("event_ids") or []),
             "last_tab_url": tab_url,
             **(
                 {
-                    "bootstrap_seed_delivered_at": utc_now_iso(),
+                    "bootstrap_seed_delivered_at": now,
                     "bootstrap_seed_version": str(payload.get("bootstrap_seed_version") or ""),
                     "bootstrap_seed_digest": str(payload.get("bootstrap_seed_digest") or ""),
-                    "bootstrap_seed_conversation_url": str(payload.get("bootstrap_seed_conversation_url") or target_url or conversation_url or ""),
+                    "bootstrap_seed_conversation_url": str(conversation_url or payload.get("bootstrap_seed_conversation_url") or target_url or ""),
                 }
                 if bool(payload.get("bootstrap_seed"))
                 else {}
             ),
         },
     )
+    record_chatgpt_browser_process_state({**browser_state, "last_tab_url": tab_url})
     return {
         "ok": True,
-        "delivery_id": f"browser:{uuid.uuid4().hex}",
+        "delivery_id": delivery_id,
         "browser": {
             "provider": str(payload.get("provider") or "chatgpt_web"),
             "tab_url": tab_url,
             "conversation_url": conversation_url,
-            "profile_dir": str(_profile_dir(profile_root)),
+            "auto_bind_new_chat": auto_bind_new_chat,
+            "pending_conversation_url": pending_conversation_url,
+            "submitted_without_conversation_url": pending_conversation_url,
+            "profile_dir": str(chatgpt_browser_profile_dir(group_id, actor_id)),
             "cdp_port": cdp_port,
             "pid": int(browser_state.get("pid") or 0),
             "reused": bool(browser_state.get("reused")),

@@ -86,9 +86,9 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "mcp_add_pattern": None,
     },
     "web_model": {
-        "display_name": "Browser Web Model",
+        "display_name": "ChatGPT Web Model",
         "command": "",
-        "capabilities": "Remote MCP connector; pull-based turns; no local process",
+        "capabilities": "ChatGPT browser delivery + remote MCP connector; no local process",
         "mcp_add_pattern": None,
     },
 }

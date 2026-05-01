@@ -98,14 +98,17 @@ Add a new actor to the group.
 ```bash
 cccc actor add <actor_id> --runtime claude
 cccc actor add <actor_id> --runtime codex
+cccc actor add <actor_id> --runtime web_model
 cccc actor add <actor_id> --runtime custom --command "my-agent"
 ```
 
 Options:
-- `--runtime`: Agent runtime (claude, codex, droid, etc.)
+- `--runtime`: Agent runtime (claude, codex, web_model, droid, etc.)
 - `--command`: Custom command (for custom runtime)
-- `--runner`: Runner type (pty or headless)
+- `--runner`: Runner type (pty or headless; web_model is headless-only)
 - `--title`: Display title
+
+For the ChatGPT Web Model actor, create the actor first, then finish MCP URL and chat binding in `Settings > Global > ChatGPT Web Model`.
 
 ### `cccc actor`
 

@@ -27,7 +27,7 @@ Use MCP chat for any visible update. Keep this short.
 Goal:
 1. Collect exactly three short lines from each active owner: current status, next step, blocker.
 2. Treat this as a coordination interrupt, not a task switch.
-3. Do not answer from fuzzy memory. If current status, next step, or blocker is not grounded in fresh context, run `cccc_bootstrap`, follow `memory_recall_gate`, and open `cccc_help` before replying.
+3. Do not answer from fuzzy memory. If current status, next step, or blocker is not grounded in fresh context, use MCP tool `cccc_bootstrap`, follow `memory_recall_gate`, and open `cccc_help` before replying.
 4. After the checkpoint, return to your prior active task unless priority changed or a real blocker appeared.
 
 Only update shared state if the checkpoint changed shared truth.
