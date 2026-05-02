@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.request import urlopen
 
+from ...util.node_env import suppress_node_deprecation_warnings_in_process, with_node_deprecation_warnings_suppressed
 from ...util.time import utc_now_iso
 
 _FRAME_INTERVAL_SECONDS = 0.35
@@ -74,6 +75,7 @@ def install_playwright_chromium() -> None:
         capture_output=True,
         text=True,
         timeout=600,
+        env=with_node_deprecation_warnings_suppressed(os.environ),
     )
     if proc.returncode != 0:
         detail = str(proc.stderr or "").strip() or str(proc.stdout or "").strip() or "playwright install chromium failed"
@@ -81,6 +83,7 @@ def install_playwright_chromium() -> None:
 
 
 def ensure_sync_playwright():
+    suppress_node_deprecation_warnings_in_process()
     try:
         from playwright.sync_api import sync_playwright
 

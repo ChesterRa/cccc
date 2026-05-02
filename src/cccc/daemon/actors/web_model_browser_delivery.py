@@ -23,6 +23,7 @@ from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...kernel.web_model_connectors import list_web_model_connectors
 from ...util.time import parse_utc_iso, utc_now_iso
+from ...util.node_env import with_node_deprecation_warnings_suppressed
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
     _conversation_url_from_tab,
@@ -286,7 +287,7 @@ def _sidecar_payload(
 def _sidecar_env(actor: Dict[str, Any]) -> Dict[str, str]:
     env = os.environ.copy()
     env.update(_actor_env(actor))
-    return env
+    return with_node_deprecation_warnings_suppressed(env)
 
 
 def _run_sidecar(command: List[str], payload: Dict[str, Any], *, timeout_seconds: float, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:

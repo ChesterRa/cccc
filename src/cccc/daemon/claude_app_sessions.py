@@ -32,6 +32,7 @@ from .mcp_install import ensure_mcp_installed
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
+from ..util.node_env import with_node_deprecation_warnings_suppressed
 from ..util.process import pid_is_alive
 from ..util.time import utc_now_iso
 from .voice_secretary_control_turns import (
@@ -497,6 +498,7 @@ class ClaudeAppSession:
             env.setdefault("CCCC_HOME", str(ensure_home()))
             env.setdefault("CCCC_GROUP_ID", self.group_id)
             env.setdefault("CCCC_ACTOR_ID", self.actor_id)
+            env = with_node_deprecation_warnings_suppressed(env)
             if not ensure_mcp_installed("claude", self.cwd, auto_mcp_runtimes=("claude",), env=env):
                 raise RuntimeError("failed to install MCP for runtime: claude")
 
