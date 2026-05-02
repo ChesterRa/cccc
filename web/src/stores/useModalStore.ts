@@ -43,10 +43,13 @@ interface ModalState {
   presentationPin: PresentationPinState | null;
   presentationAttention: PresentationAttentionState;
   editingActor: Actor | null;
+  settingsTarget: { scope?: "group" | "global"; tab?: string; nonce: number } | null;
 
   // Actions
   openModal: (name: keyof ModalState["modals"]) => void;
   closeModal: (name: keyof ModalState["modals"]) => void;
+  openSettingsTarget: (target: { scope?: "group" | "global"; tab?: string }) => void;
+  clearSettingsTarget: () => void;
   setRecipientsModal: (eventId: string | null) => void;
   setRelayModal: (eventId: string | null, groupId?: string, event?: LedgerEvent | null) => void;
   openContextTask: (taskId: string) => void;
@@ -78,6 +81,7 @@ export const useModalStore = create<ModalState>((set) => ({
   presentationPin: null,
   presentationAttention: {},
   editingActor: null,
+  settingsTarget: null,
 
   openModal: (name) =>
     set((state) => ({
@@ -88,7 +92,19 @@ export const useModalStore = create<ModalState>((set) => ({
     set((state) => ({
       modals: { ...state.modals, [name]: false },
       ...(name === "context" ? { contextTaskId: null } : {}),
+      ...(name === "settings" ? { settingsTarget: null } : {}),
     })),
+
+  openSettingsTarget: (target) =>
+    set((state) => ({
+      modals: { ...state.modals, settings: true },
+      settingsTarget: {
+        scope: target.scope === "global" ? "global" : target.scope === "group" ? "group" : undefined,
+        tab: typeof target.tab === "string" ? target.tab : undefined,
+        nonce: Date.now(),
+      },
+    })),
+  clearSettingsTarget: () => set({ settingsTarget: null }),
 
   setRecipientsModal: (eventId) => set({ recipientsEventId: eventId }),
   setRelayModal: (eventId, groupId, event) =>

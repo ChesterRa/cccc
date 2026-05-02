@@ -12,6 +12,8 @@ from typing import Any
 from ..browser.projected_browser_runtime import ProjectedBrowserSessionManager
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
+    _conversation_url_from_tab,
+    _normalize_chatgpt_url,
     chatgpt_browser_profile_dir,
     close_chatgpt_browser_session,
     read_chatgpt_browser_process_state,
@@ -99,6 +101,19 @@ def _close_prior_browser_state(group_id: str, actor_id: str) -> None:
         pass
 
 
+def _open_url_for_actor(group_id: str, actor_id: str) -> str:
+    state = read_chatgpt_browser_state(group_id, actor_id)
+    if bool(state.get("pending_new_chat_bind")):
+        return _normalize_chatgpt_url(state.get("pending_new_chat_url")) or CHATGPT_URL
+    conversation_url = _conversation_url_from_tab(state.get("conversation_url"))
+    if conversation_url:
+        return conversation_url
+    last_conversation_url = _conversation_url_from_tab(state.get("last_tab_url"))
+    if last_conversation_url:
+        return last_conversation_url
+    return CHATGPT_URL
+
+
 def open_web_model_chatgpt_browser_session(
     *,
     group_id: str,
@@ -106,13 +121,20 @@ def open_web_model_chatgpt_browser_session(
     width: int,
     height: int,
 ) -> dict[str, Any]:
+    existing = _MANAGER.info(key=_session_key(group_id, actor_id))
+    if bool(existing.get("active")) and str(existing.get("state") or "").strip() in {"starting", "ready"}:
+        _record_sidecar_state(group_id, actor_id, existing)
+        ensure_web_model_tool_confirm_watcher(group_id, actor_id)
+        return existing
+
     profile_dir = chatgpt_browser_profile_dir(group_id, actor_id)
+    start_url = _open_url_for_actor(group_id, actor_id)
     _ = _MANAGER.close(key=_session_key(group_id, actor_id))
     _close_prior_browser_state(group_id, actor_id)
     state = _MANAGER.open(
         key=_session_key(group_id, actor_id),
         profile_dir=profile_dir,
-        url=CHATGPT_URL,
+        url=start_url,
         width=width,
         height=height,
         headless=False,

@@ -157,7 +157,10 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertIn("cccc_runtime_complete_turn", names)
             self.assertIn("cccc_repo", names)
             self.assertIn("cccc_repo_edit", names)
+            self.assertIn("cccc_apply_patch", names)
             self.assertIn("cccc_shell", names)
+            self.assertIn("cccc_exec_command", names)
+            self.assertIn("cccc_write_stdin", names)
             self.assertIn("cccc_git", names)
             self.assertIn("cccc_actor", names)
             self.assertIn("cccc_group", names)
@@ -246,6 +249,8 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertIn("cccc_actor", names)
             self.assertIn("cccc_capability_enable", names)
             self.assertIn("cccc_shell", names)
+            self.assertIn("cccc_exec_command", names)
+            self.assertIn("cccc_write_stdin", names)
             self.assertNotIn("cccc_voice_secretary_document", names)
 
             actor_call = client.post(
@@ -467,10 +472,80 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             subprocess.run(["git", "init"], cwd=str(workspace), check=True, capture_output=True, text=True)
             subprocess.run(["git", "config", "user.email", "cccc@example.invalid"], cwd=str(workspace), check=True)
             subprocess.run(["git", "config", "user.name", "CCCC Test"], cwd=str(workspace), check=True)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "app.txt").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
             group = self._create_group_with_actor(str(workspace))
             admin = str(create_access_token("admin", is_admin=True).get("token") or "")
             client = self._client()
             connector_id, secret = self._create_connector(client, admin, group)
+
+            list_dir_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 190,
+                    "method": "tools/call",
+                    "params": {"name": "cccc_repo", "arguments": {"action": "list_dir", "path": ".", "depth": 2}},
+                },
+            )
+            self.assertEqual(list_dir_resp.status_code, 200)
+            list_dir_payload = json.loads((((list_dir_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertIn("src/app.txt", {str(item.get("path") or "") for item in list_dir_payload.get("entries") or [] if isinstance(item, dict)})
+
+            range_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 191,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_repo",
+                        "arguments": {"action": "read", "path": "src/app.txt", "start_line": 2, "end_line": 3},
+                    },
+                },
+            )
+            self.assertEqual(range_resp.status_code, 200)
+            range_payload = json.loads((((range_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertEqual(range_payload.get("content"), "two\nthree\n")
+            self.assertEqual(range_payload.get("start_line"), 2)
+            self.assertEqual(range_payload.get("end_line"), 3)
+
+            patch_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 192,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_apply_patch",
+                        "arguments": {
+                            "patch": "\n".join(
+                                [
+                                    "*** Begin Patch",
+                                    "*** Update File: src/app.txt",
+                                    "@@",
+                                    " one",
+                                    "-two",
+                                    "+TWO",
+                                    " three",
+                                    "*** Add File: src/new.txt",
+                                    "+created",
+                                    "*** End Patch",
+                                    "",
+                                ]
+                            )
+                        },
+                    },
+                },
+            )
+            self.assertEqual(patch_resp.status_code, 200)
+            patch_payload = json.loads((((patch_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertTrue(bool(patch_payload.get("applied")))
+            self.assertEqual((workspace / "src" / "app.txt").read_text(encoding="utf-8"), "one\nTWO\nthree\nfour\n")
+            self.assertEqual((workspace / "src" / "new.txt").read_text(encoding="utf-8"), "created\n")
 
             shell_resp = client.post(
                 f"/mcp/web-model/{connector_id}",
@@ -484,9 +559,142 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             )
             self.assertEqual(shell_resp.status_code, 200)
             shell_payload = json.loads((((shell_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertTrue(bool(shell_payload.get("ok")))
             self.assertEqual(shell_payload.get("returncode"), 0)
             self.assertIn("shell-ok", str(shell_payload.get("stdout") or ""))
             self.assertEqual((workspace / "shell.txt").read_text(encoding="utf-8"), "shell-ok")
+
+            exec_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 200,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_exec_command",
+                        "arguments": {
+                            "command": "printf exec-start; sleep 0.2; printf exec-done",
+                            "yield_time_ms": 10,
+                        },
+                    },
+                },
+            )
+            self.assertEqual(exec_resp.status_code, 200)
+            exec_payload = json.loads((((exec_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertTrue(bool(exec_payload.get("running")))
+            exec_session_id = str(exec_payload.get("session_id") or "")
+            self.assertTrue(exec_session_id)
+
+            exec_poll = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2001,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_write_stdin",
+                        "arguments": {"session_id": exec_session_id, "yield_time_ms": 300},
+                    },
+                },
+            )
+            self.assertEqual(exec_poll.status_code, 200)
+            poll_payload = json.loads((((exec_poll.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertFalse(bool(poll_payload.get("running")))
+            self.assertEqual(poll_payload.get("returncode"), 0)
+            self.assertIn("exec-done", str(poll_payload.get("output") or ""))
+
+            read_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 201,
+                    "method": "tools/call",
+                    "params": {"name": "cccc_repo", "arguments": {"action": "read", "path": "shell.txt"}},
+                },
+            )
+            self.assertEqual(read_resp.status_code, 200)
+            read_payload = json.loads((((read_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertEqual(read_payload.get("content"), "shell-ok")
+            original_sha = str(read_payload.get("sha256") or "")
+            self.assertTrue(original_sha)
+
+            replace_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 202,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_repo_edit",
+                        "arguments": {
+                            "action": "replace",
+                            "path": "shell.txt",
+                            "old_text": "shell-ok",
+                            "new_text": "shell-better",
+                            "expected_sha256": original_sha,
+                        },
+                    },
+                },
+            )
+            self.assertEqual(replace_resp.status_code, 200)
+            replace_payload = json.loads((((replace_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertTrue(bool(replace_payload.get("replaced")))
+            self.assertNotEqual(str(replace_payload.get("sha256") or ""), original_sha)
+            self.assertEqual((workspace / "shell.txt").read_text(encoding="utf-8"), "shell-better")
+
+            stale_replace = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 203,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_repo_edit",
+                        "arguments": {
+                            "action": "replace",
+                            "path": "shell.txt",
+                            "old_text": "shell-better",
+                            "new_text": "shell-final",
+                            "expected_sha256": original_sha,
+                        },
+                    },
+                },
+            )
+            self.assertEqual(stale_replace.status_code, 200)
+            self.assertIn("stale_file", json.dumps(stale_replace.json(), ensure_ascii=False))
+            self.assertEqual((workspace / "shell.txt").read_text(encoding="utf-8"), "shell-better")
+
+            fresh_sha = str(replace_payload.get("sha256") or "")
+            multi_replace = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 204,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_repo_edit",
+                        "arguments": {
+                            "action": "multi_replace",
+                            "path": "shell.txt",
+                            "expected_sha256": fresh_sha,
+                            "replacements": [
+                                {"old_text": "shell", "new_text": "mcp", "expected_replacements": 1},
+                                {"old_text": "better", "new_text": "better-again", "expected_replacements": 1},
+                            ],
+                        },
+                    },
+                },
+            )
+            self.assertEqual(multi_replace.status_code, 200)
+            multi_payload = json.loads((((multi_replace.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertEqual(multi_payload.get("replacements"), 2)
+            self.assertEqual((workspace / "shell.txt").read_text(encoding="utf-8"), "mcp-better-again")
 
             mkdir_resp = client.post(
                 f"/mcp/web-model/{connector_id}",
@@ -516,6 +724,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             )
             self.assertEqual(move_resp.status_code, 200)
             self.assertTrue((workspace / "notes" / "shell.txt").exists())
+            self.assertEqual((workspace / "notes" / "shell.txt").read_text(encoding="utf-8"), "mcp-better-again")
 
             git_status = client.post(
                 f"/mcp/web-model/{connector_id}",
@@ -542,7 +751,9 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                 },
             )
             self.assertEqual(git_add.status_code, 200)
-            self.assertEqual(json.loads((((git_add.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}").get("returncode"), 0)
+            git_add_payload = json.loads((((git_add.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            self.assertTrue(bool(git_add_payload.get("ok")))
+            self.assertEqual(git_add_payload.get("returncode"), 0)
 
             git_commit = client.post(
                 f"/mcp/web-model/{connector_id}",

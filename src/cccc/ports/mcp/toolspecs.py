@@ -291,8 +291,9 @@ MCP_TOOLS = [
         "name": "cccc_repo",
         "description": (
             "Read-only active workspace repository inspection for remote runtimes: "
-            "action=info|list|read. All paths are constrained to the group's active scope root. "
-            "Use cccc_repo_edit for write/apply_patch/mkdir/delete/move."
+            "action=info|list|list_dir|read. All paths are constrained to the group's active scope root. "
+            "Read returns sha256 and supports start_line/end_line; pass sha256 back as expected_sha256 before writing. "
+            "Use cccc_repo_edit or cccc_apply_patch for writes."
         ),
         "annotations": {"readOnlyHint": True},
         "inputSchema": _obj(
@@ -300,13 +301,17 @@ MCP_TOOLS = [
                 **_COMMON_GROUP,
                 "action": {
                     "type": "string",
-                    "enum": ["info", "list", "read"],
+                    "enum": ["info", "list", "list_dir", "read"],
                     "default": "info",
                 },
                 "path": {"type": "string", "description": "Relative path under the active workspace root."},
                 "file_path": {"type": "string", "description": "Alias for path."},
                 "max_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
                 "limit": {"type": "integer", "default": 200, "minimum": 1, "maximum": 500},
+                "offset": {"type": "integer", "default": 1, "minimum": 1, "description": "For action=list_dir, 1-indexed entry offset."},
+                "depth": {"type": "integer", "default": 2, "minimum": 1, "maximum": 8, "description": "For action=list_dir, maximum directory depth."},
+                "start_line": {"type": "integer", "minimum": 1, "description": "For action=read, first 1-indexed line to return."},
+                "end_line": {"type": "integer", "minimum": 1, "description": "For action=read, final 1-indexed line to return."},
                 "include_hidden": {"type": "boolean", "default": False},
             }
         ),
@@ -314,8 +319,9 @@ MCP_TOOLS = [
     {
         "name": "cccc_repo_edit",
         "description": (
-            "Write to the active workspace repository for remote runtimes: action=write|apply_patch|mkdir|delete|move. "
-            "Use cccc_repo for read-only info/list/read before editing. All paths are constrained to the group's active scope root."
+            "Write to the active workspace repository for remote runtimes: action=replace|multi_replace|write|apply_patch|mkdir|delete|move. "
+            "For small code edits, prefer read -> replace/multi_replace with expected_sha256, then cccc_git diff. "
+            "For file-oriented patches, prefer cccc_apply_patch with Codex *** Begin Patch format."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(
@@ -323,17 +329,39 @@ MCP_TOOLS = [
                 **_COMMON_GROUP,
                 "action": {
                     "type": "string",
-                    "enum": ["write", "apply_patch", "mkdir", "delete", "move"],
-                    "default": "apply_patch",
+                    "enum": ["replace", "multi_replace", "write", "apply_patch", "mkdir", "delete", "move"],
+                    "default": "replace",
                 },
                 "path": {"type": "string", "description": "Relative path under the active workspace root; required for write/delete/move/mkdir."},
                 "file_path": {"type": "string", "description": "Alias for path."},
                 "dest_path": {"type": "string", "description": "Destination path under the active workspace root; required for action=move."},
                 "to_path": {"type": "string", "description": "Alias for dest_path."},
-                "content": {"type": "string", "description": "Required for action=write."},
-                "patch": {"type": "string", "description": "Unified diff for action=apply_patch; applied with git apply."},
+                "content": {"type": "string", "description": "Required for action=write. Use expected_sha256 after reading unless intentionally creating a new file."},
+                "old_text": {"type": "string", "description": "Required for action=replace. Must exactly match current file text."},
+                "new_text": {"type": "string", "description": "Replacement text for action=replace."},
+                "replacements": {"type": "array", "items": {"type": "object"}, "description": "For action=multi_replace: ordered objects with old_text, new_text, optional expected_replacements, replace_all."},
+                "expected_sha256": {"type": "string", "description": "Optional sha256 from cccc_repo(action=read); rejects stale writes/replaces."},
+                "expected_replacements": {"type": "integer", "minimum": 1, "maximum": 10000, "description": "Optional exact old_text match count for action=replace."},
+                "replace_all": {"type": "boolean", "default": False, "description": "For action=replace, replace every old_text match instead of requiring a single exact match."},
+                "patch": {"type": "string", "description": "For action=apply_patch; must be Codex *** Begin Patch format. Git unified diff is not accepted here."},
                 "recursive": {"type": "boolean", "default": False, "description": "Required true to delete directories."},
                 "exist_ok": {"type": "boolean", "default": True, "description": "For action=mkdir."},
+            }
+        ),
+    },
+    {
+        "name": "cccc_apply_patch",
+        "description": (
+            "Codex-style file patch tool for Web Model local development. "
+            "Use *** Begin Patch / *** Add File / *** Update File / *** Delete File / *** End Patch. "
+            "File paths must be relative to the active workspace root."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "patch": {"type": "string", "description": "Complete Codex-style patch text starting with *** Begin Patch."},
+                "input": {"type": "string", "description": "Alias for patch."},
             }
         ),
     },
@@ -341,7 +369,8 @@ MCP_TOOLS = [
         "name": "cccc_shell",
         "description": (
             "Web Model local-power shell execution in the group's active workspace. "
-            "Run tests, builds, rg, scripts, and other local commands from a cwd constrained to the active scope root."
+            "Run tests, builds, rg, scripts, and other local commands from a cwd constrained to the active scope root. "
+            "Returns ok, returncode, stdout, stderr, and truncation flags. For long-running commands, prefer cccc_exec_command."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(
@@ -357,10 +386,49 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_exec_command",
+        "description": (
+            "Codex-style session shell execution in the group's active workspace. "
+            "Starts a command and returns output plus session_id when it is still running; use cccc_write_stdin to poll or send input."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "command": {"type": "string", "description": "Shell command to run under the active workspace root."},
+                "cmd": {"type": "string", "description": "Alias for command."},
+                "cwd": {"type": "string", "description": "Relative cwd under the active workspace root.", "default": "."},
+                "workdir": {"type": "string", "description": "Alias for cwd."},
+                "yield_time_ms": {"type": "integer", "default": 1000, "minimum": 0, "maximum": 30000},
+                "timeout_s": {"type": "integer", "default": 600, "minimum": 1, "maximum": 600},
+                "max_output_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
+                "env": {"type": "object", "additionalProperties": {"type": "string"}},
+            }
+        ),
+    },
+    {
+        "name": "cccc_write_stdin",
+        "description": (
+            "Writes characters to an existing cccc_exec_command session or polls it for more output."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                "session_id": {"type": "string"},
+                "chars": {"type": "string", "description": "Bytes/text to write to stdin; omit or empty to poll."},
+                "yield_time_ms": {"type": "integer", "default": 1000, "minimum": 0, "maximum": 30000},
+                "max_output_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
+                "terminate": {"type": "boolean", "default": False, "description": "Terminate the running session instead of waiting."},
+            },
+            required=["session_id"],
+        ),
+    },
+    {
         "name": "cccc_git",
         "description": (
             "Web Model local-power git operations in the group's active workspace: "
-            "action=status|diff|log|add|commit. Use cccc_shell for unusual git commands."
+            "action=status|diff|log|add|commit. Returns ok, returncode, stdout, stderr. "
+            "Use cccc_shell for unusual git commands."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(

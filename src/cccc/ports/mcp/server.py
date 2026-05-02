@@ -5,7 +5,7 @@ Static MCP surface:
 - cccc_help / cccc_bootstrap / cccc_project_info
 - cccc_inbox_list / cccc_inbox_mark_read
 - cccc_message_send / cccc_message_reply
-- cccc_file / cccc_repo / cccc_repo_edit / cccc_shell / cccc_git / cccc_voice_secretary_document / cccc_voice_secretary_request / cccc_group / cccc_actor / cccc_runtime_list
+- cccc_file / cccc_repo / cccc_repo_edit / cccc_apply_patch / cccc_shell / cccc_exec_command / cccc_write_stdin / cccc_git / cccc_voice_secretary_document / cccc_voice_secretary_request / cccc_group / cccc_actor / cccc_runtime_list
 - cccc_capability_search / cccc_capability_enable / cccc_capability_block / cccc_capability_state / cccc_capability_import / cccc_capability_uninstall / cccc_capability_use
 - cccc_space / cccc_automation
 - cccc_context_get / cccc_coordination / cccc_task / cccc_agent_state
@@ -73,7 +73,14 @@ from .handlers.cccc_messaging import (  # noqa: F401
     message_send,
     tracked_send,
 )
-from .handlers.cccc_repo import git_tool, repo_tool, shell_tool  # noqa: F401
+from .handlers.cccc_repo import (  # noqa: F401
+    apply_codex_patch_tool,
+    exec_command_tool,
+    git_tool,
+    repo_tool,
+    shell_tool,
+    write_stdin_tool,
+)
 from .handlers.presentation import (  # noqa: F401
     presentation_clear,
     presentation_get,
@@ -657,14 +664,18 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
     if name == "cccc_repo":
         gid = _resolve_group_id(arguments)
         action = str(arguments.get("action") or "info").strip().lower()
-        if action not in {"info", "list", "read"}:
-            raise MCPError(code="invalid_action", message="cccc_repo is read-only; use cccc_repo_edit for write/apply_patch/mkdir/delete/move")
+        if action not in {"info", "list", "list_dir", "read"}:
+            raise MCPError(code="invalid_action", message="cccc_repo is read-only; use cccc_repo_edit/cccc_apply_patch for writes")
         return repo_tool(
             group_id=gid,
             action=action,
             path=str(arguments.get("path") or arguments.get("file_path") or ""),
             max_bytes=arguments.get("max_bytes") or 200000,
             limit=arguments.get("limit") or 200,
+            offset=arguments.get("offset") or 1,
+            depth=arguments.get("depth") or 2,
+            start_line=arguments.get("start_line"),
+            end_line=arguments.get("end_line"),
             include_hidden=coerce_bool(arguments.get("include_hidden"), default=False),
         )
 
@@ -672,19 +683,39 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         _require_web_model_actor(gid, aid)
-        action = str(arguments.get("action") or "apply_patch").strip().lower()
-        if action not in {"write", "apply_patch", "mkdir", "delete", "move"}:
-            raise MCPError(code="invalid_action", message="cccc_repo_edit action must be write|apply_patch|mkdir|delete|move")
+        action = str(arguments.get("action") or "").strip().lower()
+        if not action:
+            if str(arguments.get("patch") or "").strip():
+                action = "apply_patch"
+            elif isinstance(arguments.get("replacements"), list):
+                action = "multi_replace"
+            elif str(arguments.get("content") or ""):
+                action = "write"
+            else:
+                action = "replace"
+        if action not in {"replace", "multi_replace", "write", "apply_patch", "mkdir", "delete", "move"}:
+            raise MCPError(code="invalid_action", message="cccc_repo_edit action must be replace|multi_replace|write|apply_patch|mkdir|delete|move")
         return repo_tool(
             group_id=gid,
             action=action,
             path=str(arguments.get("path") or arguments.get("file_path") or ""),
             dest_path=str(arguments.get("dest_path") or arguments.get("to_path") or ""),
-            content=str(arguments.get("content") or ""),
+            content=arguments.get("replacements") if action == "multi_replace" else str(arguments.get("content") or ""),
+            old_text=str(arguments.get("old_text") or ""),
+            new_text=str(arguments.get("new_text") or ""),
+            expected_sha256=str(arguments.get("expected_sha256") or arguments.get("expected_hash") or ""),
+            expected_replacements=arguments.get("expected_replacements"),
+            replace_all=coerce_bool(arguments.get("replace_all"), default=False),
             patch=str(arguments.get("patch") or ""),
             recursive=coerce_bool(arguments.get("recursive"), default=False),
             exist_ok=coerce_bool(arguments.get("exist_ok"), default=True),
         )
+
+    if name == "cccc_apply_patch":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        _require_web_model_actor(gid, aid)
+        return apply_codex_patch_tool(group_id=gid, patch=str(arguments.get("patch") or arguments.get("input") or ""))
 
     if name == "cccc_shell":
         gid = _resolve_group_id(arguments)
@@ -697,6 +728,32 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             timeout_s=arguments.get("timeout_s") or 60,
             max_output_bytes=arguments.get("max_output_bytes") or 200000,
             env=arguments.get("env") if isinstance(arguments.get("env"), dict) else None,
+        )
+
+    if name == "cccc_exec_command":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        _require_web_model_actor(gid, aid)
+        return exec_command_tool(
+            group_id=gid,
+            command=str(arguments.get("command") or arguments.get("cmd") or ""),
+            cwd=str(arguments.get("cwd") or arguments.get("workdir") or "."),
+            yield_time_ms=arguments.get("yield_time_ms") or 1000,
+            max_output_bytes=arguments.get("max_output_bytes") or 200000,
+            timeout_s=arguments.get("timeout_s") or 600,
+            env=arguments.get("env") if isinstance(arguments.get("env"), dict) else None,
+        )
+
+    if name == "cccc_write_stdin":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        _require_web_model_actor(gid, aid)
+        return write_stdin_tool(
+            session_id=str(arguments.get("session_id") or ""),
+            chars=str(arguments.get("chars") or ""),
+            yield_time_ms=arguments.get("yield_time_ms") or 1000,
+            max_output_bytes=arguments.get("max_output_bytes") or 200000,
+            terminate=coerce_bool(arguments.get("terminate"), default=False),
         )
 
     if name == "cccc_git":

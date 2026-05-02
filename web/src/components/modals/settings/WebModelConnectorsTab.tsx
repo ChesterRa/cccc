@@ -700,16 +700,31 @@ export default function WebModelConnectorsTab({
     pushNotice("ChatGPT sign-in surface opened below.");
   };
 
-  const refreshBrowserSession = async () => {
+  const checkBrowserSessionStatus = async () => {
     setBrowserBusy(true);
     setError("");
     try {
       if (showBrowserSurface) {
-        setBrowserSurfaceRefreshNonce((value) => value + 1);
         await loadBrowserSurfaceSession();
       } else {
         await loadBrowserSession();
       }
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
+  const reloadEmbeddedBrowser = async () => {
+    if (!groupId || !actorId) {
+      setError("Select a group with the ChatGPT Web Model actor first.");
+      return;
+    }
+    setBrowserBusy(true);
+    setError("");
+    try {
+      setBrowserSurfaceRefreshNonce((value) => value + 1);
+      await loadBrowserSurfaceSession();
+      pushNotice("ChatGPT page reload requested.");
     } finally {
       setBrowserBusy(false);
     }
@@ -1329,6 +1344,19 @@ export default function WebModelConnectorsTab({
 
               {showBrowserSurface && groupId && actorId ? (
                 <SetupSection title="Embedded ChatGPT browser">
+                  <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+                      Soft refresh reloads the current ChatGPT page while keeping this actor, group, browser profile, and delivery target.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void reloadEmbeddedBrowser()}
+                      disabled={browserBusy || !groupId || !actorId}
+                      className={secondaryButtonClass("sm")}
+                    >
+                      Reload ChatGPT page
+                    </button>
+                  </div>
                   <ProjectedBrowserSurfacePanel
                     isDark={isDark}
                     refreshNonce={browserSurfaceRefreshNonce}
@@ -1382,7 +1410,7 @@ export default function WebModelConnectorsTab({
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void refreshBrowserSession()}
+                    onClick={() => void checkBrowserSessionStatus()}
                     disabled={browserBusy || !groupId || !actorId}
                     className={secondaryButtonClass("sm")}
                   >

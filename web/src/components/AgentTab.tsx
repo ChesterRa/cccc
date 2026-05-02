@@ -12,6 +12,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
+import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
@@ -76,6 +77,7 @@ export function AgentTab({
   const { isRunning, workingState } = useActorDisplayState({ groupId, actor });
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
+  const isWebModel = String(actor.runtime || "").trim().toLowerCase() === "web_model";
   const canControl = !readOnly;
   const latestHeadlessText = useGroupStore((state) => {
     const bucket = state.chatByGroup[String(groupId || "").trim()];
@@ -836,18 +838,35 @@ export function AgentTab({
       <div className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
           <div className="flex h-full min-h-0 flex-col px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3">
-            <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 min-h-0 flex-1">
-              <div className="min-h-0 flex-1">
-                <HeadlessRuntimePanel
-                  actorId={actor.id}
-                  previewSessions={headlessPreviewSessions}
-                  fallbackText={latestHeadlessText}
-                  fallbackActivities={latestHeadlessActivities}
-                  rawEvents={rawHeadlessEvents}
-                  emptyLabel={t('noStreamingOutputYet', { defaultValue: 'There is no streaming output to show yet.' })}
+            <div
+              className={classNames(
+                "mx-auto flex w-full min-h-0 flex-1 flex-col",
+                isWebModel ? "max-w-none gap-3" : "max-w-6xl gap-4",
+              )}
+            >
+              {isWebModel ? (
+                <WebModelRuntimePanel
+                  groupId={groupId}
+                  actor={actor}
                   isDark={isDark}
+                  isVisible={isVisible}
+                  isRunning={isRunning}
+                  readOnly={readOnly}
                 />
-              </div>
+              ) : null}
+              {!isWebModel ? (
+                <div className="min-h-0 flex-1">
+                  <HeadlessRuntimePanel
+                    actorId={actor.id}
+                    previewSessions={headlessPreviewSessions}
+                    fallbackText={latestHeadlessText}
+                    fallbackActivities={latestHeadlessActivities}
+                    rawEvents={rawHeadlessEvents}
+                    emptyLabel={t('noStreamingOutputYet', { defaultValue: 'There is no streaming output to show yet.' })}
+                    isDark={isDark}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         ) : isRunning ? (

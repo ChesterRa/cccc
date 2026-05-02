@@ -3,7 +3,7 @@ import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } fro
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession, WeixinLoginStatus } from "../types";
 import * as api from "../services/api";
-import { useObservabilityStore } from "../stores";
+import { useModalStore, useObservabilityStore } from "../stores";
 import type { RuntimeVisibilityMode } from "../utils/runtimeVisibility";
 import {
   SettingsScope,
@@ -76,6 +76,8 @@ export function SettingsModal({
   const [globalTab, setGlobalTab] = useState<GlobalTabId>("capabilities");
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
+  const settingsTarget = useModalStore((state) => state.settingsTarget);
+  const clearSettingsTarget = useModalStore((state) => state.clearSettingsTarget);
 
   // Automation + delivery settings state
   const [nudgeSeconds, setNudgeSeconds] = useState(300);
@@ -947,6 +949,20 @@ export function SettingsModal({
       setGlobalTab(globalTabs[0].id);
     }
   }, [globalTab, globalTabs, scope]);
+
+  useEffect(() => {
+    if (!isOpen || !settingsTarget) return;
+    const nextScope = settingsTarget.scope === "global" ? "global" : settingsTarget.scope === "group" ? "group" : "";
+    const nextTab = String(settingsTarget.tab || "").trim();
+    if (nextScope === "global") {
+      setScope("global");
+      if (nextTab) setGlobalTab(nextTab as GlobalTabId);
+    } else if (nextScope === "group") {
+      setScope("group");
+      if (nextTab) setGroupTab(nextTab as GroupTabId);
+    }
+    clearSettingsTarget();
+  }, [clearSettingsTarget, isOpen, settingsTarget]);
 
   const groupTabs: { id: GroupTabId; label: string }[] = [
     { id: "guidance", label: t("tabs.guidance") },

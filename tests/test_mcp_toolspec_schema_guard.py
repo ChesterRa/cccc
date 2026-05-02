@@ -115,19 +115,36 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIsInstance(repo_annotations, dict)
         self.assertTrue(repo_annotations.get("readOnlyHint"))
         repo_props = ((repo.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo, dict) else {}
-        self.assertEqual((repo_props.get("action") or {}).get("enum"), ["info", "list", "read"])
+        self.assertEqual((repo_props.get("action") or {}).get("enum"), ["info", "list", "list_dir", "read"])
+        self.assertIn("start_line", repo_props)
+        self.assertIn("end_line", repo_props)
 
         edit_annotations = repo_edit.get("annotations") if isinstance(repo_edit, dict) else {}
         self.assertIsInstance(edit_annotations, dict)
         self.assertFalse(edit_annotations.get("readOnlyHint"))
         self.assertTrue(edit_annotations.get("destructiveHint"))
         edit_props = ((repo_edit.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo_edit, dict) else {}
-        self.assertEqual((edit_props.get("action") or {}).get("enum"), ["write", "apply_patch", "mkdir", "delete", "move"])
+        self.assertEqual((edit_props.get("action") or {}).get("enum"), ["replace", "multi_replace", "write", "apply_patch", "mkdir", "delete", "move"])
+        self.assertIn("old_text", edit_props)
+        self.assertIn("replacements", edit_props)
+        self.assertIn("expected_sha256", edit_props)
+        apply_patch = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_apply_patch"), None)
+        self.assertIsInstance(apply_patch, dict)
+        self.assertIn("Codex-style", str(apply_patch.get("description") or ""))
 
     def test_web_model_local_power_tools_are_not_generic_core_tools(self) -> None:
         from cccc.kernel.capabilities import CORE_BASIC_TOOLS, WEB_MODEL_CORE_TOOLS, resolve_core_tool_names
 
-        web_model_only_tools = {"cccc_runtime_wait_next_turn", "cccc_runtime_complete_turn", "cccc_shell", "cccc_git"}
+        web_model_only_tools = {
+            "cccc_runtime_wait_next_turn",
+            "cccc_runtime_complete_turn",
+            "cccc_repo_edit",
+            "cccc_apply_patch",
+            "cccc_shell",
+            "cccc_exec_command",
+            "cccc_write_stdin",
+            "cccc_git",
+        }
         self.assertFalse(web_model_only_tools & set(CORE_BASIC_TOOLS))
         self.assertTrue(web_model_only_tools <= set(WEB_MODEL_CORE_TOOLS))
         self.assertFalse(web_model_only_tools & resolve_core_tool_names(actor_role="peer"))

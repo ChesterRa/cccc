@@ -400,6 +400,96 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_projected_chatgpt_session_opens_bound_conversation(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/bound-chat?model=gpt-5",
+                    "last_tab_url": "https://chatgpt.com/",
+                },
+            )
+            with (
+                patch.object(web_model_browser_session._MANAGER, "open", return_value={"active": True, "metadata": {}}) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session", return_value={"active": False}),
+            ):
+                web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(open_session.call_args.kwargs.get("url"), "https://chatgpt.com/c/bound-chat")
+        finally:
+            cleanup()
+
+    def test_projected_chatgpt_session_opens_new_chat_when_armed(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/old-chat",
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": "https://chatgpt.com/",
+                    "last_tab_url": "https://chatgpt.com/c/old-chat",
+                },
+            )
+            with (
+                patch.object(web_model_browser_session._MANAGER, "open", return_value={"active": True, "metadata": {}}) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session", return_value={"active": False}),
+            ):
+                web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(open_session.call_args.kwargs.get("url"), "https://chatgpt.com/")
+        finally:
+            cleanup()
+
+    def test_projected_chatgpt_session_reuses_active_instance(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+
+        _, cleanup = self._with_home()
+        try:
+            existing = {
+                "active": True,
+                "state": "ready",
+                "url": "https://chatgpt.com/c/current-chat",
+                "metadata": {"cdp_port": 9222},
+            }
+            with (
+                patch.object(web_model_browser_session._MANAGER, "info", return_value=existing),
+                patch.object(web_model_browser_session._MANAGER, "open", return_value={"active": True}) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
+                patch.object(web_model_browser_session, "ensure_web_model_tool_confirm_watcher", return_value=True),
+            ):
+                result = web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(result, existing)
+            open_session.assert_not_called()
+            close_browser.assert_not_called()
+        finally:
+            cleanup()
+
     def test_projected_chatgpt_close_also_closes_sidecar_browser_state(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
 

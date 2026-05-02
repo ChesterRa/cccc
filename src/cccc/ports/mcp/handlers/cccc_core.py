@@ -580,8 +580,13 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
                     "`cccc_runtime_wait_next_turn` to get work.",
                     "- Web chat text alone is not a visible CCCC reply. Use `cccc_message_send` or "
                     "`cccc_message_reply` for peer/user-visible communication.",
-                    "- For local workspace work, use `cccc_repo`, `cccc_repo_edit`, `cccc_shell`, and "
-                    "`cccc_git` through the same connector.",
+                    "- For local workspace work, use `cccc_repo`, `cccc_apply_patch`, `cccc_repo_edit`, "
+                    "`cccc_exec_command`, `cccc_write_stdin`, `cccc_shell`, and `cccc_git` through the same connector.",
+                    "- Prefer the Codex-style loop: `cccc_repo(action=\"list_dir\"|\"read\")` with line ranges, "
+                    "`cccc_apply_patch` for file-oriented edits, then `cccc_git(action=\"diff\")`.",
+                    "- For exact small edits, use `cccc_repo_edit(action=\"replace\"|\"multi_replace\", "
+                    "expected_sha256=...)`; use `write` only for deliberate full-file writes.",
+                    "- Prefer `cccc_exec_command`/`cccc_write_stdin` for long-running commands; `cccc_shell` is for short one-shot commands.",
                     "- Finish each processed turn with `cccc_runtime_complete_turn` for status/evidence. "
                     "Browser-injected turns are already delivery-committed, so missing completion should not block later turns.",
                 ]

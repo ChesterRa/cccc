@@ -16,7 +16,7 @@ from ...util.time import utc_now_iso
 _LOG = logging.getLogger("cccc.daemon.web_model.tool_confirm")
 _WATCHERS_LOCK = threading.Lock()
 _WATCHERS: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
-_DEFAULT_INTERVAL_SECONDS = 8.0
+_DEFAULT_INTERVAL_SECONDS = 3.0
 
 
 def web_model_tool_auto_confirm_enabled() -> bool:

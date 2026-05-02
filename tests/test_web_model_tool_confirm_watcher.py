@@ -20,13 +20,13 @@ class TestWebModelToolConfirmWatcher(unittest.TestCase):
 
         return td, cleanup
 
-    def test_interval_defaults_to_eight_seconds_and_clamps(self) -> None:
+    def test_interval_defaults_to_three_seconds_and_clamps(self) -> None:
         from cccc.daemon.actors import web_model_tool_confirm_watcher as watcher
 
         old = os.environ.get("CCCC_WEB_MODEL_AUTO_CONFIRM_INTERVAL_SECONDS")
         try:
             os.environ.pop("CCCC_WEB_MODEL_AUTO_CONFIRM_INTERVAL_SECONDS", None)
-            self.assertEqual(watcher.web_model_tool_auto_confirm_interval_seconds(), 8.0)
+            self.assertEqual(watcher.web_model_tool_auto_confirm_interval_seconds(), 3.0)
             os.environ["CCCC_WEB_MODEL_AUTO_CONFIRM_INTERVAL_SECONDS"] = "1"
             self.assertEqual(watcher.web_model_tool_auto_confirm_interval_seconds(), 3.0)
             os.environ["CCCC_WEB_MODEL_AUTO_CONFIRM_INTERVAL_SECONDS"] = "100"

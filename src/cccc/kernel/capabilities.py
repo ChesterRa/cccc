@@ -65,7 +65,10 @@ WEB_MODEL_CORE_TOOLS: Tuple[str, ...] = CORE_BASIC_TOOLS + (
     "cccc_runtime_wait_next_turn",
     "cccc_runtime_complete_turn",
     "cccc_repo_edit",
+    "cccc_apply_patch",
     "cccc_shell",
+    "cccc_exec_command",
+    "cccc_write_stdin",
     "cccc_git",
 )
 
