@@ -139,7 +139,7 @@ graph TB
         direction LR
         A1["Claude Code"]
         A2["Codex CLI"]
-        A3["ChatGPT Web<br/>GPT-5.x/GPT-5.x Pro"]
+        A3["ChatGPT Web<br/>GPT-5.x via MCP"]
         A4["Gemini CLI"]
         A5["+ 5 種 + custom"]
     end
@@ -212,11 +212,13 @@ cccc doctor                    # 環境とランタイムの可用性を検証
 
 Actor は **PTY**（埋め込みターミナル）または **headless**（ターミナルなしの構造化 I/O）モードで実行できます。Claude Code と Codex CLI は両モードに対応。headless モードでは daemon が配信とストリーミングをより精密に制御します。
 
-### ChatGPT Web / GPT-5.x/GPT-5.x Pro ローカル開発
+### ChatGPT Web / GPT-5.x ローカル開発
 
 ChatGPT Web は外部チャットウィンドウではなく、実際の CCCC actor としてグループに参加できます。CCCC はブラウザ配信で明示的に紐付けた 1 つの ChatGPT 会話へグループメッセージを届け、ChatGPT はその actor に紐付いた単一の Remote MCP connector 経由で CCCC に接続します。
 
-つまり **GPT-5.x/GPT-5.x Pro** を選択した ChatGPT 会話が、Claude Code や Codex と同じ協調レイヤーでローカル開発に参加できます。ルーティングされたメッセージの受信、CCCC 経由の可視返信、リポジトリの確認/編集、scope 内の shell/git 実行、peer agent との協調が可能です。
+Apps/MCP を利用できる ChatGPT セッションでは、**GPT-5.x** が Claude Code や Codex と同じ協調レイヤーでローカル開発に参加できます。ルーティングされたメッセージの受信、CCCC 経由の可視返信、リポジトリの確認/編集、scope 内の shell/git 実行、peer agent との協調が可能です。選択した ChatGPT セッションが CCCC MCP connector を表示・実行できる場合、Plus/Pro などの有料ユーザーはネイティブ Codex に近いローカル開発体験を得られます。
+
+**GPT-5.x Pro について:** ChatGPT プラットフォーム側の制限により、GPT-5.x Pro は現在、完全な第三者 MCP / ローカル書き込みツールを通常の GPT-5.x セッションと同じ形では利用できません。CCCC では、GPT-5.x Pro は会話コンテキスト、貼り付けた diff、テスト出力、プロジェクト要約をもとにした設計相談、リスクレビュー、デバッグ仮説、実装レビュー向けの高品質な助言サーフェスとして使うのが適しています。実際のローカル実行は Codex、Claude Code、または CCCC connector にアクセスできる ChatGPT Web Model セッションに任せてください。
 
 最短セットアップ:
 
@@ -225,7 +227,7 @@ ChatGPT Web は外部チャットウィンドウではなく、実際の CCCC ac
 3. runtime が `ChatGPT Web Model` の actor を追加します。
 4. `Settings > Global > ChatGPT Web Model` でその actor の単一 MCP URL を作成/コピーします。
 5. ChatGPT Developer mode で custom MCP connector を作成し、その URL を貼り付け、`No Auth` を選択します。
-6. 特定の `https://chatgpt.com/c/...` 会話を actor に紐付け、その ChatGPT 会話内で GPT-5.x/GPT-5.x Pro を選択します。
+6. 特定の `https://chatgpt.com/c/...` 会話を actor に紐付け、その ChatGPT 会話内で CCCC MCP connector を表示・使用できる GPT-5.x モデルを選択します。
 
 詳細な設定とトラブルシュート: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
@@ -406,7 +408,7 @@ CCCC は**協調カーネル** — 協調レイヤーを担い、外部の CI/CD
 | [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
 | [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Feishu、DingTalk、WeCom、Weixin の接続 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM ナレッジ統合 |
-| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | ChatGPT Web / GPT-5.x/GPT-5.x Pro を CCCC actor として接続 |
+| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | ChatGPT Web / MCP 対応 GPT-5.x を CCCC actor として接続。GPT-5.x Pro は助言・レビュー用途に適しています |
 | [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP 機能ガバナンス |
 | [ベストプラクティス](https://chesterra.github.io/cccc/guide/best-practices) | 推奨パターンとワークフロー |
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | よくある質問 |

@@ -288,6 +288,66 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_code_exec",
+        "description": (
+            "Default-on ChatGPT Web Model code mode. Run JavaScript that orchestrates CCCC MCP tools through "
+            "global tools.<toolName>(args), with ALL_TOOLS, text(), store(), load(), and yield_control(). "
+            "Use this for multi-step local development loops such as read -> patch -> test -> diff -> report. "
+            "The JS runtime has no Node require/import/fs/network/console access; use nested MCP tools for all real work. "
+            "If the result says running with a cell_id, call cccc_code_wait."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                "source": {"type": "string", "description": "Raw JavaScript source. Do not wrap in markdown fences or JSON strings."},
+                "code": {"type": "string", "description": "Alias for source."},
+                "yield_time_ms": {
+                    "type": "integer",
+                    "default": 10000,
+                    "minimum": 0,
+                    "maximum": 60000,
+                    "description": "Return early with a running cell_id if the script is still active after this many milliseconds.",
+                },
+                "max_output_tokens": {
+                    "type": "integer",
+                    "default": 10000,
+                    "minimum": 1,
+                    "maximum": 50000,
+                    "description": "Approximate token budget for direct cccc_code_exec output.",
+                },
+            },
+        ),
+    },
+    {
+        "name": "cccc_code_wait",
+        "description": (
+            "Wait for or terminate a yielded cccc_code_exec cell. Use only when cccc_code_exec returned "
+            "status=running and a cell_id. Returns new output since the previous yield or the final result."
+        ),
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        "inputSchema": _obj(
+            {
+                "cell_id": {"type": "string", "description": "Identifier returned by cccc_code_exec."},
+                "yield_time_ms": {
+                    "type": "integer",
+                    "default": 10000,
+                    "minimum": 0,
+                    "maximum": 60000,
+                    "description": "How long to wait for more output before yielding again.",
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "default": 10000,
+                    "minimum": 1,
+                    "maximum": 50000,
+                    "description": "Approximate token budget for this wait result.",
+                },
+                "terminate": {"type": "boolean", "default": False, "description": "Terminate the running code cell."},
+            },
+            required=["cell_id"],
+        ),
+    },
+    {
         "name": "cccc_repo",
         "description": (
             "Read-only active workspace repository inspection for remote runtimes: "

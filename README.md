@@ -140,7 +140,7 @@ graph TB
         direction LR
         A1["Claude Code"]
         A2["Codex CLI"]
-        A3["ChatGPT Web<br/>GPT-5.x/GPT-5.x Pro"]
+        A3["ChatGPT Web<br/>GPT-5.x via MCP"]
         A4["Gemini CLI"]
         A5["+ 5 more + custom"]
     end
@@ -213,11 +213,13 @@ cccc doctor                    # verify environment and runtime availability
 
 Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code and Codex CLI support both modes; headless gives the daemon tighter delivery and streaming control.
 
-### ChatGPT Web / GPT-5.x/GPT-5.x Pro local development
+### ChatGPT Web / GPT-5.x local development
 
 ChatGPT Web can join a CCCC group as a real actor, not just an external chat window. CCCC delivers group messages into one explicitly bound ChatGPT conversation through browser delivery, while ChatGPT calls back into CCCC through a single actor-bound remote MCP connector.
 
-That means a ChatGPT conversation using **GPT-5.x/GPT-5.x Pro** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents.
+In supported ChatGPT sessions, **GPT-5.x** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents. This gives Plus/Pro paid ChatGPT users an experience close to a native Codex-style local coding agent when the selected chat exposes the CCCC MCP connector.
+
+**GPT-5.x Pro note:** ChatGPT platform restrictions currently prevent GPT-5.x Pro from using full third-party MCP/local write tools in the same way. In CCCC, GPT-5.x Pro is best used as an advisory surface for planning, architecture review, debugging hypotheses, and critique based on conversation context, pasted diffs, test output, and project summaries. Local execution should remain with MCP-capable runtimes such as Codex, Claude Code, or ChatGPT Web Model using a GPT-5.x session that can access the CCCC connector.
 
 Shortest setup path:
 
@@ -226,7 +228,7 @@ Shortest setup path:
 3. Add an actor with runtime `ChatGPT Web Model`.
 4. In `Settings > Global > ChatGPT Web Model`, create/copy the single MCP URL for that actor.
 5. In ChatGPT Developer mode, create a custom MCP connector with that URL and `No Auth`.
-6. Bind a specific `https://chatgpt.com/c/...` conversation to the actor, then choose GPT-5.x/GPT-5.x Pro inside that chat.
+6. Bind a specific `https://chatgpt.com/c/...` conversation to the actor, then choose a GPT-5.x model that can see and use the CCCC MCP connector.
 
 Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
@@ -407,7 +409,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk, WeCom, Weixin |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
-| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect ChatGPT Web / GPT-5.x/GPT-5.x Pro as a CCCC actor |
+| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect ChatGPT Web / MCP-capable GPT-5.x as a CCCC actor; use GPT-5.x Pro for advisory review |
 | [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP capability governance |
 | [Best Practices](https://chesterra.github.io/cccc/guide/best-practices) | Recommended patterns and workflows |
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | Frequently asked questions |

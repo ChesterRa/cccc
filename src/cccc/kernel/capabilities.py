@@ -64,6 +64,8 @@ VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = PET_CORE_TOOLS + (
 WEB_MODEL_CORE_TOOLS: Tuple[str, ...] = CORE_BASIC_TOOLS + (
     "cccc_runtime_wait_next_turn",
     "cccc_runtime_complete_turn",
+    "cccc_code_exec",
+    "cccc_code_wait",
     "cccc_repo_edit",
     "cccc_apply_patch",
     "cccc_shell",

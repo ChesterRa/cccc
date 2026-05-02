@@ -13,6 +13,7 @@ Static MCP surface:
 - cccc_memory / cccc_memory_admin
 - cccc_headless / cccc_notify / cccc_terminal / cccc_debug
 - cccc_im_bind
+- cccc_code_exec / cccc_code_wait (ChatGPT Web Model code-mode orchestration)
 
 All operations go through daemon IPC to ensure single-writer principle.
 """
@@ -80,6 +81,12 @@ from .handlers.cccc_repo import (  # noqa: F401
     repo_tool,
     shell_tool,
     write_stdin_tool,
+)
+from .handlers.code_mode import (  # noqa: F401
+    CODE_MODE_TOOL_NAMES,
+    code_exec_tool,
+    code_mode_enabled,
+    code_wait_tool,
 )
 from .handlers.presentation import (  # noqa: F401
     presentation_clear,
@@ -228,6 +235,11 @@ def _require_web_model_actor(group_id: str, actor_id: str) -> None:
 def _authorize_web_model_builtin_tool_call(name: str) -> None:
     """Keep Web Model schema stable while enforcing actor role at call time."""
     tool_name = str(name or "").strip()
+    if tool_name in CODE_MODE_TOOL_NAMES and not code_mode_enabled():
+        raise MCPError(
+            code="code_mode_disabled",
+            message=f"{tool_name} is disabled by CCCC_WEB_MODEL_CODE_MODE=0",
+        )
     if tool_name not in _BUILTIN_MCP_TOOL_NAMES:
         return
     runtime_ctx = _runtime_context()
@@ -268,6 +280,18 @@ def _authorize_web_model_builtin_tool_call(name: str) -> None:
 
 
 def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if name == "cccc_code_exec":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        _require_web_model_actor(gid, aid)
+        return code_exec_tool(arguments, nested_tool_caller=handle_tool_call, list_tools=list_tools_for_caller)
+
+    if name == "cccc_code_wait":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        _require_web_model_actor(gid, aid)
+        return code_wait_tool(arguments, nested_tool_caller=handle_tool_call)
+
     # --- Help ---
     if name == "cccc_help":
         runtime_ctx = _runtime_context()
@@ -1397,7 +1421,10 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
     admin_excluded = set(CORE_ADMIN_TOOLS) if actor_role == "peer" else set()
 
     if actor_is_web_model:
-        return [spec for spec in MCP_TOOLS if str(spec.get("name") or "") in _WEB_MODEL_ADVERTISED_TOOL_NAMES]
+        names = set(_WEB_MODEL_ADVERTISED_TOOL_NAMES)
+        if not code_mode_enabled():
+            names -= CODE_MODE_TOOL_NAMES
+        return [spec for spec in MCP_TOOLS if str(spec.get("name") or "") in names]
 
     if profile == "full":
         visible = {str(spec.get("name") or "").strip() for spec in MCP_TOOLS if isinstance(spec, dict)}

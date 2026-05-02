@@ -161,6 +161,7 @@ def _build_web_model_bootstrap_seed(group: Any, actor: Dict[str, Any]) -> str:
         "- This ChatGPT conversation is the browser surface for the actor above.\n"
         "- Browser-injected messages are already delivered in chat; do not call cccc_runtime_wait_next_turn for them.\n"
         "- Use CCCC MCP tools for visible replies, handoffs, local workspace work, validation, and evidence.\n"
+        "- For multi-step local development work, prefer cccc_code_exec and call nested tools through tools.*.\n"
         "- Text typed only in this web chat is not delivered to CCCC users or peers."
     )
     return "\n\n".join(

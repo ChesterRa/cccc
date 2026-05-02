@@ -155,6 +155,8 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             names = {str(item.get("name") or "") for item in tools if isinstance(item, dict)}
             self.assertIn("cccc_runtime_wait_next_turn", names)
             self.assertIn("cccc_runtime_complete_turn", names)
+            self.assertIn("cccc_code_exec", names)
+            self.assertIn("cccc_code_wait", names)
             self.assertIn("cccc_repo", names)
             self.assertIn("cccc_repo_edit", names)
             self.assertIn("cccc_apply_patch", names)
