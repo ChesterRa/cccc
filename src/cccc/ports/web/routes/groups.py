@@ -27,9 +27,13 @@ from ....daemon.assistants.sherpa_streaming_asr import (
 )
 from ....daemon.assistants.sherpa_diarization import (
     SherpaDiarizationError,
-    run_sherpa_diarization,
     run_sherpa_diarization_file,
     sherpa_diarization_status,
+)
+from ....daemon.assistants.voice_speaker_identity import (
+    diarization_result_segments,
+    diarization_result_speaker_embeddings,
+    run_provisional_diarization_prefix,
 )
 from ....daemon.assistants.voice_speaker_transcripts import build_speaker_transcript_segments
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
@@ -109,10 +113,9 @@ from ..schemas import (
     websocket_tokens_active,
 )
 
-_VOICE_DIARIZATION_WINDOW_MS = 30_000
 _VOICE_DIARIZATION_INTERVAL_MS = 8_000
 _VOICE_DIARIZATION_MIN_AUDIO_MS = 10_000
-_VOICE_DIARIZATION_ENABLE_PROVISIONAL = False
+_VOICE_DIARIZATION_ENABLE_PROVISIONAL = True
 _VOICE_PCM16_BYTES_PER_SAMPLE = 2
 
 
@@ -443,28 +446,6 @@ def _pcm16_duration_ms(byte_count: int, sample_rate: int) -> int:
     rate = max(1, int(sample_rate or 16000))
     return int(max(0, byte_count) / (_VOICE_PCM16_BYTES_PER_SAMPLE * rate) * 1000)
 
-
-def _trim_pcm16_window(audio: bytearray, *, sample_rate: int, window_ms: int) -> None:
-    rate = max(1, int(sample_rate or 16000))
-    max_bytes = int(rate * _VOICE_PCM16_BYTES_PER_SAMPLE * max(0, window_ms) / 1000)
-    if max_bytes <= 0 or len(audio) <= max_bytes:
-        return
-    del audio[: len(audio) - max_bytes]
-
-
-def _offset_diarization_segments(result: dict[str, Any], offset_ms: int) -> dict[str, Any]:
-    if offset_ms <= 0:
-        return result
-    segments = result.get("segments") if isinstance(result.get("segments"), list) else []
-    adjusted: list[dict[str, Any]] = []
-    for item in segments:
-        if not isinstance(item, dict):
-            continue
-        next_item = dict(item)
-        next_item["start_ms"] = int(next_item.get("start_ms") or 0) + offset_ms
-        next_item["end_ms"] = int(next_item.get("end_ms") or 0) + offset_ms
-        adjusted.append(next_item)
-    return {**result, "segments": adjusted, "offset_ms": offset_ms}
 
 _PRESENTATION_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _CONTEXT_INFLIGHT: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
@@ -2188,6 +2169,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         streaming_diarization_task: asyncio.Task[dict[str, Any]] | None = None
         streaming_last_diarization_ms = 0
         streaming_diarization_seq = 0
+        streaming_stable_diarization_segments: list[dict[str, Any]] = []
+        streaming_stable_speaker_embeddings: list[dict[str, Any]] = []
         streaming_client_session_id = ""
 
         def cleanup_streaming_pcm16() -> None:
@@ -2254,6 +2237,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     streaming_diarization_task = None
                     streaming_last_diarization_ms = 0
                     streaming_diarization_seq = 0
+                    streaming_stable_diarization_segments = []
+                    streaming_stable_speaker_embeddings = []
                     _write_voice_speaker_transcript_artifact(
                         group_id,
                         streaming_client_session_id,
@@ -2305,17 +2290,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                 pcm16_chunk = base64.b64decode(audio_base64, validate=True)
                                 append_streaming_pcm16(pcm16_chunk)
                                 streaming_pcm16_audio.extend(pcm16_chunk)
-                                _trim_pcm16_window(
-                                    streaming_pcm16_audio,
-                                    sample_rate=sample_rate,
-                                    window_ms=_VOICE_DIARIZATION_WINDOW_MS,
-                                )
                                 streaming_sample_rate = sample_rate
                             except Exception:
                                 pass
                         if _VOICE_DIARIZATION_ENABLE_PROVISIONAL and streaming_diarization_task is not None and streaming_diarization_task.done():
                             try:
                                 delta_result = streaming_diarization_task.result()
+                                streaming_stable_diarization_segments = diarization_result_segments(delta_result)
+                                streaming_stable_speaker_embeddings = diarization_result_speaker_embeddings(delta_result)
                                 await websocket.send_json({
                                     "type": "diarization_delta",
                                     "ok": True,
@@ -2350,29 +2332,24 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             and audio_duration_ms - streaming_last_diarization_ms >= _VOICE_DIARIZATION_INTERVAL_MS
                             and streaming_diarization_task is None
                         ):
-                            window_audio = bytes(streaming_pcm16_audio)
-                            window_offset_ms = _pcm16_duration_ms(
-                                max(0, streaming_pcm16_bytes - len(streaming_pcm16_audio)),
-                                streaming_sample_rate,
-                            )
+                            prefix_audio = bytes(streaming_pcm16_audio)
+                            previous_segments = list(streaming_stable_diarization_segments)
+                            previous_speaker_embeddings = list(streaming_stable_speaker_embeddings)
                             streaming_diarization_seq += 1
                             task_seq = streaming_diarization_seq
                             streaming_last_diarization_ms = audio_duration_ms
 
-                            async def _run_delta(audio: bytes, offset_ms: int, run_seq: int) -> dict[str, Any]:
-                                result = await run_sherpa_diarization(
-                                    audio,
+                            streaming_diarization_task = asyncio.create_task(
+                                run_provisional_diarization_prefix(
+                                    prefix_audio,
                                     selected_model_id=streaming_diarization_model_id,
                                     sample_rate=streaming_sample_rate,
+                                    run_seq=task_seq,
+                                    audio_duration_ms=audio_duration_ms,
+                                    previous_segments=previous_segments,
+                                    previous_speaker_embeddings=previous_speaker_embeddings,
                                 )
-                                return {
-                                    **_offset_diarization_segments(result, offset_ms),
-                                    "run_seq": run_seq,
-                                    "window_ms": _VOICE_DIARIZATION_WINDOW_MS,
-                                    "provisional": True,
-                                }
-
-                            streaming_diarization_task = asyncio.create_task(_run_delta(window_audio, window_offset_ms, task_seq))
+                            )
                         await streaming_session.send(
                             {
                                 "type": "audio",

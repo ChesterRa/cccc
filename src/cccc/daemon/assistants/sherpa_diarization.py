@@ -207,6 +207,7 @@ async def run_sherpa_diarization(
     *,
     selected_model_id: str = "",
     sample_rate: int = 16000,
+    include_speaker_embeddings: bool = False,
 ) -> dict[str, Any]:
     if not pcm16_audio:
         model_id = resolve_sherpa_diarization_model_id(selected_model_id)
@@ -221,6 +222,7 @@ async def run_sherpa_diarization(
             tmp_path,
             selected_model_id=selected_model_id,
             sample_rate=sample_rate,
+            include_speaker_embeddings=include_speaker_embeddings,
         )
     finally:
         if tmp_path:
@@ -235,6 +237,7 @@ async def run_sherpa_diarization_file(
     *,
     selected_model_id: str = "",
     sample_rate: int = 16000,
+    include_speaker_embeddings: bool = False,
 ) -> dict[str, Any]:
     status = sherpa_diarization_status(selected_model_id)
     runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
@@ -286,6 +289,8 @@ async def run_sherpa_diarization_file(
             "--min-duration-off",
             str(float(config.get("min_duration_off") or 0.5)),
         ]
+        if include_speaker_embeddings:
+            argv.append("--include-speaker-embeddings")
         env = os.environ.copy()
         env["CCCC_HOME"] = str(ensure_home())
         source_root = str(Path(__file__).resolve().parents[3])
@@ -330,8 +335,11 @@ async def run_sherpa_diarization_file(
                 "stderr": stderr.decode("utf-8", errors="replace")[-4000:],
             },
         )
-    return {
+    result = {
         "segments": normalize_diarization_segments(payload.get("segments")),
         "model_id": model_id,
         "sample_rate": int(payload.get("sample_rate") or sample_rate or 16000),
     }
+    if include_speaker_embeddings and isinstance(payload.get("speaker_embeddings"), list):
+        result["speaker_embeddings"] = payload.get("speaker_embeddings")
+    return result

@@ -14,6 +14,8 @@ export type VoiceTranscriptPreview = {
   language?: string;
   startMs?: number;
   endMs?: number;
+  speakerLabel?: string;
+  speakerIndex?: number;
   updatedAt: number;
 };
 
@@ -146,6 +148,53 @@ export function filterVoiceTranscriptItemsForDocument(
       Number(right.updatedAt || 0) - Number(left.updatedAt || 0)
       || Number(right.createdAt || 0) - Number(left.createdAt || 0)
     ));
+}
+
+export function annotateVoiceTranscriptItemsWithSpeakers(
+  items: VoiceTranscriptItem[],
+  speakerSegments: Record<string, unknown>[],
+): VoiceTranscriptItem[] {
+  if (!items.length || !speakerSegments.length) return items;
+  let changed = false;
+  const next = items.map((item) => {
+    const speaker = speakerForTranscriptRange(item.startMs, item.endMs, speakerSegments);
+    if (!speaker || (item.speakerLabel === speaker.label && item.speakerIndex === speaker.index)) return item;
+    changed = true;
+    return {
+      ...item,
+      speakerLabel: speaker.label,
+      speakerIndex: speaker.index,
+    };
+  });
+  return changed ? next : items;
+}
+
+function speakerForTranscriptRange(
+  startMs: number | undefined,
+  endMs: number | undefined,
+  speakerSegments: Record<string, unknown>[],
+): { label: string; index?: number } | null {
+  const start = Number(startMs);
+  const end = Number(endMs);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  let best: { label: string; index?: number; overlap: number } | null = null;
+  for (const segment of speakerSegments) {
+    const label = String(segment.speaker_label || "").trim();
+    if (!label) continue;
+    const segmentStart = Number(segment.start_ms);
+    const segmentEnd = Number(segment.end_ms);
+    if (!Number.isFinite(segmentStart) || !Number.isFinite(segmentEnd) || segmentEnd <= segmentStart) continue;
+    const overlap = Math.max(0, Math.min(end, segmentEnd) - Math.max(start, segmentStart));
+    if (!best || overlap > best.overlap) {
+      const rawIndex = Number(segment.speaker_index);
+      best = {
+        label,
+        index: Number.isFinite(rawIndex) ? rawIndex : undefined,
+        overlap,
+      };
+    }
+  }
+  return best && best.overlap > 0 ? { label: best.label, index: best.index } : null;
 }
 
 function voiceTranscriptItemsLookDuplicated(left: VoiceTranscriptItem, right: VoiceTranscriptItem): boolean {

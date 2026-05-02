@@ -46,7 +46,7 @@ _RUNTIME_CONTEXT_OVERRIDE: ContextVar[Optional[_RuntimeContext]] = ContextVar(
 @contextmanager
 def runtime_context_override(*, home: str = "", group_id: str = "", actor_id: str = "") -> Iterable[None]:
     ctx = _RuntimeContext(
-        home=_normalize_home(str(home or "")),
+        home=str(home or "").strip(),
         group_id=str(group_id or "").strip(),
         actor_id=str(actor_id or "").strip(),
     )

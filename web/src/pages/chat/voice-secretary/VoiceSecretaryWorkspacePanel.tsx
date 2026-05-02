@@ -252,16 +252,26 @@ export function VoiceSecretaryWorkspacePanel({
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className={classNames(
-                    "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                    isLive
-                      ? isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-cyan-50 text-cyan-800"
-                      : isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-gray-700",
-                  )}>
-                    {isLive
-                      ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
-                      : t("voiceSecretaryTranscriptHeard", { defaultValue: "Transcript" })}
-                  </span>
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className={classNames(
+                      "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      isLive
+                        ? isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-cyan-50 text-cyan-800"
+                        : isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-gray-700",
+                    )}>
+                      {isLive
+                        ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
+                        : t("voiceSecretaryTranscriptHeard", { defaultValue: "Transcript" })}
+                    </span>
+                    {item.speakerLabel ? (
+                      <span className={classNames(
+                        "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                        isDark ? "bg-violet-300/15 text-violet-100" : "bg-violet-50 text-violet-800",
+                      )}>
+                        {item.speakerLabel}
+                      </span>
+                    ) : null}
+                  </div>
                   {timeLabel ? (
                     <time
                       className="shrink-0 text-[10px] tabular-nums text-[var(--color-text-muted)]"
