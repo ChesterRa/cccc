@@ -1101,6 +1101,48 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_runtime_install_rechecks_modules_after_pip_install(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import voice_runtime_deps
+
+            runtime_id = "sherpa_onnx_streaming"
+            python_path = Path(home) / "cache" / "voice-runtimes" / runtime_id / ".venv" / "bin" / "python"
+            python_path.parent.mkdir(parents=True, exist_ok=True)
+            python_path.write_text("#!/bin/sh\n", encoding="utf-8")
+            voice_runtime_deps._write_state(
+                runtime_id,
+                {
+                    "runtime_id": runtime_id,
+                    "status": "installing",
+                    "updated_at": "now",
+                    "packages": ["sherpa-onnx", "numpy"],
+                },
+            )
+            voice_runtime_deps._STATUS_CACHE[runtime_id] = (
+                time.monotonic(),
+                {
+                    "runtime_id": runtime_id,
+                    "status": "installing",
+                    "missing_modules": ["sherpa_onnx", "numpy"],
+                },
+            )
+            with patch.object(voice_runtime_deps, "_ensure_venv", return_value=python_path), patch.object(
+                voice_runtime_deps.subprocess,
+                "run",
+                return_value=type("Proc", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+            ), patch.object(
+                voice_runtime_deps,
+                "_module_status",
+                return_value={"sherpa_onnx": True, "numpy": True},
+            ):
+                installed = voice_runtime_deps.install_voice_runtime_deps(runtime_id)
+
+            self.assertEqual(str(installed.get("status") or ""), "ready")
+            self.assertEqual(installed.get("missing_modules"), [])
+        finally:
+            cleanup()
+
     def test_voice_runtime_python_selects_current_python_39_or_newer(self) -> None:
         from cccc.daemon.assistants import voice_runtime_deps
 

@@ -321,6 +321,7 @@ def install_voice_runtime_deps(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_ST
                         "stdout": str(proc.stdout or "").strip()[-2000:],
                     },
                 )
+        _STATUS_CACHE.pop(runtime_id, None)
         status = get_voice_runtime_status(runtime_id)
         if status.get("missing_modules"):
             raise VoiceRuntimeDepsError(
