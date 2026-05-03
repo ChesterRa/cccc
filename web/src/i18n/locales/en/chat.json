@@ -170,6 +170,7 @@
   "voiceSecretaryMicDefaultHint": "Mic input uses the browser/system default for Browser ASR.",
   "voiceSecretaryMicServiceHint": "Audio is captured in the browser, then sent to the daemon-managed assistant service for local ASR.",
   "voiceSecretaryMicDevice": "Microphone",
+  "voiceSecretaryBrowserDefaultMic": "Browser default microphone",
   "voiceSecretaryDefaultMic": "System default microphone",
   "voiceSecretaryMicDeviceFallback": "Microphone {{index}}",
   "voiceSecretaryRefreshDevices": "Refresh devices",

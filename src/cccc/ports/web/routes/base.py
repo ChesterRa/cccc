@@ -573,8 +573,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         pending_url = _normalize_chatgpt_url(raw_url) if raw_url else ""
         if bool(req.new_chat):
             conversation_url = ""
-            if not pending_url:
-                pending_url = CHATGPT_URL
+            pending_url = CHATGPT_URL
         if not conversation_url and not pending_url:
             raise HTTPException(
                 status_code=400,

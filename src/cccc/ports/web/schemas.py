@@ -255,10 +255,20 @@ class AssistantVoiceModelInstallRequest(BaseModel):
     background: bool = Field(default=False)
 
 
+class AssistantVoiceModelRemoveRequest(BaseModel):
+    model_id: str = Field(default="")
+    by: str = Field(default="user")
+
+
 class AssistantVoiceRuntimeInstallRequest(BaseModel):
     runtime_id: str = Field(default="")
     by: str = Field(default="user")
     background: bool = Field(default=True)
+
+
+class AssistantVoiceRuntimeRemoveRequest(BaseModel):
+    runtime_id: str = Field(default="")
+    by: str = Field(default="user")
 
 
 class AssistantVoiceTranscriptSegmentRequest(BaseModel):

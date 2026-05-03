@@ -212,6 +212,11 @@ _WEB_MODEL_ADVERTISED_TOOL_NAMES = frozenset(web_model_advertised_tool_names(_BU
 _WEB_MODEL_PEER_ALLOWED_TOOL_NAMES = frozenset(WEB_MODEL_CORE_TOOLS)
 
 
+def _argument_or_default(arguments: Dict[str, Any], key: str, default: Any) -> Any:
+    value = arguments.get(key)
+    return default if value is None else value
+
+
 # =============================================================================
 # Tool Call Routing
 # =============================================================================
@@ -762,7 +767,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             group_id=gid,
             command=str(arguments.get("command") or arguments.get("cmd") or ""),
             cwd=str(arguments.get("cwd") or arguments.get("workdir") or "."),
-            yield_time_ms=arguments.get("yield_time_ms") or 1000,
+            yield_time_ms=_argument_or_default(arguments, "yield_time_ms", 1000),
             max_output_bytes=arguments.get("max_output_bytes") or 200000,
             timeout_s=arguments.get("timeout_s") or 600,
             env=arguments.get("env") if isinstance(arguments.get("env"), dict) else None,
@@ -775,7 +780,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         return write_stdin_tool(
             session_id=str(arguments.get("session_id") or ""),
             chars=str(arguments.get("chars") or ""),
-            yield_time_ms=arguments.get("yield_time_ms") or 1000,
+            yield_time_ms=_argument_or_default(arguments, "yield_time_ms", 1000),
             max_output_bytes=arguments.get("max_output_bytes") or 200000,
             terminate=coerce_bool(arguments.get("terminate"), default=False),
         )

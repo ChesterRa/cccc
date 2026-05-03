@@ -1086,6 +1086,37 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_web_model_browser_session_new_chat_ignores_current_conversation_url(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            admin = str(create_access_token("admin", is_admin=True).get("token") or "")
+            client = self._client()
+
+            with (
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
+                    return_value={"active": True, "tab_url": "https://chatgpt.com/c/old-chat"},
+                ),
+                patch("cccc.ports.web_model_browser_sidecar.record_chatgpt_browser_state") as record_browser_state,
+                patch("cccc.daemon.actors.web_model_browser_session.get_web_model_chatgpt_browser_session_state", return_value={"active": True, "state": "ready"}),
+            ):
+                resp = client.post(
+                    "/api/v1/web-model/browser-session/bind-current",
+                    headers={"Authorization": f"Bearer {admin}"},
+                    json={"group_id": group.group_id, "actor_id": "peer1", "new_chat": True},
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            state = record_browser_state.call_args.args[2]
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("pending_new_chat_bind"), True)
+            self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
+        finally:
+            cleanup()
+
     def test_web_model_browser_session_rejects_non_web_model_actor(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 

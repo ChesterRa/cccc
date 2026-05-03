@@ -565,9 +565,15 @@ class Pcm16Resampler {
   }
 }
 
-function voiceLanguageOptionValues(configuredLanguage: string): string[] {
-  const values: string[] = [...VOICE_LANGUAGE_OPTION_VALUES];
-  const configured = String(configuredLanguage || "").trim();
+function normalizeVoiceRecognitionLanguageForBackend(language: string, backend: string): string {
+  const configured = String(language || "").trim() || "auto";
+  return String(backend || "").trim() === "browser_asr" && configured === "mixed" ? "auto" : configured;
+}
+
+function voiceLanguageOptionValues(configuredLanguage: string, backend: string): string[] {
+  const browserAsr = String(backend || "").trim() === "browser_asr";
+  const values: string[] = VOICE_LANGUAGE_OPTION_VALUES.filter((value) => !(browserAsr && value === "mixed"));
+  const configured = normalizeVoiceRecognitionLanguageForBackend(configuredLanguage, backend);
   if (configured && !values.includes(configured)) values.push(configured);
   return values;
 }
@@ -859,17 +865,15 @@ export function VoiceSecretaryComposerControl({
   const documentHasUnsavedEdits = documentDraft !== documentBaseContent;
   const assistantEnabled = !!assistant?.enabled;
   const recognitionBackend = String(assistant?.config?.recognition_backend || "browser_asr").trim();
-  const configuredRecognitionLanguage = String(assistant?.config?.recognition_language || "mixed").trim() || "mixed";
+  const rawConfiguredRecognitionLanguage = String(assistant?.config?.recognition_language || "mixed").trim() || "mixed";
+  const configuredRecognitionLanguage = normalizeVoiceRecognitionLanguageForBackend(rawConfiguredRecognitionLanguage, recognitionBackend);
   const effectiveRecognitionLanguage = configuredRecognitionLanguage === "auto"
     ? (typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US")
     : configuredRecognitionLanguage;
-  const browserRecognitionLanguage =
-    configuredRecognitionLanguage === "mixed"
-      ? (typeof navigator !== "undefined" && navigator.language ? navigator.language : "zh-CN")
-      : effectiveRecognitionLanguage;
+  const browserRecognitionLanguage = effectiveRecognitionLanguage;
   const voiceLanguageOptions = useMemo(
-    () => voiceLanguageOptionValues(configuredRecognitionLanguage),
-    [configuredRecognitionLanguage],
+    () => voiceLanguageOptionValues(rawConfiguredRecognitionLanguage, recognitionBackend),
+    [rawConfiguredRecognitionLanguage, recognitionBackend],
   );
   const voiceLanguageLabel = useCallback((value: string) => {
     switch (value) {
@@ -2734,8 +2738,8 @@ export function VoiceSecretaryComposerControl({
 
   const updateRecognitionLanguage = useCallback(async (nextLanguage: string) => {
     const gid = String(selectedGroupId || "").trim();
-    const language = String(nextLanguage || "auto").trim() || "auto";
-    if (!gid || language === configuredRecognitionLanguage) return;
+    const language = normalizeVoiceRecognitionLanguageForBackend(nextLanguage, recognitionBackend);
+    if (!gid || language === rawConfiguredRecognitionLanguage) return;
     const previousAssistant = assistant;
     const nextConfig = { ...(assistant?.config || {}), recognition_language: language };
     setAssistant((current) => current
@@ -2761,7 +2765,8 @@ export function VoiceSecretaryComposerControl({
     }
   }, [
     assistant,
-    configuredRecognitionLanguage,
+    rawConfiguredRecognitionLanguage,
+    recognitionBackend,
     selectedGroupId,
     showError,
     t,
@@ -3634,6 +3639,28 @@ export function VoiceSecretaryComposerControl({
                           matchTriggerWidth
                         />
                       </label>
+                      {browserSpeechReady ? (
+                        <label
+                          className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]"
+                          title={t("voiceSecretaryMicDefaultHint", { defaultValue: "Mic input uses the browser/system default for Browser ASR." })}
+                        >
+                          <span className="hidden xl:inline">{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
+                          <span
+                            className={classNames(
+                              "inline-flex h-[38px] max-w-[14rem] items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold",
+                              isDark
+                                ? "border-white/10 bg-white/[0.035] text-slate-300"
+                                : "border-black/10 bg-white/70 text-gray-700",
+                            )}
+                            aria-label={t("voiceSecretaryMicDefaultHint", { defaultValue: "Mic input uses the browser/system default for Browser ASR." })}
+                          >
+                            <MicrophoneIcon size={14} aria-hidden="true" />
+                            <span className="truncate">
+                              {t("voiceSecretaryBrowserDefaultMic", { defaultValue: "Browser default microphone" })}
+                            </span>
+                          </span>
+                        </label>
+                      ) : null}
                       {serviceAsrReady ? (
                         <>
                           <label className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">

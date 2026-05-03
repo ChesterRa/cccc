@@ -170,6 +170,7 @@
   "voiceSecretaryMicDefaultHint": "Browser ASR はブラウザ/システムの既定マイクを使います。",
   "voiceSecretaryMicServiceHint": "音声はブラウザでキャプチャし、daemon 管理の assistant service に送って local ASR を実行します。",
   "voiceSecretaryMicDevice": "マイク",
+  "voiceSecretaryBrowserDefaultMic": "ブラウザ既定のマイク",
   "voiceSecretaryDefaultMic": "システム既定のマイク",
   "voiceSecretaryMicDeviceFallback": "マイク {{index}}",
   "voiceSecretaryRefreshDevices": "デバイスを更新",

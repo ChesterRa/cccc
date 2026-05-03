@@ -48,13 +48,16 @@ from .voice_models import (
     get_voice_model_status,
     install_voice_model,
     list_voice_models,
+    remove_voice_model,
 )
 from .voice_runtime_deps import (
     VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING,
     VoiceRuntimeDepsError,
+    begin_voice_runtime_install,
     get_voice_runtime_status,
     install_voice_runtime_deps,
     list_voice_runtime_statuses,
+    remove_voice_runtime_deps,
 )
 from .sherpa_streaming_asr import sherpa_streaming_backend_status
 from .sherpa_diarization import sherpa_diarization_status
@@ -188,7 +191,7 @@ _ASSISTANT_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "config": {
             "capture_mode": "browser",
             "recognition_backend": "browser_asr",
-            "recognition_language": "mixed",
+            "recognition_language": "auto",
             "retention_ttl_seconds": 900,
             "auto_document_enabled": True,
             "document_default_dir": _DEFAULT_VOICE_DOCUMENT_DIR,
@@ -369,6 +372,8 @@ def _normalize_voice_config(raw: Any, *, base: Dict[str, Any]) -> Dict[str, Any]
         out["service_diarization_model_id"] = value
     if "tts_enabled" in raw:
         out["tts_enabled"] = coerce_bool(raw.get("tts_enabled"), default=False)
+    if str(out.get("recognition_backend") or "").strip() == "browser_asr" and str(out.get("recognition_language") or "").strip() == "mixed":
+        out["recognition_language"] = "auto"
     return out
 
 
@@ -3262,6 +3267,36 @@ def handle_assistant_voice_model_install(args: Dict[str, Any]) -> DaemonResponse
     )
 
 
+def handle_assistant_voice_model_remove(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    model_id = str(args.get("model_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not model_id:
+        return _error("missing_model_id", "missing model_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.settings_update")
+        stop_voice_service(group)
+        removed = remove_voice_model(model_id)
+    except VoiceModelError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except Exception as exc:
+        return _error("assistant_voice_model_remove_failed", str(exc))
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "assistant": _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY),
+            "model": removed,
+            "service_runtime": get_voice_runtime_status(),
+        },
+    )
+
+
 def handle_assistant_voice_runtime_install(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip()
@@ -3283,6 +3318,33 @@ def handle_assistant_voice_runtime_install(args: Dict[str, Any]) -> DaemonRespon
         return _error(exc.code, exc.message, details=exc.details)
     except Exception as exc:
         return _error("assistant_voice_runtime_install_failed", str(exc))
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "assistant": _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY),
+            "service_runtime": runtime,
+        },
+    )
+
+
+def handle_assistant_voice_runtime_remove(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    runtime_id = str(args.get("runtime_id") or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.settings_update")
+        stop_voice_service(group)
+        runtime = remove_voice_runtime_deps(runtime_id)
+    except VoiceRuntimeDepsError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    except Exception as exc:
+        return _error("assistant_voice_runtime_remove_failed", str(exc))
     return DaemonResponse(
         ok=True,
         result={
@@ -3326,6 +3388,7 @@ def _start_voice_runtime_install_background(runtime_id: str) -> Dict[str, Any]:
         existing = _VOICE_RUNTIME_INSTALL_THREADS.get(runtime_id)
         if existing is not None and existing.is_alive():
             return get_voice_runtime_status(runtime_id)
+        started = begin_voice_runtime_install(runtime_id)
 
         def _run() -> None:
             try:
@@ -3341,10 +3404,7 @@ def _start_voice_runtime_install_background(runtime_id: str) -> Dict[str, Any]:
         thread = threading.Thread(target=_run, name=f"voice-runtime-install-{runtime_id}", daemon=True)
         _VOICE_RUNTIME_INSTALL_THREADS[runtime_id] = thread
         thread.start()
-        return {
-            **get_voice_runtime_status(runtime_id),
-            "status": "installing",
-        }
+        return started
 
 
 def handle_assistant_settings_update(
@@ -5351,8 +5411,12 @@ def try_handle_assistant_op(
         return handle_assistant_voice_transcribe(args)
     if op == "assistant_voice_model_install":
         return handle_assistant_voice_model_install(args)
+    if op == "assistant_voice_model_remove":
+        return handle_assistant_voice_model_remove(args)
     if op == "assistant_voice_runtime_install":
         return handle_assistant_voice_runtime_install(args)
+    if op == "assistant_voice_runtime_remove":
+        return handle_assistant_voice_runtime_remove(args)
     if op == "assistant_voice_transcript_append":
         return handle_assistant_voice_transcript_append(
             args,

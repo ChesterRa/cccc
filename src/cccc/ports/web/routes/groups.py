@@ -76,7 +76,9 @@ from ..schemas import (
     AssistantVoiceDocumentSaveRequest,
     AssistantVoiceInputRequest,
     AssistantVoiceModelInstallRequest,
+    AssistantVoiceModelRemoveRequest,
     AssistantVoiceRuntimeInstallRequest,
+    AssistantVoiceRuntimeRemoveRequest,
     AssistantVoicePromptDraftAckRequest,
     AssistantVoiceTranscriptSegmentRequest,
     AssistantVoiceTranscriptionRequest,
@@ -2569,6 +2571,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
+    @group_router.post("/assistants/voice_secretary/models/remove")
+    async def group_voice_secretary_model_remove(
+        group_id: str,
+        req: AssistantVoiceModelRemoveRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_model_remove",
+                "args": {
+                    "group_id": group_id,
+                    "model_id": req.model_id,
+                    "by": req.by,
+                },
+            }
+        )
+
     @group_router.post("/assistants/voice_secretary/runtime/install")
     async def group_voice_secretary_runtime_install(
         group_id: str,
@@ -2582,6 +2600,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "runtime_id": req.runtime_id,
                     "by": req.by,
                     "background": req.background,
+                },
+            }
+        )
+
+    @group_router.post("/assistants/voice_secretary/runtime/remove")
+    async def group_voice_secretary_runtime_remove(
+        group_id: str,
+        req: AssistantVoiceRuntimeRemoveRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_runtime_remove",
+                "args": {
+                    "group_id": group_id,
+                    "runtime_id": req.runtime_id,
+                    "by": req.by,
                 },
             }
         )

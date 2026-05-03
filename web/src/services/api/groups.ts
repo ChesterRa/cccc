@@ -197,6 +197,7 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     manifest_sha256: asOptionalString(record.manifest_sha256) || undefined,
     downloaded_bytes: Number.isFinite(Number(record.downloaded_bytes)) ? Number(record.downloaded_bytes) : undefined,
     total_size_bytes: Number.isFinite(Number(record.total_size_bytes)) ? Number(record.total_size_bytes) : undefined,
+    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes)) ? Number(record.disk_usage_bytes) : undefined,
     progress_percent: Number.isFinite(Number(record.progress_percent)) ? Number(record.progress_percent) : undefined,
     current_artifact_path: asOptionalString(record.current_artifact_path) || undefined,
     artifact_index: Number.isFinite(Number(record.artifact_index)) ? Number(record.artifact_index) : undefined,
@@ -228,6 +229,7 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     missing_modules: asStringArray(record.missing_modules),
     installed_at: asOptionalString(record.installed_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
+    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes)) ? Number(record.disk_usage_bytes) : undefined,
     error: asRecord(record.error) ?? undefined,
   };
 }
@@ -649,6 +651,36 @@ export async function installVoiceAssistantModel(
   };
 }
 
+export async function removeVoiceAssistantModel(
+  groupId: string,
+  payload: { modelId: string; by?: string },
+): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/models/remove`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        model_id: String(payload.modelId || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>;
+  const normalized = normalizeAssistantMutationResult(gid, resp.result);
+  const resultRecord = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      ...normalized,
+      model: normalizeAssistantServiceModel(resultRecord.model) || undefined,
+      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
+    },
+  };
+}
+
 export async function installVoiceAssistantRuntime(
   groupId: string,
   payload: { runtimeId?: string; by?: string; background?: boolean } = {},
@@ -663,6 +695,35 @@ export async function installVoiceAssistantRuntime(
         runtime_id: String(payload.runtimeId || "").trim(),
         by: String(payload.by || "user").trim() || "user",
         background: payload.background !== false,
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>;
+  const normalized = normalizeAssistantMutationResult(gid, resp.result);
+  const resultRecord = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      ...normalized,
+      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
+    },
+  };
+}
+
+export async function removeVoiceAssistantRuntime(
+  groupId: string,
+  payload: { runtimeId?: string; by?: string } = {},
+): Promise<ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/runtime/remove`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runtime_id: String(payload.runtimeId || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
       }),
     },
   );

@@ -59,6 +59,35 @@ def _voice_models_root() -> Path:
     return ensure_home() / "cache" / "voice-models"
 
 
+def _directory_size_bytes(path: Path) -> int:
+    total = 0
+    if not path.exists():
+        return total
+    for item in path.rglob("*"):
+        try:
+            if item.is_file():
+                total += int(item.stat().st_size)
+        except OSError:
+            continue
+    return total
+
+
+def _clear_voice_model_dir(model_id: str) -> None:
+    root = voice_model_dir(model_id)
+    if not root.exists():
+        return
+    for child in root.iterdir():
+        if child.name == _INSTALL_LOCK_FILENAME:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def _local_manifest_path() -> Path:
     return ensure_home().joinpath(*_LOCAL_MANIFEST_REL_PATH)
 
@@ -767,6 +796,7 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
         "current_artifact_path": str(state.get("current_artifact_path") or ""),
         "artifact_index": int(state.get("artifact_index") or 0),
         "artifact_count": int(state.get("artifact_count") or 0),
+        "disk_usage_bytes": _directory_size_bytes(install_dir),
         "artifacts": [
             {
                 "path": str(artifact["path"]),
@@ -931,6 +961,50 @@ def begin_voice_model_install(model_id: str, *, source: str = "") -> Dict[str, A
         ),
     )
     return get_voice_model_status(model_id, source=source)
+
+
+def remove_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
+    model_id = str(model_id or "").strip()
+    catalog = load_voice_model_catalog(source)
+    entry = catalog.get(model_id)
+    if entry is None:
+        raise VoiceModelError(
+            "voice_model_not_found",
+            f"voice model not found: {model_id}",
+            details={"model_id": model_id},
+        )
+    status = get_voice_model_status(model_id, source=source)
+    if str(status.get("status") or "") == VOICE_MODEL_STATUS_DOWNLOADING:
+        raise VoiceModelError(
+            "voice_model_busy",
+            f"voice model is currently downloading: {model_id}",
+            details={"model_id": model_id},
+        )
+    lock_handle = acquire_lockfile(_install_lock_path(model_id))
+    try:
+        _clear_voice_model_dir(model_id)
+        _write_install_state(
+            model_id,
+            {
+                "model_id": model_id,
+                "status": VOICE_MODEL_STATUS_NOT_INSTALLED,
+                "updated_at": utc_now_iso(),
+                "installed_at": "",
+                "error": {},
+                "manifest_sha256": entry.get("manifest_sha256"),
+                "artifacts": [],
+                "total_size_bytes": sum(int(artifact.get("size_bytes") or 0) for artifact in (entry.get("artifacts") or [])),
+                "downloaded_bytes": 0,
+                "progress_percent": 0.0,
+                "current_artifact_path": "",
+                "artifact_index": 0,
+                "artifact_count": len(entry.get("artifacts") or []),
+                "command": "",
+            },
+        )
+        return get_voice_model_status(model_id, source=source)
+    finally:
+        release_lockfile(lock_handle)
 
 
 def resolve_installed_voice_model_command(model_id: str) -> str:

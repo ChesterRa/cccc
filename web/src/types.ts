@@ -709,6 +709,7 @@ export type AssistantServiceModel = {
   manifest_sha256?: string;
   downloaded_bytes?: number;
   total_size_bytes?: number;
+  disk_usage_bytes?: number;
   progress_percent?: number;
   current_artifact_path?: string;
   artifact_index?: number;
@@ -729,6 +730,7 @@ export type AssistantServiceRuntime = {
   missing_modules?: string[];
   installed_at?: string;
   updated_at?: string;
+  disk_usage_bytes?: number;
   error?: Record<string, unknown>;
 };
 

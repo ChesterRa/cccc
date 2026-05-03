@@ -309,7 +309,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertFalse(bool(assistants_by_id["voice_secretary"].get("enabled")))
             self.assertEqual(assistants_by_id["voice_secretary"].get("lifecycle"), "disabled")
             self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_backend"), "browser_asr")
-            self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_language"), "mixed")
+            self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_language"), "auto")
         finally:
             cleanup()
 
@@ -1000,6 +1000,74 @@ class TestAssistantOps(unittest.TestCase):
                 os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
             else:
                 os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+            cleanup()
+
+    def test_voice_model_remove_clears_installed_artifacts(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            self._write_voice_model_manifest(home)
+            group_id = self._create_group()
+            self._ensure_foreman(group_id)
+
+            install, _ = self._call(
+                "assistant_voice_model_install",
+                {"group_id": group_id, "model_id": "mock_asr", "by": "user"},
+            )
+            self.assertTrue(install.ok, getattr(install, "error", None))
+            installed_model = (install.result or {}).get("model") if isinstance(install.result, dict) else {}
+            install_dir = Path(str(installed_model.get("install_dir") or ""))
+            self.assertTrue(install_dir.joinpath("adapter.py").exists())
+            self.assertGreater(int(installed_model.get("disk_usage_bytes") or 0), 0)
+
+            remove, _ = self._call(
+                "assistant_voice_model_remove",
+                {"group_id": group_id, "model_id": "mock_asr", "by": "user"},
+            )
+            self.assertTrue(remove.ok, getattr(remove, "error", None))
+            removed_model = (remove.result or {}).get("model") if isinstance(remove.result, dict) else {}
+            self.assertEqual(str(removed_model.get("status") or ""), "not_installed")
+            self.assertFalse(install_dir.joinpath("adapter.py").exists())
+            self.assertEqual(int(removed_model.get("downloaded_bytes", -1)), 0)
+        finally:
+            cleanup()
+
+    def test_voice_runtime_remove_clears_runtime_cache(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._ensure_foreman(group_id)
+            runtime_root = Path(home) / "cache" / "voice-runtimes" / "sherpa_onnx_streaming"
+            runtime_root.joinpath(".venv").mkdir(parents=True, exist_ok=True)
+            runtime_root.joinpath(".venv", "dummy.bin").write_bytes(b"runtime-cache")
+
+            remove, _ = self._call(
+                "assistant_voice_runtime_remove",
+                {"group_id": group_id, "runtime_id": "sherpa_onnx_streaming", "by": "user"},
+            )
+            self.assertTrue(remove.ok, getattr(remove, "error", None))
+            runtime = (remove.result or {}).get("service_runtime") if isinstance(remove.result, dict) else {}
+            self.assertEqual(str(runtime.get("status") or ""), "not_installed")
+            self.assertFalse(runtime_root.joinpath(".venv", "dummy.bin").exists())
+        finally:
+            cleanup()
+
+    def test_voice_runtime_remove_rejects_installing_runtime(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants.voice_runtime_deps import (
+                VOICE_RUNTIME_STATUS_INSTALLING,
+                VoiceRuntimeDepsError,
+                begin_voice_runtime_install,
+                remove_voice_runtime_deps,
+            )
+
+            started = begin_voice_runtime_install("sherpa_onnx_streaming")
+            self.assertEqual(str(started.get("status") or ""), VOICE_RUNTIME_STATUS_INSTALLING)
+
+            with self.assertRaises(VoiceRuntimeDepsError) as cm:
+                remove_voice_runtime_deps("sherpa_onnx_streaming")
+            self.assertEqual(cm.exception.code, "voice_runtime_busy")
+        finally:
             cleanup()
 
     def test_voice_document_create_requires_attached_repo_scope(self) -> None:
@@ -3859,6 +3927,35 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(browser.ok, getattr(browser, "error", None))
             assistant = (browser.result or {}).get("assistant") if isinstance(browser.result, dict) else {}
             self.assertEqual((assistant.get("config") or {}).get("recognition_backend"), "browser_asr")
+            self.assertEqual((assistant.get("config") or {}).get("recognition_language"), "auto")
+
+            local_mixed, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_backend": "assistant_service_local_asr", "recognition_language": "mixed"}},
+                },
+            )
+            self.assertTrue(local_mixed.ok, getattr(local_mixed, "error", None))
+            assistant = (local_mixed.result or {}).get("assistant") if isinstance(local_mixed.result, dict) else {}
+            self.assertEqual((assistant.get("config") or {}).get("recognition_backend"), "assistant_service_local_asr")
+            self.assertEqual((assistant.get("config") or {}).get("recognition_language"), "mixed")
+
+            browser_mixed, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_backend": "browser_asr", "recognition_language": "mixed"}},
+                },
+            )
+            self.assertTrue(browser_mixed.ok, getattr(browser_mixed, "error", None))
+            assistant = (browser_mixed.result or {}).get("assistant") if isinstance(browser_mixed.result, dict) else {}
+            self.assertEqual((assistant.get("config") or {}).get("recognition_backend"), "browser_asr")
+            self.assertEqual((assistant.get("config") or {}).get("recognition_language"), "auto")
 
             update, _ = self._call(
                 "assistant_settings_update",

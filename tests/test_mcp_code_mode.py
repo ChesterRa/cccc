@@ -108,6 +108,29 @@ text(JSON.stringify({
         finally:
             cleanup()
 
+    def test_exec_command_and_write_stdin_preserve_zero_yield(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.common import runtime_context_override
+
+        home, _workspace, group, cleanup = self._with_home_and_group()
+        try:
+            with runtime_context_override(home=str(home), group_id=group.group_id, actor_id="peer1"), patch.object(
+                mcp_server,
+                "exec_command_tool",
+                return_value={"running": True, "session_id": "exec-1"},
+            ) as exec_tool, patch.object(
+                mcp_server,
+                "write_stdin_tool",
+                return_value={"running": True, "session_id": "exec-1"},
+            ) as stdin_tool:
+                mcp_server.handle_tool_call("cccc_exec_command", {"command": "sleep 1", "yield_time_ms": 0})
+                mcp_server.handle_tool_call("cccc_write_stdin", {"session_id": "exec-1", "yield_time_ms": 0})
+
+            self.assertEqual(exec_tool.call_args.kwargs.get("yield_time_ms"), 0)
+            self.assertEqual(stdin_tool.call_args.kwargs.get("yield_time_ms"), 0)
+        finally:
+            cleanup()
+
     def test_code_exec_yields_and_code_wait_resumes(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.common import runtime_context_override

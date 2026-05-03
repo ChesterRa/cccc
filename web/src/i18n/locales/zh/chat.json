@@ -170,6 +170,7 @@
   "voiceSecretaryMicDefaultHint": "浏览器 ASR 使用浏览器/系统默认麦克风。",
   "voiceSecretaryMicServiceHint": "音频在浏览器中采集，然后发送到 daemon 管理的助手服务做本地 ASR。",
   "voiceSecretaryMicDevice": "麦克风",
+  "voiceSecretaryBrowserDefaultMic": "浏览器默认麦克风",
   "voiceSecretaryDefaultMic": "系统默认麦克风",
   "voiceSecretaryMicDeviceFallback": "麦克风 {{index}}",
   "voiceSecretaryRefreshDevices": "刷新设备",
