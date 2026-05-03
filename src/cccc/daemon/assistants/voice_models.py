@@ -29,6 +29,7 @@ VOICE_MODEL_KIND_ASR = "asr"
 VOICE_MODEL_KIND_DIARIZATION = "diarization"
 VOICE_MODEL_STATUS_NOT_INSTALLED = "not_installed"
 VOICE_MODEL_STATUS_DOWNLOADING = "downloading"
+VOICE_MODEL_STATUS_INSTALLING = "installing"
 VOICE_MODEL_STATUS_READY = "ready"
 VOICE_MODEL_STATUS_FAILED = "failed"
 _INSTALL_STATE_FILENAME = "install-state.json"
@@ -892,6 +893,19 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
                 artifact,
                 output_path=install_dir / artifact_path,
                 progress=on_progress,
+            )
+            _write_install_state(
+                model_id,
+                _install_progress_state(
+                    model_id=model_id,
+                    entry=entry,
+                    status=VOICE_MODEL_STATUS_INSTALLING,
+                    downloaded_bytes=total_bytes + int(result.get("size_bytes") or 0),
+                    total_bytes=total_expected_bytes,
+                    current_artifact_path=artifact_path,
+                    artifact_index=index,
+                    artifact_count=artifact_count,
+                ),
             )
             if artifact.get("archive"):
                 _safe_extract_tar(install_dir / artifact_path, install_dir)

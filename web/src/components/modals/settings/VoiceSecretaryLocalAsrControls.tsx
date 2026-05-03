@@ -61,6 +61,10 @@ function modelStatusLabel(
   model: AssistantServiceModel | null,
   t: (key: string, options?: Record<string, unknown>) => string,
 ) {
+  if (status === "downloading" && Number(model?.progress_percent || 0) >= 100 && model?.installed !== true) {
+    return t("assistants.serviceRuntimeStatusShort", { status: "installing" });
+  }
+  if (status === "installing") return t("assistants.serviceRuntimeStatusShort", { status });
   if (status !== "downloading") return t("assistants.serviceRuntimeStatusShort", { status });
   return `${t("assistants.serviceRuntimeStatusShort", { status })} ${Math.round(Number(model?.progress_percent || 0))}%`;
 }

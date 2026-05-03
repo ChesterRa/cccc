@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import * as api from "../../../services/api";
 import type { GroupPromptInfo } from "../../../services/api";
-import type { AssistantStateResult, BuiltinAssistant } from "../../../types";
+import type { AssistantServiceModel, AssistantStateResult, BuiltinAssistant } from "../../../types";
 import {
   DEFAULT_SERVICE_MODEL_ID,
   STREAMING_ASR_RUNTIME_ID,
@@ -98,6 +98,18 @@ function formatModelSize(bytes: number | undefined): string {
   if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
   if (value >= 1024) return `${Math.round(value / 1024)} KiB`;
   return `${Math.round(value)} B`;
+}
+
+function serviceModelStatusLabel(
+  status: string,
+  model: AssistantServiceModel | null | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (status === "downloading" && Number(model?.progress_percent || 0) >= 100 && model?.installed !== true) {
+    return t("assistants.componentStatusShort", { status: "installing", defaultValue: "{{status}}" });
+  }
+  if (status !== "downloading") return t("assistants.componentStatusShort", { status, defaultValue: "{{status}}" });
+  return `${t("assistants.componentStatusShort", { status, defaultValue: "{{status}}" })} ${Math.round(Number(model?.progress_percent || 0))}%`;
 }
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
@@ -680,17 +692,17 @@ export function AssistantsTab({
   const streamingRuntimeReady = streamingRuntimeStatus === "ready";
   const finalServiceAsrModelId = String(finalServiceAsrModel?.model_id || "").trim();
   const finalServiceAsrModelStatus = String(finalServiceAsrModel?.status || "not_installed").trim() || "not_installed";
-  const finalServiceAsrModelInstalling = finalServiceAsrModelStatus === "downloading";
+  const finalServiceAsrModelInstalling = finalServiceAsrModelStatus === "downloading" || finalServiceAsrModelStatus === "installing";
   const finalServiceAsrModelReady = finalServiceAsrModelStatus === "ready";
   const finalServiceAsrModelSize = formatModelSize(finalServiceAsrModel?.total_size_bytes);
   const liveServiceAsrModelId = String(liveServiceAsrModel?.model_id || "").trim();
   const liveServiceAsrModelStatus = String(liveServiceAsrModel?.status || "not_installed").trim() || "not_installed";
-  const liveServiceAsrModelInstalling = liveServiceAsrModelStatus === "downloading";
+  const liveServiceAsrModelInstalling = liveServiceAsrModelStatus === "downloading" || liveServiceAsrModelStatus === "installing";
   const liveServiceAsrModelReady = liveServiceAsrModelStatus === "ready";
   const liveServiceAsrModelSize = formatModelSize(liveServiceAsrModel?.total_size_bytes);
   const diarizationModel = serviceModelsById[DIARIZATION_MODEL_ID];
   const diarizationModelStatus = String(diarizationModel?.status || "not_installed").trim() || "not_installed";
-  const diarizationModelInstalling = diarizationModelStatus === "downloading";
+  const diarizationModelInstalling = diarizationModelStatus === "downloading" || diarizationModelStatus === "installing";
   const diarizationModelReady = diarizationModelStatus === "ready";
   const diarizationModelSize = formatModelSize(diarizationModel?.total_size_bytes);
   const diarizationModelDiskSize = formatModelSize(diarizationModel?.disk_usage_bytes);
@@ -1167,9 +1179,7 @@ export function AssistantsTab({
                                 {t("assistants.liveAsrModelLabel", { defaultValue: "Live ASR" })}
                               </span>
                               <StatusPill tone={liveServiceAsrModelReady ? "on" : liveServiceAsrModelStatus === "failed" ? "off" : "info"}>
-                                {liveServiceAsrModelStatus === "downloading"
-                                  ? `${t("assistants.componentStatusShort", { status: liveServiceAsrModelStatus, defaultValue: "{{status}}" })} ${Math.round(Number(liveServiceAsrModel?.progress_percent || 0))}%`
-                                  : t("assistants.componentStatusShort", { status: liveServiceAsrModelStatus, defaultValue: "{{status}}" })}
+                                {serviceModelStatusLabel(liveServiceAsrModelStatus, liveServiceAsrModel, t)}
                               </StatusPill>
                               {liveServiceAsrModelSize ? <StatusPill tone="info">{liveServiceAsrModelSize}</StatusPill> : null}
                             </div>
@@ -1183,9 +1193,7 @@ export function AssistantsTab({
                                 {t("assistants.finalAsrModelLabel", { defaultValue: "Final ASR" })}
                               </span>
                               <StatusPill tone={finalServiceAsrModelReady ? "on" : finalServiceAsrModelStatus === "failed" ? "off" : "info"}>
-                                {finalServiceAsrModelStatus === "downloading"
-                                  ? `${t("assistants.componentStatusShort", { status: finalServiceAsrModelStatus, defaultValue: "{{status}}" })} ${Math.round(Number(finalServiceAsrModel?.progress_percent || 0))}%`
-                                  : t("assistants.componentStatusShort", { status: finalServiceAsrModelStatus, defaultValue: "{{status}}" })}
+                                {serviceModelStatusLabel(finalServiceAsrModelStatus, finalServiceAsrModel, t)}
                               </StatusPill>
                               {finalServiceAsrModelSize ? <StatusPill tone="info">{finalServiceAsrModelSize}</StatusPill> : null}
                             </div>
@@ -1208,9 +1216,7 @@ export function AssistantsTab({
                               {t("assistants.speakerLabelsTitle", { defaultValue: "Speaker labels" })}
                             </div>
                             <StatusPill tone={diarizationModelReady ? "on" : diarizationModelStatus === "failed" ? "off" : "info"}>
-                              {diarizationModelStatus === "downloading"
-                                ? `${t("assistants.componentStatusShort", { status: diarizationModelStatus, defaultValue: "{{status}}" })} ${Math.round(Number(diarizationModel?.progress_percent || 0))}%`
-                                : t("assistants.componentStatusShort", { status: diarizationModelStatus, defaultValue: "{{status}}" })}
+                              {serviceModelStatusLabel(diarizationModelStatus, diarizationModel, t)}
                             </StatusPill>
                             <StatusPill tone="info">{t("assistants.optional", { defaultValue: "Optional" })}</StatusPill>
                             {diarizationModelSize ? <StatusPill tone="info">{diarizationModelSize}</StatusPill> : null}

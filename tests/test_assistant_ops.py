@@ -190,6 +190,27 @@ class TestAssistantOps(unittest.TestCase):
                 _download_artifact(artifact, output_path=Path(td) / "model.pt")
         self.assertEqual(cm.exception.code, "voice_model_manifest_hash_invalid")
 
+    def test_voice_model_install_marks_post_download_installing_phase(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import voice_models
+
+            self._write_voice_model_manifest(home)
+            states = []
+            original_write = voice_models._write_install_state
+
+            def capture_state(model_id: str, state: dict) -> None:
+                states.append(dict(state))
+                original_write(model_id, state)
+
+            with patch("cccc.daemon.assistants.voice_models._write_install_state", side_effect=capture_state):
+                installed = voice_models.install_voice_model("mock_asr")
+
+            self.assertEqual(str(installed.get("status") or ""), "ready")
+            self.assertTrue(any(str(state.get("status") or "") == "installing" for state in states))
+        finally:
+            cleanup()
+
     def test_voice_model_manifest_rejects_unsafe_install_paths(self) -> None:
         from cccc.daemon.assistants.voice_models import VoiceModelError, load_voice_model_catalog
 

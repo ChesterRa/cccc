@@ -264,14 +264,15 @@ def _read_text(path: Path, *, max_bytes: int) -> tuple[str, bool, int, str]:
     if not path.exists() or not path.is_file():
         raise MCPError(code="not_found", message=f"file not found: {path}")
     size = int(path.stat().st_size)
-    sha256 = _sha256_file(path)
     limit = min(max_bytes, _MAX_READ_BYTES)
     with path.open("rb") as fh:
         raw = fh.read(limit)
+    truncated = size > len(raw)
+    sha256 = "" if truncated else hashlib.sha256(raw).hexdigest()
     if b"\0" in raw:
         raise MCPError(code="binary_file", message="refusing to read binary file as text")
     text = raw.decode("utf-8", errors="replace")
-    return text, size > len(raw), size, sha256
+    return text, truncated, size, sha256
 
 
 def _line_slice(text: str, *, start_line: Any = None, end_line: Any = None) -> tuple[str, int | None, int | None, int]:

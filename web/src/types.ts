@@ -695,7 +695,7 @@ export type AssistantServiceModel = {
   runtime_id?: string;
   title?: string;
   description?: string;
-  status?: "not_installed" | "downloading" | "ready" | "failed" | "unknown" | string;
+  status?: "not_installed" | "downloading" | "installing" | "ready" | "failed" | "unknown" | string;
   available?: boolean;
   installed?: boolean;
   install_dir?: string;
