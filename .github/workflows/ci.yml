@@ -36,11 +36,12 @@ jobs:
       - name: Install build deps
         run: |
           python -m pip install -U pip build twine
-          python -m pip install -e . pytest
+          python -m pip install -e . pytest pytest-timeout
 
       - name: Run test suite
+        timeout-minutes: 15
         run: |
-          python -m pytest -q
+          python -m pytest -q --timeout=120 --timeout-method=thread --durations=20
 
       - name: Build
         run: |
