@@ -10,6 +10,10 @@ import {
   GroupTabId,
   GlobalTabId,
 } from "./modals/settings/types";
+import {
+  readSettingsLastLocation,
+  writeSettingsLastLocation,
+} from "./modals/settings/settingsLastLocation";
 import { ModalFrame } from "./modals/ModalFrame";
 import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
 import { IMConfigDraft, saveAndStartIMBridge, saveIMConfigDraft } from "./modals/settings/imBridgeConfig";
@@ -71,9 +75,10 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const { t } = useTranslation("settings");
   const { modalRef } = useModalA11y(isOpen, onClose);
-  const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
-  const [groupTab, setGroupTab] = useState<GroupTabId>("guidance");
-  const [globalTab, setGlobalTab] = useState<GlobalTabId>("capabilities");
+  const initialLocation = useMemo(() => readSettingsLastLocation(Boolean(groupId)), []);
+  const [scope, setScope] = useState<SettingsScope>(initialLocation.scope);
+  const [groupTab, setGroupTab] = useState<GroupTabId>(initialLocation.groupTab);
+  const [globalTab, setGlobalTab] = useState<GlobalTabId>(initialLocation.globalTab);
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
   const settingsTarget = useModalStore((state) => state.settingsTarget);
@@ -981,6 +986,11 @@ export function SettingsModal({
     if (scope === "group") setGroupTab(tab as GroupTabId);
     else setGlobalTab(tab as GlobalTabId);
   };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    writeSettingsLastLocation({ scope, groupTab, globalTab });
+  }, [globalTab, groupTab, isOpen, scope]);
 
   useEffect(() => {
     const el = contentScrollRef.current;

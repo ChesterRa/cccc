@@ -228,7 +228,23 @@ export function ChatComposer({
     const gid = String(selectedGroupId || "").trim();
     if (!gid || busy === "send" || petBusy) return;
     if (petEnabled) {
-      requestAssistantOpen(gid, "pet");
+      setPetBusy(true);
+      try {
+        const resp = await updateSettings(gid, { desktop_pet_enabled: false });
+        if (!resp.ok) {
+          showError(resp.error.message);
+          return;
+        }
+        await refreshSettings(gid);
+        await refreshInternalRuntimeActors(gid);
+        showNotice({
+          message: t("builtInAssistantPetDisabled", { defaultValue: "PET disabled for this group." }),
+        });
+      } catch {
+        showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
+      } finally {
+        setPetBusy(false);
+      }
       return;
     }
     setPetBusy(true);
@@ -923,12 +939,12 @@ export function ChatComposer({
                   disabled={!selectedGroupId || busy === "send" || petBusy}
                   aria-label={
                     petEnabled
-                      ? t("builtInAssistantPetOpen", { defaultValue: "Open PET" })
+                      ? t("builtInAssistantPetTurnOff", { defaultValue: "Turn PET off" })
                       : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" })
                   }
                   title={
                     petEnabled
-                      ? t("builtInAssistantPetOpen", { defaultValue: "Open PET" })
+                      ? t("builtInAssistantPetTurnOff", { defaultValue: "Turn PET off" })
                       : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" })
                   }
                 >
