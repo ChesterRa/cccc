@@ -74,6 +74,20 @@ run_full_python_tests() {
   echo ""
 }
 
+python_sources=()
+
+append_unique_python_source() {
+  local candidate="$1"
+  [[ -f "$candidate" ]] || return 0
+  local existing
+  if [[ ${#python_sources[@]} -gt 0 ]]; then
+    for existing in "${python_sources[@]}"; do
+      [[ "$existing" == "$candidate" ]] && return 0
+    done
+  fi
+  python_sources+=("$candidate")
+}
+
 append_unique_test() {
   local candidate="$1"
   [[ -f "$candidate" ]] || return 0
@@ -86,9 +100,20 @@ append_unique_test() {
   python_tests+=("$candidate")
 }
 
+run_python_syntax_check() {
+  if [[ ${#python_sources[@]} -eq 0 ]]; then
+    return
+  fi
+
+  echo "Checking changed Python syntax..."
+  uv run python -m compileall -q "${python_sources[@]}"
+  echo "✓ Python syntax check passed"
+  echo ""
+}
+
 run_targeted_python_tests() {
   if [[ ${#python_tests[@]} -eq 0 ]]; then
-    echo "Skipping Python tests; no impacted test files found."
+    echo "Skipping Python tests; no impacted test files found. Run scripts/pre_commit_checks.sh --full for full coverage."
     echo ""
     return
   fi
@@ -120,7 +145,6 @@ fi
 
 needs_web=0
 needs_python=0
-needs_full_python=0
 python_tests=()
 
 for file in "${changed_files[@]}"; do
@@ -133,23 +157,31 @@ for file in "${changed_files[@]}"; do
       ;;
     tests/*.py)
       needs_python=1
+      append_unique_python_source "$file"
       append_unique_test "$file"
       ;;
     src/cccc/daemon/codex_app_sessions.py|src/cccc/daemon/claude_app_sessions.py)
       needs_python=1
+      append_unique_python_source "$file"
       append_unique_test "tests/test_codex_app_flow.py"
       ;;
     src/cccc/daemon/space/*|src/cccc/providers/notebooklm/*)
       needs_python=1
+      append_unique_python_source "$file"
       append_unique_test "tests/test_group_space_ops.py"
+      ;;
+    src/cccc/daemon/assistants/voice_*|src/cccc/daemon/assistants/local_*asr*.py|src/cccc/daemon/assistants/sherpa_*.py)
+      needs_python=1
+      append_unique_python_source "$file"
+      append_unique_test "tests/test_assistant_ops.py"
       ;;
     src/cccc/**/*.py|src/cccc/*.py|pyproject.toml|uv.lock)
       needs_python=1
-      needs_full_python=1
+      append_unique_python_source "$file"
       ;;
     *.py)
       needs_python=1
-      needs_full_python=1
+      append_unique_python_source "$file"
       ;;
   esac
 done
@@ -164,11 +196,8 @@ else
 fi
 
 if [[ "$needs_python" == "1" ]]; then
-  if [[ "$needs_full_python" == "1" ]]; then
-    run_full_python_tests
-  else
-    run_targeted_python_tests
-  fi
+  run_python_syntax_check
+  run_targeted_python_tests
 else
   echo "Skipping Python tests; no Python files changed."
   echo ""

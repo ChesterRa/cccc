@@ -24,7 +24,9 @@ VOICE_RUNTIME_STATUS_FAILED = "failed"
 _STATE_FILENAME = "runtime-state.json"
 _LOCK_FILENAME = ".runtime.lock"
 _INSTALL_TIMEOUT_SECONDS = 3600
-_SUPPORTED_PYTHON_COMMANDS = ("python3.12", "python3.11", "python3.10", "python3.9")
+_MIN_SUPPORTED_PYTHON = (3, 9)
+_SUPPORTED_PYTHON_LABEL = "Python 3.9+"
+_SUPPORTED_PYTHON_COMMANDS = ("python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python")
 _SHERPA_ONNX_STREAMING_PACKAGES = ("sherpa-onnx", "numpy")
 _SHERPA_ONNX_STREAMING_MODULES = ("sherpa_onnx", "numpy")
 _STATUS_CACHE_TTL_SECONDS = 2.0
@@ -138,21 +140,25 @@ def _python_version(argv0: str) -> tuple[int, int]:
         return (0, 0)
 
 
+def _is_supported_python_version(version: tuple[int, int]) -> bool:
+    return version >= _MIN_SUPPORTED_PYTHON
+
+
 def _select_base_python() -> str:
     current = sys.executable
     current_version = sys.version_info[:2]
-    if (3, 9) <= current_version <= (3, 12):
+    if _is_supported_python_version(current_version):
         return current
     for name in _SUPPORTED_PYTHON_COMMANDS:
         path = shutil.which(name)
         if not path:
             continue
         version = _python_version(path)
-        if (3, 9) <= version <= (3, 12):
+        if _is_supported_python_version(version):
             return path
     raise VoiceRuntimeDepsError(
         "voice_runtime_python_missing",
-        "Voice ASR runtime needs Python 3.9-3.12 for compatible wheels.",
+        f"Voice ASR runtime needs {_SUPPORTED_PYTHON_LABEL} for compatible wheels.",
         details={"current_python": sys.executable, "current_version": ".".join(map(str, sys.version_info[:3]))},
     )
 

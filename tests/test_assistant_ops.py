@@ -242,18 +242,26 @@ class TestAssistantOps(unittest.TestCase):
                 _safe_extract_tar(archive_path, Path(td) / "out")
         self.assertEqual(cm.exception.code, "voice_model_archive_invalid")
 
-    def test_default_voice_catalog_prefers_zipformer_transducer_model(self) -> None:
+    def test_default_voice_catalog_prefers_final_and_live_service_models(self) -> None:
+        from cccc.daemon.assistants.local_asr_model_selection import (
+            DEFAULT_FINAL_SERVICE_MODEL_ID,
+            DEFAULT_LIVE_SERVICE_MODEL_ID,
+        )
         from cccc.daemon.assistants.voice_models import load_voice_model_catalog
 
         catalog = load_voice_model_catalog()
         model_ids = list(catalog.keys())
         self.assertGreater(len(model_ids), 0)
-        self.assertEqual(model_ids[0], "sherpa_onnx_streaming_zipformer_zh_int8")
-        streaming = catalog[model_ids[0]].get("streaming") or {}
-        self.assertEqual(streaming.get("engine"), "transducer")
+        self.assertEqual(model_ids[0], DEFAULT_FINAL_SERVICE_MODEL_ID)
+        offline = catalog[DEFAULT_FINAL_SERVICE_MODEL_ID].get("offline") or {}
+        self.assertEqual(offline.get("engine"), "sense_voice")
+        self.assertTrue(str(offline.get("model") or "").endswith("model.int8.onnx"))
+        self.assertTrue(str(offline.get("tokens") or "").endswith("tokens.txt"))
+
+        streaming = catalog[DEFAULT_LIVE_SERVICE_MODEL_ID].get("streaming") or {}
+        self.assertEqual(streaming.get("engine"), "paraformer")
         self.assertTrue(str(streaming.get("encoder") or "").endswith("encoder.int8.onnx"))
-        self.assertTrue(str(streaming.get("decoder") or "").endswith("decoder.onnx"))
-        self.assertTrue(str(streaming.get("joiner") or "").endswith("joiner.int8.onnx"))
+        self.assertTrue(str(streaming.get("decoder") or "").endswith("decoder.int8.onnx"))
         self.assertTrue(str(streaming.get("tokens") or "").endswith("tokens.txt"))
 
     def test_sherpa_streaming_model_resolution_falls_back_from_invalid_selection(self) -> None:
@@ -264,6 +272,7 @@ class TestAssistantOps(unittest.TestCase):
                 return {
                     "model_id": model_id,
                     "runtime_id": "sherpa_onnx_streaming",
+                    "streaming": {"engine": "paraformer"},
                     "streaming_ready": True,
                 }
             return {"model_id": model_id, "status": "unknown", "available": False}
@@ -275,6 +284,7 @@ class TestAssistantOps(unittest.TestCase):
                 {
                     "model_id": "ready_streaming",
                     "runtime_id": "sherpa_onnx_streaming",
+                    "streaming": {"engine": "paraformer"},
                     "streaming_ready": True,
                 }
             ],
@@ -1069,6 +1079,36 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(cm.exception.code, "voice_runtime_busy")
         finally:
             cleanup()
+
+    def test_voice_runtime_python_selects_current_python_39_or_newer(self) -> None:
+        from cccc.daemon.assistants import voice_runtime_deps
+
+        with patch.object(voice_runtime_deps.sys, "version_info", (3, 14, 0)):
+            self.assertEqual(voice_runtime_deps._select_base_python(), voice_runtime_deps.sys.executable)
+
+    def test_voice_runtime_python_falls_back_to_python_314(self) -> None:
+        from cccc.daemon.assistants import voice_runtime_deps
+
+        with patch.object(voice_runtime_deps.sys, "version_info", (3, 8, 20)), patch.object(
+            voice_runtime_deps.shutil,
+            "which",
+            side_effect=lambda name: "/opt/homebrew/bin/python3.14" if name == "python3.14" else None,
+        ), patch.object(voice_runtime_deps, "_python_version", return_value=(3, 14)):
+            self.assertEqual(voice_runtime_deps._select_base_python(), "/opt/homebrew/bin/python3.14")
+
+    def test_voice_runtime_python_rejects_below_39(self) -> None:
+        from cccc.daemon.assistants import voice_runtime_deps
+        from cccc.daemon.assistants.voice_runtime_deps import VoiceRuntimeDepsError
+
+        with patch.object(voice_runtime_deps.sys, "version_info", (3, 8, 20)), patch.object(
+            voice_runtime_deps.shutil,
+            "which",
+            return_value=None,
+        ):
+            with self.assertRaises(VoiceRuntimeDepsError) as cm:
+                voice_runtime_deps._select_base_python()
+        self.assertEqual(cm.exception.code, "voice_runtime_python_missing")
+        self.assertIn("Python 3.9+", cm.exception.message)
 
     def test_voice_document_create_requires_attached_repo_scope(self) -> None:
         _, cleanup = self._with_home()
