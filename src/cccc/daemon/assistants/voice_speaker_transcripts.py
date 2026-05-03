@@ -2,59 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-_PCM16_BYTES_PER_SAMPLE = 2
+from .local_streaming_asr import open_local_offline_asr_session
+from .voice_speaker_transcript_windows import (
+    merge_adjacent_speaker_turns,
+    merge_display_transcript_segments,
+    normalized_speaker_turns,
+    slice_pcm16_by_ms,
+)
+
 _DEFAULT_MAX_SPEAKER_TRANSCRIPT_SEGMENTS = 48
 _MIN_TRANSCRIBE_DURATION_MS = 300
 
 SpeakerTranscriber = Callable[[bytes, int], Awaitable[str]]
-
-
-def _safe_ms(value: Any) -> int | None:
-    try:
-        parsed = int(value)
-    except Exception:
-        return None
-    return max(0, parsed)
-
-
-def slice_pcm16_by_ms(pcm16_audio: bytes, *, start_ms: int, end_ms: int, sample_rate: int = 16000) -> bytes:
-    if not pcm16_audio or end_ms <= start_ms:
-        return b""
-    rate = max(1, int(sample_rate or 16000))
-    start_sample = max(0, int(start_ms * rate / 1000))
-    end_sample = max(start_sample, int(end_ms * rate / 1000))
-    start_byte = min(len(pcm16_audio), start_sample * _PCM16_BYTES_PER_SAMPLE)
-    end_byte = min(len(pcm16_audio), end_sample * _PCM16_BYTES_PER_SAMPLE)
-    return pcm16_audio[start_byte:end_byte]
-
-
-def normalized_speaker_turns(
-    speaker_segments: Any,
-    *,
-    max_segments: int = _DEFAULT_MAX_SPEAKER_TRANSCRIPT_SEGMENTS,
-) -> list[dict[str, Any]]:
-    if not isinstance(speaker_segments, list):
-        return []
-    turns: list[dict[str, Any]] = []
-    for item in speaker_segments:
-        if not isinstance(item, dict):
-            continue
-        start_ms = _safe_ms(item.get("start_ms"))
-        end_ms = _safe_ms(item.get("end_ms"))
-        if start_ms is None or end_ms is None or end_ms <= start_ms:
-            continue
-        label = str(item.get("speaker_label") or "").strip()
-        if not label:
-            continue
-        turns.append(
-            {
-                "start_ms": start_ms,
-                "end_ms": end_ms,
-                "speaker_label": label,
-                "speaker_index": item.get("speaker_index"),
-            }
-        )
-    return sorted(turns, key=lambda row: (int(row["start_ms"]), int(row["end_ms"])))[:max_segments]
 
 
 async def build_speaker_transcript_segments(
@@ -66,7 +25,8 @@ async def build_speaker_transcript_segments(
     max_segments: int = _DEFAULT_MAX_SPEAKER_TRANSCRIPT_SEGMENTS,
 ) -> list[dict[str, Any]]:
     transcript_segments: list[dict[str, Any]] = []
-    for turn in normalized_speaker_turns(speaker_segments, max_segments=max_segments):
+    normalized_turns = normalized_speaker_turns(speaker_segments, max_segments=max_segments)
+    for turn in merge_adjacent_speaker_turns(normalized_turns):
         start_ms = int(turn["start_ms"])
         end_ms = int(turn["end_ms"])
         if end_ms - start_ms < _MIN_TRANSCRIBE_DURATION_MS:
@@ -89,4 +49,25 @@ async def build_speaker_transcript_segments(
                 "text": text,
             }
         )
-    return transcript_segments
+    return merge_display_transcript_segments(transcript_segments)
+
+
+async def build_offline_speaker_transcript_segments(
+    pcm16_audio: bytes,
+    speaker_segments: Any,
+    *,
+    selected_model_id: str,
+    sample_rate: int = 16000,
+    max_segments: int = _DEFAULT_MAX_SPEAKER_TRANSCRIPT_SEGMENTS,
+) -> list[dict[str, Any]]:
+    session = await open_local_offline_asr_session(selected_model_id, sample_rate=sample_rate)
+    try:
+        return await build_speaker_transcript_segments(
+            pcm16_audio,
+            speaker_segments,
+            sample_rate=sample_rate,
+            max_segments=max_segments,
+            transcribe_segment=lambda audio, rate: session.transcribe_pcm16(audio, sample_rate=rate),
+        )
+    finally:
+        await session.close()

@@ -890,6 +890,28 @@ async def run_provisional_diarization_window(
     }
 
 
+async def run_provisional_diarization_prefix(
+    pcm16_audio: bytes,
+    *,
+    selected_model_id: str,
+    sample_rate: int,
+    run_seq: int,
+    audio_duration_ms: int,
+    previous_segments: list[dict[str, Any]],
+    previous_speaker_embeddings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return await run_provisional_diarization_window(
+        pcm16_audio,
+        selected_model_id=selected_model_id,
+        sample_rate=sample_rate,
+        run_seq=run_seq,
+        audio_duration_ms=audio_duration_ms,
+        window_start_ms=0,
+        previous_segments=previous_segments,
+        previous_speaker_embeddings=previous_speaker_embeddings,
+    )
+
+
 async def run_final_diarization_file(
     pcm16_path: Path,
     *,

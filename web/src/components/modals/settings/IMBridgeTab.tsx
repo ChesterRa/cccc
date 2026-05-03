@@ -4,6 +4,7 @@ import { useTranslation, Trans } from "react-i18next";
 import QRCode from "qrcode";
 import { IMStatus, IMPlatform, WeixinLoginStatus } from "../../../types";
 import * as api from "../../../services/api";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   dangerButtonClass,
   inputClass,
@@ -472,19 +473,21 @@ export function IMBridgeTab({
         <div className="mt-4 space-y-3">
         <div>
           <label className={labelClass()}>{t("imBridge.platform")}</label>
-          <select
+          <SelectCombobox
+            items={[
+              { value: "telegram", label: "Telegram" },
+              { value: "slack", label: "Slack" },
+              { value: "discord", label: "Discord" },
+              { value: "feishu", label: "Feishu/Lark" },
+              { value: "dingtalk", label: "DingTalk" },
+              { value: "wecom", label: t("imBridge.wecom") },
+              { value: "weixin", label: t("imBridge.weixin") },
+            ]}
             value={imPlatform}
-            onChange={(e) => onPlatformChange(e.target.value as IMPlatform)}
+            onChange={(value) => onPlatformChange(value as IMPlatform)}
+            ariaLabel={t("imBridge.platform")}
             className={inputClass()}
-          >
-            <option value="telegram">Telegram</option>
-            <option value="slack">Slack</option>
-            <option value="discord">Discord</option>
-            <option value="feishu">Feishu/Lark</option>
-            <option value="dingtalk">DingTalk</option>
-            <option value="wecom">{t("imBridge.wecom")}</option>
-            <option value="weixin">{t("imBridge.weixin")}</option>
-          </select>
+          />
         </div>
 
         {/* Bot Token (Telegram/Slack/Discord) */}
@@ -528,14 +531,16 @@ export function IMBridgeTab({
           <>
             <div>
               <label className={labelClass()}>{t("imBridge.apiRegion")}</label>
-              <select
+              <SelectCombobox
+                items={[
+                  { value: "https://open.feishu.cn", label: t("imBridge.feishuCn") },
+                  { value: "https://open.larkoffice.com", label: t("imBridge.larkGlobal") },
+                ]}
                 value={imFeishuDomain}
-                onChange={(e) => setImFeishuDomain(e.target.value)}
+                onChange={setImFeishuDomain}
+                ariaLabel={t("imBridge.apiRegion")}
                 className={inputClass()}
-              >
-                <option value="https://open.feishu.cn">{t("imBridge.feishuCn")}</option>
-                <option value="https://open.larkoffice.com">{t("imBridge.larkGlobal")}</option>
-              </select>
+              />
               <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.feishuRegionHint")}
               </p>

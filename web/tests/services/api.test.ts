@@ -825,6 +825,43 @@ describe("api assistant voice model helpers", () => {
       }),
     );
   });
+
+  it("preserves offline ASR model metadata in assistant state", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        result: {
+          group_id: "g-demo",
+          assistant: {
+            assistant_id: "voice_secretary",
+            kind: "voice_secretary",
+            enabled: true,
+            lifecycle: "idle",
+          },
+          service_models: [
+            {
+              model_id: "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
+              kind: "asr",
+              status: "not_installed",
+              offline_ready: false,
+              offline: { engine: "sense_voice" },
+            },
+          ],
+        },
+      }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchAssistant("g-demo", "voice_secretary");
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) throw new Error("expected ok response");
+    const model = resp.result.service_models_by_id?.sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8;
+    expect(model?.offline_ready).toBe(false);
+    expect(model?.offline).toEqual({ engine: "sense_voice" });
+  });
 });
 
 describe("api.message refs", () => {

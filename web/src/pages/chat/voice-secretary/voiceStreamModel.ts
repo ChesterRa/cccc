@@ -1,9 +1,11 @@
 export type VoiceStreamCaptureMode = "document" | "instruction" | "prompt";
 
 export type VoiceTranscriptPreviewPhase = "interim" | "final";
+export type VoiceTranscriptProcessingPhase = "separating_speakers" | "failed";
 
 export type VoiceTranscriptPreview = {
   id: string;
+  sessionId?: string;
   phase: VoiceTranscriptPreviewPhase;
   text: string;
   pendingFinalText?: string;
@@ -19,6 +21,7 @@ export type VoiceTranscriptPreview = {
   endMs?: number;
   speakerLabel?: string;
   speakerIndex?: number;
+  processingPhase?: VoiceTranscriptProcessingPhase;
   updatedAt: number;
 };
 
@@ -28,6 +31,7 @@ export type VoiceTranscriptItem = VoiceTranscriptPreview & {
 
 export type VoiceStreamMetadata = {
   mode: VoiceStreamCaptureMode;
+  sessionId?: string;
   documentTitle?: string;
   documentPath?: string;
   language?: string;
@@ -58,6 +62,7 @@ export function createVoiceTranscriptPreview(params: {
     : params.cleanText;
   return {
     id: params.id,
+    sessionId: params.metadata.sessionId,
     phase: params.phase,
     text,
     pendingFinalText: params.pendingFinalText,
@@ -81,6 +86,7 @@ export function createVoiceTranscriptItem(params: {
   if (!cleanText || params.metadata.mode !== "document" || !documentPath) return null;
   return {
     id: params.id,
+    sessionId: params.metadata.sessionId,
     phase: "final",
     text: cleanText,
     ...params.metadata,
@@ -90,6 +96,30 @@ export function createVoiceTranscriptItem(params: {
     createdAt: params.now,
     updatedAt: params.now,
   };
+}
+
+export function upsertLiveVoiceTranscriptItem(
+  currentItems: VoiceTranscriptItem[],
+  preview: VoiceTranscriptPreview | null,
+  maxItems = 240,
+): VoiceTranscriptItem[] {
+  if (!preview || preview.mode !== "document" || !String(preview.documentPath || "").trim()) {
+    return currentItems;
+  }
+  const text = String(preview.text || "").trim();
+  if (!text) return currentItems.filter((item) => item.id !== preview.id);
+  const item: VoiceTranscriptItem = {
+    ...preview,
+    phase: preview.phase,
+    text,
+    documentPath: String(preview.documentPath || "").trim(),
+    createdAt: Number(currentItems.find((existing) => existing.id === preview.id)?.createdAt || preview.updatedAt),
+    updatedAt: preview.updatedAt,
+  };
+  return [
+    item,
+    ...currentItems.filter((existing) => existing.id !== preview.id),
+  ].slice(0, maxItems);
 }
 
 export function appendFinalVoiceTranscriptItem(
@@ -118,6 +148,34 @@ export function mergeVoiceTranscriptItems(
     (items, item) => appendFinalVoiceTranscriptItem(items, item, "", maxItems),
     currentItems,
   ).slice(0, maxItems);
+}
+
+export function replaceVoiceTranscriptSessionItems(
+  currentItems: VoiceTranscriptItem[],
+  incomingItems: VoiceTranscriptItem[],
+  maxItems = 240,
+): VoiceTranscriptItem[] {
+  const sessionIds = new Set(incomingItems.map((item) => String(item.sessionId || "").trim()).filter(Boolean));
+  const filtered = currentItems.filter((item) => {
+    const sessionId = String(item.sessionId || "").trim();
+    if (sessionId && sessionIds.has(sessionId)) return false;
+    return true;
+  });
+  return mergeVoiceTranscriptItems(filtered, incomingItems, maxItems);
+}
+
+export function replaceVoiceTranscriptProcessingItem(
+  currentItems: VoiceTranscriptItem[],
+  incomingItem: VoiceTranscriptItem,
+  maxItems = 240,
+): VoiceTranscriptItem[] {
+  const sessionId = String(incomingItem.sessionId || "").trim();
+  const nextItems = currentItems.filter((item) => {
+    if (item.id === incomingItem.id) return false;
+    if (sessionId && String(item.sessionId || "").trim() === sessionId && item.processingPhase) return false;
+    return true;
+  });
+  return [incomingItem, ...nextItems].slice(0, maxItems);
 }
 
 export function filterVoiceTranscriptItemsForDocument(

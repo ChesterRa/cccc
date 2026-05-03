@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation, Trans } from "react-i18next";
 
 import { MessageSquareIcon } from "../../Icons";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   inputClass,
   labelClass,
@@ -51,14 +52,16 @@ export function MessagingTab(props: MessagingTabProps) {
 
             <div className="ml-1 space-y-2.5">
               <label className={labelClass(isDark)}>{t("messaging.whenNoRecipients")}</label>
-              <select
+              <SelectCombobox
+                items={[
+                  { value: "foreman", label: t("messaging.foremanOnly") },
+                  { value: "broadcast", label: t("messaging.broadcastAll") },
+                ]}
                 value={defaultSendTo}
-                onChange={(e) => setDefaultSendTo((e.target.value as "foreman" | "broadcast") || "foreman")}
-                className={`${inputClass(isDark)} cursor-pointer`}
-              >
-                <option value="foreman">{t("messaging.foremanOnly")}</option>
-                <option value="broadcast">{t("messaging.broadcastAll")}</option>
-              </select>
+                onChange={(value) => setDefaultSendTo((value as "foreman" | "broadcast") || "foreman")}
+                ariaLabel={t("messaging.whenNoRecipients")}
+                className={inputClass(isDark)}
+              />
               <div className="text-[11px] leading-snug text-[var(--color-text-muted)]">
                 {t("messaging.tip")}
               </div>

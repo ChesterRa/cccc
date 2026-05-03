@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { InboxIcon } from "../../../components/Icons";
 
 type VoiceSecretaryDocumentListPanelProps = {
   actionBusy: string;
@@ -170,7 +171,7 @@ export function VoiceSecretaryDocumentListPanel({
             >
               <span className="flex min-w-0 items-center justify-between gap-2">
                 <span className="truncate text-sm font-semibold">{document.title || docId}</span>
-                <span className="flex w-[5.5rem] shrink-0 items-center justify-end gap-1">
+                <span className="flex w-[4.25rem] shrink-0 items-center justify-end gap-1.5">
                   <button
                     type="button"
                     aria-label={t("voiceSecretaryArchiveDocumentItemAriaLabel", {
@@ -187,15 +188,13 @@ export function VoiceSecretaryDocumentListPanel({
                       event.stopPropagation();
                     }}
                     className={classNames(
-                      "inline-flex h-6 items-center justify-center rounded-full border px-2 opacity-0 transition-all disabled:cursor-default group-hover:opacity-100 group-focus-within:opacity-100",
+                      "inline-flex h-7 w-7 items-center justify-center rounded-full border opacity-0 transition-all disabled:cursor-default group-hover:opacity-100 group-focus-within:opacity-100",
                       isDark
                         ? "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/10 hover:text-slate-100 disabled:opacity-35"
                         : "border-black/10 bg-white text-gray-500 hover:bg-black/5 hover:text-gray-900 disabled:opacity-35",
                     )}
                   >
-                    <span className="text-[10px] font-semibold leading-none">
-                      {t("voiceSecretaryArchiveShort", { defaultValue: "Archive" })}
-                    </span>
+                    <InboxIcon size={14} aria-hidden="true" />
                   </button>
                   <button
                     type="button"

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveServiceModelRuntimeId } from "../../../src/pages/chat/voice-secretary/voiceServiceModelRuntime";
+import {
+  DEFAULT_LIVE_SERVICE_MODEL_ID,
+  DEFAULT_SERVICE_MODEL_ID,
+  effectiveServiceModelId,
+  resolveServiceModelRuntimeId,
+} from "../../../src/pages/chat/voice-secretary/voiceServiceModelRuntime";
 import { resolveVoiceServiceReadiness } from "../../../src/pages/chat/voice-secretary/voiceServiceReadiness";
 
 describe("voiceServiceReadiness", () => {
@@ -87,26 +92,9 @@ describe("voiceServiceReadiness", () => {
     ).toBe("sherpa_onnx_streaming");
   });
 
-  it("maps the old Paraformer default to the SenseVoice default model", () => {
-    expect(
-      resolveServiceModelRuntimeId(
-        {
-          assistant_id: "voice_secretary",
-          kind: "voice_secretary",
-          enabled: true,
-          lifecycle: "idle",
-          config: {
-            service_model_id: "sherpa_onnx_streaming_paraformer_trilingual_zh_cantonese_en",
-          },
-        },
-        {
-          sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8: {
-            model_id: "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
-            runtime_id: "sherpa_onnx_streaming",
-          },
-        },
-      ),
-    ).toBe("sherpa_onnx_streaming");
+  it("keeps the live Paraformer model id separate from the final SenseVoice default", () => {
+    expect(effectiveServiceModelId("")).toBe(DEFAULT_SERVICE_MODEL_ID);
+    expect(effectiveServiceModelId(DEFAULT_LIVE_SERVICE_MODEL_ID)).toBe(DEFAULT_LIVE_SERVICE_MODEL_ID);
   });
 
   it("uses service model metadata to resolve the streaming runtime", () => {

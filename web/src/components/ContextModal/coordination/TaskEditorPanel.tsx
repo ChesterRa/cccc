@@ -3,6 +3,7 @@ import type { Task, TaskWaitingOn } from "../../../types";
 import { formatFullTime, formatTime } from "../../../utils/time";
 import { classNames } from "../../../utils/classNames";
 import { type TaskAttemptVerdict, type TaskTypeDefinition, type TaskWorkflowCoverage, type TaskTypeId } from "../../../utils/taskWorkflow";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   alignTaskDraftTaskType,
   getWaitingOnOptions,
@@ -184,15 +185,17 @@ export function TaskEditorPanel({
             </div>
 
             <div className="grid gap-2 sm:w-[15rem]">
-              <select value={taskTypeId} onChange={(event) => onTaskTypeChange(event.target.value as TaskTypeId)} className={ui.inputClass}>
-                {[
-                  ["free", tr("context.taskTypeFree", "Free")],
-                  ["standard", tr("context.taskTypeStandard", "Standard")],
-                  ["optimization", tr("context.taskTypeOptimization", "Optimization")],
-                ].map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+              <SelectCombobox
+                items={[
+                  { value: "free", label: tr("context.taskTypeFree", "Free") },
+                  { value: "standard", label: tr("context.taskTypeStandard", "Standard") },
+                  { value: "optimization", label: tr("context.taskTypeOptimization", "Optimization") },
+                ]}
+                value={taskTypeId}
+                onChange={(value) => onTaskTypeChange(value as TaskTypeId)}
+                ariaLabel={tr("context.taskType", "Task type")}
+                className={ui.inputClass}
+              />
             </div>
           </div>
 
@@ -286,12 +289,18 @@ export function TaskEditorPanel({
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
             <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.status", "Status")}</span>
-            <select value={taskDraft.status} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, status: event.target.value } : prev)} className={ui.inputClass}>
-              <option value="planned">{tr("context.planned", "Planned")}</option>
-              <option value="active">{tr("context.active", "Active")}</option>
-              <option value="done">{tr("context.done", "Done")}</option>
-              <option value="archived">{tr("context.archived", "Archived")}</option>
-            </select>
+            <SelectCombobox
+              items={[
+                { value: "planned", label: tr("context.planned", "Planned") },
+                { value: "active", label: tr("context.active", "Active") },
+                { value: "done", label: tr("context.done", "Done") },
+                { value: "archived", label: tr("context.archived", "Archived") },
+              ]}
+              value={taskDraft.status}
+              onChange={(value) => setTaskDraft((prev) => prev ? { ...prev, status: value } : prev)}
+              ariaLabel={tr("context.status", "Status")}
+              className={ui.inputClass}
+            />
           </label>
           <label className="block text-sm">
             <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.assignee", "Assignee")}</span>
@@ -349,9 +358,13 @@ export function TaskEditorPanel({
               </label>
               <label className="block text-sm">
                 <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.waitingOn", "Waiting on")}</span>
-                <select value={taskDraft.waitingOn} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, waitingOn: event.target.value as TaskWaitingOn } : prev)} className={ui.inputClass}>
-                  {waitingOnOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
+                <SelectCombobox
+                  items={waitingOnOptions}
+                  value={taskDraft.waitingOn}
+                  onChange={(value) => setTaskDraft((prev) => prev ? { ...prev, waitingOn: value as TaskWaitingOn } : prev)}
+                  ariaLabel={tr("context.waitingOn", "Waiting on")}
+                  className={ui.inputClass}
+                />
               </label>
             </div>
           </div>

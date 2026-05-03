@@ -6,6 +6,8 @@ import {
   createVoiceTranscriptItem,
   filterVoiceTranscriptItemsForDocument,
   mergeVoiceTranscriptItems,
+  replaceVoiceTranscriptSessionItems,
+  upsertLiveVoiceTranscriptItem,
   type VoiceTranscriptItem,
 } from "../../../src/pages/chat/voice-secretary/voiceStreamModel";
 import { voiceTranscriptSourceDetail, voiceTranscriptSourceLabel } from "../../../src/pages/chat/voice-secretary/voiceTranscriptSource";
@@ -89,6 +91,48 @@ describe("voice transcript model", () => {
     expect(items[0]?.text).toBe("final text");
   });
 
+  it("upserts a live document transcript row from the current preview", () => {
+    const existing = makeTranscriptItem({ id: "older", text: "older row" });
+    const items = upsertLiveVoiceTranscriptItem([existing], {
+      id: "live",
+      phase: "interim",
+      text: "live text",
+      mode: "document",
+      documentPath: "docs/voice-secretary/one.md",
+      updatedAt: 2000,
+    });
+
+    expect(items.map((item) => item.id)).toEqual(["live", "older"]);
+    expect(items[0]?.text).toBe("live text");
+    expect(items[0]?.createdAt).toBe(2000);
+
+    const updated = upsertLiveVoiceTranscriptItem(items, {
+      id: "live",
+      phase: "final",
+      text: "updated live text",
+      mode: "document",
+      documentPath: "docs/voice-secretary/one.md",
+      updatedAt: 3000,
+    });
+
+    expect(updated.map((item) => item.id)).toEqual(["live", "older"]);
+    expect(updated[0]?.text).toBe("updated live text");
+    expect(updated[0]?.createdAt).toBe(2000);
+  });
+
+  it("does not upsert live transcript rows outside document mode", () => {
+    const existing = makeTranscriptItem({ id: "older", text: "older row" });
+
+    expect(upsertLiveVoiceTranscriptItem([existing], {
+      id: "live",
+      phase: "interim",
+      text: "live text",
+      mode: "instruction",
+      documentPath: "docs/voice-secretary/one.md",
+      updatedAt: 2000,
+    })).toEqual([existing]);
+  });
+
   it("dedupes restored and local transcript rows for the same document", () => {
     const local = makeTranscriptItem({ id: "local", text: "same transcript", updatedAt: 1000 });
     const restored = makeTranscriptItem({ id: "restored", text: "same transcript", updatedAt: 1500 });
@@ -96,6 +140,65 @@ describe("voice transcript model", () => {
     const items = mergeVoiceTranscriptItems([local], [restored]);
 
     expect(items.map((item) => item.id)).toEqual(["restored"]);
+  });
+
+  it("replaces pending analysis rows with restored final rows for the same session", () => {
+    const pending = makeTranscriptItem({
+      id: "session-1-analysis",
+      sessionId: "session-1",
+      phase: "interim",
+      text: "Analyzing final audio...",
+      processingPhase: "separating_speakers",
+      updatedAt: 1000,
+    });
+    const final = makeTranscriptItem({
+      id: "session-1-segment-0",
+      sessionId: "session-1",
+      text: "final transcript",
+      updatedAt: 2000,
+    });
+
+    const items = replaceVoiceTranscriptSessionItems([pending], [final]);
+
+    expect(items.map((item) => item.id)).toEqual(["session-1-segment-0"]);
+    expect(items[0]?.text).toBe("final transcript");
+  });
+
+  it("preserves older transcript rows when a new recording for the same document is restored", () => {
+    const oldSession = makeTranscriptItem({
+      id: "old-session-segment-0",
+      sessionId: "old-session",
+      text: "old session transcript",
+      updatedAt: 1000,
+    });
+    const legacyRow = makeTranscriptItem({
+      id: "legacy-row",
+      sessionId: undefined,
+      text: "legacy transcript",
+      updatedAt: 1100,
+    });
+    const pending = makeTranscriptItem({
+      id: "new-session-analysis",
+      sessionId: "new-session",
+      phase: "interim",
+      text: "Analyzing final audio...",
+      processingPhase: "separating_speakers",
+      updatedAt: 2000,
+    });
+    const final = makeTranscriptItem({
+      id: "new-session-segment-0",
+      sessionId: "new-session",
+      text: "new session transcript",
+      updatedAt: 3000,
+    });
+
+    const items = replaceVoiceTranscriptSessionItems([pending, legacyRow, oldSession], [final]);
+
+    expect(items.map((item) => item.id)).toEqual([
+      "new-session-segment-0",
+      "legacy-row",
+      "old-session-segment-0",
+    ]);
   });
 
   it("does not force a single speaker badge on mixed-speaker transcript rows", () => {

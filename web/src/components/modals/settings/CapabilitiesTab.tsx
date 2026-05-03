@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { BodyPortal } from "../../ui/BodyPortal";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   Actor,
   CapabilityImportRecord,
@@ -1359,27 +1360,50 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           className={inputClass()}
         />
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-          <select value={registryKind} onChange={(e) => setRegistryKind(e.target.value as RegistryKindFilter)} className={inputClass()}>
-            <option value="all">{t("capabilities.filterKindAll")}</option>
-            <option value="pack">{t("capabilities.filterKindPack")}</option>
-            <option value="mcp">{t("capabilities.filterKindMcp")}</option>
-            <option value="skill">{t("capabilities.filterKindSkill")}</option>
-          </select>
-          <select value={registryPolicy} onChange={(e) => setRegistryPolicy(e.target.value as RegistryPolicyFilter)} className={inputClass()}>
-            <option value="all">{t("capabilities.filterPolicyAll")}</option>
-            <option value="actionable">{t("capabilities.filterPolicyActionable")}</option>
-            <option value="blocked">{t("capabilities.filterPolicyBlocked")}</option>
-            <option value="indexed">{t("capabilities.filterPolicyIndexed")}</option>
-          </select>
-          <select value={registrySource} onChange={(e) => setRegistrySource(e.target.value)} className={inputClass()}>
-            <option value="all">{t("capabilities.filterSourceAll")}</option>
-            {registrySourceOptions.map((sid) => (<option key={sid} value={sid}>{sid}</option>))}
-          </select>
+          <SelectCombobox
+            items={[
+              { value: "all", label: t("capabilities.filterKindAll") },
+              { value: "pack", label: t("capabilities.filterKindPack") },
+              { value: "mcp", label: t("capabilities.filterKindMcp") },
+              { value: "skill", label: t("capabilities.filterKindSkill") },
+            ]}
+            value={registryKind}
+            onChange={(value) => setRegistryKind(value as RegistryKindFilter)}
+            ariaLabel={t("capabilities.filterKindAll")}
+            className={inputClass()}
+          />
+          <SelectCombobox
+            items={[
+              { value: "all", label: t("capabilities.filterPolicyAll") },
+              { value: "actionable", label: t("capabilities.filterPolicyActionable") },
+              { value: "blocked", label: t("capabilities.filterPolicyBlocked") },
+              { value: "indexed", label: t("capabilities.filterPolicyIndexed") },
+            ]}
+            value={registryPolicy}
+            onChange={(value) => setRegistryPolicy(value as RegistryPolicyFilter)}
+            ariaLabel={t("capabilities.filterPolicyAll")}
+            className={inputClass()}
+          />
+          <SelectCombobox
+            items={[
+              { value: "all", label: t("capabilities.filterSourceAll") },
+              ...registrySourceOptions.map((sid) => ({ value: sid, label: sid })),
+            ]}
+            value={registrySource}
+            onChange={setRegistrySource}
+            ariaLabel={t("capabilities.filterSourceAll")}
+            className={inputClass()}
+            searchable
+          />
           <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
             <label className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageSize")}</label>
-            <select value={registryPageSize} onChange={(e) => setRegistryPageSize(Number(e.target.value) || 40)} className={inputClass()}>
-              {REGISTRY_PAGE_SIZE_OPTIONS.map((size) => (<option key={size} value={size}>{size}</option>))}
-            </select>
+            <SelectCombobox
+              items={REGISTRY_PAGE_SIZE_OPTIONS.map((size) => ({ value: String(size), label: String(size) }))}
+              value={String(registryPageSize)}
+              onChange={(value) => setRegistryPageSize(Number(value) || 40)}
+              ariaLabel={t("capabilities.pageSize")}
+              className={inputClass()}
+            />
           </div>
         </div>
         <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">

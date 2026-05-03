@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { CoordinationBrief, CoordinationNote, Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   noteTimestamp,
   taskOptionLabel,
@@ -198,10 +199,17 @@ export function SteeringPanel({
                   <div className={classNames("mt-3 rounded-xl border p-3", "glass-card")}>
                     <textarea value={decisionDraft.summary} onChange={(event) => onDecisionDraftChange((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(ui.textareaClass, "min-h-[96px]")} placeholder={tr("context.decisionPlaceholder", "Record a durable decision or constraint...")} />
                     <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                      <select value={decisionDraft.taskId} onChange={(event) => onDecisionDraftChange((prev) => ({ ...prev, taskId: event.target.value }))} className={ui.inputClass}>
-                        <option value="">{tr("context.noRelatedTask", "No related task")}</option>
-                        {activeTaskOptions.map((task) => <option key={task.id} value={task.id}>{taskOptionLabel(task)}</option>)}
-                      </select>
+                      <SelectCombobox
+                        items={[
+                          { value: "", label: tr("context.noRelatedTask", "No related task") },
+                          ...activeTaskOptions.map((task) => ({ value: task.id, label: taskOptionLabel(task) })),
+                        ]}
+                        value={decisionDraft.taskId}
+                        onChange={(value) => onDecisionDraftChange((prev) => ({ ...prev, taskId: value }))}
+                        ariaLabel={tr("context.noRelatedTask", "No related task")}
+                        className={ui.inputClass}
+                        searchable
+                      />
                       <button type="button" onClick={() => onAddCoordinationNote("decision")} disabled={activityBusyKind !== null || !String(decisionDraft.summary || "").trim()} className={ui.buttonPrimaryClass}>{activityBusyKind === "decision" ? tr("context.saving", "Saving…") : tr("context.addDecision", "Add decision")}</button>
                     </div>
                   </div>
@@ -219,10 +227,17 @@ export function SteeringPanel({
                   <div className={classNames("mt-3 rounded-xl border p-3", "glass-card")}>
                     <textarea value={handoffDraft.summary} onChange={(event) => onHandoffDraftChange((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(ui.textareaClass, "min-h-[96px]")} placeholder={tr("context.handoffPlaceholder", "Record a durable handoff or next-owner note...")} />
                     <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                      <select value={handoffDraft.taskId} onChange={(event) => onHandoffDraftChange((prev) => ({ ...prev, taskId: event.target.value }))} className={ui.inputClass}>
-                        <option value="">{tr("context.noRelatedTask", "No related task")}</option>
-                        {activeTaskOptions.map((task) => <option key={task.id} value={task.id}>{taskOptionLabel(task)}</option>)}
-                      </select>
+                      <SelectCombobox
+                        items={[
+                          { value: "", label: tr("context.noRelatedTask", "No related task") },
+                          ...activeTaskOptions.map((task) => ({ value: task.id, label: taskOptionLabel(task) })),
+                        ]}
+                        value={handoffDraft.taskId}
+                        onChange={(value) => onHandoffDraftChange((prev) => ({ ...prev, taskId: value }))}
+                        ariaLabel={tr("context.noRelatedTask", "No related task")}
+                        className={ui.inputClass}
+                        searchable
+                      />
                       <button type="button" onClick={() => onAddCoordinationNote("handoff")} disabled={activityBusyKind !== null || !String(handoffDraft.summary || "").trim()} className={ui.buttonPrimaryClass}>{activityBusyKind === "handoff" ? tr("context.saving", "Saving…") : tr("context.addHandoff", "Add handoff")}</button>
                     </div>
                   </div>

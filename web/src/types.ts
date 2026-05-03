@@ -704,8 +704,10 @@ export type AssistantServiceModel = {
   command_ready?: boolean;
   offline_ready?: boolean;
   streaming_ready?: boolean;
+  diarization_ready?: boolean;
   offline?: Record<string, unknown>;
   streaming?: Record<string, unknown>;
+  diarization?: Record<string, unknown>;
   manifest_sha256?: string;
   downloaded_bytes?: number;
   total_size_bytes?: number;
@@ -831,10 +833,14 @@ export type AssistantVoiceMeetingSession = {
   sample_rate?: number;
   audio_duration_ms?: number;
   language?: string;
+  capture_mode?: string;
   document_path?: string;
   latest_partial?: string;
   last_final_text?: string;
+  diarization_ready?: boolean;
+  diarization_artifact_path?: string;
   segments?: Record<string, unknown>[];
+  diarization?: Record<string, unknown>;
   error?: Record<string, unknown> | null;
 };
 

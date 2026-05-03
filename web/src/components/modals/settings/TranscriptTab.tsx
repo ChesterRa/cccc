@@ -1,6 +1,7 @@
 // TranscriptTab configures terminal transcript visibility and viewing.
 import { useTranslation } from "react-i18next";
 import { Actor } from "../../../types";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   dangerButtonClass,
   inputClass,
@@ -97,18 +98,20 @@ export function TranscriptTab({
             <div className="mt-4 space-y-4">
               <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                 <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">{t("transcript.visibilityLabel")}</label>
-                <select
+                <SelectCombobox
+                  items={[
+                    { value: "off", label: t("transcript.visibilityOff") },
+                    { value: "foreman", label: t("transcript.visibilityForeman") },
+                    { value: "all", label: t("transcript.visibilityAll") },
+                  ]}
                   value={terminalVisibility}
-                  onChange={(e) => {
-                    const v = e.target.value;
+                  onChange={(value) => {
+                    const v = value;
                     if (v === "off" || v === "foreman" || v === "all") setTerminalVisibility(v);
                   }}
+                  ariaLabel={t("transcript.visibilityLabel")}
                   className={inputClass()}
-                >
-                  <option value="off">{t("transcript.visibilityOff")}</option>
-                  <option value="foreman">{t("transcript.visibilityForeman")}</option>
-                  <option value="all">{t("transcript.visibilityAll")}</option>
-                </select>
+                />
                 <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
                   {t("transcript.visibilityTip")}
                 </div>
@@ -187,18 +190,18 @@ export function TranscriptTab({
               <div className="space-y-4">
                 <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                   <label className="block text-xs text-[var(--color-text-tertiary)]">{t("transcript.actor")}</label>
-                  <select
+                  <SelectCombobox
+                    items={
+                      devActors.length
+                        ? devActors.map((a) => ({ value: a.id, label: `${a.id}${a.role ? ` (${a.role})` : ""}` }))
+                        : [{ value: "", label: t("transcript.noActors"), disabled: true }]
+                    }
                     value={tailActorId}
-                    onChange={(e) => setTailActorId(e.target.value)}
+                    onChange={setTailActorId}
+                    ariaLabel={t("transcript.actor")}
                     className={`${inputClass()} mt-2`}
-                  >
-                    {devActors.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.id}{a.role ? ` (${a.role})` : ""}
-                      </option>
-                    ))}
-                    {!devActors.length && <option value="">{t("transcript.noActors")}</option>}
-                  </select>
+                    searchable
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">

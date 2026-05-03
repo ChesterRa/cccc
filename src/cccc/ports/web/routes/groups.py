@@ -23,19 +23,24 @@ from ....daemon.group.presentation_ops import load_presentation_snapshot, resolv
 from ....daemon.assistants.sherpa_streaming_asr import (
     SherpaStreamingAsrError,
     open_sherpa_streaming_session,
-    transcribe_sherpa_streaming_pcm16,
+)
+from ....daemon.assistants.local_streaming_asr import LocalStreamingAsrError
+from ....daemon.assistants.local_asr_model_selection import (
+    effective_final_service_model_id,
+    effective_live_service_model_id,
 )
 from ....daemon.assistants.sherpa_diarization import (
     SherpaDiarizationError,
-    run_sherpa_diarization_file,
     sherpa_diarization_status,
 )
 from ....daemon.assistants.voice_speaker_identity import (
     diarization_result_segments,
     diarization_result_speaker_embeddings,
+    run_final_diarization_file,
     run_provisional_diarization_prefix,
 )
-from ....daemon.assistants.voice_speaker_transcripts import build_speaker_transcript_segments
+from ....daemon.assistants.voice_final_document_apply import apply_final_speaker_transcript_to_document
+from ....daemon.assistants.voice_speaker_transcripts import build_offline_speaker_transcript_segments
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
@@ -303,18 +308,22 @@ def _append_voice_meeting_session_event(
 
 async def _run_voice_meeting_diarization_background(
     *,
+    daemon: Any,
     group_id: str,
     session_id: str,
     pcm16_path: Path,
+    document_path: str,
     selected_model_id: str,
     sample_rate: int,
     audio_duration_ms: int,
+    language: str = "",
     selected_asr_model_id: str = "",
 ) -> None:
+    final_asr_model_id = effective_final_service_model_id(selected_asr_model_id)
     speaker_transcript_segments: list[dict[str, Any]] = []
     speaker_transcript_error: dict[str, Any] | None = None
     try:
-        diarization = await run_sherpa_diarization_file(
+        diarization = await run_final_diarization_file(
             pcm16_path,
             selected_model_id=selected_model_id,
             sample_rate=sample_rate,
@@ -322,37 +331,70 @@ async def _run_voice_meeting_diarization_background(
         speaker_segments = diarization.get("segments") if isinstance(diarization.get("segments"), list) else []
         try:
             pcm16_audio = pcm16_path.read_bytes()
-            speaker_transcript_segments = await build_speaker_transcript_segments(
+            speaker_transcript_segments = await build_offline_speaker_transcript_segments(
                 pcm16_audio,
                 speaker_segments,
                 sample_rate=sample_rate,
-                transcribe_segment=lambda audio, rate: transcribe_sherpa_streaming_pcm16(
-                    audio,
-                    selected_model_id=selected_asr_model_id,
-                    sample_rate=rate,
-                ),
+                selected_model_id=final_asr_model_id,
             )
-        except SherpaStreamingAsrError as exc:
+        except LocalStreamingAsrError as exc:
             speaker_transcript_error = {"code": exc.code, "message": exc.message, "details": exc.details}
         except Exception as exc:
             speaker_transcript_error = {"code": "speaker_transcript_failed", "message": str(exc), "details": {}}
+        final_apply_result: dict[str, Any] = {"ok": True, "result": {"applied": False}}
+        if speaker_transcript_segments and not speaker_transcript_error and str(document_path or "").strip():
+            final_apply_result = await apply_final_speaker_transcript_to_document(
+                daemon,
+                group_id=group_id,
+                session_id=session_id,
+                document_path=document_path,
+                speaker_transcript_segments=speaker_transcript_segments,
+                sample_rate=sample_rate,
+                language=language,
+                final_asr_model_id=final_asr_model_id,
+                audio_duration_ms=audio_duration_ms,
+            )
+            if not bool(final_apply_result.get("ok")):
+                error = final_apply_result.get("error") if isinstance(final_apply_result.get("error"), dict) else {}
+                speaker_transcript_error = {
+                    "code": str(error.get("code") or "final_transcript_apply_failed"),
+                    "message": str(error.get("message") or "final transcript could not be applied"),
+                    "details": error.get("details") if isinstance(error.get("details"), dict) else {},
+                }
+            elif not bool((final_apply_result.get("result") or {}).get("applied")):
+                result = final_apply_result.get("result") if isinstance(final_apply_result.get("result"), dict) else {}
+                speaker_transcript_error = {
+                    "code": str(result.get("reason") or "final_transcript_not_applied"),
+                    "message": "final transcript was not applied to the target document",
+                    "details": {},
+                }
+        elif speaker_transcript_segments and not speaker_transcript_error:
+            final_apply_result = {"ok": True, "result": {"applied": False, "reason": "non_document_capture"}}
+        elif not speaker_transcript_error:
+            speaker_transcript_error = {
+                "code": "empty_speaker_transcript",
+                "message": "final audio analysis produced no transcript",
+                "details": {},
+            }
         artifact_path = _write_voice_speaker_transcript_artifact(
             group_id,
             session_id,
             {
-                "status": "ready",
+                "status": "failed" if speaker_transcript_error else "ready",
                 "sample_rate": sample_rate,
                 "audio_duration_ms": audio_duration_ms,
                 "segments": speaker_segments,
                 "speaker_transcript_segments": speaker_transcript_segments,
                 "speaker_transcript_error": speaker_transcript_error,
+                "speaker_transcript_model_id": final_asr_model_id,
+                "final_apply_result": final_apply_result,
             },
         )
         _write_voice_meeting_session(
             group_id,
             session_id,
             {
-                "status": "closed",
+                "status": "failed" if speaker_transcript_error else "closed",
                 "audio_duration_ms": audio_duration_ms,
                 "audio_path": str(pcm16_path),
                 "diarization_artifact_path": artifact_path,
@@ -360,18 +402,21 @@ async def _run_voice_meeting_diarization_background(
                     **diarization,
                     "speaker_transcript_segments": speaker_transcript_segments,
                     "speaker_transcript_error": speaker_transcript_error,
+                    "speaker_transcript_model_id": final_asr_model_id,
+                    "final_apply_result": final_apply_result,
                     "artifact_path": artifact_path,
                     "provisional": False,
                 },
-                "error": None,
+                "error": speaker_transcript_error,
             },
         )
         _append_voice_meeting_session_event(
             group_id,
             session_id,
-            status="ready",
-            action="diarization_ready",
+            status="failed" if speaker_transcript_error else "ready",
+            action="diarization_failed" if speaker_transcript_error else "diarization_ready",
             artifact_path=artifact_path,
+            error=speaker_transcript_error,
         )
     except SherpaDiarizationError as exc:
         error = {"code": exc.code, "message": exc.message, "details": exc.details}
@@ -2164,7 +2209,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         streaming_pcm16_path: Path | None = None
         streaming_pcm16_bytes = 0
         streaming_sample_rate = 16000
+        streaming_final_asr_model_id = ""
         streaming_diarization_model_id = ""
+        streaming_capture_mode = "document"
+        streaming_document_path = ""
+        streaming_language = ""
         streaming_diarization_ready = False
         streaming_diarization_task: asyncio.Task[dict[str, Any]] | None = None
         streaming_last_diarization_ms = 0
@@ -2228,8 +2277,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     assistants = group.doc.get("assistants") if isinstance(group.doc.get("assistants"), dict) else {}
                     assistant = assistants.get("voice_secretary") if isinstance(assistants.get("voice_secretary"), dict) else {}
                     config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
-                    selected_model_id = str(config.get("service_model_id") or "").strip()
+                    configured_service_model_id = str(config.get("service_model_id") or "").strip()
+                    selected_model_id = effective_live_service_model_id(configured_service_model_id)
+                    streaming_final_asr_model_id = effective_final_service_model_id(configured_service_model_id)
                     streaming_diarization_model_id = str(config.get("service_diarization_model_id") or "").strip()
+                    streaming_capture_mode = str(payload.get("capture_mode") or payload.get("captureMode") or "document").strip().lower()
+                    if streaming_capture_mode not in {"document", "instruction", "prompt"}:
+                        streaming_capture_mode = "document"
+                    streaming_document_path = (
+                        str(payload.get("document_path") or payload.get("documentPath") or "").strip()
+                        if streaming_capture_mode == "document"
+                        else ""
+                    )
+                    streaming_language = str(payload.get("language") or config.get("recognition_language") or "").strip()
                     cleanup_streaming_pcm16()
                     streaming_pcm16_audio = bytearray()
                     streaming_sample_rate = int(payload.get("sample_rate") or 16000)
@@ -2249,6 +2309,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             "segments": [],
                             "speaker_transcript_segments": [],
                             "speaker_transcript_error": None,
+                            "speaker_transcript_model_id": streaming_final_asr_model_id,
                         },
                     )
                     _write_voice_meeting_session(
@@ -2258,6 +2319,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             "status": "recording",
                             "sample_rate": streaming_sample_rate,
                             "diarization_ready": streaming_diarization_ready,
+                            "final_asr_model_id": streaming_final_asr_model_id,
+                            "capture_mode": streaming_capture_mode,
+                            "document_path": streaming_document_path,
+                            "language": streaming_language,
                             "latest_partial": "",
                             "error": None,
                         },
@@ -2451,6 +2516,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                         "segments": [],
                                         "speaker_transcript_segments": [],
                                         "speaker_transcript_error": None,
+                                        "speaker_transcript_model_id": streaming_final_asr_model_id,
                                     },
                                 )
                                 _write_voice_meeting_session(
@@ -2461,6 +2527,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                         "audio_duration_ms": audio_duration_ms,
                                         "audio_path": str(persisted_pcm16_path),
                                         "diarization_artifact_path": artifact_path,
+                                        "final_asr_model_id": streaming_final_asr_model_id,
+                                        "capture_mode": streaming_capture_mode,
                                     },
                                 )
                                 await websocket.send_json({
@@ -2471,13 +2539,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     "artifact_path": artifact_path,
                                 })
                                 asyncio.create_task(_run_voice_meeting_diarization_background(
+                                    daemon=ctx.daemon,
                                     group_id=group_id,
                                     session_id=streaming_client_session_id,
                                     pcm16_path=persisted_pcm16_path,
+                                    document_path=streaming_document_path if streaming_capture_mode == "document" else "",
                                     selected_model_id=streaming_diarization_model_id,
-                                    selected_asr_model_id=selected_model_id,
+                                    selected_asr_model_id=streaming_final_asr_model_id,
                                     sample_rate=streaming_sample_rate,
                                     audio_duration_ms=audio_duration_ms,
+                                    language=streaming_language,
                                 ))
                             else:
                                 _write_voice_meeting_session(

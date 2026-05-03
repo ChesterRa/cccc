@@ -1,5 +1,6 @@
 // DeveloperTab configures developer mode.
 import { useTranslation } from "react-i18next";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   inputClass,
   labelClass,
@@ -205,14 +206,16 @@ export function DeveloperTab({
             <div className="mt-4 space-y-4">
               <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                 <label className={labelClass()}>{t("developer.logLevel")}</label>
-                <select
+                <SelectCombobox
+                  items={[
+                    { value: "INFO", label: "INFO" },
+                    { value: "DEBUG", label: "DEBUG" },
+                  ]}
                   value={logLevel}
-                  onChange={(e) => setLogLevel((e.target.value === "DEBUG" ? "DEBUG" : "INFO"))}
+                  onChange={(value) => setLogLevel((value === "DEBUG" ? "DEBUG" : "INFO"))}
+                  ariaLabel={t("developer.logLevel")}
                   className={inputClass()}
-                >
-                  <option value="INFO">INFO</option>
-                  <option value="DEBUG">DEBUG</option>
-                </select>
+                />
               </div>
 
               <div className="pt-3 border-t border-[var(--glass-border-subtle)]">
@@ -226,28 +229,32 @@ export function DeveloperTab({
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                     <label className={labelClass()}>{t("developer.peerRuntime")}</label>
-                    <select
+                    <SelectCombobox
+                      items={[
+                        { value: "visible", label: t("developer.visible") },
+                        { value: "hidden", label: t("developer.hidden") },
+                      ]}
                       value={peerRuntimeVisibility}
-                      onChange={(e) => setPeerRuntimeVisibility(e.target.value === "hidden" ? "hidden" : "visible")}
+                      onChange={(value) => setPeerRuntimeVisibility(value === "hidden" ? "hidden" : "visible")}
+                      ariaLabel={t("developer.peerRuntime")}
                       className={inputClass()}
-                    >
-                      <option value="visible">{t("developer.visible")}</option>
-                      <option value="hidden">{t("developer.hidden")}</option>
-                    </select>
+                    />
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                       {t("developer.peerRuntimeHint")}
                     </div>
                   </div>
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                     <label className={labelClass()}>{t("developer.petRuntime")}</label>
-                    <select
+                    <SelectCombobox
+                      items={[
+                        { value: "hidden", label: t("developer.hidden") },
+                        { value: "visible", label: t("developer.visible") },
+                      ]}
                       value={petRuntimeVisibility}
-                      onChange={(e) => setPetRuntimeVisibility(e.target.value === "visible" ? "visible" : "hidden")}
+                      onChange={(value) => setPetRuntimeVisibility(value === "visible" ? "visible" : "hidden")}
+                      ariaLabel={t("developer.petRuntime")}
                       className={inputClass()}
-                    >
-                      <option value="hidden">{t("developer.hidden")}</option>
-                      <option value="visible">{t("developer.visible")}</option>
-                    </select>
+                    />
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                       {t("developer.petRuntimeHint")}
                     </div>
@@ -450,15 +457,17 @@ export function DeveloperTab({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
               <label className={labelClass()}>{t("developer.component")}</label>
-              <select
+              <SelectCombobox
+                items={[
+                  { value: "daemon", label: "daemon" },
+                  { value: "web", label: "web" },
+                  { value: "im", label: "im" },
+                ]}
                 value={logComponent}
-                onChange={(e) => setLogComponent((e.target.value === "im" ? "im" : e.target.value === "web" ? "web" : "daemon"))}
+                onChange={(value) => setLogComponent((value === "im" ? "im" : value === "web" ? "web" : "daemon"))}
+                ariaLabel={t("developer.component")}
                 className={inputClass()}
-              >
-                <option value="daemon">daemon</option>
-                <option value="web">web</option>
-                <option value="im">im</option>
-              </select>
+              />
             </div>
             <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
               <label className={labelClass()}>{t("developer.lines")}</label>

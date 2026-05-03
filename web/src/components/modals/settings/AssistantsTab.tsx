@@ -4,9 +4,15 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { GroupPromptInfo } from "../../../services/api";
 import type { AssistantStateResult, BuiltinAssistant } from "../../../types";
+import {
+  DEFAULT_SERVICE_MODEL_ID,
+  STREAMING_ASR_RUNTIME_ID,
+} from "../../../pages/chat/voice-secretary/voiceServiceModelRuntime";
 import { parseHelpMarkdown, updatePetHelpNote, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
 import { getDefaultPetPersonaSeed } from "../../../utils/rolePresets";
+import { GroupCombobox } from "../../GroupCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
+import { resolveLocalAsrModels } from "./assistantsLocalAsrModels";
 import {
   inputClass,
   labelClass,
@@ -44,8 +50,8 @@ const VOICE_MAX_QUIET_SECONDS = 60;
 const VOICE_RECOMMENDED_MAX_WINDOW_SECONDS = 120;
 const VOICE_MIN_MAX_WINDOW_SECONDS = 10;
 const VOICE_MAX_MAX_WINDOW_SECONDS = 300;
-const STREAMING_ASR_RUNTIME_ID = "sherpa_onnx_streaming";
 const DIARIZATION_MODEL_ID = "sherpa_onnx_diarization_pyannote_3dspeaker_zh";
+const LEGACY_DEFAULT_SERVICE_MODEL_IDS = new Set([""]);
 
 const DEFAULT_VOICE_SECRETARY_GUIDANCE = [
   "- Keep working documents useful: synthesize decisions, action items, requirements, risks, and open questions; do not dump raw transcript.",
@@ -117,14 +123,50 @@ function promptDraftDirty(savedText: string, draft: string, loaded: boolean, fal
 function StatusPill({ children, tone }: { children: React.ReactNode; tone: "on" | "off" | "info" }) {
   const classes =
     tone === "on"
-      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+      ? "border border-emerald-600/15 bg-emerald-50 text-emerald-800 dark:border-emerald-400/18 dark:bg-emerald-400/10 dark:text-emerald-200"
       : tone === "off"
-        ? "bg-slate-500/12 text-[var(--color-text-muted)]"
+        ? "border border-slate-500/10 bg-slate-500/8 text-[var(--color-text-muted)]"
         : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${classes}`}>
+    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] ${classes}`}>
       {children}
     </span>
+  );
+}
+
+function localVoicePanelClass(isDark: boolean) {
+  return `rounded-xl border p-4 ${
+    isDark
+      ? "border-white/10 bg-white/[0.035]"
+      : "border-slate-200/80 bg-white/70"
+  }`;
+}
+
+function localVoiceModelCardClass(isDark: boolean) {
+  return `rounded-lg border p-3 ${
+    isDark
+      ? "border-white/10 bg-black/10"
+      : "border-slate-200/75 bg-slate-50/70"
+  }`;
+}
+
+function AssistantsFeedbackToast({ error, notice }: { error: string; notice: string }) {
+  const message = error || notice;
+  if (!message) return null;
+
+  const isError = Boolean(error);
+  const classes = isError
+    ? "border-rose-500/25 bg-rose-50 text-rose-700 shadow-rose-950/10 dark:bg-rose-500/15 dark:text-rose-200"
+    : "border-emerald-500/25 bg-emerald-50 text-emerald-700 shadow-emerald-950/10 dark:bg-emerald-500/15 dark:text-emerald-200";
+
+  return (
+    <div
+      role={isError ? "alert" : "status"}
+      aria-live={isError ? "assertive" : "polite"}
+      className={`pointer-events-none fixed bottom-5 right-5 z-[80] max-w-[min(28rem,calc(100vw-2.5rem))] rounded-xl border px-3 py-2 text-xs leading-5 shadow-lg backdrop-blur ${classes}`}
+    >
+      {message}
+    </div>
   );
 }
 
@@ -607,6 +649,11 @@ export function AssistantsTab({
     : [recognitionBackend, ...VOICE_BACKENDS];
   const backendLabel = (backend: string) => t(`assistants.backends.${backend}`, { defaultValue: backend });
   const backendSelectable = (backend: string) => VOICE_AVAILABLE_BACKENDS.has(backend);
+  const backendComboboxItems = backendOptions.map((backend) => ({
+    value: backend,
+    label: backendLabel(backend),
+    disabled: !backendSelectable(backend),
+  }));
   const currentBackendUnavailable = !backendSelectable(recognitionBackend);
 
   const voiceEnabledTone = voiceEnabled ? "on" : "off";
@@ -614,31 +661,42 @@ export function AssistantsTab({
   const serviceStatus = String(serviceHealth.status || (recognitionBackend === "assistant_service_local_asr" ? "not_started" : "")).trim();
   const serviceAlive = Boolean(serviceHealth.alive);
   const serviceRuntimesById = assistantState?.service_runtimes_by_id || {};
-  const streamingRuntime = serviceRuntimesById[STREAMING_ASR_RUNTIME_ID];
+  const rawConfiguredServiceModelId = readStringConfig(voiceAssistant, "service_model_id", DEFAULT_SERVICE_MODEL_ID);
+  const configuredServiceModelId = LEGACY_DEFAULT_SERVICE_MODEL_IDS.has(rawConfiguredServiceModelId)
+    ? DEFAULT_SERVICE_MODEL_ID
+    : rawConfiguredServiceModelId;
+  const serviceModelsById = assistantState?.service_models_by_id || {};
+  const { finalModel: finalServiceAsrModel, liveModel: liveServiceAsrModel } = resolveLocalAsrModels({
+    configuredModelId: configuredServiceModelId,
+    serviceModels: assistantState?.service_models || [],
+    serviceModelsById,
+  });
+  const selectedServiceRuntimeId = String(
+    liveServiceAsrModel?.runtime_id || finalServiceAsrModel?.runtime_id || STREAMING_ASR_RUNTIME_ID,
+  ).trim() || STREAMING_ASR_RUNTIME_ID;
+  const streamingRuntime = serviceRuntimesById[selectedServiceRuntimeId];
   const streamingRuntimeStatus = String(streamingRuntime?.status || "not_installed").trim() || "not_installed";
   const streamingRuntimeInstalling = streamingRuntimeStatus === "installing";
   const streamingRuntimeReady = streamingRuntimeStatus === "ready";
-  const serviceModelsById = assistantState?.service_models_by_id || {};
-  const serviceAsrModels = (assistantState?.service_models || [])
-    .filter((model) => String(model.kind || "").trim() === "asr" && Boolean(model.streaming));
-  const configuredServiceModelId = readStringConfig(voiceAssistant, "service_model_id", "");
-  const selectedServiceAsrModel = configuredServiceModelId && serviceModelsById[configuredServiceModelId]
-    ? serviceModelsById[configuredServiceModelId]
-    : serviceAsrModels[0];
-  const selectedServiceAsrModelId = String(selectedServiceAsrModel?.model_id || "").trim();
-  const selectedServiceAsrModelStatus = String(selectedServiceAsrModel?.status || "not_installed").trim() || "not_installed";
-  const selectedServiceAsrModelInstalling = selectedServiceAsrModelStatus === "downloading";
-  const selectedServiceAsrModelReady = selectedServiceAsrModelStatus === "ready";
-  const selectedServiceAsrModelSize = formatModelSize(selectedServiceAsrModel?.total_size_bytes);
+  const finalServiceAsrModelId = String(finalServiceAsrModel?.model_id || "").trim();
+  const finalServiceAsrModelStatus = String(finalServiceAsrModel?.status || "not_installed").trim() || "not_installed";
+  const finalServiceAsrModelInstalling = finalServiceAsrModelStatus === "downloading";
+  const finalServiceAsrModelReady = finalServiceAsrModelStatus === "ready";
+  const finalServiceAsrModelSize = formatModelSize(finalServiceAsrModel?.total_size_bytes);
+  const liveServiceAsrModelId = String(liveServiceAsrModel?.model_id || "").trim();
+  const liveServiceAsrModelStatus = String(liveServiceAsrModel?.status || "not_installed").trim() || "not_installed";
+  const liveServiceAsrModelInstalling = liveServiceAsrModelStatus === "downloading";
+  const liveServiceAsrModelReady = liveServiceAsrModelStatus === "ready";
+  const liveServiceAsrModelSize = formatModelSize(liveServiceAsrModel?.total_size_bytes);
   const diarizationModel = serviceModelsById[DIARIZATION_MODEL_ID];
   const diarizationModelStatus = String(diarizationModel?.status || "not_installed").trim() || "not_installed";
   const diarizationModelInstalling = diarizationModelStatus === "downloading";
   const diarizationModelReady = diarizationModelStatus === "ready";
   const diarizationModelSize = formatModelSize(diarizationModel?.total_size_bytes);
   const diarizationModelDiskSize = formatModelSize(diarizationModel?.disk_usage_bytes);
-  const localAsrInstalling = serviceRuntimeInstallBusy || streamingRuntimeInstalling || selectedServiceAsrModelInstalling;
-  const localAsrReady = streamingRuntimeReady && selectedServiceAsrModelReady;
-  const localAsrFailed = streamingRuntimeStatus === "failed" || selectedServiceAsrModelStatus === "failed";
+  const localAsrInstalling = serviceRuntimeInstallBusy || streamingRuntimeInstalling || liveServiceAsrModelInstalling || finalServiceAsrModelInstalling;
+  const localAsrReady = streamingRuntimeReady && liveServiceAsrModelReady && finalServiceAsrModelReady;
+  const localAsrFailed = streamingRuntimeStatus === "failed" || liveServiceAsrModelStatus === "failed" || finalServiceAsrModelStatus === "failed";
   const localAsrStatusTone: "on" | "off" | "info" = localAsrReady ? "on" : localAsrFailed ? "off" : "info";
   const localAsrStatusLabel = localAsrInstalling
     ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
@@ -649,12 +707,14 @@ export function AssistantsTab({
         : t("assistants.localAsrSetupNeeded", { defaultValue: "Setup needed" });
   const localAsrDiskUsage = formatModelSize(
     Number(streamingRuntime?.disk_usage_bytes || 0)
-    + Number(selectedServiceAsrModel?.disk_usage_bytes || 0),
+    + Number(liveServiceAsrModel?.disk_usage_bytes || 0)
+    + Number(finalServiceAsrModel?.disk_usage_bytes || 0),
   );
   const selectedServiceModelInstalling = (
     serviceRuntimeInstallBusy
     || streamingRuntimeInstalling
-    || selectedServiceAsrModelInstalling
+    || liveServiceAsrModelInstalling
+    || finalServiceAsrModelInstalling
     || diarizationModelInstallBusy
     || diarizationModelInstalling
     || localAsrMaintenanceBusy
@@ -679,10 +739,27 @@ export function AssistantsTab({
     && (!asrCommandConfigured || Boolean(serviceLastErrorMessage));
   const showServiceModelControls =
     backendSelectable(recognitionBackend) && recognitionBackend === "assistant_service_local_asr";
+  const localAsrModelIds = Array.from(new Set([liveServiceAsrModelId, finalServiceAsrModelId].filter(Boolean)));
+  const canManageLocalAsr = localAsrModelIds.length > 0;
+
+  const installLocalAsrModel = async (modelId: string): Promise<boolean> => {
+    const gid = String(groupId || "").trim();
+    if (!gid || !modelId) return false;
+    const resp = await api.installVoiceAssistantModel(gid, {
+      modelId,
+      by: "user",
+      background: true,
+    });
+    if (!resp.ok) {
+      setError(resp.error?.message || t("assistants.streamingAsrModelInstallFailed", { defaultValue: "Failed to install ASR model." }));
+      return false;
+    }
+    return true;
+  };
 
   const installLocalAsrBundle = async () => {
     const gid = String(groupId || "").trim();
-    if (!gid || !selectedServiceAsrModelId) return;
+    if (!gid || !canManageLocalAsr) return;
     setServiceRuntimeInstallBusy(true);
     setError("");
     setNotice("");
@@ -700,16 +777,13 @@ export function AssistantsTab({
           return;
         }
       }
-      if (!selectedServiceAsrModelReady) {
-        const modelResp = await api.installVoiceAssistantModel(gid, {
-          modelId: selectedServiceAsrModelId,
-          by: "user",
-          background: true,
-        });
-        if (!modelResp.ok) {
-          setError(modelResp.error?.message || t("assistants.streamingAsrModelInstallFailed", { defaultValue: "Failed to install streaming ASR model." }));
-          return;
-        }
+      if (!liveServiceAsrModelReady && liveServiceAsrModelId) {
+        const installed = await installLocalAsrModel(liveServiceAsrModelId);
+        if (!installed) return;
+      }
+      if (!finalServiceAsrModelReady && finalServiceAsrModelId) {
+        const installed = await installLocalAsrModel(finalServiceAsrModelId);
+        if (!installed) return;
       }
       setNotice(t("assistants.localAsrInstallStarted", { defaultValue: "Local ASR setup started." }));
       await loadAssistants({ quiet: true });
@@ -749,19 +823,21 @@ export function AssistantsTab({
 
   const removeLocalAsrBundle = async () => {
     const gid = String(groupId || "").trim();
-    if (!gid || !selectedServiceAsrModelId) return;
-    if (!window.confirm(t("assistants.localAsrRemoveConfirm", { defaultValue: "Remove the local ASR engine and default ASR model from this device?" }))) return;
+    if (!gid || !canManageLocalAsr) return;
+    if (!window.confirm(t("assistants.localAsrRemoveConfirm", { defaultValue: "Remove the local ASR engine and ASR models from this device?" }))) return;
     setLocalAsrMaintenanceBusy(true);
     setError("");
     setNotice("");
     try {
-      const modelResp = await api.removeVoiceAssistantModel(gid, {
-        modelId: selectedServiceAsrModelId,
-        by: "user",
-      });
-      if (!modelResp.ok) {
-        setError(modelResp.error?.message || t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }));
-        return;
+      for (const modelId of localAsrModelIds) {
+        const modelResp = await api.removeVoiceAssistantModel(gid, {
+          modelId,
+          by: "user",
+        });
+        if (!modelResp.ok) {
+          setError(modelResp.error?.message || t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }));
+          return;
+        }
       }
       const runtimeResp = await api.removeVoiceAssistantRuntime(gid, {
         runtimeId: STREAMING_ASR_RUNTIME_ID,
@@ -782,16 +858,18 @@ export function AssistantsTab({
 
   const reinstallLocalAsrBundle = async () => {
     const gid = String(groupId || "").trim();
-    if (!gid || !selectedServiceAsrModelId) return;
-    if (!window.confirm(t("assistants.localAsrReinstallConfirm", { defaultValue: "Reinstall the local ASR engine and default ASR model?" }))) return;
+    if (!gid || !canManageLocalAsr) return;
+    if (!window.confirm(t("assistants.localAsrReinstallConfirm", { defaultValue: "Reinstall the local ASR engine and ASR models?" }))) return;
     setLocalAsrMaintenanceBusy(true);
     setError("");
     setNotice("");
     try {
-      const modelRemove = await api.removeVoiceAssistantModel(gid, { modelId: selectedServiceAsrModelId, by: "user" });
-      if (!modelRemove.ok) {
-        setError(modelRemove.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
-        return;
+      for (const modelId of localAsrModelIds) {
+        const modelRemove = await api.removeVoiceAssistantModel(gid, { modelId, by: "user" });
+        if (!modelRemove.ok) {
+          setError(modelRemove.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
+          return;
+        }
       }
       const runtimeRemove = await api.removeVoiceAssistantRuntime(gid, { runtimeId: STREAMING_ASR_RUNTIME_ID, by: "user" });
       if (!runtimeRemove.ok) {
@@ -803,10 +881,12 @@ export function AssistantsTab({
         setError(runtimeInstall.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
         return;
       }
-      const modelInstall = await api.installVoiceAssistantModel(gid, { modelId: selectedServiceAsrModelId, by: "user", background: true });
-      if (!modelInstall.ok) {
-        setError(modelInstall.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
-        return;
+      for (const modelId of localAsrModelIds) {
+        const modelInstall = await api.installVoiceAssistantModel(gid, { modelId, by: "user", background: true });
+        if (!modelInstall.ok) {
+          setError(modelInstall.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
+          return;
+        }
       }
       setNotice(t("assistants.localAsrReinstallStarted", { defaultValue: "Local ASR reinstall started." }));
       await loadAssistants({ quiet: true });
@@ -902,6 +982,7 @@ export function AssistantsTab({
     assistantHelpPrompt !== null,
     resolveVoiceSecretaryGuidanceDraft(""),
   );
+  const showBrowserTranscriptBatching = recognitionBackend === "browser_asr";
 
   const renderVoiceGuidanceEditor = (expanded = false) => (
     <AssistantPromptEditor
@@ -963,6 +1044,7 @@ export function AssistantsTab({
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <AssistantsFeedbackToast error={error} notice={notice} />
       <div className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>
           <div>
@@ -985,17 +1067,6 @@ export function AssistantsTab({
         </div>
 
         <div className={settingsWorkspaceBodyClass}>
-          {error ? (
-            <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-              {error}
-            </div>
-          ) : null}
-          {notice ? (
-            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-              {notice}
-            </div>
-          ) : null}
-
           <div className="space-y-5">
             <div className={settingsWorkspacePanelClass(isDark)}>
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1021,17 +1092,19 @@ export function AssistantsTab({
                   <div className="grid gap-4 md:grid-cols-1">
                     <div>
                       <label className={labelClass(isDark)}>{t("assistants.recognitionBackend")}</label>
-                      <select
+                      <GroupCombobox
+                        items={backendComboboxItems}
                         value={recognitionBackend}
-                        onChange={(event) => setRecognitionBackend(event.target.value)}
-                        className={`${inputClass(isDark)} cursor-pointer`}
-                      >
-                        {backendOptions.map((backend) => (
-                          <option key={backend} value={backend} disabled={!backendSelectable(backend)}>
-                            {backendLabel(backend)}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setRecognitionBackend}
+                        placeholder={t("assistants.recognitionBackend")}
+                        searchPlaceholder={t("assistants.recognitionBackend")}
+                        emptyText={t("common:noResults", { defaultValue: "No matching results" })}
+                        ariaLabel={t("assistants.recognitionBackend")}
+                        triggerClassName={`${inputClass(isDark)} min-h-[44px] cursor-pointer px-3 py-2 text-sm text-[var(--color-text-primary)]`}
+                        contentClassName="p-0"
+                        searchable={false}
+                        matchTriggerWidth
+                      />
                       {currentBackendUnavailable ? (
                         <p className="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
                           {t("assistants.recognitionBackendUnavailable")}
@@ -1045,7 +1118,7 @@ export function AssistantsTab({
 
                   {showServiceModelControls ? (
                     <div className={`mt-4 space-y-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
-                      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                      <div className={localVoicePanelClass(isDark)}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -1062,7 +1135,7 @@ export function AssistantsTab({
                           <button
                             type="button"
                             onClick={() => void (localAsrFailed ? reinstallLocalAsrBundle() : installLocalAsrBundle())}
-                            disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !selectedServiceAsrModelId || localAsrReady}
+                            disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr || localAsrReady}
                             className={localAsrReady ? secondaryButtonClass("sm") : primaryButtonClass(false)}
                           >
                             {localAsrReady
@@ -1074,8 +1147,8 @@ export function AssistantsTab({
                                   : t("assistants.localAsrInstall", { defaultValue: "Install local ASR" })}
                           </button>
                         </div>
-                        <div className="mt-4 grid gap-2 md:grid-cols-2">
-                          <div className="rounded-lg border border-black/5 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div className="mt-4 grid gap-2 lg:grid-cols-3">
+                          <div className={localVoiceModelCardClass(isDark)}>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                                 {t("assistants.localAsrEngineLabel", { defaultValue: "Engine" })}
@@ -1088,31 +1161,47 @@ export function AssistantsTab({
                               {t("assistants.localAsrEngineHint", { defaultValue: "sherpa-onnx runtime environment." })}
                             </p>
                           </div>
-                          <div className="rounded-lg border border-black/5 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                          <div className={localVoiceModelCardClass(isDark)}>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-                                {t("assistants.localAsrModelLabel", { defaultValue: "ASR model" })}
+                                {t("assistants.liveAsrModelLabel", { defaultValue: "Live ASR" })}
                               </span>
-                              <StatusPill tone={selectedServiceAsrModelReady ? "on" : selectedServiceAsrModelStatus === "failed" ? "off" : "info"}>
-                                {selectedServiceAsrModelStatus === "downloading"
-                                  ? `${t("assistants.componentStatusShort", { status: selectedServiceAsrModelStatus, defaultValue: "{{status}}" })} ${Math.round(Number(selectedServiceAsrModel?.progress_percent || 0))}%`
-                                  : t("assistants.componentStatusShort", { status: selectedServiceAsrModelStatus, defaultValue: "{{status}}" })}
+                              <StatusPill tone={liveServiceAsrModelReady ? "on" : liveServiceAsrModelStatus === "failed" ? "off" : "info"}>
+                                {liveServiceAsrModelStatus === "downloading"
+                                  ? `${t("assistants.componentStatusShort", { status: liveServiceAsrModelStatus, defaultValue: "{{status}}" })} ${Math.round(Number(liveServiceAsrModel?.progress_percent || 0))}%`
+                                  : t("assistants.componentStatusShort", { status: liveServiceAsrModelStatus, defaultValue: "{{status}}" })}
                               </StatusPill>
-                              {selectedServiceAsrModelSize ? <StatusPill tone="info">{selectedServiceAsrModelSize}</StatusPill> : null}
+                              {liveServiceAsrModelSize ? <StatusPill tone="info">{liveServiceAsrModelSize}</StatusPill> : null}
                             </div>
                             <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
-                              {selectedServiceAsrModel?.title || selectedServiceAsrModelId || t("assistants.streamingAsrModelMissing", { defaultValue: "No streaming ASR model is available." })}
+                              {liveServiceAsrModel?.title || liveServiceAsrModelId || t("assistants.streamingAsrModelMissing", { defaultValue: "No streaming ASR model is available." })}
+                            </p>
+                          </div>
+                          <div className={localVoiceModelCardClass(isDark)}>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                                {t("assistants.finalAsrModelLabel", { defaultValue: "Final ASR" })}
+                              </span>
+                              <StatusPill tone={finalServiceAsrModelReady ? "on" : finalServiceAsrModelStatus === "failed" ? "off" : "info"}>
+                                {finalServiceAsrModelStatus === "downloading"
+                                  ? `${t("assistants.componentStatusShort", { status: finalServiceAsrModelStatus, defaultValue: "{{status}}" })} ${Math.round(Number(finalServiceAsrModel?.progress_percent || 0))}%`
+                                  : t("assistants.componentStatusShort", { status: finalServiceAsrModelStatus, defaultValue: "{{status}}" })}
+                              </StatusPill>
+                              {finalServiceAsrModelSize ? <StatusPill tone="info">{finalServiceAsrModelSize}</StatusPill> : null}
+                            </div>
+                            <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
+                              {finalServiceAsrModel?.title || finalServiceAsrModelId || t("assistants.finalAsrModelMissing", { defaultValue: "No final ASR model is available." })}
                             </p>
                           </div>
                         </div>
-                        {streamingRuntime?.error?.message || selectedServiceAsrModel?.error?.message ? (
+                        {streamingRuntime?.error?.message || liveServiceAsrModel?.error?.message || finalServiceAsrModel?.error?.message ? (
                           <p className="mt-3 text-[11px] leading-5 text-rose-700 dark:text-rose-300">
-                            {t("assistants.serviceRuntimeError", { message: String(streamingRuntime?.error?.message || selectedServiceAsrModel?.error?.message || "") })}
+                            {t("assistants.serviceRuntimeError", { message: String(streamingRuntime?.error?.message || liveServiceAsrModel?.error?.message || finalServiceAsrModel?.error?.message || "") })}
                           </p>
                         ) : null}
                       </div>
 
-                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 p-4">
+                      <div className={`flex flex-wrap items-start justify-between gap-3 ${localVoicePanelClass(isDark)}`}>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -1168,15 +1257,19 @@ export function AssistantsTab({
                               {streamingRuntime?.install_dir || "-"}
                             </div>
                             <div className="break-words md:col-span-2">
-                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrModelPath", { defaultValue: "Model path" })}: </span>
-                              {selectedServiceAsrModel?.install_dir || "-"}
+                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.liveAsrModelPath", { defaultValue: "Live model path" })}: </span>
+                              {liveServiceAsrModel?.install_dir || "-"}
+                            </div>
+                            <div className="break-words md:col-span-2">
+                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.finalAsrModelPath", { defaultValue: "Final model path" })}: </span>
+                              {finalServiceAsrModel?.install_dir || "-"}
                             </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
                               type="button"
                               onClick={() => void reinstallLocalAsrBundle()}
-                              disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !selectedServiceAsrModelId}
+                              disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr}
                               className={secondaryButtonClass("sm")}
                             >
                               {t("assistants.localAsrReinstall", { defaultValue: "Reinstall local ASR" })}
@@ -1184,7 +1277,7 @@ export function AssistantsTab({
                             <button
                               type="button"
                               onClick={() => void removeLocalAsrBundle()}
-                              disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !selectedServiceAsrModelId}
+                              disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr}
                               className={secondaryButtonClass("sm")}
                             >
                               {t("assistants.localAsrRemove", { defaultValue: "Remove local ASR" })}
@@ -1211,74 +1304,76 @@ export function AssistantsTab({
                     </div>
                   ) : null}
 
-                  <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-[var(--color-text-primary)]">
-                          {t("assistants.transcriptBatchingTitle")}
+                  {showBrowserTranscriptBatching ? (
+                    <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+                            {t("assistants.transcriptBatchingTitle")}
+                          </div>
+                          <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                            {t("assistants.transcriptBatchingHint")}
+                          </p>
                         </div>
-                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                          {t("assistants.transcriptBatchingHint")}
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void resetVoiceBatching()}
+                          disabled={busy || voiceSaveBusy}
+                          className={secondaryButtonClass("sm")}
+                        >
+                          {t("assistants.resetTranscriptBatching")}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void resetVoiceBatching()}
-                        disabled={busy || voiceSaveBusy}
-                        className={secondaryButtonClass("sm")}
-                      >
-                        {t("assistants.resetTranscriptBatching")}
-                      </button>
+                      <div className="mt-3 grid gap-4 md:grid-cols-2">
+                        <div>
+                          <label className={labelClass(isDark)}>{t("assistants.transcriptQuietWindow")}</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={VOICE_MIN_QUIET_SECONDS}
+                              max={VOICE_MAX_QUIET_SECONDS}
+                              step={1}
+                              value={voiceQuietWindowSeconds}
+                              onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isFinite(value)) setVoiceQuietWindowSeconds(value);
+                              }}
+                              className={inputClass(isDark)}
+                            />
+                            <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                              {t("assistants.secondsUnit")}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                            {t("assistants.transcriptQuietWindowHint")}
+                          </p>
+                        </div>
+                        <div>
+                          <label className={labelClass(isDark)}>{t("assistants.transcriptMaxWindow")}</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={VOICE_MIN_MAX_WINDOW_SECONDS}
+                              max={VOICE_MAX_MAX_WINDOW_SECONDS}
+                              step={1}
+                              value={voiceMaxWindowSeconds}
+                              onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
+                              }}
+                              className={inputClass(isDark)}
+                            />
+                            <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                              {t("assistants.secondsUnit")}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                            {t("assistants.transcriptMaxWindowHint")}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt-3 grid gap-4 md:grid-cols-2">
-                      <div>
-                        <label className={labelClass(isDark)}>{t("assistants.transcriptQuietWindow")}</label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={VOICE_MIN_QUIET_SECONDS}
-                            max={VOICE_MAX_QUIET_SECONDS}
-                            step={1}
-                            value={voiceQuietWindowSeconds}
-                            onChange={(event) => {
-                              const value = Number(event.target.value);
-                              if (Number.isFinite(value)) setVoiceQuietWindowSeconds(value);
-                            }}
-                            className={inputClass(isDark)}
-                          />
-                          <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
-                            {t("assistants.secondsUnit")}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                          {t("assistants.transcriptQuietWindowHint")}
-                        </p>
-                      </div>
-                      <div>
-                        <label className={labelClass(isDark)}>{t("assistants.transcriptMaxWindow")}</label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={VOICE_MIN_MAX_WINDOW_SECONDS}
-                            max={VOICE_MAX_MAX_WINDOW_SECONDS}
-                            step={1}
-                            value={voiceMaxWindowSeconds}
-                            onChange={(event) => {
-                              const value = Number(event.target.value);
-                              if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
-                            }}
-                            className={inputClass(isDark)}
-                          />
-                          <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
-                            {t("assistants.secondsUnit")}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                          {t("assistants.transcriptMaxWindowHint")}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                  ) : null}
 
                   {showServiceAsrDiagnostic ? (
                     <div className="mt-4 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--color-text-muted)]">

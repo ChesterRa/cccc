@@ -190,8 +190,10 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     installed_at: asOptionalString(record.installed_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
     command_ready: typeof record.command_ready === "boolean" ? record.command_ready : undefined,
+    offline_ready: typeof record.offline_ready === "boolean" ? record.offline_ready : undefined,
     streaming_ready: typeof record.streaming_ready === "boolean" ? record.streaming_ready : undefined,
-    diarization_ready: typeof record.diarization_ready === "boolean" ? record.diarization_ready : undefined,
+    ...(typeof record.diarization_ready === "boolean" ? { diarization_ready: record.diarization_ready } : {}),
+    offline: asRecord(record.offline) ?? undefined,
     streaming: asRecord(record.streaming) ?? undefined,
     diarization: asRecord(record.diarization) ?? undefined,
     manifest_sha256: asOptionalString(record.manifest_sha256) || undefined,
@@ -249,10 +251,11 @@ function normalizeAssistantVoiceMeetingSession(value: unknown): AssistantVoiceMe
     sample_rate: Number.isFinite(Number(record.sample_rate)) ? Number(record.sample_rate) : undefined,
     audio_duration_ms: Number.isFinite(Number(record.audio_duration_ms)) ? Number(record.audio_duration_ms) : undefined,
     language: asOptionalString(record.language) || undefined,
+    capture_mode: asOptionalString(record.capture_mode) || undefined,
     document_path: asOptionalString(record.document_path) || undefined,
     latest_partial: asOptionalString(record.latest_partial) || undefined,
     last_final_text: asOptionalString(record.last_final_text) || undefined,
-    diarization_ready: typeof record.diarization_ready === "boolean" ? record.diarization_ready : undefined,
+    ...(typeof record.diarization_ready === "boolean" ? { diarization_ready: record.diarization_ready } : {}),
     diarization_artifact_path: asOptionalString(record.diarization_artifact_path) || undefined,
     segments: Array.isArray(record.segments) ? record.segments.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item) : [],
     diarization: asRecord(record.diarization) ?? undefined,
@@ -608,6 +611,26 @@ export async function fetchLatestVoiceAssistantMeetingSession(
   const query = params.toString();
   const resp = await apiJson<unknown>(
     `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/latest${query ? `?${query}` : ""}`,
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
+  const record = asRecord(resp.result) ?? {};
+  return {
+    ok: true,
+    result: {
+      group_id: asString(record.group_id).trim() || gid,
+      session: normalizeAssistantVoiceMeetingSession(record.session),
+    },
+  };
+}
+
+export async function fetchVoiceAssistantMeetingSession(
+  groupId: string,
+  sessionId: string,
+): Promise<ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>> {
+  const gid = String(groupId || "").trim();
+  const sid = String(sessionId || "").trim();
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/${encodeURIComponent(sid)}`,
   );
   if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
   const record = asRecord(resp.result) ?? {};

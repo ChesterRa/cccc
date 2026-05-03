@@ -57,6 +57,43 @@
           "archive": "tar.bz2"
         }
       ]
+    },
+    {
+      "model_id": "sherpa_onnx_diarization_pyannote_3dspeaker_zh",
+      "kind": "diarization",
+      "title": "sherpa-onnx speaker diarization pyannote + 3D-Speaker zh",
+      "description": "Optional local speaker diarization model for anonymous Speaker 1 / Speaker 2 labels after Voice Secretary recordings.",
+      "diarization": {
+        "engine": "offline_speaker_diarization",
+        "segmentation_model": "sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx",
+        "embedding_model": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+        "sample_rate": 16000,
+        "num_threads": 2,
+        "provider": "cpu",
+        "num_speakers": -1,
+        "cluster_threshold": 0.5,
+        "min_duration_on": 0.3,
+        "min_duration_off": 0.5
+      },
+      "required_files": [
+        "sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx",
+        "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+      ],
+      "artifacts": [
+        {
+          "path": "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+          "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+          "size_bytes": 6958444,
+          "archive": "tar.bz2"
+        },
+        {
+          "path": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+          "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+          "size_bytes": 28281138
+        }
+      ]
     }
   ]
 }

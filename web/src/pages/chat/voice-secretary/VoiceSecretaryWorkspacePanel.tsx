@@ -62,7 +62,9 @@ export function VoiceSecretaryWorkspacePanel({
   formatFullTime,
   normalizeTranscriptText,
 }: VoiceSecretaryWorkspacePanelProps) {
-  const transcriptRows = useMemo(() => transcriptItems.filter((item) => item.phase === "final"), [transcriptItems]);
+  const processingRows = useMemo(() => transcriptItems.filter((item) => item.processingPhase === "separating_speakers"), [transcriptItems]);
+  const failedRows = useMemo(() => transcriptItems.filter((item) => item.processingPhase === "failed"), [transcriptItems]);
+  const transcriptRows = useMemo(() => transcriptItems.filter((item) => item.phase === "final" && !item.processingPhase), [transcriptItems]);
   const transcriptCount = transcriptRows.length;
   return (
     <section
@@ -263,12 +265,30 @@ export function VoiceSecretaryWorkspacePanel({
               label={t("voiceSecretaryTranscriptRecordingIndicator", { defaultValue: "Recording audio. Final transcript appears after Save." })}
               levels={recordingAudioLevels}
             />
-          ) : transcriptRows.length ? transcriptRows.map((item) => {
+          ) : processingRows.length ? (
+            <VoiceTranscriptRecordingIndicator
+              isDark={isDark}
+              label={t("voiceSecretaryTranscriptAnalyzingAudio", { defaultValue: "Analyzing final audio..." })}
+              levels={recordingAudioLevels}
+            />
+          ) : null}
+          {!recording && !processingRows.length && failedRows.length ? (
+            <div className={classNames(
+              "rounded-2xl border px-3 py-2.5 text-sm",
+              isDark ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-red-200 bg-red-50 text-red-800",
+            )}>
+              {normalizeTranscriptText(failedRows[0]?.text || t("voiceSecretaryTranscriptFinalFailed", {
+                defaultValue: "Final audio analysis failed.",
+              }))}
+            </div>
+          ) : null}
+          {transcriptRows.length ? transcriptRows.map((item) => {
             const itemText = normalizeTranscriptText(item.text);
             const timeLabel = formatTime(item.updatedAt);
             const fullTimeLabel = formatFullTime(item.updatedAt);
             const sourceLabel = String(item.sourceLabel || "").trim();
             const sourceDetail = String(item.sourceDetail || "").trim();
+            const speakerLabel = String(item.speakerLabel || "").trim();
             return (
               <div
                 key={item.id}
@@ -294,6 +314,16 @@ export function VoiceSecretaryWorkspacePanel({
                         title={sourceDetail || sourceLabel}
                       >
                         {sourceLabel}
+                      </span>
+                    ) : null}
+                    {speakerLabel ? (
+                      <span
+                        className={classNames(
+                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          isDark ? "bg-sky-300/12 text-sky-100" : "bg-sky-50 text-sky-800",
+                        )}
+                      >
+                        {speakerLabel}
                       </span>
                     ) : null}
                   </div>
@@ -322,13 +352,13 @@ export function VoiceSecretaryWorkspacePanel({
                 ) : null}
               </div>
             );
-          }) : (
+          }) : !recording && !processingRows.length && !failedRows.length ? (
             <div className="flex h-full min-h-[280px] items-center justify-center rounded-2xl border border-dashed border-[var(--glass-border-subtle)] px-4 text-center text-sm text-[var(--color-text-muted)]">
               {activeDocumentPath
                 ? t("voiceSecretaryTranscriptEmpty", { defaultValue: "Document-mode transcript for this document will appear here." })
                 : t("voiceSecretaryTranscriptNeedsDocument", { defaultValue: "Choose or create a document to see its transcript." })}
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </section>

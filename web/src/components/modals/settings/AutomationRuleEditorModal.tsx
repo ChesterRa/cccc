@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { GroupCombobox } from "../../GroupCombobox";
+import { SelectCombobox } from "../../SelectCombobox";
 
 import type { AutomationRule, AutomationRuleStatus } from "../../../types";
 import {
@@ -192,11 +193,16 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               </div>
               <div>
                 <label className={labelClass(isDark)}>{t("ruleEditor.scheduleType")}</label>
-                <select
+                <SelectCombobox
+                  items={[
+                    ...(kind === "notify" ? [{ value: "interval", label: t("ruleEditor.intervalSchedule") }] : []),
+                    ...(kind === "notify" ? [{ value: "cron", label: t("ruleEditor.recurringSchedule") }] : []),
+                    { value: "at", label: t("ruleEditor.oneTimeSchedule") },
+                  ]}
                   value={scheduleSelectValue}
                   disabled={scheduleLockedToOneTime}
-                  onChange={(e) => {
-                    const nextKind = String(e.target.value || "interval");
+                  onChange={(value) => {
+                    const nextKind = String(value || "interval");
                     if (nextKind === "cron") {
                       const nextCron = buildCronFromPreset({
                         preset: schedule.preset,
@@ -221,12 +227,9 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     }
                     patchRule({ trigger: { kind: "interval", every_seconds: everySeconds } });
                   }}
+                  ariaLabel={t("ruleEditor.scheduleType")}
                   className={inputClass(isDark)}
-                >
-                  {kind === "notify" ? <option value="interval">{t("ruleEditor.intervalSchedule")}</option> : null}
-                  {kind === "notify" ? <option value="cron">{t("ruleEditor.recurringSchedule")}</option> : null}
-                  <option value="at">{t("ruleEditor.oneTimeSchedule")}</option>
-                </select>
+                />
                 <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                   {scheduleLockedToOneTime
                     ? t("ruleEditor.oneTimeOnly")
@@ -275,10 +278,15 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className={labelClass(isDark)}>{t("ruleEditor.pattern")}</label>
-                  <select
+                  <SelectCombobox
+                    items={[
+                      { value: "daily", label: t("ruleEditor.daily") },
+                      { value: "weekly", label: t("ruleEditor.weekly") },
+                      { value: "monthly", label: t("ruleEditor.monthly") },
+                    ]}
                     value={schedule.preset}
-                    onChange={(e) => {
-                      const preset = String(e.target.value || "daily") as SchedulePreset;
+                    onChange={(value) => {
+                      const preset = String(value || "daily") as SchedulePreset;
                       patchRule({
                         trigger: {
                           kind: "cron",
@@ -293,12 +301,9 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                         },
                       });
                     }}
+                    ariaLabel={t("ruleEditor.pattern")}
                     className={inputClass(isDark)}
-                  >
-                    <option value="daily">{t("ruleEditor.daily")}</option>
-                    <option value="weekly">{t("ruleEditor.weekly")}</option>
-                    <option value="monthly">{t("ruleEditor.monthly")}</option>
-                  </select>
+                  />
                 </div>
                 <div>
                   <label className={labelClass(isDark)}>{t("ruleEditor.time")}</label>
@@ -329,9 +334,10 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               {schedule.preset === "weekly" ? (
                 <div>
                   <label className={labelClass(isDark)}>{t("ruleEditor.weekday")}</label>
-                  <select
+                  <SelectCombobox
+                    items={weekdayOptions.map((day) => ({ value: String(day.value), label: day.label }))}
                     value={String(schedule.weekday)}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       patchRule({
                         trigger: {
                           kind: "cron",
@@ -339,21 +345,16 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                             preset: "weekly",
                             hour: schedule.hour,
                             minute: schedule.minute,
-                            weekday: Number(e.target.value || 1),
+                            weekday: Number(value || 1),
                             dayOfMonth: schedule.dayOfMonth,
                           }),
                           timezone: localTz,
                         },
                       })
                     }
+                    ariaLabel={t("ruleEditor.weekday")}
                     className={inputClass(isDark)}
-                  >
-                    {weekdayOptions.map((day) => (
-                      <option key={day.value} value={String(day.value)}>
-                        {day.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               ) : null}
 
@@ -391,14 +392,16 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             <div className="space-y-3">
               <div>
                 <label className={labelClass(isDark)}>{t("ruleEditor.oneTimeMode")}</label>
-                <select
+                <SelectCombobox
+                  items={[
+                    { value: "after", label: t("ruleEditor.afterCountdown") },
+                    { value: "exact", label: t("ruleEditor.exactTime") },
+                  ]}
                   value={oneShotMode}
-                  onChange={(e) => onSetOneShotMode(String(e.target.value || "after") as "after" | "exact")}
+                  onChange={(value) => onSetOneShotMode(String(value || "after") as "after" | "exact")}
+                  ariaLabel={t("ruleEditor.oneTimeMode")}
                   className={inputClass(isDark)}
-                >
-                  <option value="after">{t("ruleEditor.afterCountdown")}</option>
-                  <option value="exact">{t("ruleEditor.exactTime")}</option>
-                </select>
+                />
               </div>
 
               {oneShotMode === "after" ? (
@@ -447,10 +450,23 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
 
           <div>
             <label className={labelClass(isDark)}>{t("ruleEditor.action")}</label>
-            <select
+            <SelectCombobox
+              items={[
+                { value: "notify", label: t("ruleEditor.sendReminder") },
+                {
+                  value: "group_state",
+                  label: `${t("ruleEditor.setGroupStatus")}${operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}`,
+                  disabled: !operationalActionsEnabled,
+                },
+                {
+                  value: "actor_control",
+                  label: `${t("ruleEditor.controlActorRuntimes")}${operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}`,
+                  disabled: !operationalActionsEnabled,
+                },
+              ]}
               value={kind}
-              onChange={(e) => {
-                const next = String(e.target.value || "notify");
+              onChange={(value) => {
+                const next = String(value || "notify");
                 if (next !== "notify" && !operationalActionsEnabled) {
                   onSetRulesErr(t("automation.operationalActionsHint"));
                   return;
@@ -477,18 +493,9 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   to: recipients.length > 0 ? recipients : ["@foreman"],
                 });
               }}
+              ariaLabel={t("ruleEditor.action")}
               className={inputClass(isDark)}
-            >
-              <option value="notify">{t("ruleEditor.sendReminder")}</option>
-              <option value="group_state" disabled={!operationalActionsEnabled}>
-                {t("ruleEditor.setGroupStatus")}
-                {operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}
-              </option>
-              <option value="actor_control" disabled={!operationalActionsEnabled}>
-                {t("ruleEditor.controlActorRuntimes")}
-                {operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}
-              </option>
-            </select>
+            />
             {!operationalActionsEnabled ? (
               <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("automation.operationalActionsOnly")}</div>
             ) : null}
@@ -530,10 +537,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
 
               <div>
                 <label className={labelClass(isDark)}>{t("ruleEditor.notificationSource")}</label>
-                <select
+                <SelectCombobox
+                  items={[
+                    { value: "snippet", label: t("ruleEditor.messageSnippet") },
+                    { value: "custom", label: t("ruleEditor.typeText") },
+                  ]}
                   value={contentMode}
-                  onChange={(e) => {
-                    const nextMode = String(e.target.value || "custom");
+                  onChange={(value) => {
+                    const nextMode = String(value || "custom");
                     if (nextMode === "snippet") {
                       if (snippetIds.length === 0) {
                         onSetRulesErr(t("automation.createSnippetFirst"));
@@ -546,11 +557,9 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     onSetRulesErr("");
                     patchRule({ action: { ...notifyAction, snippet_ref: null } });
                   }}
+                  ariaLabel={t("ruleEditor.notificationSource")}
                   className={inputClass(isDark)}
-                >
-                  <option value="snippet">{t("ruleEditor.messageSnippet")}</option>
-                  <option value="custom">{t("ruleEditor.typeText")}</option>
-                </select>
+                />
               </div>
 
               {contentMode === "snippet" ? (
@@ -607,23 +616,25 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           {kind === "group_state" ? (
             <div>
               <label className={labelClass(isDark)}>{t("ruleEditor.groupStatusTarget")}</label>
-              <select
+              <SelectCombobox
+                items={[
+                  { value: "active", label: groupStateCopy.active.label },
+                  { value: "idle", label: groupStateCopy.idle.label },
+                  { value: "paused", label: groupStateCopy.paused.label },
+                  { value: "stopped", label: groupStateCopy.stopped.label },
+                ]}
                 value={groupStateValue}
-                onChange={(e) =>
+                onChange={(value) =>
                   patchRule({
                     action: {
                       kind: "group_state",
-                      state: String(e.target.value || "paused") as "active" | "idle" | "paused" | "stopped",
+                      state: String(value || "paused") as "active" | "idle" | "paused" | "stopped",
                     },
                   })
                 }
+                ariaLabel={t("ruleEditor.groupStatusTarget")}
                 className={inputClass(isDark)}
-              >
-                <option value="active">{groupStateCopy.active.label}</option>
-                <option value="idle">{groupStateCopy.idle.label}</option>
-                <option value="paused">{groupStateCopy.paused.label}</option>
-                <option value="stopped">{groupStateCopy.stopped.label}</option>
-              </select>
+              />
               <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {groupStateCopy[(groupStateValue as "active" | "idle" | "paused" | "stopped") || "paused"].hint}
               </div>
@@ -634,23 +645,25 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             <div className="space-y-3">
               <div>
                 <label className={labelClass(isDark)}>{t("ruleEditor.runtimeOperation")}</label>
-                <select
+                <SelectCombobox
+                  items={[
+                    { value: "start", label: actorOperationCopy.start.label },
+                    { value: "stop", label: actorOperationCopy.stop.label },
+                    { value: "restart", label: actorOperationCopy.restart.label },
+                  ]}
                   value={actorOperation}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     patchRule({
                       action: {
                         kind: "actor_control",
-                        operation: String(e.target.value || "restart") as "start" | "stop" | "restart",
+                        operation: String(value || "restart") as "start" | "stop" | "restart",
                         targets: actorTargets.length > 0 ? actorTargets : ["@all"],
                       },
                     })
                   }
+                  ariaLabel={t("ruleEditor.runtimeOperation")}
                   className={inputClass(isDark)}
-                >
-                  <option value="start">{actorOperationCopy.start.label}</option>
-                  <option value="stop">{actorOperationCopy.stop.label}</option>
-                  <option value="restart">{actorOperationCopy.restart.label}</option>
-                </select>
+                />
                 <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                   {actorOperationCopy[(actorOperation as "start" | "stop" | "restart") || "restart"].hint}
                 </div>

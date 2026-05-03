@@ -17,6 +17,7 @@ export type GroupComboboxItem = {
   label: string;
   description?: string;
   keywords?: string[];
+  disabled?: boolean;
 };
 
 interface GroupComboboxProps {
@@ -122,8 +123,10 @@ export function GroupCombobox({
                   <CommandItem
                     key={item.value}
                     value={item.value}
+                    disabled={item.disabled}
                     keywords={[item.label, item.description || "", ...(item.keywords || [])]}
                     onSelect={() => {
+                      if (item.disabled) return;
                       onChange(item.value);
                       setOpen(false);
                     }}

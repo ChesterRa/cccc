@@ -9,6 +9,7 @@ import type {
 } from "../../../types";
 import * as api from "../../../services/api";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   inputClass,
   primaryButtonClass,
@@ -498,25 +499,23 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
 
         <div className="mt-3">
           <label className="block text-[11px] mb-1 text-[var(--color-text-tertiary)]">{t("groupSpace.chooseNotebook")}</label>
-          <select
+          <SelectCombobox
+            items={
+              notebookOptions.length
+                ? notebookOptions.map((item) => {
+                    const remoteId = String(item.remote_space_id || "").trim();
+                    const title = String(item.title || "").trim() || remoteId;
+                    return { value: remoteId, label: title };
+                  })
+                : [{ value: "", label: t("groupSpace.noNotebookOptions"), disabled: true }]
+            }
             value={selectedRemoteId}
-            onChange={(e) => setSelectedRemoteId(String(e.target.value || ""))}
+            onChange={(value) => setSelectedRemoteId(String(value || ""))}
             disabled={!connectionConnected || actionBusy || spacesBusy || !notebookOptions.length}
+            ariaLabel={t("groupSpace.chooseNotebook")}
             className={inputClass()}
-          >
-            {!notebookOptions.length ? (
-              <option value="">{t("groupSpace.noNotebookOptions")}</option>
-            ) : null}
-            {notebookOptions.map((item) => {
-              const remoteId = String(item.remote_space_id || "").trim();
-              const title = String(item.title || "").trim() || remoteId;
-              return (
-                <option key={remoteId} value={remoteId}>
-                  {title}
-                </option>
-              );
-            })}
-          </select>
+            searchable
+          />
           {notebookActionsHint ? (
             <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{notebookActionsHint}</div>
           ) : connectionConnected && !notebookOptions.length ? (

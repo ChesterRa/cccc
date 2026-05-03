@@ -10,6 +10,7 @@ import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 import { CapabilityPicker } from "../CapabilityPicker";
 import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
+import { SelectCombobox } from "../SelectCombobox";
 import { normalizeActorRunner, supportsStandardWebHeadlessRuntime } from "../../utils/headlessRuntimeSupport";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -655,19 +656,21 @@ export function EditActorModal({
                   <>
                     <div>
                       <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("actorProfile")}</label>
-                      <select
+                      <SelectCombobox
                         className="w-full rounded-xl border px-3 py-2 text-sm min-h-[40px] glass-input text-[var(--color-text-primary)]"
                         value={attachProfileId}
-                        onChange={(e) => setAttachProfileId(e.target.value)}
+                        onChange={setAttachProfileId}
                         disabled={actorProfilesBusy || busy === "actor-update"}
-                      >
-                        <option value="">{actorProfilesBusy ? t("loadingProfiles") : t("selectActorProfile")}</option>
-                        {selectableActorProfiles.map((profile) => (
-                          <option key={actorProfileIdentityKey(profile)} value={actorProfileIdentityKey(profile)}>
-                            {(profile.name || profile.id) + " · " + profileScopeLabel(profile, t)}
-                          </option>
-                        ))}
-                      </select>
+                        ariaLabel={t("actorProfile")}
+                        items={[
+                          { value: "", label: actorProfilesBusy ? t("loadingProfiles") : t("selectActorProfile") },
+                          ...selectableActorProfiles.map((profile) => ({
+                            value: actorProfileIdentityKey(profile),
+                            label: `${profile.name || profile.id} · ${profileScopeLabel(profile, t)}`,
+                          })),
+                        ]}
+                        searchable
+                      />
                       {!actorProfilesBusy && actorProfiles.length > 0 && selectableActorProfiles.length === 0 ? (
                         <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
                           ChatGPT Web Model is managed directly in Settings &gt; ChatGPT Web Model.
@@ -710,11 +713,11 @@ export function EditActorModal({
                   <div className="space-y-4">
                     <div>
                       <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("runtime")}</label>
-                      <select
+                      <SelectCombobox
                         className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
                         value={runtime}
-                        onChange={(e) => {
-                          const next = e.target.value as SupportedRuntime;
+                        onChange={(value) => {
+                          const next = value as SupportedRuntime;
                           onChangeRuntime(next);
                           if (next === "web_model") onChangeRunner("headless");
                           else if (!supportsStandardWebHeadlessRuntime(next)) onChangeRunner("pty");
@@ -722,20 +725,19 @@ export function EditActorModal({
                           const nextDefault = String(nextInfo?.recommended_command || "").trim();
                           onChangeCommand(nextDefault);
                         }}
-                      >
-                        {SUPPORTED_RUNTIMES.map((rt) => {
+                        ariaLabel={t("runtime")}
+                        items={SUPPORTED_RUNTIMES.map((rt) => {
                           const info = RUNTIME_INFO[rt];
                           const rtInfoLocal = runtimes.find((r) => r.name === rt);
                           const runtimeAvailable = rtInfoLocal?.available ?? false;
                           const selectable = runtimeAvailable || rt === "custom";
-                          return (
-                            <option key={rt} value={rt} disabled={!selectable}>
-                              {info?.label || rt}
-                              {!runtimeAvailable && rt !== "custom" ? ` ${t("notInstalled")}` : ""}
-                            </option>
-                          );
+                          return {
+                            value: rt,
+                            label: `${info?.label || rt}${!runtimeAvailable && rt !== "custom" ? ` ${t("notInstalled")}` : ""}`,
+                            disabled: !selectable,
+                          };
                         })}
-                      </select>
+                      />
                     </div>
 
 	                    {supportsStandardWebHeadlessRuntime(runtime) ? (

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
 import { InfoIcon } from "../../Icons";
 import { BodyPortal } from "../../ui/BodyPortal";
+import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
 import * as api from "../../../services/api";
 import {
@@ -1430,17 +1431,19 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
               <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,240px)_minmax(0,240px)]">
                 <div>
                   <label className={labelClass()}>{t("webAccess.providerLabel")}</label>
-                  <select
+                  <SelectCombobox
+                    items={[
+                      { value: "manual", label: t("webAccess.providers.manual") },
+                      { value: "tailscale", label: t("webAccess.providers.tailscale") },
+                    ]}
                     value={remoteMethodValue}
-                    onChange={(e) => {
-                      const nextProvider = (e.target.value as "manual" | "tailscale") || "manual";
+                    onChange={(value) => {
+                      const nextProvider = (value as "manual" | "tailscale") || "manual";
                       setProvider(nextProvider);
                     }}
+                    ariaLabel={t("webAccess.providerLabel")}
                     className={inputClass()}
-                  >
-                    <option value="manual">{t("webAccess.providers.manual")}</option>
-                    <option value="tailscale">{t("webAccess.providers.tailscale")}</option>
-                  </select>
+                  />
                   <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
                     {remoteMethodValue === "tailscale" ? t("webAccess.modeHintTailscale") : t("webAccess.remoteMethodLanHint")}
                   </div>

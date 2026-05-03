@@ -7,6 +7,7 @@ import { classNames } from "../utils/classNames";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { CloseIcon, SearchIcon } from "./Icons";
+import { SelectCombobox } from "./SelectCombobox";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Surface } from "./ui/surface";
@@ -268,23 +269,21 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               <label className={classNames("block text-xs font-medium mb-1", "text-[var(--color-text-secondary)]")}>
                 {t('by')}
               </label>
-              <select
+              <SelectCombobox
+                items={[
+                  { value: "", label: t('any') },
+                  { value: "user", label: "user" },
+                  { value: "system", label: "system" },
+                  ...actorIds.map((id) => ({ value: id, label: id })),
+                ]}
                 value={by}
-                onChange={(e) => setBy(e.target.value)}
+                onChange={setBy}
+                ariaLabel={t('by')}
                 className={classNames(
                   "w-full sm:w-auto px-3 py-2 border rounded-lg text-sm min-h-[44px] sm:min-w-[140px]",
                   "glass-input text-[var(--color-text-primary)]"
                 )}
-              >
-                <option value="">{t('any')}</option>
-                <option value="user">user</option>
-                <option value="system">system</option>
-                {actorIds.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
         </div>

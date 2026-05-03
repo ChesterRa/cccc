@@ -100,6 +100,21 @@ export function voiceReplyDismissKey(item?: AssistantVoiceAskFeedback | null): s
   ].join("\u0001");
 }
 
+export function shouldAutoOpenVoiceReplyBubble(params: {
+  requestId: string;
+  replyText: string;
+  dismissKey: string;
+  previousReplyKey?: string;
+  isLocalRequest?: boolean;
+  wasDismissed?: boolean;
+}): boolean {
+  const requestId = String(params.requestId || "").trim();
+  if (!requestId || !String(params.replyText || "").trim() || !params.dismissKey) return false;
+  if (params.wasDismissed) return false;
+  if (params.isLocalRequest) return true;
+  return Boolean(params.previousReplyKey && params.previousReplyKey !== params.dismissKey);
+}
+
 export function displayAskFeedbackStatus(item: AssistantVoiceAskFeedback, nowMs: number): string {
   const status = askFeedbackStatusKey(item.status);
   if (!isActiveAskFeedbackStatus(status)) {
@@ -230,31 +245,61 @@ export function mergeTranscriptChunks(previous: string, nextText: string): strin
   return cjkBoundary ? `${prev}${next}` : `${prev} ${next}`;
 }
 
-export function voiceTranscriptItemsFromMeetingSession(session: AssistantVoiceMeetingSession): VoiceTranscriptItem[] {
-  const documentPath = String(session.document_path || "").trim();
+export function stripUncertainSpeakerPrefix(value: string): string {
+  return normalizeBrowserTranscriptChunk(value).replace(/^Speaker\s*\?:\s*/i, "").trim();
+}
+
+export function nextUncommittedServiceTranscriptText(partialText: string, committedText: string): string {
+  const partial = stripUncertainSpeakerPrefix(partialText);
+  if (!partial) return "";
+  const committed = normalizeBrowserTranscriptChunk(committedText);
+  if (committed && (committed === partial || committed.endsWith(partial))) return "";
+  return committed && partial.startsWith(committed)
+    ? partial.slice(committed.length).trim()
+    : partial;
+}
+
+export function voiceTranscriptItemsFromMeetingSession(
+  session: AssistantVoiceMeetingSession,
+  opts?: { documentPathFallback?: string },
+): VoiceTranscriptItem[] {
+  if (String(session.capture_mode || "document").trim().toLowerCase() !== "document") return [];
+  const documentPath = String(session.document_path || opts?.documentPathFallback || "").trim();
   if (!documentPath) return [];
-  const segments = Array.isArray(session.segments) ? session.segments : [];
+  const diarization = recordFromUnknown(session.diarization);
+  const speakerTranscriptSegments = Array.isArray(diarization.speaker_transcript_segments)
+    ? diarization.speaker_transcript_segments
+    : [];
+  const speakerTranscriptModelId = String(diarization.speaker_transcript_model_id || "").trim();
+  const segments = speakerTranscriptSegments.length
+    ? speakerTranscriptSegments
+    : Array.isArray(session.segments) ? session.segments : [];
   const items = segments
     .map((segment, index): VoiceTranscriptItem | null => {
       const record = recordFromUnknown(segment);
       const text = normalizeBrowserTranscriptChunk(String(record.text || ""));
       if (!text) return null;
       const trigger = recordFromUnknown(record.trigger);
-      const source = String(trigger.recognition_backend || "").trim();
+      const speakerLabel = String(record.speaker_label || "").trim();
+      const rawSpeakerIndex = Number(record.speaker_index);
+      const source = speakerTranscriptSegments.length
+        ? "assistant_service_local_asr_final"
+        : String(trigger.recognition_backend || "").trim();
       const updatedAt = assistantVoiceTimestampMs(String(record.updated_at || record.created_at || "")) || Date.now() - index;
-      return createVoiceTranscriptItem({
+      const item = createVoiceTranscriptItem({
         id: String(record.segment_id || "").trim() || `${session.session_id}-segment-${index}`,
         cleanText: text,
         metadata: {
           mode: "document",
+          sessionId: String(session.session_id || "").trim(),
           documentPath,
           language: String(record.language || session.language || "").trim(),
           source,
           sourceLabel: voiceTranscriptSourceLabel(source),
           sourceDetail: voiceTranscriptSourceDetail({
             source,
-            modelId: String(trigger.final_model_id || trigger.model_id || "").trim(),
-            engine: String(trigger.engine || "").trim(),
+            modelId: speakerTranscriptModelId || String(trigger.final_model_id || trigger.model_id || "").trim(),
+            engine: speakerTranscriptSegments.length ? "sense_voice" : String(trigger.engine || "").trim(),
             language: String(trigger.asr_language || trigger.language || "").trim(),
             chunks: Number.isFinite(Number(trigger.chunk_count)) ? Number(trigger.chunk_count) : undefined,
             fallbackReason: String(trigger.fallback_reason || "").trim(),
@@ -266,6 +311,12 @@ export function voiceTranscriptItemsFromMeetingSession(session: AssistantVoiceMe
         },
         now: updatedAt,
       });
+      if (!item) return null;
+      return {
+        ...item,
+        ...(speakerLabel ? { speakerLabel } : {}),
+        ...(Number.isFinite(rawSpeakerIndex) ? { speakerIndex: rawSpeakerIndex } : {}),
+      };
     })
     .filter((item): item is VoiceTranscriptItem => item !== null);
 

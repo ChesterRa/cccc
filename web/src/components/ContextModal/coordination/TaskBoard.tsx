@@ -5,6 +5,7 @@ import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import { evaluateTaskWorkflow, type TaskAttemptVerdict } from "../../../utils/taskWorkflow";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   statusTone,
   taskDisplaySummary,
@@ -367,11 +368,18 @@ export function TaskBoard({
                 className={ui.inputClass}
                 placeholder={tr("context.searchTasks", "Search tasks by title, id, assignee, or outcome")}
               />
-              <select value={assigneeFilter} onChange={(event) => onAssigneeFilterChange(event.target.value)} className={classNames(ui.inputClass, "w-full lg:w-[14rem]")}>
-                <option value="__all__">{tr("context.allAssignees", "All assignees")}</option>
-                <option value="__unassigned__">{tr("context.unassignedOnly", "Unassigned only")}</option>
-                {assigneeOptions.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
-              </select>
+              <SelectCombobox
+                items={[
+                  { value: "__all__", label: tr("context.allAssignees", "All assignees") },
+                  { value: "__unassigned__", label: tr("context.unassignedOnly", "Unassigned only") },
+                  ...assigneeOptions.map((assignee) => ({ value: assignee, label: assignee })),
+                ]}
+                value={assigneeFilter}
+                onChange={onAssigneeFilterChange}
+                ariaLabel={tr("context.assignee", "Assignee")}
+                className={classNames(ui.inputClass, "w-full lg:w-[14rem]")}
+                searchable
+              />
               <button type="button" onClick={onClearFilters} className={ui.buttonSecondaryClass}>{tr("context.clearFilters", "Clear filters")}</button>
             </div>
           </div>

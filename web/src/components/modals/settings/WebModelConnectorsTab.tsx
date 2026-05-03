@@ -4,6 +4,7 @@ import type { Actor, GroupMeta, RemoteAccessState } from "../../../types";
 import * as api from "../../../services/api";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
+import { SelectCombobox } from "../../SelectCombobox";
 import {
   dangerButtonClass,
   inputClass,
@@ -1168,22 +1169,20 @@ export default function WebModelConnectorsTab({
                   <label className="block">
                     <span className={labelClass(isDark)}>Owner group</span>
                     {groups.length > 1 ? (
-                      <select
+                      <SelectCombobox
+                        items={groups
+                          .map((group) => {
+                            const gid = String(group.group_id || "").trim();
+                            const label = String(group.title || group.group_id || "").trim();
+                            return gid ? { value: gid, label } : null;
+                          })
+                          .filter((item): item is { value: string; label: string } => item !== null)}
                         value={createActorGroupId}
-                        onChange={(event) => setCreateActorGroupId(event.target.value)}
+                        onChange={setCreateActorGroupId}
+                        ariaLabel="Owner group"
                         className={inputClass(isDark)}
-                      >
-                        {groups.map((group) => {
-                          const gid = String(group.group_id || "").trim();
-                          if (!gid) return null;
-                          const label = String(group.title || group.group_id || "").trim();
-                          return (
-                            <option key={gid} value={gid}>
-                              {label}
-                            </option>
-                          );
-                        })}
-                      </select>
+                        searchable
+                      />
                     ) : (
                       <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">
                         {createActorGroupLabel || "No group available"}
