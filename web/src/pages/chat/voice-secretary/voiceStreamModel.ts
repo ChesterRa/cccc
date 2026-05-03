@@ -178,6 +178,14 @@ export function replaceVoiceTranscriptProcessingItem(
   return [incomingItem, ...nextItems].slice(0, maxItems);
 }
 
+export function isDisplayableFinalVoiceTranscriptItem(item: VoiceTranscriptItem): boolean {
+  return (
+    item.phase === "final"
+    && !item.processingPhase
+    && !String(item.id || "").startsWith("voice-stream-")
+  );
+}
+
 export function filterVoiceTranscriptItemsForDocument(
   items: VoiceTranscriptItem[],
   documentPath: string,

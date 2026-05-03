@@ -5,6 +5,7 @@ import {
   appendFinalVoiceTranscriptItem,
   createVoiceTranscriptItem,
   filterVoiceTranscriptItemsForDocument,
+  isDisplayableFinalVoiceTranscriptItem,
   mergeVoiceTranscriptItems,
   replaceVoiceTranscriptSessionItems,
   upsertLiveVoiceTranscriptItem,
@@ -140,6 +141,17 @@ describe("voice transcript model", () => {
     const items = mergeVoiceTranscriptItems([local], [restored]);
 
     expect(items.map((item) => item.id)).toEqual(["restored"]);
+  });
+
+  it("does not treat live preview rows as displayable final transcript rows", () => {
+    expect(isDisplayableFinalVoiceTranscriptItem(makeTranscriptItem({
+      id: "voice-stream-live",
+      text: "live preview",
+    }))).toBe(false);
+    expect(isDisplayableFinalVoiceTranscriptItem(makeTranscriptItem({
+      id: "final-session-segment-0",
+      text: "final transcript",
+    }))).toBe(true);
   });
 
   it("replaces pending analysis rows with restored final rows for the same session", () => {

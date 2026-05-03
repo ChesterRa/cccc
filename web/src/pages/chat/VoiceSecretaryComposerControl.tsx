@@ -1186,9 +1186,6 @@ export function VoiceSecretaryComposerControl({
     });
     liveTranscriptPreviewRef.current = preview;
     setLiveTranscriptPreview(preview);
-    if (captureMode === "document") {
-      setVoiceTranscriptItems((prev) => upsertLiveVoiceTranscriptItem(prev, preview));
-    }
     setActivityClockMs(now);
   }, [captureMode, effectiveCaptureTargetDocumentPath, captureTargetDocumentTitle, effectiveRecognitionLanguage, settleLiveTranscriptPreview]);
 

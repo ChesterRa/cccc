@@ -2,7 +2,7 @@ import type { TFunction } from "i18next";
 import { useMemo } from "react";
 import { MarkdownDocumentSurface } from "../../../components/document/MarkdownDocumentSurface";
 import { classNames } from "../../../utils/classNames";
-import type { VoiceTranscriptItem } from "./voiceStreamModel";
+import { isDisplayableFinalVoiceTranscriptItem, type VoiceTranscriptItem } from "./voiceStreamModel";
 import { VoiceTranscriptRecordingIndicator } from "./VoiceTranscriptRecordingIndicator";
 
 export type VoiceWorkspaceView = "document" | "transcript";
@@ -64,7 +64,7 @@ export function VoiceSecretaryWorkspacePanel({
 }: VoiceSecretaryWorkspacePanelProps) {
   const processingRows = useMemo(() => transcriptItems.filter((item) => item.processingPhase === "separating_speakers"), [transcriptItems]);
   const failedRows = useMemo(() => transcriptItems.filter((item) => item.processingPhase === "failed"), [transcriptItems]);
-  const transcriptRows = useMemo(() => transcriptItems.filter((item) => item.phase === "final" && !item.processingPhase), [transcriptItems]);
+  const transcriptRows = useMemo(() => transcriptItems.filter(isDisplayableFinalVoiceTranscriptItem), [transcriptItems]);
   const transcriptCount = transcriptRows.length;
   return (
     <section

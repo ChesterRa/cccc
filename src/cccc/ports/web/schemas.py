@@ -286,6 +286,11 @@ class AssistantVoiceTranscriptSegmentRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class AssistantVoiceTranscriptClearRequest(BaseModel):
+    document_path: str = Field(default="")
+    by: str = Field(default="user")
+
+
 class AssistantVoiceDocumentSaveRequest(BaseModel):
     document_path: str = Field(default="")
     workspace_path: str = Field(default="")

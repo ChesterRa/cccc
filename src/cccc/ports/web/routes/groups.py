@@ -89,6 +89,7 @@ from ..schemas import (
     AssistantVoiceRuntimeInstallRequest,
     AssistantVoiceRuntimeRemoveRequest,
     AssistantVoicePromptDraftAckRequest,
+    AssistantVoiceTranscriptClearRequest,
     AssistantVoiceTranscriptSegmentRequest,
     AssistantVoiceTranscriptionRequest,
     CreateGroupRequest,
@@ -2635,6 +2636,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
+    @group_router.delete("/assistants/voice_secretary/models")
+    async def group_voice_secretary_model_remove_legacy(
+        group_id: str,
+        req: AssistantVoiceModelRemoveRequest,
+    ) -> Dict[str, Any]:
+        return await group_voice_secretary_model_remove(group_id, req)
+
     @group_router.post("/assistants/voice_secretary/runtime/install")
     async def group_voice_secretary_runtime_install(
         group_id: str,
@@ -2681,6 +2689,24 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.get("/assistants/voice_secretary/sessions/{session_id}")
     async def group_voice_secretary_session_get(group_id: str, session_id: str) -> Dict[str, Any]:
         return {"ok": True, "result": {"group_id": group_id, "session": _read_voice_meeting_session(group_id, session_id)}}
+
+    @group_router.delete("/assistants/voice_secretary/sessions/latest/transcript")
+    async def group_voice_secretary_latest_session_transcript_clear(group_id: str, req: AssistantVoiceTranscriptClearRequest) -> Dict[str, Any]:
+        session = _read_latest_voice_meeting_session(group_id, document_path=req.document_path)
+        session_id = str(session.get("session_id") or "").strip()
+        cleared = False
+        if session_id:
+            path = _voice_meeting_segments_path(group_id, session_id)
+            if path.exists():
+                try:
+                    path.unlink()
+                    cleared = True
+                except FileNotFoundError:
+                    cleared = True
+            else:
+                cleared = True
+            _write_voice_meeting_session(group_id, session_id, {"latest_partial": ""})
+        return {"ok": True, "result": {"group_id": group_id, "session_id": session_id, "cleared": cleared}}
 
     @group_router.post("/assistants/voice_secretary/transcript_segments")
     async def group_voice_secretary_transcript_segment_append(
