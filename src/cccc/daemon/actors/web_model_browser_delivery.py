@@ -1,7 +1,8 @@
 """Browser-delivery adapter for website-hosted model actors.
 
-This module owns the daemon-side protocol boundary only. The actual ChatGPT
-DOM/CDP automation lives in an external CCCC-owned sidecar command.
+This module owns the daemon-side protocol boundary. Built-in ChatGPT delivery
+uses the shared projected browser session; custom delivery commands still use
+the external sidecar-compatible payload.
 """
 
 from __future__ import annotations
@@ -98,6 +99,17 @@ def _timeout_seconds(actor: Dict[str, Any]) -> float:
     return max(5.0, min(value, 3600.0))
 
 
+def _float_setting(actor: Dict[str, Any], keys: tuple[str, ...], *, default: float, minimum: float, maximum: float) -> float:
+    raw = _setting(actor, keys)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except Exception:
+        return default
+    return max(minimum, min(value, maximum))
+
+
 def resolve_web_model_browser_delivery_command(actor: Dict[str, Any]) -> List[str]:
     raw = _setting(actor, _COMMAND_ENV_KEYS)
     if not raw:
@@ -106,6 +118,30 @@ def resolve_web_model_browser_delivery_command(actor: Dict[str, Any]) -> List[st
         return [part for part in shlex.split(raw) if part]
     except ValueError:
         return []
+
+
+def _uses_builtin_chatgpt_sidecar(command: List[str]) -> bool:
+    expected = [sys.executable, "-m", "cccc.ports.web_model_browser_sidecar"]
+    return [str(item or "").strip() for item in command] == expected
+
+
+def _ensure_chatgpt_browser_session(group_id: str, actor_id: str) -> Dict[str, Any]:
+    from .web_model_browser_session import open_web_model_chatgpt_browser_session
+
+    surface = open_web_model_chatgpt_browser_session(
+        group_id=group_id,
+        actor_id=actor_id,
+        width=1366,
+        height=900,
+    )
+    state = str(surface.get("state") or "").strip()
+    if state not in {"ready", "starting"}:
+        message = str(surface.get("message") or "ChatGPT browser session is not ready").strip()
+        raise RuntimeError(message or "ChatGPT browser session is not ready")
+    meta = surface.get("metadata") if isinstance(surface.get("metadata"), dict) else {}
+    if int((meta or {}).get("cdp_port") or 0) <= 0:
+        raise RuntimeError("ChatGPT browser session has no CDP endpoint")
+    return surface
 
 
 def _provider_from_actor_or_connector(group_id: str, actor: Dict[str, Any]) -> str:
@@ -161,7 +197,8 @@ def _build_web_model_bootstrap_seed(group: Any, actor: Dict[str, Any]) -> str:
         "- This ChatGPT conversation is the browser surface for the actor above.\n"
         "- Browser-injected messages are already delivered in chat; do not call cccc_runtime_wait_next_turn for them.\n"
         "- Use CCCC MCP tools for visible replies, handoffs, local workspace work, validation, and evidence.\n"
-        "- For multi-step local development work, prefer cccc_code_exec and call nested tools through tools.*.\n"
+        "- For non-trivial local development work, default to cccc_code_exec so repo reads, patches, tests, diffs, "
+        "and reports stay in one focused Codex-style loop; use direct tools only for simple one-step actions.\n"
         "- Text typed only in this web chat is not delivered to CCCC users or peers."
     )
     return "\n\n".join(
@@ -493,6 +530,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         return {"ok": True, "status": "idle"}
 
     command = resolve_web_model_browser_delivery_command(actor)
+    delivery_command_label = ["projected_session"] if _uses_builtin_chatgpt_sidecar(command) else command[:1]
     provider = _provider_from_actor_or_connector(group.group_id, actor) or "chatgpt_web"
     candidate_seed_text = _build_web_model_bootstrap_seed(group, actor)
     seed_digest = _bootstrap_seed_digest(candidate_seed_text)
@@ -511,8 +549,41 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         bootstrap_seed_digest=seed_digest,
         auto_bind_new_chat=auto_bind_new_chat,
     )
+    browser_surface: Dict[str, Any] = {}
     try:
-        sidecar_result = _run_sidecar(command, payload, timeout_seconds=_timeout_seconds(actor), env=_sidecar_env(actor))
+        if _uses_builtin_chatgpt_sidecar(command):
+            from .web_model_browser_session import submit_prompt_via_web_model_chatgpt_browser_session
+
+            sidecar_result = submit_prompt_via_web_model_chatgpt_browser_session(
+                group_id=group.group_id,
+                actor_id=aid,
+                prompt=prompt,
+                target_url=target_url,
+                auto_bind_new_chat=auto_bind_new_chat,
+                delivery_id=str(payload.get("delivery_id") or turn.get("delivery_id") or ""),
+                timeout_seconds=_timeout_seconds(actor),
+                input_timeout_seconds=_float_setting(
+                    actor,
+                    ("CCCC_WEB_MODEL_BROWSER_INPUT_TIMEOUT_SECONDS",),
+                    default=30.0,
+                    minimum=5.0,
+                    maximum=300.0,
+                ),
+                new_chat_bind_timeout_seconds=_float_setting(
+                    actor,
+                    ("CCCC_WEB_MODEL_NEW_CHAT_BIND_TIMEOUT_SECONDS",),
+                    default=20.0,
+                    minimum=1.0,
+                    maximum=120.0,
+                ),
+            )
+            browser_surface = (
+                sidecar_result.get("browser_surface")
+                if isinstance(sidecar_result.get("browser_surface"), dict)
+                else _ensure_chatgpt_browser_session(group.group_id, aid)
+            )
+        else:
+            sidecar_result = _run_sidecar(command, payload, timeout_seconds=_timeout_seconds(actor), env=_sidecar_env(actor))
     except subprocess.TimeoutExpired:
         sidecar_result = {"ok": False, "error": "browser sidecar timed out"}
     except Exception as exc:
@@ -539,11 +610,112 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "ok": False,
             "error": "new ChatGPT chat did not produce a conversation URL",
         }
-    if ok:
+    if pending_conversation_url:
+        pending_delivery_id = str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or "")
+        commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by=aid)
+        pending_seed_state = (
+            {
+                "bootstrap_seed_delivered_at": utc_now_iso(),
+                "bootstrap_seed_version": _BOOTSTRAP_SEED_VERSION,
+                "bootstrap_seed_digest": str(seed_digest or "").strip(),
+                "bootstrap_seed_conversation_url": target_url or CHATGPT_URL,
+            }
+            if bootstrap_seed
+            else {
+                "bootstrap_seed_delivered_at": "",
+                "bootstrap_seed_version": "",
+                "bootstrap_seed_digest": "",
+                "bootstrap_seed_conversation_url": "",
+            }
+        )
+        record_chatgpt_browser_state(
+            group.group_id,
+            aid,
+            {
+                "conversation_url": "",
+                "pending_new_chat_bind": True,
+                "pending_new_chat_url": target_url or CHATGPT_URL,
+                "pending_new_chat_submitted": True,
+                "pending_new_chat_submitted_at": utc_now_iso(),
+                "pending_new_chat_delivery_id": pending_delivery_id,
+                "pending_new_chat_last_turn_id": str(turn.get("turn_id") or ""),
+                "pending_new_chat_last_event_ids": list(turn.get("event_ids") or []),
+                "pending_new_chat_last_tab_url": str(browser_result.get("tab_url") or ""),
+                **pending_seed_state,
+                "last_error": "conversation_url_pending",
+            },
+        )
+        update_headless_state(
+            group.group_id,
+            aid,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+        )
         try:
-            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher
+            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
 
             ensure_web_model_tool_confirm_watcher(group.group_id, aid, logger=_LOG)
+            start_web_model_browser_reload_window(
+                group.group_id,
+                aid,
+                reason="browser_delivery_pending",
+                delivery_id=pending_delivery_id,
+                turn_id=str(turn.get("turn_id") or ""),
+                event_ids=list(turn.get("event_ids") or []),
+                target_url=target_url,
+            )
+        except Exception:
+            pass
+        event = _append_delivery_event(
+            group=group,
+            actor_id=aid,
+            turn=turn,
+            kind="web_model.browser_delivery.pending",
+            data={
+                "provider": provider,
+                "delivery_id": str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or ""),
+                "trigger_event_id": str(trigger_event_id or "").strip(),
+                "sidecar_command": delivery_command_label,
+                "cursor_committed": bool(commit.get("cursor_committed")),
+                "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+                "bootstrap_seed": bool(bootstrap_seed),
+                "target_url": target_url,
+                "auto_bind_new_chat": bool(auto_bind_new_chat),
+                "bound_conversation_url": "",
+                "pending_conversation_url": True,
+                "browser_surface": {
+                    "state": str(browser_surface.get("state") or ""),
+                    "url": str(browser_surface.get("url") or ""),
+                },
+                "browser": sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {},
+            },
+        )
+        return {
+            "ok": True,
+            "status": "target_chat_binding_pending",
+            "turn_id": str(turn.get("turn_id") or ""),
+            "cursor_committed": bool(commit.get("cursor_committed")),
+            "commit": commit,
+            "event": event,
+            "sidecar": sidecar_result,
+            "reschedule": False,
+        }
+    if ok:
+        delivery_id = str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or "")
+        try:
+            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
+
+            ensure_web_model_tool_confirm_watcher(group.group_id, aid, logger=_LOG)
+            start_web_model_browser_reload_window(
+                group.group_id,
+                aid,
+                reason="browser_delivery",
+                delivery_id=delivery_id,
+                turn_id=str(turn.get("turn_id") or ""),
+                event_ids=list(turn.get("event_ids") or []),
+                target_url=delivered_conversation_url or target_url,
+            )
         except Exception:
             pass
         commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by=aid)
@@ -580,39 +752,6 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "last_error": "",
                 },
             )
-        elif pending_conversation_url:
-            pending_seed_state = (
-                {
-                    "bootstrap_seed_delivered_at": utc_now_iso(),
-                    "bootstrap_seed_version": _BOOTSTRAP_SEED_VERSION,
-                    "bootstrap_seed_digest": str(seed_digest or "").strip(),
-                    "bootstrap_seed_conversation_url": target_url or CHATGPT_URL,
-                }
-                if bootstrap_seed
-                else {
-                    "bootstrap_seed_delivered_at": "",
-                    "bootstrap_seed_version": "",
-                    "bootstrap_seed_digest": "",
-                    "bootstrap_seed_conversation_url": "",
-                }
-            )
-            record_chatgpt_browser_state(
-                group.group_id,
-                aid,
-                {
-                    "conversation_url": "",
-                    "pending_new_chat_bind": True,
-                    "pending_new_chat_url": target_url or CHATGPT_URL,
-                    "pending_new_chat_submitted": True,
-                    "pending_new_chat_submitted_at": utc_now_iso(),
-                    "pending_new_chat_delivery_id": str(sidecar_result.get("delivery_id") or ""),
-                    "pending_new_chat_last_turn_id": str(turn.get("turn_id") or ""),
-                    "pending_new_chat_last_event_ids": list(turn.get("event_ids") or []),
-                    "pending_new_chat_last_tab_url": str(browser_result.get("tab_url") or ""),
-                    **pending_seed_state,
-                    "last_error": "conversation_url_pending",
-                },
-            )
         event = _append_delivery_event(
             group=group,
             actor_id=aid,
@@ -620,9 +759,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             kind="web_model.browser_delivery.submitted",
             data={
                 "provider": provider,
-                "delivery_id": str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or ""),
+                "delivery_id": delivery_id,
                 "trigger_event_id": str(trigger_event_id or "").strip(),
-                "sidecar_command": command[:1],
+                "sidecar_command": delivery_command_label,
                 "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
                 "bootstrap_seed": bool(bootstrap_seed),
@@ -630,6 +769,10 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "auto_bind_new_chat": bool(auto_bind_new_chat),
                 "bound_conversation_url": delivered_conversation_url,
                 "pending_conversation_url": bool(pending_conversation_url),
+                "browser_surface": {
+                    "state": str(browser_surface.get("state") or ""),
+                    "url": str(browser_surface.get("url") or ""),
+                },
                 "browser": sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {},
             },
         )
@@ -661,7 +804,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "provider": provider,
             "trigger_event_id": str(trigger_event_id or "").strip(),
             "error": error,
-            "sidecar_command": command[:1],
+            "sidecar_command": delivery_command_label,
         },
     )
     return {

@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -28,6 +28,7 @@ from ..daemon.browser.projected_browser_runtime import (
     ensure_sync_playwright,
 )
 from ..paths import ensure_home
+from ..util.process import pid_is_alive, terminate_pid
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import utc_now_iso
 
@@ -44,9 +45,12 @@ INPUT_SELECTORS = [
     '[contenteditable="true"]',
 ]
 SEND_BUTTON_SELECTORS = [
+    "#composer-submit-button",
     'button[data-testid="send-button"]',
     'button[data-testid="composer-submit-button"]',
     'button[data-testid*="composer-send"]',
+    "button.composer-submit-btn",
+    "button.composer-submit-button-color",
     'form button[type="submit"]',
     'button[type="submit"][data-testid*="send"]',
     'button[aria-label*="Send"]',
@@ -328,6 +332,24 @@ def reset_chatgpt_browser_actor_runtime_state(group_id: str, actor_id: str) -> N
             "last_turn_id": "",
             "last_event_ids": [],
             "last_delivery_id": "",
+            "auto_reload_active": False,
+            "auto_reload_window_started_at": "",
+            "auto_reload_window_expires_at": "",
+            "auto_reload_last_progress_at": "",
+            "auto_reload_last_progress_reason": "",
+            "auto_reload_last_progress_detail": "",
+            "auto_reload_last_delivery_id": "",
+            "auto_reload_last_turn_id": "",
+            "auto_reload_last_event_ids": [],
+            "auto_reload_target_url": "",
+            "auto_reload_last_reload_at": "",
+            "auto_reload_last_reload_reason": "",
+            "auto_reload_last_page_url": "",
+            "auto_reload_count": 0,
+            "auto_reload_completed_at": "",
+            "auto_reload_completed_reason": "",
+            "auto_reload_expired_at": "",
+            "auto_reload_last_error": "",
             "last_error": "",
         },
     )
@@ -415,54 +437,189 @@ def _browser_launch_command(binary: str, profile_dir: Path, port: int, visibilit
     return browser_cmd
 
 
+def _managed_profile_dir(profile_dir: str | Path) -> Path | None:
+    try:
+        path = Path(profile_dir).resolve()
+        root = chatgpt_browser_profile_root().resolve()
+        if path.is_relative_to(root):
+            return path
+    except Exception:
+        return None
+    return None
+
+
+def _same_profile_path(left: str | Path, right: str | Path) -> bool:
+    try:
+        left_norm = os.path.normcase(os.path.abspath(os.path.expanduser(str(left or ""))))
+        right_norm = os.path.normcase(os.path.abspath(os.path.expanduser(str(right or ""))))
+    except Exception:
+        return False
+    return bool(left_norm and right_norm and left_norm == right_norm)
+
+
+def _user_data_dir_from_args(args: list[str]) -> str:
+    for index, raw in enumerate(args):
+        arg = str(raw or "").strip()
+        if arg.startswith("--user-data-dir="):
+            return arg.split("=", 1)[1].strip().strip("\"'")
+        if arg == "--user-data-dir" and index + 1 < len(args):
+            return str(args[index + 1] or "").strip().strip("\"'")
+    return ""
+
+
+def _user_data_dir_from_command_line(command: str) -> str:
+    text = str(command or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"--user-data-dir=(?:\"([^\"]+)\"|'([^']+)'|(\S+))", text)
+    if match:
+        return str(next((item for item in match.groups() if item), "") or "").strip()
+    match = re.search(r"--user-data-dir\s+(?:\"([^\"]+)\"|'([^']+)'|(\S+))", text)
+    if match:
+        return str(next((item for item in match.groups() if item), "") or "").strip()
+    return ""
+
+
+def _profile_process_pids_from_proc(profile: Path) -> list[int]:
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return []
+    pids: list[int] = []
+    current_pid = os.getpid()
+    for child in proc_root.iterdir():
+        if not child.name.isdigit():
+            continue
+        try:
+            pid = int(child.name)
+        except Exception:
+            continue
+        if pid <= 0 or pid == current_pid:
+            continue
+        try:
+            raw = (child / "cmdline").read_bytes()
+        except Exception:
+            continue
+        if not raw:
+            continue
+        args = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part]
+        user_data_dir = _user_data_dir_from_args(args)
+        if user_data_dir and _same_profile_path(user_data_dir, profile):
+            pids.append(pid)
+    return pids
+
+
+def _profile_process_pids_from_ps(profile: Path) -> list[int]:
+    try:
+        proc = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return []
+    if int(getattr(proc, "returncode", 1) or 0) != 0:
+        return []
+    pids: list[int] = []
+    current_pid = os.getpid()
+    for raw_line in str(proc.stdout or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except Exception:
+            continue
+        if pid <= 0 or pid == current_pid:
+            continue
+        user_data_dir = _user_data_dir_from_command_line(parts[1])
+        if user_data_dir and _same_profile_path(user_data_dir, profile):
+            pids.append(pid)
+    return pids
+
+
+def _profile_process_pids_from_windows(profile: Path) -> list[int]:
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        return []
+    command = (
+        "Get-CimInstance Win32_Process | "
+        "Select-Object ProcessId,CommandLine | "
+        "ConvertTo-Json -Compress"
+    )
+    try:
+        proc = subprocess.run(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return []
+    if int(getattr(proc, "returncode", 1) or 0) != 0:
+        return []
+    try:
+        raw = json.loads(str(proc.stdout or "null"))
+    except Exception:
+        return []
+    rows = raw if isinstance(raw, list) else [raw]
+    pids: list[int] = []
+    current_pid = os.getpid()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        try:
+            pid = int(item.get("ProcessId") or 0)
+        except Exception:
+            continue
+        if pid <= 0 or pid == current_pid:
+            continue
+        user_data_dir = _user_data_dir_from_command_line(str(item.get("CommandLine") or ""))
+        if user_data_dir and _same_profile_path(user_data_dir, profile):
+            pids.append(pid)
+    return pids
+
+
+def _profile_process_pids(profile_dir: str | Path) -> list[int]:
+    profile = _managed_profile_dir(profile_dir)
+    if profile is None:
+        return []
+    if os.name == "nt":
+        pids = _profile_process_pids_from_windows(profile)
+    else:
+        pids = _profile_process_pids_from_proc(profile) or _profile_process_pids_from_ps(profile)
+    return sorted(set(pids), reverse=True)
+
+
+def _stop_browser_profile_processes(profile_dir: str | Path) -> None:
+    pids = _profile_process_pids(profile_dir)
+    if not pids:
+        return
+
+    for pid in pids:
+        terminate_pid(pid, timeout_s=0.2, include_group=True, force=False)
+    deadline = time.time() + 3.0
+    while time.time() < deadline and any(pid_is_alive(pid) for pid in pids):
+        time.sleep(0.1)
+    for pid in pids:
+        if not pid_is_alive(pid):
+            continue
+        terminate_pid(pid, timeout_s=0.5, include_group=True, force=True)
+
+
 def _stop_browser_state(state: dict[str, Any]) -> None:
     pid = int(state.get("pid") or 0)
+    profile_dir = str(state.get("profile_dir") or "").strip()
     if pid <= 0:
+        if profile_dir:
+            _stop_browser_profile_processes(profile_dir)
         return
-    def _pid_alive() -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except Exception:
-            return False
-
-    def _wait_exit(timeout_seconds: float = 3.0) -> bool:
-        deadline = time.time() + max(0.1, float(timeout_seconds))
-        while time.time() < deadline:
-            if not _pid_alive():
-                return True
-            time.sleep(0.1)
-        return not _pid_alive()
-
-    signaled = False
-    try:
-        os.killpg(pid, signal.SIGTERM)
-        signaled = True
-    except Exception:
-        pass
-    if not signaled:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            signaled = True
-        except Exception:
-            pass
-    if signaled and _wait_exit():
-        return
-    try:
-        os.killpg(pid, signal.SIGKILL)
-        _wait_exit(timeout_seconds=1.0)
-        return
-    except Exception:
-        pass
-    try:
-        os.kill(pid, signal.SIGKILL)
-        _wait_exit(timeout_seconds=1.0)
-    except Exception:
-        pass
+    terminate_pid(pid, timeout_s=3.0, include_group=True, force=True)
+    if profile_dir:
+        _stop_browser_profile_processes(profile_dir)
 
 
 def _start_or_reuse_browser(profile_root: Path, *, visibility: str = "visible") -> dict[str, Any]:
@@ -563,6 +720,20 @@ def _clear_and_type_prompt(page: Any, selector: str, prompt: str) -> None:
 def _composer_text(page: Any, selector: str) -> str:
     locator = page.locator(selector).first
     try:
+        text = locator.evaluate(
+            """(el) => {
+                if (!el) return "";
+                const value = "value" in el ? String(el.value || "") : "";
+                if (value.trim()) return value;
+                return String(el.innerText || el.textContent || "");
+            }""",
+            timeout=1000,
+        )
+        if str(text or "").strip():
+            return str(text or "").strip()
+    except Exception:
+        pass
+    try:
         return str(locator.input_value(timeout=150) or "").strip()
     except Exception:
         pass
@@ -576,24 +747,88 @@ def _composer_text(page: Any, selector: str) -> str:
         return ""
 
 
-def _click_send(page: Any) -> str:
+def _normalize_composer_text(value: str) -> str:
+    return " ".join(str(value or "").replace("\xa0", " ").split())
+
+
+def _prompt_inserted(page: Any, selector: str, prompt: str) -> bool:
+    actual = _normalize_composer_text(_composer_text(page, selector))
+    expected = _normalize_composer_text(prompt)
+    if not actual or not expected:
+        return False
+    if expected in actual:
+        return True
+    prefix = expected[: min(160, len(expected))]
+    suffix = expected[-min(120, len(expected)) :]
+    return bool(prefix and prefix in actual) and (len(expected) <= 200 or bool(suffix and suffix in actual))
+
+
+def _wait_for_prompt_inserted(page: Any, selector: str, prompt: str, *, timeout_seconds: float = 3.0) -> bool:
+    deadline = time.time() + max(0.5, float(timeout_seconds))
+    while time.time() < deadline:
+        if _prompt_inserted(page, selector, prompt):
+            return True
+        time.sleep(0.1)
+    return _prompt_inserted(page, selector, prompt)
+
+
+def _click_send(page: Any, *, timeout_seconds: float = 5.0) -> str:
+    deadline = time.time() + max(0.5, float(timeout_seconds))
     last_error = ""
-    for selector in SEND_BUTTON_SELECTORS:
-        try:
-            button = page.locator(selector).first
-            if button.count() <= 0:
-                continue
-            if not button.is_visible(timeout=250):
-                continue
+    while time.time() < deadline:
+        for selector in SEND_BUTTON_SELECTORS:
             try:
-                if button.is_disabled(timeout=250):
+                button = page.locator(selector).first
+                if button.count() <= 0:
                     continue
-            except Exception:
-                pass
-            button.click(timeout=5000)
-            return selector
+                if not button.is_visible(timeout=250):
+                    continue
+                try:
+                    if button.is_disabled(timeout=250):
+                        continue
+                except Exception:
+                    pass
+                button.click(timeout=5000)
+                return selector
+            except Exception as exc:
+                last_error = str(exc)
+        try:
+            clicked = page.evaluate(
+                """() => {
+                    const buttons = [...document.querySelectorAll('button')];
+                    const candidate = buttons.find(button => {
+                        const label = String(button.getAttribute('aria-label') || '');
+                        const testid = String(button.getAttribute('data-testid') || '');
+                        const id = String(button.id || '');
+                        const cls = String(button.className || '');
+                        const text = String(button.innerText || button.textContent || '');
+                        const looksLikeSend =
+                            id === 'composer-submit-button' ||
+                            testid === 'send-button' ||
+                            testid === 'composer-submit-button' ||
+                            /send|发送|送信/i.test(label) ||
+                            /send|发送|送信/i.test(text) ||
+                            cls.includes('composer-submit');
+                        if (!looksLikeSend) return false;
+                        const style = window.getComputedStyle(button);
+                        const rect = button.getBoundingClientRect();
+                        return !button.disabled &&
+                            button.getAttribute('aria-disabled') !== 'true' &&
+                            style.visibility !== 'hidden' &&
+                            style.display !== 'none' &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    });
+                    if (!candidate) return false;
+                    candidate.click();
+                    return true;
+                }"""
+            )
+            if clicked:
+                return "js:composer-submit"
         except Exception as exc:
             last_error = str(exc)
+        time.sleep(0.15)
     raise RuntimeError(last_error or "ChatGPT send button not found or disabled")
 
 
@@ -652,39 +887,85 @@ def _auto_confirm_page_tool_prompts(page: Any, *, max_clicks: int = TOOL_CONFIRM
     return out
 
 
-def _wait_for_submission(page: Any, selector: str, *, timeout_seconds: float = 8.0) -> bool:
+def _submission_echo_found(page: Any, prompt: str) -> bool:
+    normalized = " ".join(str(prompt or "").split())
+    if not normalized:
+        return False
+    excerpt = normalized[:120]
+    if len(excerpt) < 24:
+        excerpt = normalized
+    try:
+        return bool(
+            page.evaluate(
+                """needle => {
+                    const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+                    const target = normalize(needle);
+                    if (!target) return false;
+                    const candidates = [
+                        ...document.querySelectorAll('[data-message-author-role="user"]'),
+                        ...document.querySelectorAll('[data-testid*="conversation-turn"]'),
+                        ...document.querySelectorAll('main article'),
+                    ];
+                    for (const node of candidates) {
+                        if (normalize(node.innerText || node.textContent || "").includes(target)) return true;
+                    }
+                    return false;
+                }""",
+                excerpt,
+            )
+        )
+    except Exception:
+        return False
+
+
+def _wait_for_submission(
+    page: Any,
+    selector: str,
+    *,
+    prompt: str,
+    timeout_seconds: float = 8.0,
+    accept_composer_clear: bool = False,
+) -> str:
     deadline = time.time() + max(1.0, float(timeout_seconds))
     while time.time() < deadline:
         try:
             stop_visible = page.locator('[data-testid="stop-button"]').first.is_visible(timeout=150)
             if stop_visible:
-                return True
+                return "stop_button"
         except Exception:
             pass
         if not _composer_text(page, selector):
-            return True
+            if _submission_echo_found(page, prompt):
+                return "message_echo"
+            if accept_composer_clear:
+                return "composer_cleared"
         time.sleep(0.15)
-    return False
+    return ""
 
 
 def _submit_prompt(page: Any, prompt: str, *, input_timeout_seconds: float) -> dict[str, Any]:
     selector = _visible_input_selector(page, timeout_seconds=input_timeout_seconds)
     _clear_and_type_prompt(page, selector, prompt)
+    if not _wait_for_prompt_inserted(page, selector, prompt):
+        raise RuntimeError("ChatGPT prompt insertion did not stick")
     time.sleep(0.5)
     send_selector = ""
     try:
         send_selector = _click_send(page)
     except Exception:
         send_selector = ""
-    if _wait_for_submission(page, selector):
-        return {"input_selector": selector, "send_selector": send_selector or "keyboard"}
+    evidence = _wait_for_submission(page, selector, prompt=prompt, accept_composer_clear=bool(send_selector))
+    if evidence:
+        return {"input_selector": selector, "send_selector": send_selector or "keyboard", "submission_evidence": evidence}
     page.keyboard.press("Enter")
-    if _wait_for_submission(page, selector, timeout_seconds=4.0):
-        return {"input_selector": selector, "send_selector": send_selector or "keyboard:Enter"}
+    evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=4.0, accept_composer_clear=True)
+    if evidence:
+        return {"input_selector": selector, "send_selector": send_selector or "keyboard:Enter", "submission_evidence": evidence}
     modifier = "Meta" if sys.platform == "darwin" else "Control"
     page.keyboard.press(f"{modifier}+Enter")
-    if _wait_for_submission(page, selector, timeout_seconds=4.0):
-        return {"input_selector": selector, "send_selector": send_selector or f"keyboard:{modifier}+Enter"}
+    evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=4.0, accept_composer_clear=True)
+    if evidence:
+        return {"input_selector": selector, "send_selector": send_selector or f"keyboard:{modifier}+Enter", "submission_evidence": evidence}
     raise RuntimeError("ChatGPT prompt was inserted but did not submit")
 
 
@@ -777,6 +1058,24 @@ def _session_payload(state: dict[str, Any], inspection: dict[str, Any] | None = 
         "auto_confirm_last_page_url": str(state.get("auto_confirm_last_page_url") or ""),
         "auto_confirm_last_details": state.get("auto_confirm_last_details") if isinstance(state.get("auto_confirm_last_details"), list) else [],
         "auto_confirm_last_errors": state.get("auto_confirm_last_errors") if isinstance(state.get("auto_confirm_last_errors"), list) else [],
+        "auto_reload_active": bool(state.get("auto_reload_active")),
+        "auto_reload_window_started_at": str(state.get("auto_reload_window_started_at") or ""),
+        "auto_reload_window_expires_at": str(state.get("auto_reload_window_expires_at") or ""),
+        "auto_reload_last_progress_at": str(state.get("auto_reload_last_progress_at") or ""),
+        "auto_reload_last_progress_reason": str(state.get("auto_reload_last_progress_reason") or ""),
+        "auto_reload_last_progress_detail": str(state.get("auto_reload_last_progress_detail") or ""),
+        "auto_reload_last_delivery_id": str(state.get("auto_reload_last_delivery_id") or ""),
+        "auto_reload_last_turn_id": str(state.get("auto_reload_last_turn_id") or ""),
+        "auto_reload_last_event_ids": state.get("auto_reload_last_event_ids") if isinstance(state.get("auto_reload_last_event_ids"), list) else [],
+        "auto_reload_target_url": str(state.get("auto_reload_target_url") or ""),
+        "auto_reload_last_reload_at": str(state.get("auto_reload_last_reload_at") or ""),
+        "auto_reload_last_reload_reason": str(state.get("auto_reload_last_reload_reason") or ""),
+        "auto_reload_last_page_url": str(state.get("auto_reload_last_page_url") or ""),
+        "auto_reload_count": int(state.get("auto_reload_count") or 0),
+        "auto_reload_completed_at": str(state.get("auto_reload_completed_at") or ""),
+        "auto_reload_completed_reason": str(state.get("auto_reload_completed_reason") or ""),
+        "auto_reload_expired_at": str(state.get("auto_reload_expired_at") or ""),
+        "auto_reload_last_error": str(state.get("auto_reload_last_error") or ""),
         "ready": False,
         "login_required": True,
     }

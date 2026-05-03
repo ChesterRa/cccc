@@ -25,10 +25,13 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.request import urlopen
 
+from ...util.process import terminate_pid
 from ...util.node_env import suppress_node_deprecation_warnings_in_process, with_node_deprecation_warnings_suppressed
 from ...util.time import utc_now_iso
 
-_FRAME_INTERVAL_SECONDS = 0.35
+_VIEWER_FRAME_INTERVAL_SECONDS = 0.5
+_IDLE_FRAME_POLL_SECONDS = 2.0
+_FRAME_CAPTURE_TIMEOUT_MS = 5000
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
 
@@ -110,6 +113,10 @@ def _terminate_process(proc: Any) -> None:
                 proc.kill()
     except Exception:
         pass
+
+
+def _terminate_pid(pid: int) -> None:
+    terminate_pid(int(pid or 0), timeout_s=3.0, include_group=True, force=True)
 
 
 class _VirtualDisplay:
@@ -346,6 +353,7 @@ class PlaywrightProjectedRuntime:
         strategy: str,
         cleanup_callbacks: Iterable[Any] = (),
         metadata: dict[str, Any] | None = None,
+        close_context_on_close: bool = True,
     ) -> None:
         self._lock = threading.RLock()
         self._playwright_cm = playwright_cm
@@ -357,6 +365,7 @@ class PlaywrightProjectedRuntime:
         self.height = int(height)
         self.metadata = dict(metadata or {})
         self._cleanup_callbacks = list(cleanup_callbacks or [])
+        self._close_context_on_close = bool(close_context_on_close)
         self._page_history: list[Any] = []
         self._known_page_ids: set[int] = set()
         self._register_page(page)
@@ -476,18 +485,14 @@ class PlaywrightProjectedRuntime:
 
     def capture_frame(self) -> bytes:
         with self._lock:
-            cdp = self._cdp
-        payload = cdp.send(
-            "Page.captureScreenshot",
-            {
-                "format": "jpeg",
-                "quality": 60,
-                "captureBeyondViewport": False,
-                "fromSurface": True,
-            },
+            page = self._page
+        payload = page.screenshot(
+            type="jpeg",
+            quality=60,
+            full_page=False,
+            timeout=_FRAME_CAPTURE_TIMEOUT_MS,
         )
-        data = str((payload or {}).get("data") or "")
-        return base64.b64decode(data) if data else b""
+        return bytes(payload or b"")
 
     def click(self, *, x: float, y: float, button: str = "left") -> None:
         self.page.mouse.click(float(x), float(y), button=str(button or "left"))
@@ -531,11 +536,12 @@ class PlaywrightProjectedRuntime:
                 self._cdp.detach()
         except Exception:
             pass
-        try:
-            if self._context is not None:
-                self._context.close()
-        except Exception:
-            pass
+        if self._close_context_on_close:
+            try:
+                if self._context is not None:
+                    self._context.close()
+            except Exception:
+                pass
         try:
             self._playwright_cm.__exit__(None, None, None)
         except Exception:
@@ -557,6 +563,9 @@ def launch_projected_browser_runtime(
     channel_candidates: Iterable[str | None] = (None,),
     seed_storage_state: dict[str, Any] | None = None,
     system_profile_subdir: str | None = None,
+    require_system_browser_cdp: bool = False,
+    existing_cdp_port: int = 0,
+    existing_browser_metadata: dict[str, Any] | None = None,
 ) -> PlaywrightProjectedRuntime:
     sync_playwright = ensure_sync_playwright()
     playwright_cm = sync_playwright()
@@ -565,6 +574,60 @@ def launch_projected_browser_runtime(
     browser_env = {str(k): str(v) for k, v in os.environ.items()}
     cleanup_callbacks: list[Any] = []
     strategy_suffix = ""
+
+    existing_port = int(existing_cdp_port or 0)
+    if existing_port > 0:
+        try:
+            if not _wait_cdp_endpoint(existing_port, timeout_seconds=1.0):
+                raise RuntimeError("existing CDP endpoint is not reachable")
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{existing_port}")
+            contexts = list(getattr(browser, "contexts", []) or [])
+            context = contexts[0] if contexts else None
+            if context is None:
+                raise RuntimeError("cdp connected but no browser context became available")
+            _ = seed_context_with_storage_state(context, seed_storage_state)
+            pages = list(getattr(context, "pages", []) or [])
+            target_url = str(url or "").strip()
+            page = None
+            if target_url:
+                page = next((item for item in pages if str(getattr(item, "url", "") or "").strip() == target_url), None)
+            if page is None:
+                page = pages[0] if pages else context.new_page()
+            page.set_viewport_size({"width": int(width), "height": int(height)})
+            if target_url and str(getattr(page, "url", "") or "").strip() != target_url:
+                page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            cdp_session = context.new_cdp_session(page)
+            try:
+                cdp_session.send("Page.enable")
+            except Exception:
+                pass
+            metadata = dict(existing_browser_metadata or {})
+            metadata.update(
+                {
+                    "cdp_port": existing_port,
+                    "profile_dir": str(metadata.get("profile_dir") or profile_dir),
+                    "adopted": True,
+                }
+            )
+            return PlaywrightProjectedRuntime(
+                playwright_cm=playwright_cm,
+                context=context,
+                page=page,
+                cdp_session=cdp_session,
+                width=width,
+                height=height,
+                strategy="system_browser_cdp:adopted",
+                metadata=metadata,
+                cleanup_callbacks=cleanup_callbacks,
+                close_context_on_close=False,
+            )
+        except Exception:
+            try:
+                playwright_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+            raise
+
     if not bool(headless):
         virtual_display = _start_virtual_display(width=width, height=height)
         if virtual_display is not None:
@@ -602,6 +665,7 @@ def launch_projected_browser_runtime(
                     stderr=subprocess.DEVNULL,
                     text=True,
                     env=browser_env,
+                    start_new_session=True,
                 )
                 if not _wait_cdp_endpoint(port, timeout_seconds=12.0):
                     raise RuntimeError("cdp endpoint did not become ready")
@@ -647,6 +711,13 @@ def launch_projected_browser_runtime(
             system_browser = _launch_system_browser_once(channel)
             if system_browser is not None:
                 return system_browser
+            if bool(require_system_browser_cdp):
+                raise RuntimeError(
+                    f"system browser CDP launch failed for channel {channel!r}; "
+                    "install Google Chrome or Microsoft Edge and close any existing CCCC ChatGPT browser using the same profile"
+                )
+        elif bool(require_system_browser_cdp):
+            raise RuntimeError("managed Playwright Chromium is not supported for this browser surface")
         launch_kwargs: dict[str, Any] = {
             "user_data_dir": str(profile_dir),
             "headless": bool(headless),
@@ -747,6 +818,9 @@ class ProjectedBrowserSession:
         headless: bool,
         channel_candidates: Iterable[str | None],
         system_profile_subdir: str | None = None,
+        require_system_browser_cdp: bool = False,
+        existing_cdp_port: int = 0,
+        existing_browser_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.session_key = str(session_key or "").strip()
         self.profile_dir = Path(profile_dir)
@@ -756,6 +830,9 @@ class ProjectedBrowserSession:
         self.headless = bool(headless)
         self.channel_candidates = tuple(channel_candidates or (None,))
         self.system_profile_subdir = system_profile_subdir
+        self.require_system_browser_cdp = bool(require_system_browser_cdp)
+        self.existing_cdp_port = int(existing_cdp_port or 0)
+        self.existing_browser_metadata = dict(existing_browser_metadata or {})
         self._lock = threading.Lock()
         self._frame_cond = threading.Condition(self._lock)
         self._commands: "queue.Queue[tuple[str, dict[str, Any], Optional[queue.Queue[dict[str, Any]]]]]" = queue.Queue()
@@ -765,8 +842,7 @@ class ProjectedBrowserSession:
             daemon=True,
             name=f"cccc-browser-{self.session_key[:48]}",
         )
-        self._controller_attached = False
-        self._controller_socket: Optional[socket.socket] = None
+        self._controller_sockets: dict[int, socket.socket] = {}
         self._controller_generation = 0
         self._state = "starting"
         self._message = "Preparing browser runtime..."
@@ -795,14 +871,24 @@ class ProjectedBrowserSession:
         except Exception:
             pass
         self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            with self._lock:
+                pid = int((self._metadata or {}).get("pid") or 0)
+            _terminate_pid(pid)
+            self._thread.join(timeout=2.0)
         with self._lock:
-            self._controller_attached = False
-            self._controller_socket = None
+            controller_sockets = list(self._controller_sockets.values())
+            self._controller_sockets.clear()
             if self._state not in {"failed", "closed"}:
                 self._state = "closed"
                 self._message = "Browser surface closed."
                 self._updated_at = utc_now_iso()
             self._frame_cond.notify_all()
+        for controller_sock in controller_sockets:
+            try:
+                controller_sock.close()
+            except Exception:
+                pass
 
     def wait_until_started(self, timeout: float = _START_WAIT_TIMEOUT_SECONDS) -> dict[str, Any]:
         deadline = time.time() + max(1.0, float(timeout))
@@ -828,7 +914,7 @@ class ProjectedBrowserSession:
                 "updated_at": self._updated_at,
                 "last_frame_seq": self._last_frame_seq,
                 "last_frame_at": self._last_frame_at,
-                "controller_attached": bool(self._controller_attached),
+                "controller_attached": bool(self._controller_sockets),
                 "metadata": dict(self._metadata),
             }
 
@@ -839,22 +925,18 @@ class ProjectedBrowserSession:
                 return False, {"code": "browser_surface_not_active", "message": message, "details": dict(self._error)}
             return True, {}
 
+    def _has_viewers(self) -> bool:
+        with self._lock:
+            return bool(self._controller_sockets)
+
     def attach_socket(self, sock: socket.socket) -> bool:
         with self._lock:
             if self._state not in {"starting", "ready"}:
                 return False
-            old_sock = self._controller_socket
             self._controller_generation += 1
             generation = self._controller_generation
-            self._controller_attached = True
-            self._controller_socket = sock
+            self._controller_sockets[generation] = sock
             self._updated_at = utc_now_iso()
-        # Evict old controller outside the lock to avoid deadlocks.
-        if old_sock is not None:
-            try:
-                old_sock.close()
-            except Exception:
-                pass
         threading.Thread(
             target=self._serve_socket,
             args=(sock, generation),
@@ -947,6 +1029,66 @@ class ProjectedBrowserSession:
             raw_urls = payload.get("urls")
             urls = raw_urls if isinstance(raw_urls, list) else []
             return {"ok": True, "cookies": runtime.cookies_for_urls(urls)}
+        elif kind == "chatgpt_submit_prompt":
+            from ...ports.web_model_browser_sidecar import (
+                CHATGPT_URL,
+                _conversation_url_from_tab,
+                _mark_page_pending_delivery,
+                _normalize_chatgpt_url,
+                _submit_prompt,
+                _wait_for_conversation_url,
+            )
+
+            prompt = str(payload.get("prompt") or "").strip()
+            if not prompt:
+                raise RuntimeError("payload.prompt is required")
+            target_url = _normalize_chatgpt_url(payload.get("target_url"))
+            auto_bind_new_chat = bool(payload.get("auto_bind_new_chat"))
+            delivery_id = str(payload.get("delivery_id") or "").strip()
+            page = runtime.page
+            current_url = _normalize_chatgpt_url(str(getattr(page, "url", "") or ""))
+            if target_url and current_url != target_url:
+                page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            elif not current_url:
+                page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=30000)
+            current_chatgpt_url = _normalize_chatgpt_url(str(getattr(page, "url", "") or ""))
+            if not current_chatgpt_url:
+                raise RuntimeError(f"ChatGPT sign-in required before delivery; current page is {str(getattr(page, 'url', '') or '')[:200]}")
+            if auto_bind_new_chat:
+                _mark_page_pending_delivery(page, delivery_id)
+            submit = _submit_prompt(
+                page,
+                prompt,
+                input_timeout_seconds=float(payload.get("input_timeout_seconds") or 30.0),
+            )
+            conversation_url = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
+            if auto_bind_new_chat and not conversation_url:
+                conversation_url = _wait_for_conversation_url(
+                    page,
+                    timeout_seconds=float(payload.get("new_chat_bind_timeout_seconds") or 20.0),
+                )
+            tab_url = str(getattr(page, "url", "") or "")
+            pending_conversation_url = bool(auto_bind_new_chat and not conversation_url)
+            conversation_url = conversation_url or ("" if pending_conversation_url else target_url)
+            with self._lock:
+                self._url = str(runtime.current_url() or tab_url or self._url)
+                self._updated_at = utc_now_iso()
+            return {
+                "ok": True,
+                "browser": {
+                    "provider": "chatgpt_web",
+                    "tab_url": tab_url,
+                    "conversation_url": conversation_url,
+                    "auto_bind_new_chat": auto_bind_new_chat,
+                    "pending_conversation_url": pending_conversation_url,
+                    "submitted_without_conversation_url": pending_conversation_url,
+                    "profile_dir": str((runtime.metadata or {}).get("profile_dir") or self.profile_dir),
+                    "cdp_port": int((runtime.metadata or {}).get("cdp_port") or 0),
+                    "pid": int((runtime.metadata or {}).get("pid") or 0),
+                    "reused": True,
+                    **submit,
+                },
+            }
         elif kind == "close":
             self._stop_event.set()
             return {"ok": True}
@@ -969,6 +1111,9 @@ class ProjectedBrowserSession:
                 channel_candidates=self.channel_candidates,
                 seed_storage_state=self._seed_storage_state,
                 system_profile_subdir=self.system_profile_subdir,
+                require_system_browser_cdp=self.require_system_browser_cdp,
+                existing_cdp_port=self.existing_cdp_port,
+                existing_browser_metadata=self.existing_browser_metadata,
             )
             with self._lock:
                 self._strategy = str(getattr(runtime, "strategy", "") or "")
@@ -977,9 +1122,17 @@ class ProjectedBrowserSession:
                 self._updated_at = utc_now_iso()
             self._set_state("ready", message=f"Browser surface ready ({self._strategy or 'chromium'}).")
             next_frame_at = 0.0
+            had_viewers = False
             consecutive_capture_failures = 0
             while not self._stop_event.is_set():
-                timeout = max(0.05, min(0.20, next_frame_at - time.time())) if next_frame_at else 0.05
+                has_viewers = self._has_viewers()
+                if has_viewers and not had_viewers:
+                    next_frame_at = 0.0
+                had_viewers = has_viewers
+                if has_viewers:
+                    timeout = max(0.05, min(0.20, next_frame_at - time.time())) if next_frame_at else 0.05
+                else:
+                    timeout = 0.20
                 try:
                     kind, payload, reply = self._commands.get(timeout=timeout)
                 except queue.Empty:
@@ -999,6 +1152,13 @@ class ProjectedBrowserSession:
                         break
 
                 now = time.time()
+                if not self._has_viewers():
+                    if next_frame_at and now < next_frame_at:
+                        continue
+                    with self._lock:
+                        self._url = str(runtime.current_url() or self._url)
+                    next_frame_at = time.time() + _IDLE_FRAME_POLL_SECONDS
+                    continue
                 if next_frame_at and now < next_frame_at:
                     continue
                 with self._lock:
@@ -1014,7 +1174,7 @@ class ProjectedBrowserSession:
                     consecutive_capture_failures = 0
                 if frame:
                     self._record_frame(frame)
-                next_frame_at = time.time() + _FRAME_INTERVAL_SECONDS
+                next_frame_at = time.time() + _VIEWER_FRAME_INTERVAL_SECONDS
         except Exception as exc:
             self._set_state(
                 "failed",
@@ -1111,10 +1271,8 @@ class ProjectedBrowserSession:
                             break
         finally:
             with self._lock:
-                # Only reset if we are still the current controller (not evicted).
-                if self._controller_generation == generation:
-                    self._controller_attached = False
-                    self._controller_socket = None
+                if self._controller_sockets.get(generation) is sock:
+                    self._controller_sockets.pop(generation, None)
                     self._updated_at = utc_now_iso()
                 self._frame_cond.notify_all()
             try:
@@ -1182,6 +1340,9 @@ class ProjectedBrowserSessionManager:
         channel_candidates: Iterable[str | None] = (None,),
         seed_storage_state: dict[str, Any] | None = None,
         system_profile_subdir: str | None = None,
+        require_system_browser_cdp: bool = False,
+        existing_cdp_port: int = 0,
+        existing_browser_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_key = str(key or "").strip()
         replacement = ProjectedBrowserSession(
@@ -1193,6 +1354,9 @@ class ProjectedBrowserSessionManager:
             headless=headless,
             channel_candidates=channel_candidates,
             system_profile_subdir=system_profile_subdir,
+            require_system_browser_cdp=require_system_browser_cdp,
+            existing_cdp_port=existing_cdp_port,
+            existing_browser_metadata=existing_browser_metadata,
         )
         replacement.set_seed_storage_state(seed_storage_state)
         previous: Optional[ProjectedBrowserSession] = None

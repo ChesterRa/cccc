@@ -11,6 +11,7 @@ _MANAGER = ProjectedBrowserSessionManager(
     idle_message="No projected NotebookLM auth browser session is active.",
 )
 _SESSION_KEY = "notebooklm"
+_CHANNEL_CANDIDATES = ("chrome", "msedge")
 _GOOGLE_COOKIE_URLS = (
     "https://notebooklm.google.com",
     "https://accounts.google.com",
@@ -33,8 +34,9 @@ def open_notebooklm_auth_browser_session(
         width=width,
         height=height,
         headless=False,
-        channel_candidates=("chrome", "msedge", None),
+        channel_candidates=_CHANNEL_CANDIDATES,
         seed_storage_state=seed_storage_state,
+        require_system_browser_cdp=True,
     )
 
 

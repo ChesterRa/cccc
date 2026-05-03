@@ -109,10 +109,21 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
     def test_web_model_connector_endpoint_serves_actor_scoped_mcp(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
         from cccc.kernel.ledger import append_event
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
         _, cleanup = self._with_home()
         try:
             group = self._create_group_with_actor()
+            record_chatgpt_browser_state(
+                group.group_id,
+                "peer1",
+                {
+                    "auto_reload_active": True,
+                    "auto_reload_window_started_at": "2026-05-03T00:00:00Z",
+                    "auto_reload_window_expires_at": "2099-01-01T00:00:00Z",
+                    "auto_reload_last_progress_at": "2026-05-03T00:00:00Z",
+                },
+            )
             append_event(
                 group.ledger_path,
                 kind="chat.message",
@@ -195,6 +206,9 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertIn("## Web Model Transport (Runtime)", help_markdown)
             self.assertIn("normal CCCC agent", help_markdown)
             self.assertIn("remote MCP pull", help_markdown)
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("auto_reload_last_progress_reason"), "mcp_tool")
+            self.assertEqual(browser_state.get("auto_reload_last_progress_detail"), "cccc_help")
 
             with patch("cccc.ports.mcp.common.call_daemon", side_effect=self._local_call_daemon):
                 wait_resp = client.post(
@@ -1046,6 +1060,39 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                         "last_error": "",
                     },
                 )
+        finally:
+            cleanup()
+
+    def test_web_model_browser_session_can_open_global_setup_surface_without_actor(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = str(create_access_token("admin", is_admin=True).get("token") or "")
+            client = self._client()
+            headers = {"Authorization": f"Bearer {admin}"}
+
+            with (
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
+                    return_value={"active": True, "tab_url": "https://chatgpt.com/", "ready": False},
+                ),
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.open_web_model_chatgpt_browser_session",
+                    return_value={"active": True, "state": "ready", "metadata": {"cdp_port": 9222}},
+                ) as open_session,
+            ):
+                opened = client.post(
+                    "/api/v1/web-model/browser-session/open",
+                    headers=headers,
+                    json={"group_id": "", "actor_id": "", "width": 1280, "height": 800},
+                )
+
+            self.assertEqual(opened.status_code, 200)
+            self.assertTrue(bool(((opened.json().get("result") or {}).get("browser_session") or {}).get("active")))
+            open_session.assert_called_once()
+            self.assertEqual(open_session.call_args.kwargs.get("group_id"), "")
+            self.assertEqual(open_session.call_args.kwargs.get("actor_id"), "")
         finally:
             cleanup()
 

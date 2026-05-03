@@ -486,6 +486,18 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
     elif status in {"failed", "cancelled"}:
         update_headless_state(group_id, actor_id, status="waiting", active_turn_id="", latest_event_id="")
 
+    try:
+        from .web_model_tool_confirm_watcher import close_web_model_browser_reload_window
+
+        close_web_model_browser_reload_window(
+            group_id,
+            actor_id,
+            reason=f"complete_turn:{status}",
+            detail=_clean_text(args.get("turn_id")),
+        )
+    except Exception:
+        pass
+
     return DaemonResponse(
         ok=True,
         result={

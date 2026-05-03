@@ -580,8 +580,10 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
                     "`cccc_runtime_wait_next_turn` to get work.",
                     "- Web chat text alone is not a visible CCCC reply. Use `cccc_message_send` or "
                     "`cccc_message_reply` for peer/user-visible communication.",
-                    "- For multi-step local workspace work, prefer `cccc_code_exec`: use JavaScript `tools.*` "
-                    "calls to compose repo reads, patches, shell/test commands, git diff, and visible reports in one flow.",
+                    "- For non-trivial local workspace work, default to `cccc_code_exec`: use JavaScript `tools.*` "
+                    "calls to compose repo reads, patches, shell/test commands, git diff, and visible reports in one focused flow.",
+                    "- Use direct repo/shell/git tools for simple one-step actions; use `cccc_code_exec` when the work needs "
+                    "more than one local operation or when patch/test/diff feedback should stay together.",
                     "- Direct tools remain available for simple steps: `cccc_repo`, `cccc_apply_patch`, `cccc_repo_edit`, "
                     "`cccc_exec_command`, `cccc_write_stdin`, `cccc_shell`, and `cccc_git`.",
                     "- Inside `cccc_code_exec`, call nested tools as `await tools.cccc_repo({...})`, "

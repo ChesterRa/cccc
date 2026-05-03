@@ -230,9 +230,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             entry["connector_url_with_token"] = token_url
         return entry
 
-    def _require_web_model_browser_actor(group_id: str, actor_id: str) -> None:
+    def _is_global_web_model_browser_setup(group_id: str, actor_id: str) -> bool:
+        return not str(group_id or "").strip() and not str(actor_id or "").strip()
+
+    def _require_web_model_browser_actor(group_id: str, actor_id: str, *, allow_global_setup: bool = False) -> None:
         gid = str(group_id or "").strip()
         aid = str(actor_id or "").strip()
+        if allow_global_setup and _is_global_web_model_browser_setup(gid, aid):
+            return
         if not gid:
             raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "missing group_id", "details": {}})
         if not aid:
@@ -356,6 +361,28 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if not isinstance(item, dict):
                 return _mcp_jsonrpc_error(None, -32600, "Invalid Request")
 
+            method = str(item.get("method") or "").strip()
+            params = item.get("params") if isinstance(item.get("params"), dict) else {}
+            requested_tool_name = str(params.get("name") or "").strip() if method == "tools/call" else ""
+
+            async def _record_browser_progress(reason: str, detail: str) -> None:
+                if not isinstance(connector, dict):
+                    return
+                if method != "tools/call" or not requested_tool_name or requested_tool_name == "cccc_runtime_complete_turn":
+                    return
+                try:
+                    from ....daemon.actors.web_model_tool_confirm_watcher import record_web_model_browser_progress
+
+                    await run_in_threadpool(
+                        record_web_model_browser_progress,
+                        str(connector.get("group_id") or ""),
+                        str(connector.get("actor_id") or ""),
+                        reason=reason,
+                        detail=detail,
+                    )
+                except Exception:
+                    pass
+
             def _run() -> Dict[str, Any]:
                 if not isinstance(connector, dict):
                     return handle_mcp_request(item)
@@ -366,6 +393,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 ):
                     return handle_mcp_request(item)
 
+            await _record_browser_progress("mcp_tool_start", requested_tool_name)
             resp = await run_in_threadpool(_run)
             if isinstance(connector, dict):
                 connector_id = str(connector.get("connector_id") or "").strip()
@@ -381,6 +409,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         turn_id=activity["turn_id"],
                         error=activity["error"],
                     )
+                    await _record_browser_progress("mcp_tool", activity["tool_name"])
             return resp
 
         if isinstance(payload, list):
@@ -488,14 +517,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @global_router.get("/api/v1/web-model/browser-session", dependencies=[Depends(require_admin)])
     async def web_model_browser_session_status(group_id: str, actor_id: str) -> Dict[str, Any]:
-        _require_web_model_browser_actor(group_id, actor_id)
+        _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
         return await _web_model_browser_payload(group_id, actor_id, {})
 
     @global_router.post("/api/v1/web-model/browser-session/open", dependencies=[Depends(require_admin)])
     async def web_model_browser_session_open(req: WebModelBrowserSessionRequest) -> Dict[str, Any]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
-        _require_web_model_browser_actor(group_id, actor_id)
+        _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
         from ....daemon.actors.web_model_browser_session import open_web_model_chatgpt_browser_session
 
         try:
@@ -517,7 +546,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def web_model_browser_session_close(req: WebModelBrowserSessionRequest) -> Dict[str, Any]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
-        _require_web_model_browser_actor(group_id, actor_id)
+        _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
         from ....daemon.actors.web_model_browser_session import close_web_model_chatgpt_browser_session
 
         result = await run_in_threadpool(
@@ -631,7 +660,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         try:
             check_admin(websocket)
-            _require_web_model_browser_actor(group_id, actor_id)
+            _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {"code": "permission_denied", "message": str(exc.detail or "permission denied")}
             try:

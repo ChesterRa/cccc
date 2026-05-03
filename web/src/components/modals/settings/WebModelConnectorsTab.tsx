@@ -206,6 +206,7 @@ export default function WebModelConnectorsTab({
   const [showBrowserSurface, setShowBrowserSurface] = useState(false);
   const [chatManagerOpen, setChatManagerOpen] = useState(false);
   const [browserSurfaceRefreshNonce, setBrowserSurfaceRefreshNonce] = useState(0);
+  const [browserSurfaceRestartNonce, setBrowserSurfaceRestartNonce] = useState(0);
   const [conversationUrlDraft, setConversationUrlDraft] = useState("");
   const [createActorGroupId, setCreateActorGroupId] = useState("");
   const currentSelectionRef = useRef({ groupId: "", actorId: "" });
@@ -315,7 +316,7 @@ export default function WebModelConnectorsTab({
   }, []);
 
   const loadBrowserSession = useCallback(async (gid: string = groupId, aid: string = actorId) => {
-    if (!gid || !aid) {
+    if ((gid && !aid) || (!gid && aid)) {
       setBrowserSession(null);
       return;
     }
@@ -381,16 +382,6 @@ export default function WebModelConnectorsTab({
   }, []);
 
   const loadBrowserSurfaceSession = useCallback(async () => {
-    if (!groupId || !actorId) {
-      setBrowserSession(null);
-      return {
-        ok: true as const,
-        result: {
-          browser_session: {},
-          browser_surface: api.normalizePresentationBrowserSurfaceState(null),
-        },
-      };
-    }
     const gid = groupId;
     const aid = actorId;
     const resp = await api.fetchWebModelBrowserSurfaceSession(gid, aid);
@@ -410,15 +401,6 @@ export default function WebModelConnectorsTab({
   }, [actorId, groupId]);
 
   const startBrowserSurfaceSession = useCallback(async (size: { width: number; height: number }) => {
-    if (!groupId || !actorId) {
-      return {
-        ok: false as const,
-        error: {
-          code: "missing_actor",
-          message: "Select a group with the ChatGPT Web Model actor first.",
-        },
-      };
-    }
     const gid = groupId;
     const aid = actorId;
     const resp = await api.openWebModelBrowserSurfaceSession({
@@ -534,9 +516,17 @@ export default function WebModelConnectorsTab({
   }, [groupId, isActive, loadActorsForGroup]);
 
   useEffect(() => {
-    if (!isActive || !groupId || !actorId) {
+    if (!isActive) {
       setBrowserSession(null);
       setShowBrowserSurface(false);
+      return;
+    }
+    if (!groupId && !actorId) {
+      void loadBrowserSession("", "");
+      return;
+    }
+    if (!groupId || !actorId) {
+      setBrowserSession(null);
       return;
     }
     void loadBrowserSession(groupId, actorId);
@@ -611,6 +601,8 @@ export default function WebModelConnectorsTab({
         await loadBrowserSession(gid, createdActorId);
       }
       setChatManagerOpen(true);
+      setShowBrowserSurface(true);
+      setBrowserSurfaceRefreshNonce((value) => value + 1);
       pushNotice("ChatGPT Web Model actor created.");
     } catch {
       setError("Failed to create ChatGPT Web Model actor.");
@@ -660,6 +652,9 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         pushNotice("Actor started.");
         await loadActorsForGroup(groupId);
+        setChatManagerOpen(true);
+        setShowBrowserSurface(true);
+        setBrowserSurfaceRefreshNonce((value) => value + 1);
       } else {
         setError(resp.error?.message || "Failed to start actor.");
       }
@@ -690,10 +685,6 @@ export default function WebModelConnectorsTab({
   };
 
   const openBrowserLogin = async () => {
-    if (!groupId || !actorId) {
-      setError("Select a group with the ChatGPT Web Model actor first.");
-      return;
-    }
     setError("");
     setChatManagerOpen(true);
     setShowBrowserSurface(true);
@@ -716,23 +707,35 @@ export default function WebModelConnectorsTab({
   };
 
   const reloadEmbeddedBrowser = async () => {
-    if (!groupId || !actorId) {
-      setError("Select a group with the ChatGPT Web Model actor first.");
-      return;
-    }
     setBrowserBusy(true);
     setError("");
     try {
-      setBrowserSurfaceRefreshNonce((value) => value + 1);
-      await loadBrowserSurfaceSession();
-      pushNotice("ChatGPT page reload requested.");
+      const gid = groupId;
+      const aid = actorId;
+      const resp = await api.closeWebModelBrowserSurfaceSession(gid, aid);
+      if (resp.ok) {
+        const nextSession = resp.result?.browser_session || null;
+        const key = browserSessionKey(gid, aid);
+        setBrowserSessionsByActor((current) => ({
+          ...current,
+          [key]: nextSession || {},
+        }));
+        const currentSelection = currentSelectionRef.current;
+        if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
+        setShowBrowserSurface(true);
+        setBrowserSurfaceRestartNonce((value) => value + 1);
+        pushNotice("ChatGPT browser restarted.");
+      } else {
+        setError(resp.error?.message || "Failed to restart ChatGPT browser.");
+      }
+    } catch {
+      setError("Failed to restart ChatGPT browser.");
     } finally {
       setBrowserBusy(false);
     }
   };
 
   const closeBrowserSession = async () => {
-    if (!groupId || !actorId) return;
     setBrowserBusy(true);
     setError("");
     try {
@@ -1165,6 +1168,48 @@ export default function WebModelConnectorsTab({
                 <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
                   This creates the single CCCC actor identity that the ChatGPT MCP app will use. After creation, continue here to create the MCP URL, sign in to ChatGPT, and choose the target chat.
                 </p>
+                <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-[var(--color-text-primary)]">ChatGPT browser</div>
+                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                        You can sign in before creating the actor. CCCC keeps this one global ChatGPT page and reuses it later.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void openBrowserLogin()}
+                      disabled={browserBusy}
+                      className={primaryButtonClass(browserBusy)}
+                    >
+                      Open ChatGPT
+                    </button>
+                  </div>
+                  {showBrowserSurface ? (
+                    <div className="mt-3 overflow-hidden rounded-xl border border-[var(--glass-border-subtle)]">
+                      <ProjectedBrowserSurfacePanel
+                        key={`chatgpt-setup-surface:${browserSurfaceRestartNonce}`}
+                        isDark={isDark}
+                        refreshNonce={browserSurfaceRefreshNonce}
+                        viewportClassName="h-[58vh] min-h-[420px] max-h-[720px]"
+                        loadSession={loadBrowserSurfaceSession}
+                        startSession={startBrowserSurfaceSession}
+                        webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl("", "")}
+                        fallbackUrl="https://chatgpt.com/"
+                        labels={{
+                          starting: "Opening ChatGPT...",
+                          waiting: "Waiting for ChatGPT...",
+                          ready: "ChatGPT surface ready",
+                          failed: "ChatGPT surface failed",
+                          closed: "ChatGPT surface closed.",
+                          reconnecting: "Reconnecting ChatGPT surface...",
+                          reconnect: "Reconnect",
+                          frameAlt: "ChatGPT browser frame",
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
                   <label className="block">
                     <span className={labelClass(isDark)}>Owner group</span>
@@ -1345,7 +1390,7 @@ export default function WebModelConnectorsTab({
                 <SetupSection title="Embedded ChatGPT browser">
                   <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
-                      Soft refresh reloads the current ChatGPT page while keeping this actor, group, browser profile, and delivery target.
+                      Reload restarts the embedded ChatGPT browser while preserving this actor, group, browser profile, and delivery target.
                     </div>
                     <button
                       type="button"
@@ -1357,6 +1402,7 @@ export default function WebModelConnectorsTab({
                     </button>
                   </div>
                   <ProjectedBrowserSurfacePanel
+                    key={`chatgpt-actor-surface:${groupId}:${actorId}:${browserSurfaceRestartNonce}`}
                     isDark={isDark}
                     refreshNonce={browserSurfaceRefreshNonce}
                     viewportClassName="h-[68vh] min-h-[460px] max-h-[780px]"

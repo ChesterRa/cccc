@@ -179,24 +179,10 @@ export function WebModelRuntimePanel({
   const [session, setSession] = useState<WebModelBrowserSession | null>(null);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
-  const [surfaceRefreshNonce, setSurfaceRefreshNonce] = useState(0);
+  const [surfaceRestartNonce, setSurfaceRestartNonce] = useState(0);
   const actorId = String(actor.id || "").trim();
   const queuedCount = Math.max(0, Number(actor.web_model_queued_count || 0));
-  const canControlSurface = Boolean(isVisible && isRunning && !readOnly && groupId && actorId);
-
-  const loadSession = useCallback(async () => {
-    if (!groupId || !actorId) return null;
-    const resp = await api.fetchWebModelBrowserSession(groupId, actorId);
-    if (!resp.ok) {
-      const message = resp.error?.message || "Failed to load ChatGPT browser status.";
-      setError(message);
-      return null;
-    }
-    const next = resp.result.browser_session || {};
-    setSession(next);
-    setError("");
-    return next;
-  }, [actorId, groupId]);
+  const canControlSurface = Boolean(isVisible && !readOnly && groupId && actorId);
 
   useEffect(() => {
     if (!isVisible || !groupId || !actorId) return;
@@ -228,15 +214,20 @@ export function WebModelRuntimePanel({
     if (!canControlSurface) {
       const message = readOnly
         ? "ChatGPT page reload is disabled in read-only mode."
-        : "Start this actor to reload the embedded ChatGPT page.";
+        : "Open ChatGPT Web Model settings to inspect the browser page.";
       setError(message);
       return;
     }
     setBusyAction("reload");
     setError("");
     try {
-      setSurfaceRefreshNonce((value) => value + 1);
-      await loadSession();
+      const resp = await api.closeWebModelBrowserSurfaceSession(groupId, actorId);
+      if (!resp.ok) {
+        setError(resp.error?.message || "Failed to restart ChatGPT browser.");
+        return;
+      }
+      setSession(resp.result.browser_session || {});
+      setSurfaceRestartNonce((value) => value + 1);
     } finally {
       setBusyAction("");
     }
@@ -284,7 +275,7 @@ export function WebModelRuntimePanel({
     if (!canControlSurface) {
       const message = readOnly
         ? "ChatGPT browser control is disabled in read-only mode."
-        : "Start this actor to open the embedded ChatGPT browser.";
+        : "Open ChatGPT Web Model settings to inspect the browser page.";
       setError(message);
       return {
         ok: false as const,
@@ -313,9 +304,7 @@ export function WebModelRuntimePanel({
   const showNewChatAction = !readOnly && !session?.conversation_url && !session?.pending_new_chat_bind;
   const surfaceDisabledMessage = readOnly
     ? "Browser view is unavailable in read-only mode."
-    : !isRunning
-      ? "Start this actor to inspect the live ChatGPT browser here."
-      : "";
+    : "";
 
   return (
     <section
@@ -345,8 +334,8 @@ export function WebModelRuntimePanel({
             onClick={reloadChatGptPage}
             disabled={Boolean(busyAction)}
             className={iconButtonClass(false)}
-            title="Reload ChatGPT page"
-            aria-label="Reload ChatGPT page"
+            title="Restart ChatGPT browser"
+            aria-label="Restart ChatGPT browser"
           >
             <RefreshIcon size={17} aria-hidden="true" />
           </button>
@@ -383,8 +372,9 @@ export function WebModelRuntimePanel({
       {canControlSurface ? (
         <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]">
           <ProjectedBrowserSurfacePanel
+            key={`chatgpt-runtime-surface:${groupId}:${actorId}:${surfaceRestartNonce}`}
             isDark={isDark}
-            refreshNonce={surfaceRefreshNonce}
+            refreshNonce={0}
             chromeMode="embedded"
             viewportClassName="h-full min-h-0"
             loadSession={loadBrowserSurfaceSession}

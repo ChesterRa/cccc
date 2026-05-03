@@ -290,9 +290,11 @@ MCP_TOOLS = [
     {
         "name": "cccc_code_exec",
         "description": (
-            "Default-on ChatGPT Web Model code mode. Run JavaScript that orchestrates CCCC MCP tools through "
+            "Preferred/default ChatGPT Web Model tool for non-trivial local development work. "
+            "Run JavaScript that orchestrates CCCC MCP tools through "
             "global tools.<toolName>(args), with ALL_TOOLS, text(), store(), load(), and yield_control(). "
-            "Use this for multi-step local development loops such as read -> patch -> test -> diff -> report. "
+            "Use this instead of many separate tool calls for multi-step loops such as read -> patch -> test -> diff -> report; "
+            "direct repo/shell/git tools are still fine for simple one-step actions. "
             "The JS runtime has no Node require/import/fs/network/console access; use nested MCP tools for all real work. "
             "If the result says running with a cell_id, call cccc_code_wait."
         ),

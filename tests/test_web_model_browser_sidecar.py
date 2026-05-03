@@ -128,6 +128,84 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(_conversation_url_from_tab("https://evilchatgpt.com/c/abc123"), "")
         self.assertEqual(_conversation_url_from_tab("https://chatgpt.com.evil.test/c/abc123"), "")
 
+    def test_submission_wait_accepts_composer_clear_after_send_attempt(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Locator:
+            first = None
+
+            def __init__(self) -> None:
+                self.first = self
+
+            def is_visible(self, timeout: int = 0) -> bool:
+                return False
+
+        class _Page:
+            def locator(self, selector: str) -> _Locator:
+                return _Locator()
+
+        with (
+            patch.object(sidecar, "_composer_text", return_value=""),
+            patch.object(sidecar, "_submission_echo_found", return_value=False),
+        ):
+            self.assertEqual(
+                sidecar._wait_for_submission(
+                    _Page(),
+                    "#prompt-textarea",
+                    prompt="hello",
+                    timeout_seconds=1.0,
+                    accept_composer_clear=True,
+                ),
+                "composer_cleared",
+            )
+
+    def test_composer_text_reads_contenteditable_via_dom_evaluate(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Locator:
+            first = None
+
+            def __init__(self) -> None:
+                self.first = self
+
+            def evaluate(self, *_args, **_kwargs) -> str:
+                return "Inserted prompt"
+
+            def input_value(self, *_args, **_kwargs) -> str:  # pragma: no cover - should not be reached
+                raise AssertionError("input_value fallback should not be needed")
+
+        class _Page:
+            def locator(self, selector: str) -> _Locator:
+                self.selector = selector
+                return _Locator()
+
+        page = _Page()
+
+        self.assertEqual(sidecar._composer_text(page, "#prompt-textarea"), "Inserted prompt")
+        self.assertEqual(page.selector, "#prompt-textarea")
+
+    def test_submit_prompt_waits_for_delayed_insert_before_clicking_send(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        page = object()
+        prompt = "Browser-delivered CCCC message"
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_clear_and_type_prompt") as clear_prompt,
+            patch.object(sidecar, "_composer_text", side_effect=["", "", prompt]),
+            patch.object(sidecar, "_click_send", return_value="#composer-submit-button") as click_send,
+            patch.object(sidecar, "_wait_for_submission", return_value="stop_button") as wait_for_submission,
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            result = sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+        clear_prompt.assert_called_once_with(page, "#prompt-textarea", prompt)
+        click_send.assert_called_once_with(page)
+        wait_for_submission.assert_called_once()
+        self.assertEqual(result.get("send_selector"), "#composer-submit-button")
+        self.assertEqual(result.get("submission_evidence"), "stop_button")
+
     def test_chatgpt_profile_is_shared_while_actor_state_stays_separate(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
             chatgpt_browser_profile_dir,
@@ -377,7 +455,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_projected_chatgpt_session_keeps_managed_chromium_fallback(self) -> None:
+    def test_projected_chatgpt_session_requires_system_browser_cdp(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
 
         _, cleanup = self._with_home()
@@ -394,8 +472,10 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 )
 
             kwargs = open_session.call_args.kwargs
-            self.assertEqual(tuple(kwargs.get("channel_candidates") or ()), ("chrome", "msedge", None))
+            self.assertEqual(kwargs.get("key"), "chatgpt_web")
+            self.assertEqual(tuple(kwargs.get("channel_candidates") or ()), ("chrome", "msedge"))
             self.assertEqual(kwargs.get("system_profile_subdir"), "")
+            self.assertEqual(kwargs.get("require_system_browser_cdp"), True)
             close_browser.assert_called_once_with("g-test", "peer1")
         finally:
             cleanup()
@@ -490,6 +570,115 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_projected_chatgpt_session_adopts_existing_shared_cdp_process(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            profile_dir = sidecar.chatgpt_browser_profile_dir("g-test", "peer1")
+            sidecar.record_chatgpt_browser_process_state(
+                {
+                    "pid": 1234,
+                    "cdp_port": 9222,
+                    "profile_dir": str(profile_dir),
+                    "visibility": "projected",
+                    "browser_binary": "/usr/bin/google-chrome",
+                    "started_at": "2026-05-03T00:00:00Z",
+                }
+            )
+            opened = {
+                "active": True,
+                "state": "ready",
+                "url": "https://chatgpt.com/c/current-chat",
+                "started_at": "2026-05-03T00:01:00Z",
+                "metadata": {
+                    "cdp_port": 9222,
+                    "pid": 1234,
+                    "profile_dir": str(profile_dir),
+                    "adopted": True,
+                },
+            }
+            with (
+                patch.object(web_model_browser_session._MANAGER, "info", return_value={"active": False, "state": "idle"}),
+                patch.object(web_model_browser_session, "_wait_cdp_endpoint", return_value=True),
+                patch.object(web_model_browser_session._MANAGER, "open", return_value=opened) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
+                patch.object(web_model_browser_session, "ensure_web_model_tool_confirm_watcher", return_value=True),
+            ):
+                result = web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(result, opened)
+            kwargs = open_session.call_args.kwargs
+            self.assertEqual(kwargs.get("existing_cdp_port"), 9222)
+            self.assertEqual((kwargs.get("existing_browser_metadata") or {}).get("pid"), 1234)
+            close_browser.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_projected_chatgpt_session_is_global_across_actor_ids(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+
+        _, cleanup = self._with_home()
+        try:
+            with (
+                patch.object(web_model_browser_session._MANAGER, "info", return_value={"active": False, "state": "idle"}),
+                patch.object(web_model_browser_session._MANAGER, "open", return_value={"active": True, "metadata": {}}) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session", return_value={"active": False}),
+            ):
+                web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-one",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+                web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-two",
+                    actor_id="peer2",
+                    width=1280,
+                    height=800,
+                )
+
+            keys = [call.kwargs.get("key") for call in open_session.call_args_list]
+            self.assertEqual(keys, ["chatgpt_web", "chatgpt_web"])
+        finally:
+            cleanup()
+
+    def test_clear_web_model_actor_runtime_keeps_global_browser_open(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/old-chat",
+                    "last_turn_id": "turn-old",
+                    "last_event_ids": ["evt-old"],
+                },
+            )
+            with (
+                patch.object(web_model_browser_session, "close_web_model_chatgpt_browser_session") as close_session,
+                patch.object(web_model_browser_session, "stop_web_model_tool_confirm_watcher") as stop_watcher,
+            ):
+                web_model_browser_session.clear_web_model_chatgpt_browser_actor_runtime(group_id="g-test", actor_id="peer1")
+
+            close_session.assert_not_called()
+            stop_watcher.assert_called_once_with("g-test", "peer1")
+            state = read_chatgpt_browser_state("g-test", "peer1")
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("last_turn_id"), "")
+            self.assertEqual(state.get("last_event_ids"), [])
+        finally:
+            cleanup()
+
     def test_projected_chatgpt_close_also_closes_sidecar_browser_state(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
 
@@ -509,6 +698,65 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             close_browser.assert_called_once_with("g-test", "peer1")
         finally:
             cleanup()
+
+    def test_close_chatgpt_browser_session_cleans_profile_processes_when_pid_state_is_stale(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            profile_dir = sidecar.chatgpt_browser_profile_dir("g-test", "peer1")
+            sidecar.record_chatgpt_browser_process_state(
+                {
+                    "pid": 0,
+                    "cdp_port": 0,
+                    "profile_dir": str(profile_dir),
+                    "visibility": "projected",
+                },
+            )
+            with patch.object(sidecar, "_stop_browser_profile_processes") as stop_profile:
+                sidecar.close_chatgpt_browser_session("g-test", "peer1")
+
+            stop_profile.assert_called_once_with(str(profile_dir))
+        finally:
+            cleanup()
+
+    def test_profile_process_detection_parses_posix_and_windows_user_data_dir(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        self.assertEqual(
+            sidecar._user_data_dir_from_command_line(
+                '/opt/google/chrome/chrome --user-data-dir="/tmp/CCCC Profile" https://chatgpt.com/'
+            ),
+            "/tmp/CCCC Profile",
+        )
+        self.assertEqual(
+            sidecar._user_data_dir_from_command_line(
+                r'"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="C:\Users\dodd\AppData\CCCC ChatGPT"'
+            ),
+            r"C:\Users\dodd\AppData\CCCC ChatGPT",
+        )
+        self.assertEqual(
+            sidecar._user_data_dir_from_args(["chrome", "--user-data-dir", "/tmp/cccc-profile"]),
+            "/tmp/cccc-profile",
+        )
+
+    def test_profile_process_pids_from_ps_matches_exact_profile(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        profile = Path("/tmp/cccc-profile")
+        fake_proc = type(
+            "FakeProc",
+            (),
+            {
+                "returncode": 0,
+                "stdout": (
+                    '111 /opt/google/chrome/chrome --user-data-dir="/tmp/cccc-profile" https://chatgpt.com/\\n'
+                    '222 /opt/google/chrome/chrome --user-data-dir="/tmp/cccc-profile-other" https://chatgpt.com/\\n'
+                ),
+            },
+        )()
+        with patch.object(sidecar.subprocess, "run", return_value=fake_proc):
+            self.assertEqual(sidecar._profile_process_pids_from_ps(profile), [111])
 
 
 if __name__ == "__main__":

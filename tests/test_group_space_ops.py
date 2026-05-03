@@ -2519,6 +2519,21 @@ class TestGroupSpaceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_notebooklm_projected_auth_browser_requires_system_browser_cdp(self) -> None:
+        from cccc.daemon.space import notebooklm_auth_browser_runtime as runtime
+
+        with patch.object(runtime._MANAGER, "open", return_value={"active": True, "state": "ready"}) as open_session:
+            runtime.open_notebooklm_auth_browser_session(
+                profile_dir=Path("/tmp/notebooklm-auth-profile"),
+                url="https://notebooklm.google.com/",
+                width=1280,
+                height=900,
+            )
+
+        kwargs = open_session.call_args.kwargs
+        self.assertEqual(tuple(kwargs.get("channel_candidates") or ()), ("chrome", "msedge"))
+        self.assertEqual(kwargs.get("require_system_browser_cdp"), True)
+
     def test_notebooklm_auth_flow_reuses_saved_credential_without_browser(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
