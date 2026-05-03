@@ -1,70 +1,60 @@
 {
   "voice_secretary_asr_models": [
     {
-      "model_id": "sherpa_onnx_streaming_zipformer_zh_int8",
+      "model_id": "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
       "kind": "asr",
-      "title": "sherpa-onnx streaming Zipformer zh int8",
-      "description": "Chinese streaming Zipformer transducer ASR model for higher-quality real-time Voice Secretary transcription.",
-      "streaming": {
-        "engine": "transducer",
-        "encoder": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/encoder.int8.onnx",
-        "decoder": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/decoder.onnx",
-        "joiner": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/joiner.int8.onnx",
-        "tokens": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/tokens.txt",
+      "title": "sherpa-onnx SenseVoice zh/en/ja/ko/yue int8",
+      "description": "Offline SenseVoice ASR model for final Voice Secretary transcripts in Mandarin, English, Japanese, Korean, and Cantonese.",
+      "offline": {
+        "engine": "sense_voice",
+        "model": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx",
+        "tokens": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt",
         "sample_rate": 16000,
         "num_threads": 2,
-        "provider": "cpu"
+        "provider": "cpu",
+        "language": "auto",
+        "use_itn": true
       },
       "required_files": [
-        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/encoder.int8.onnx",
-        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/decoder.onnx",
-        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/joiner.int8.onnx",
-        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/tokens.txt"
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx",
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt"
       ],
       "artifacts": [
         {
-          "path": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
-          "sha256": "5a2832047ea1f97dd0dc595b816c230c4bafad65cfc0341fa57517cadc50afd0",
-          "size_bytes": 132634597,
+          "path": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
+          "size_bytes": 163002883,
           "archive": "tar.bz2"
         }
       ]
     },
     {
-      "model_id": "sherpa_onnx_diarization_pyannote_3dspeaker_zh",
-      "kind": "diarization",
-      "title": "sherpa-onnx speaker diarization pyannote + 3D-Speaker zh",
-      "description": "Offline speaker diarization model for Voice Secretary meeting speaker labels.",
-      "diarization": {
-        "engine": "offline_speaker_diarization",
-        "segmentation_model": "sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
-        "embedding_model": "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+      "model_id": "sherpa_onnx_streaming_paraformer_trilingual_zh_cantonese_en",
+      "kind": "asr",
+      "title": "sherpa-onnx streaming Paraformer trilingual zh/cantonese/en int8",
+      "description": "Streaming Paraformer ASR model for low-latency Voice Secretary captions in Mandarin, Cantonese, and English.",
+      "streaming": {
+        "engine": "paraformer",
+        "encoder": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/encoder.int8.onnx",
+        "decoder": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/decoder.int8.onnx",
+        "tokens": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/tokens.txt",
         "sample_rate": 16000,
         "num_threads": 2,
-        "provider": "cpu",
-        "num_speakers": -1,
-        "cluster_threshold": 0.5,
-        "min_duration_on": 0.3,
-        "min_duration_off": 0.5
+        "provider": "cpu"
       },
       "required_files": [
-        "sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
-        "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+        "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/encoder.int8.onnx",
+        "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/decoder.int8.onnx",
+        "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/tokens.txt"
       ],
       "artifacts": [
         {
-          "path": "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
-          "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
-          "size_bytes": 6958444,
+          "path": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2",
+          "sha256": "d479167d8752628d9032d29de1060493865389d1e295a1c2e8e011e7062f1932",
+          "size_bytes": 1047671211,
           "archive": "tar.bz2"
-        },
-        {
-          "path": "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
-          "sha256": "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b",
-          "size_bytes": 39593761
         }
       ]
     }

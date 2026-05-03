@@ -117,8 +117,8 @@ function buildActivityNarrative(
     : [];
   const toolName = normalizeInlineText(activity.tool_name);
   const serverName = normalizeInlineText(activity.server_name);
-  const rawItemType = normalizeInlineText(activity.raw_item_type);
   const status = normalizeInlineText(activity.status);
+  const toolLabel = toolName ? (serverName ? `${serverName}:${toolName}` : toolName) : "";
   const primaryTitle = command
     || (filePaths.length > 0 ? filePaths.join(", ") : "")
     || structuredLabel
@@ -135,14 +135,19 @@ function buildActivityNarrative(
     query && query !== primaryTitle ? query : undefined,
     cwd ? `cwd ${cwd}` : undefined,
   ]).map((line) => truncateText(line, density === "expanded" ? 96 : 72));
+  const showToolDetail = Boolean(
+    toolLabel
+    && toolLabel !== primaryLabel
+    && toolLabel !== primaryTitle
+    && toolLabel !== summary
+  );
   const detailRows = normalizeMetaLines([
     detail && detail !== primaryLabel ? `detail\t${detail}` : undefined,
-    toolName ? `tool\t${serverName ? `${serverName}:${toolName}` : toolName}` : undefined,
+    showToolDetail ? `tool\t${toolLabel}` : undefined,
     command ? `cmd\t${command}` : undefined,
     query ? `query\t${query}` : undefined,
     cwd ? `cwd\t${cwd}` : undefined,
     filePaths.length > 0 ? `files\t${filePaths.map((path) => getPathTail(path, 3)).join(", ")}` : undefined,
-    rawItemType ? `raw\t${rawItemType}` : undefined,
     status ? `state\t${status}` : undefined,
   ]).map((line) => {
     const [label, ...rest] = line.split("\t");

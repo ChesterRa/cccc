@@ -12,6 +12,9 @@ export type VoiceTranscriptPreview = {
   documentTitle?: string;
   documentPath?: string;
   language?: string;
+  source?: string;
+  sourceLabel?: string;
+  sourceDetail?: string;
   startMs?: number;
   endMs?: number;
   speakerLabel?: string;
@@ -28,6 +31,9 @@ export type VoiceStreamMetadata = {
   documentTitle?: string;
   documentPath?: string;
   language?: string;
+  source?: string;
+  sourceLabel?: string;
+  sourceDetail?: string;
 };
 
 export type VoiceStreamTiming = {
@@ -86,24 +92,6 @@ export function createVoiceTranscriptItem(params: {
   };
 }
 
-export function upsertLiveVoiceTranscriptItem(
-  currentItems: VoiceTranscriptItem[],
-  preview: VoiceTranscriptPreview,
-  maxItems = 120,
-): VoiceTranscriptItem[] {
-  if (preview.mode !== "document" || !String(preview.documentPath || "").trim()) return currentItems;
-  const existing = currentItems.find((item) => item.id === preview.id);
-  const nextItem: VoiceTranscriptItem = {
-    ...preview,
-    documentPath: String(preview.documentPath || "").trim(),
-    createdAt: existing?.createdAt || preview.updatedAt,
-  };
-  return [
-    nextItem,
-    ...currentItems.filter((item) => item.id !== preview.id),
-  ].slice(0, maxItems);
-}
-
 export function appendFinalVoiceTranscriptItem(
   currentItems: VoiceTranscriptItem[],
   item: VoiceTranscriptItem | null,
@@ -158,7 +146,16 @@ export function annotateVoiceTranscriptItemsWithSpeakers(
   let changed = false;
   const next = items.map((item) => {
     const speaker = speakerForTranscriptRange(item.startMs, item.endMs, speakerSegments);
-    if (!speaker || (item.speakerLabel === speaker.label && item.speakerIndex === speaker.index)) return item;
+    if (!speaker) {
+      if (!item.speakerLabel && item.speakerIndex === undefined) return item;
+      changed = true;
+      return {
+        ...item,
+        speakerLabel: undefined,
+        speakerIndex: undefined,
+      };
+    }
+    if (item.speakerLabel === speaker.label && item.speakerIndex === speaker.index) return item;
     changed = true;
     return {
       ...item,
@@ -177,7 +174,7 @@ function speakerForTranscriptRange(
   const start = Number(startMs);
   const end = Number(endMs);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
-  let best: { label: string; index?: number; overlap: number } | null = null;
+  const overlaps = new Map<string, { label: string; index?: number; overlap: number }>();
   for (const segment of speakerSegments) {
     const label = String(segment.speaker_label || "").trim();
     if (!label) continue;
@@ -185,16 +182,23 @@ function speakerForTranscriptRange(
     const segmentEnd = Number(segment.end_ms);
     if (!Number.isFinite(segmentStart) || !Number.isFinite(segmentEnd) || segmentEnd <= segmentStart) continue;
     const overlap = Math.max(0, Math.min(end, segmentEnd) - Math.max(start, segmentStart));
-    if (!best || overlap > best.overlap) {
-      const rawIndex = Number(segment.speaker_index);
-      best = {
-        label,
-        index: Number.isFinite(rawIndex) ? rawIndex : undefined,
-        overlap,
-      };
-    }
+    if (overlap <= 0) continue;
+    const rawIndex = Number(segment.speaker_index);
+    const index = Number.isFinite(rawIndex) ? rawIndex : undefined;
+    const key = `${label}\t${index ?? ""}`;
+    const existing = overlaps.get(key);
+    overlaps.set(key, {
+      label,
+      index,
+      overlap: (existing?.overlap || 0) + overlap,
+    });
   }
-  return best && best.overlap > 0 ? { label: best.label, index: best.index } : null;
+  const ranked = Array.from(overlaps.values()).sort((left, right) => right.overlap - left.overlap);
+  const best = ranked[0];
+  if (!best || best.overlap <= 0) return null;
+  const totalOverlap = ranked.reduce((sum, item) => sum + item.overlap, 0);
+  if (ranked.length > 1 && totalOverlap > 0 && best.overlap / totalOverlap < 0.72) return null;
+  return { label: best.label, index: best.index };
 }
 
 function voiceTranscriptItemsLookDuplicated(left: VoiceTranscriptItem, right: VoiceTranscriptItem): boolean {

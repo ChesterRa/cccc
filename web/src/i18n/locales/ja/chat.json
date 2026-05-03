@@ -281,6 +281,7 @@
   "voiceSecretaryTranscriptFeedTitle": "文字起こし",
   "voiceSecretaryTranscriptFeedHint": "このタブの最近の ASR テキストです。安定した塊は {{title}} に入ります。",
   "voiceSecretaryTranscriptLive": "ライブ",
+  "voiceSecretaryTranscriptRecordingIndicator": "録音中です。保存後に最終文字起こしが表示されます。",
   "voiceSecretaryTranscriptFeedListeningEmpty": "聞き取り中です。文字起こしはここに表示されます。",
   "voiceSecretaryTranscriptFeedEmpty": "録音を開始すると文字起こしがここに表示されます。",
   "voiceSecretaryQueuePending": "{{count}} 件のジョブ待機中（文字起こし {{transcriptCount}}、整理 {{reviewCount}}）。",

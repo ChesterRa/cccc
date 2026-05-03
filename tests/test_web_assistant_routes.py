@@ -205,6 +205,25 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     self.assertTrue(bool(install_body.get("ok")), install_body)
                     self.assertEqual(str(((install_body.get("result") or {}).get("model") or {}).get("status") or ""), "ready")
 
+                    delete_resp = client.request(
+                        "DELETE",
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/models",
+                        json={"model_id": "mock_asr", "by": "user"},
+                    )
+                    self.assertEqual(delete_resp.status_code, 200)
+                    delete_body = delete_resp.json()
+                    self.assertTrue(bool(delete_body.get("ok")), delete_body)
+                    self.assertEqual(str(((delete_body.get("result") or {}).get("model") or {}).get("status") or ""), "not_installed")
+
+                    reinstall_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/models/install",
+                        json={"model_id": "mock_asr", "by": "user"},
+                    )
+                    self.assertEqual(reinstall_resp.status_code, 200)
+                    reinstall_body = reinstall_resp.json()
+                    self.assertTrue(bool(reinstall_body.get("ok")), reinstall_body)
+                    self.assertEqual(str(((reinstall_body.get("result") or {}).get("model") or {}).get("status") or ""), "ready")
+
                     transcribe_resp = client.post(
                         f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions",
                         json={
@@ -301,6 +320,29 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     segments = session.get("segments") or []
                     self.assertEqual(len(segments), 1)
                     self.assertEqual(str(segments[0].get("text") or ""), "please inspect the web transcript segment route")
+
+                    clear_resp = client.request(
+                        "DELETE",
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest/transcript",
+                        json={
+                            "document_path": "",
+                            "by": "user",
+                        },
+                    )
+                    self.assertEqual(clear_resp.status_code, 200)
+                    clear_body = clear_resp.json()
+                    self.assertTrue(bool(clear_body.get("ok")), clear_body)
+                    self.assertTrue(bool((clear_body.get("result") or {}).get("cleared")), clear_body)
+
+                    session_after_clear_resp = client.get(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest",
+                    )
+                    self.assertEqual(session_after_clear_resp.status_code, 200)
+                    session_after_clear_body = session_after_clear_resp.json()
+                    self.assertTrue(bool(session_after_clear_body.get("ok")), session_after_clear_body)
+                    session_after_clear = ((session_after_clear_body.get("result") or {}).get("session")) or {}
+                    self.assertEqual(str(session_after_clear.get("session_id") or ""), "web-session-1")
+                    self.assertEqual(session_after_clear.get("segments") or [], [])
         finally:
             cleanup()
 

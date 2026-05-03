@@ -18,6 +18,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
+from starlette.routing import Match, Mount
+from starlette.types import Scope
 
 from ... import __version__
 from ...daemon.server import call_daemon
@@ -37,6 +39,13 @@ logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
 _WEB_LOG_PATH: Optional[Path] = None
 _SIGNED_OUT_COOKIE = "cccc_signed_out"
+
+
+class HttpOnlyMount(Mount):
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope.get("type") != "http":
+            return Match.NONE, {}
+        return super().matches(scope)
 
 
 @dataclass(frozen=True)
@@ -376,7 +385,9 @@ def create_app() -> FastAPI:
             except Exception:
                 dist_dir = None
     if dist_dir is not None:
-        app.mount("/ui", StaticFiles(directory=str(dist_dir), html=True), name="ui")
+        app.router.routes.append(
+            HttpOnlyMount("/ui", app=StaticFiles(directory=str(dist_dir), html=True), name="ui")
+        )
 
     cors = str(os.environ.get("CCCC_WEB_CORS_ORIGINS") or "").strip()
     if cors:

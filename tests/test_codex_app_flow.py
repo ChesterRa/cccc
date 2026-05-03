@@ -1300,6 +1300,34 @@ class TestCodexAppFlow(unittest.TestCase):
             "voice_secretary_input_not_consumed",
         )
 
+    def test_voice_secretary_control_completion_keeps_unknown_composer_draft_incomplete(self) -> None:
+        from cccc.daemon.codex_app_sessions import _voice_secretary_control_completion_state
+
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "voice-secretary-missing-draft", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            completed, diagnostics = _voice_secretary_control_completion_state(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 1,
+                    "before_secretary_read_cursor": 1,
+                    "prefetched_read_new_input": True,
+                    "composer_request_ids": ["voice-prompt-missing"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {},
+                },
+            )
+
+            self.assertFalse(completed)
+            self.assertEqual(diagnostics.get("missing"), ["composer_draft:voice-prompt-missing"])
+        finally:
+            cleanup()
+
     def test_claude_voice_secretary_prepare_repair_retry_only_restates_missing_outputs(self) -> None:
         from cccc.daemon.claude_app_sessions import (
             _voice_secretary_control_failure_reason,

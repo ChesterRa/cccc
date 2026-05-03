@@ -34,6 +34,7 @@ def resolve_sherpa_streaming_model_id(selected_model_id: str = "") -> str:
         selected_status = get_voice_model_status(selected)
         if (
             str(selected_status.get("runtime_id") or "") == VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+            and bool(selected_status.get("streaming"))
             and bool(selected_status.get("streaming_ready"))
         ):
             return selected
@@ -42,12 +43,16 @@ def resolve_sherpa_streaming_model_id(selected_model_id: str = "") -> str:
             continue
         if str(item.get("runtime_id") or "") != VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING:
             continue
+        if not item.get("streaming"):
+            continue
         if bool(item.get("streaming_ready")):
             return str(item.get("model_id") or "").strip()
     for item in list_voice_models():
         if not isinstance(item, dict):
             continue
         if str(item.get("runtime_id") or "") == VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING:
+            if not item.get("streaming"):
+                continue
             return str(item.get("model_id") or "").strip()
     return ""
 

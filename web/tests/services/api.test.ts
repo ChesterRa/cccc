@@ -746,6 +746,48 @@ describe("api assistant voice model helpers", () => {
     expect((resp.result.assistant?.health?.service as Record<string, unknown>)?.selected_model_id).toBe("mock_asr");
   });
 
+  it("requests a matching voice prompt draft", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        result: {
+          group_id: "g-demo",
+          assistant: {
+            assistant_id: "voice_secretary",
+            kind: "voice_secretary",
+            enabled: true,
+            lifecycle: "idle",
+          },
+          prompt_draft: {
+            request_id: "voice-prompt-1",
+            status: "pending",
+            operation: "replace_with_refined_prompt",
+            draft_text: "请审查当前代码优化方案，并按风险优先级给出可执行修改建议。",
+            composer_snapshot_hash: "snapshot-1",
+          },
+        },
+      }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchAssistant("g-demo", "voice_secretary", {
+      promptRequestId: "voice-prompt-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/assistants/voice_secretary?prompt_request_id=voice-prompt-1",
+      expect.anything(),
+    );
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) throw new Error("expected ok response");
+    expect(resp.result.prompt_draft).toMatchObject({
+      request_id: "voice-prompt-1",
+      operation: "replace_with_refined_prompt",
+    });
+  });
+
   it("calls the install model endpoint and clears assistant cache", async () => {
     fetchMock.mockResolvedValue({
       status: 200,

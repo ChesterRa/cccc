@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { MarkdownDocumentSurface } from "../../../components/document/MarkdownDocumentSurface";
 import { classNames } from "../../../utils/classNames";
 import type { VoiceTranscriptItem } from "./voiceStreamModel";
+import { VoiceTranscriptRecordingIndicator } from "./VoiceTranscriptRecordingIndicator";
 
 export type VoiceWorkspaceView = "document" | "transcript";
 
@@ -18,10 +19,12 @@ type VoiceSecretaryWorkspacePanelProps = {
   documentRemoteChanged: boolean;
   isDark: boolean;
   recording: boolean;
+  recordingAudioLevels: number[];
   t: TFunction;
   transcriptItems: VoiceTranscriptItem[];
   view: VoiceWorkspaceView;
   onChangeView: (view: VoiceWorkspaceView) => void;
+  onClearTranscript: () => void;
   onDownloadDocument: () => void;
   onEditDocumentChange: (value: string) => void;
   onLoadLatestDocument: () => void;
@@ -44,10 +47,12 @@ export function VoiceSecretaryWorkspacePanel({
   documentRemoteChanged,
   isDark,
   recording,
+  recordingAudioLevels,
   t,
   transcriptItems,
   view,
   onChangeView,
+  onClearTranscript,
   onDownloadDocument,
   onEditDocumentChange,
   onLoadLatestDocument,
@@ -57,8 +62,8 @@ export function VoiceSecretaryWorkspacePanel({
   formatFullTime,
   normalizeTranscriptText,
 }: VoiceSecretaryWorkspacePanelProps) {
-  const transcriptCount = transcriptItems.length;
-  const transcriptRows = useMemo(() => transcriptItems, [transcriptItems]);
+  const transcriptRows = useMemo(() => transcriptItems.filter((item) => item.phase === "final"), [transcriptItems]);
+  const transcriptCount = transcriptRows.length;
   return (
     <section
       className={classNames(
@@ -214,6 +219,22 @@ export function VoiceSecretaryWorkspacePanel({
               </button>
             </>
           ) : null}
+          {view === "transcript" ? (
+            <button
+              type="button"
+              onClick={onClearTranscript}
+              disabled={!transcriptCount || recording}
+              className={classNames(
+                "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
+                isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+              )}
+              title={recording
+                ? t("voiceSecretaryClearTranscriptDisabledRecording", { defaultValue: "Stop recording before clearing transcript entries." })
+                : t("voiceSecretaryClearTranscriptTitle", { defaultValue: "Clear visible transcript entries for this document." })}
+            >
+              {t("voiceSecretaryClearTranscript", { defaultValue: "Clear" })}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -236,39 +257,43 @@ export function VoiceSecretaryWorkspacePanel({
         />
       ) : (
         <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable]">
-          {transcriptRows.length ? transcriptRows.map((item) => {
+          {recording ? (
+            <VoiceTranscriptRecordingIndicator
+              isDark={isDark}
+              label={t("voiceSecretaryTranscriptRecordingIndicator", { defaultValue: "Recording audio. Final transcript appears after Save." })}
+              levels={recordingAudioLevels}
+            />
+          ) : transcriptRows.length ? transcriptRows.map((item) => {
             const itemText = normalizeTranscriptText(item.text);
             const timeLabel = formatTime(item.updatedAt);
             const fullTimeLabel = formatFullTime(item.updatedAt);
-            const isLive = recording && item.phase === "interim";
+            const sourceLabel = String(item.sourceLabel || "").trim();
+            const sourceDetail = String(item.sourceDetail || "").trim();
             return (
               <div
                 key={item.id}
                 className={classNames(
                   "rounded-2xl border px-3 py-2.5",
-                  isLive
-                    ? isDark ? "border-cyan-300/20 bg-cyan-400/10" : "border-cyan-200 bg-cyan-50/70"
-                    : isDark ? "border-white/10 bg-white/[0.04]" : "border-black/[0.08] bg-white",
+                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/[0.08] bg-white",
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span className={classNames(
                       "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                      isLive
-                        ? isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-cyan-50 text-cyan-800"
-                        : isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-gray-700",
+                      isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-gray-700",
                     )}>
-                      {isLive
-                        ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
-                        : t("voiceSecretaryTranscriptHeard", { defaultValue: "Transcript" })}
+                      {t("voiceSecretaryTranscriptHeard", { defaultValue: "Transcript" })}
                     </span>
-                    {item.speakerLabel ? (
-                      <span className={classNames(
-                        "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                        isDark ? "bg-violet-300/15 text-violet-100" : "bg-violet-50 text-violet-800",
-                      )}>
-                        {item.speakerLabel}
+                    {sourceLabel ? (
+                      <span
+                        className={classNames(
+                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          isDark ? "bg-emerald-300/12 text-emerald-100" : "bg-emerald-50 text-emerald-800",
+                        )}
+                        title={sourceDetail || sourceLabel}
+                      >
+                        {sourceLabel}
                       </span>
                     ) : null}
                   </div>
@@ -288,6 +313,11 @@ export function VoiceSecretaryWorkspacePanel({
                     isDark ? "text-slate-100" : "text-gray-900",
                   )}>
                     {itemText}
+                  </div>
+                ) : null}
+                {sourceDetail ? (
+                  <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
+                    {sourceDetail}
                   </div>
                 ) : null}
               </div>
