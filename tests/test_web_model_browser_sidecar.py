@@ -128,7 +128,78 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(_conversation_url_from_tab("https://evilchatgpt.com/c/abc123"), "")
         self.assertEqual(_conversation_url_from_tab("https://chatgpt.com.evil.test/c/abc123"), "")
 
-    def test_submission_wait_accepts_composer_clear_after_send_attempt(self) -> None:
+    def test_health_snapshot_treats_pending_bind_as_recoverable_wait(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": True,
+                "tab_url": "https://chatgpt.com/",
+                "pending_new_chat_bind": True,
+                "pending_new_chat_url": "https://chatgpt.com/",
+                "last_delivery_status": "pending",
+                "last_delivery_id": "delivery-1",
+                "last_turn_id": "turn-1",
+                "last_error": "conversation_url_pending",
+            },
+            browser_surface={"active": True, "state": "ready", "controller_attached": True, "last_frame_at": "2026-05-04T00:00:00Z"},
+        )
+
+        self.assertEqual((snapshot.get("browser") or {}).get("state"), "ready")
+        self.assertEqual((snapshot.get("target") or {}).get("state"), "new_chat_pending")
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "pending_bind")
+        self.assertTrue(delivery.get("cursor_committed"))
+        self.assertEqual(delivery.get("last_error"), "")
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "wait_for_chat_bind")
+        self.assertNotEqual(snapshot.get("tone"), "error")
+
+    def test_health_snapshot_derives_pending_bind_from_existing_fields(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": True,
+                "tab_url": "https://chatgpt.com/",
+                "pending_new_chat_bind": True,
+                "pending_new_chat_submitted": True,
+                "last_delivery_at": "2026-05-04T00:00:00Z",
+                "last_error": "conversation_url_pending",
+            },
+            browser_surface={"active": True, "state": "ready"},
+        )
+
+        self.assertEqual((snapshot.get("delivery") or {}).get("state"), "pending_bind")
+        self.assertEqual((snapshot.get("delivery") or {}).get("last_error"), "")
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "wait_for_chat_bind")
+
+    def test_health_snapshot_recommends_restart_for_browser_failure(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": False,
+                "error": "browser command timed out",
+                "conversation_url": "https://chatgpt.com/c/test",
+                "last_delivery_status": "submitted",
+            },
+            browser_surface={"active": True, "state": "failed", "message": "renderer crashed"},
+        )
+
+        self.assertEqual(snapshot.get("tone"), "error")
+        self.assertEqual((snapshot.get("browser") or {}).get("state"), "failed")
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "restart_browser")
+
+    def test_submission_wait_does_not_accept_composer_clear_as_delivery(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
 
         class _Locator:
@@ -148,15 +219,13 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             patch.object(sidecar, "_composer_text", return_value=""),
             patch.object(sidecar, "_submission_echo_found", return_value=False),
         ):
-            self.assertEqual(
+            self.assertFalse(
                 sidecar._wait_for_submission(
                     _Page(),
                     "#prompt-textarea",
                     prompt="hello",
                     timeout_seconds=1.0,
-                    accept_composer_clear=True,
-                ),
-                "composer_cleared",
+                )
             )
 
     def test_composer_text_reads_contenteditable_via_dom_evaluate(self) -> None:
@@ -205,6 +274,63 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         wait_for_submission.assert_called_once()
         self.assertEqual(result.get("send_selector"), "#composer-submit-button")
         self.assertEqual(result.get("submission_evidence"), "stop_button")
+
+    def test_submit_prompt_tries_request_submit_before_keyboard_fallback(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Keyboard:
+            def __init__(self) -> None:
+                self.pressed: list[str] = []
+
+            def press(self, key: str) -> None:
+                self.pressed.append(key)
+
+        class _Page:
+            def __init__(self) -> None:
+                self.keyboard = _Keyboard()
+
+        page = _Page()
+        prompt = "Browser-delivered CCCC message"
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_clear_and_type_prompt"),
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_click_send", return_value="#composer-submit-button"),
+            patch.object(sidecar, "_wait_for_submission", side_effect=["", "message_echo"]) as wait_for_submission,
+            patch.object(sidecar, "_request_submit_composer", return_value="form.requestSubmit:button") as request_submit,
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            result = sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+        request_submit.assert_called_once_with(page)
+        self.assertEqual(wait_for_submission.call_count, 2)
+        self.assertEqual(page.keyboard.pressed, [])
+        self.assertEqual(result.get("send_selector"), "form.requestSubmit:button")
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
+
+    def test_submit_prompt_failure_includes_page_diagnostics(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Keyboard:
+            def press(self, _key: str) -> None:
+                return None
+
+        class _Page:
+            keyboard = _Keyboard()
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_clear_and_type_prompt"),
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_click_send", return_value="#composer-submit-button"),
+            patch.object(sidecar, "_wait_for_submission", return_value=""),
+            patch.object(sidecar, "_request_submit_composer", return_value=""),
+            patch.object(sidecar, "_submission_diagnostics", return_value={"prompt_chars": 42, "send_enabled_count": 0}),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "diagnostics=.*send_enabled_count"):
+                sidecar._submit_prompt(_Page(), "hello", input_timeout_seconds=1.0)
 
     def test_chatgpt_profile_is_shared_while_actor_state_stays_separate(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (

@@ -90,6 +90,12 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         action = file_props.get("action") if isinstance(file_props, dict) else {}
         self.assertEqual(action.get("enum"), ["send", "blob_path", "info", "read"])
         self.assertIn("max_bytes", file_props)
+        file_desc = str(file_spec.get("description") or "") if isinstance(file_spec, dict) else ""
+        self.assertIn("chat attachment", file_desc)
+        self.assertIn("delivered state/blobs attachments", file_desc)
+        self.assertIn("active-scope local file", file_desc)
+        self.assertIn("UTF-8 text", str((file_props.get("rel_path") or {}).get("description") or ""))
+        self.assertIn("active scope", str((file_props.get("path") or {}).get("description") or ""))
 
     def test_task_toolspec_exposes_type_enum(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_task"), None)
@@ -163,6 +169,17 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIn("when no turn was browser-delivered", wait_desc)
         self.assertIn("does not mark messages read", wait_desc)
         self.assertIn("whether it was browser-delivered or pulled", complete_desc)
+
+    def test_code_exec_schema_advertises_discovery_helpers(self) -> None:
+        code_exec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_code_exec"), None)
+        self.assertIsInstance(code_exec, dict)
+        desc = str(code_exec.get("description") or "") if isinstance(code_exec, dict) else ""
+        self.assertIn("COMMON_WORK_LOOPS", desc)
+        self.assertIn("tool_help(query", desc)
+        self.assertIn("tool_names(query)", desc)
+        self.assertIn("list_tools(query)", desc)
+        self.assertIn("detail:'schema'", desc)
+        self.assertIn("max_output_tokens up to 50000", desc)
 
 
 if __name__ == "__main__":

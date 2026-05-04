@@ -88,6 +88,13 @@ function webModelQueuedCount(actor?: Actor | null): number {
   return Math.max(0, Number(actor?.web_model_queued_count || 0));
 }
 
+function isStandardChatGptWebModelActor(actor?: Actor | null): boolean {
+  return (
+    String(actor?.runtime || "").trim().toLowerCase() === "web_model"
+    && !String(actor?.internal_kind || "").trim()
+  );
+}
+
 function browserSessionKey(groupId: string, actorId: string): string {
   return `${String(groupId || "").trim()}::${String(actorId || "").trim()}`;
 }
@@ -181,6 +188,15 @@ function SetupSection({
   );
 }
 
+function healthNextActionText(health?: api.WebModelHealthSnapshot | null): string {
+  const action = health?.next_action;
+  const recommended = String(action?.recommended || "none").trim();
+  if (!recommended || recommended === "none") return "";
+  const label = String(action?.label || "").trim() || recommended;
+  const reason = String(action?.reason || "").trim();
+  return reason ? `${label}: ${reason}` : label;
+}
+
 export default function WebModelConnectorsTab({
   isDark,
   isActive = true,
@@ -216,7 +232,7 @@ export default function WebModelConnectorsTab({
   }, [actorId, groupId]);
 
   const webModelActors = useMemo(
-    () => actors.filter((actor) => String(actor.runtime || "").trim().toLowerCase() === "web_model"),
+    () => actors.filter((actor) => isStandardChatGptWebModelActor(actor)),
     [actors],
   );
 
@@ -264,6 +280,7 @@ export default function WebModelConnectorsTab({
   const publicEndpointReady = Boolean(configuredPublicUrl && isHttpsUrl(configuredPublicUrl));
   const uiAccessTokenPresent = Boolean(remoteState?.config?.access_token_configured || remoteState?.diagnostics?.access_token_present);
   const selectedBrowserSession = browserSessionsByActor[browserSessionKey(groupId, actorId)] || browserSession || null;
+  const selectedHealth = selectedBrowserSession?.health_snapshot || null;
   const browserActive = Boolean(selectedBrowserSession?.active || showBrowserSurface);
   const browserReady = Boolean(selectedBrowserSession?.ready);
   const boundConversationUrl = String(selectedBrowserSession?.conversation_url || "").trim();
@@ -283,16 +300,16 @@ export default function WebModelConnectorsTab({
     : pendingNewChatBind
       ? "CCCC will create and bind the /c/... URL after the next message is sent."
       : "Choose an existing chat or select new-chat delivery before sending work.";
-  const browserStatusLabel = browserReady
+  const browserStatusLabel = String(selectedHealth?.browser?.label || "").trim() || (browserReady
     ? "ChatGPT ready"
     : browserActive
       ? "Sign-in needed"
-      : "Not open";
-  const targetStatusLabel = boundConversationUrl
+      : "Not open");
+  const targetStatusLabel = String(selectedHealth?.target?.label || "").trim() || (boundConversationUrl
     ? "Target chat bound"
     : pendingNewChatBind
       ? "New chat armed"
-      : "Target chat needed";
+      : "Target chat needed");
   const setupReady = browserReady && Boolean(boundConversationUrl || pendingNewChatBind);
   const setupSummary = setupReady
     ? `${browserStatusLabel} · ${targetStatusLabel}`
@@ -371,8 +388,8 @@ export default function WebModelConnectorsTab({
       const nextActors = resp.result?.actors || [];
       setActors(nextActors);
       setActorId((current) => {
-        if (current && nextActors.some((actor) => actor.id === current && actor.runtime === "web_model")) return current;
-        return nextActors.find((actor) => actor.runtime === "web_model")?.id || "";
+        if (current && nextActors.some((actor) => actor.id === current && isStandardChatGptWebModelActor(actor))) return current;
+        return nextActors.find((actor) => isStandardChatGptWebModelActor(actor))?.id || "";
       });
     } else {
       setActors([]);
@@ -470,9 +487,7 @@ export default function WebModelConnectorsTab({
         const resp = await api.fetchActors(gid, true, { noCache: true });
         if (cancelled) return;
         if (!resp.ok) continue;
-        const found = (resp.result?.actors || []).find(
-          (actor) => String(actor.runtime || "").trim().toLowerCase() === "web_model",
-        );
+        const found = (resp.result?.actors || []).find((actor) => isStandardChatGptWebModelActor(actor));
         if (found) {
           setGroupId(gid);
           setActors(resp.result?.actors || []);
@@ -945,6 +960,7 @@ export default function WebModelConnectorsTab({
               const actorLabel = String(actor.title || actor.id || "").trim() || actor.id;
               const selected = actor.id === actorId;
               const rowSession = browserSessionsByActor[browserSessionKey(groupId, actor.id)] || {};
+              const rowHealth = rowSession.health_snapshot || null;
               const targetUrl = String(rowSession.conversation_url || "").trim();
               const rowPendingNewChat = Boolean(rowSession.pending_new_chat_bind);
               const rowPendingUrl = String(rowSession.pending_new_chat_url || "").trim();
@@ -956,10 +972,10 @@ export default function WebModelConnectorsTab({
               const targetDetail = targetReady
                 ? shortConversationLabel(targetUrl)
                 : rowPendingNewChat
-                  ? "New chat armed"
-                  : "Not set";
+                  ? String(rowHealth?.target?.label || "").trim() || "New chat armed"
+                  : String(rowHealth?.target?.label || "").trim() || "Not set";
               const mcpDetail = mcpUrl ? (chatGptSeen ? "Connected" : "URL ready") : connector ? "Needs rotation" : "Not created";
-              const browserDetail = browserLoginReady ? "Signed in" : browserOpen ? "Open, sign-in needed" : "Not open";
+              const browserDetail = String(rowHealth?.browser?.label || "").trim() || (browserLoginReady ? "Signed in" : browserOpen ? "Open, sign-in needed" : "Not open");
               const cardStatus = !publicEndpointReady
                 ? { label: "Needs public URL", tone: "needs" as const }
                 : !actorRunning
@@ -974,8 +990,10 @@ export default function WebModelConnectorsTab({
                           ? { label: "Needs target chat", tone: "needs" as const }
                           : { label: "Ready", tone: "ready" as const };
               const mcpTone: SetupTone = mcpUrl && chatGptSeen ? "ready" : mcpUrl ? "neutral" : "needs";
-              const targetTone: SetupTone = targetReady || rowPendingNewChat ? "ready" : "needs";
-              const browserTone: SetupTone = browserLoginReady ? "ready" : browserOpen ? "needs" : "neutral";
+              const targetTone: SetupTone = String(rowHealth?.target?.state || "").trim() === "missing" ? "needs" : targetReady || rowPendingNewChat ? "ready" : "needs";
+              const browserState = String(rowHealth?.browser?.state || "").trim();
+              const browserTone: SetupTone = browserState === "failed" ? "warn" : browserState === "ready" ? "ready" : browserLoginReady ? "ready" : browserOpen ? "needs" : "neutral";
+              const healthNextAction = healthNextActionText(rowHealth);
               const nextAction = !publicEndpointReady
                 ? "Set the public HTTPS URL in Web Access."
                 : !actorRunning
@@ -990,7 +1008,7 @@ export default function WebModelConnectorsTab({
                       ? "Bind an existing ChatGPT conversation or arm new-chat auto-bind."
                     : !browserLoginReady
                       ? "Open the embedded browser and sign in to ChatGPT."
-                      : "Ready for browser delivery.";
+                      : healthNextAction || "Ready for browser delivery.";
               const setupPrimary = actorRunning && Boolean(mcpUrl) && chatGptSeen && (!browserLoginReady || (!targetReady && !rowPendingNewChat));
               return (
                 <div
@@ -1429,10 +1447,32 @@ export default function WebModelConnectorsTab({
                 <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[140px_1fr]">
                   <span>Status</span>
                   <span>{browserStatusLabel} · {targetStatusLabel}</span>
+                  {healthNextActionText(selectedHealth) ? (
+                    <>
+                      <span>Recommended</span>
+                      <span>{healthNextActionText(selectedHealth)}</span>
+                    </>
+                  ) : null}
                   <span>{browserActive ? "Current browser tab" : "Last browser tab"}</span>
                   <span className="break-all font-mono">{currentBrowserUrl || "none"}</span>
                   <span>Delivery target</span>
                   <span className="break-all font-mono">{boundConversationUrl || (pendingNewChatBind ? "new chat on next delivery" : "none")}</span>
+                  {selectedBrowserSession?.last_delivery_status || selectedBrowserSession?.last_delivery_at ? (
+                    <>
+                      <span>Last delivery</span>
+                      <span className="break-all font-mono">
+                        {[selectedBrowserSession.last_delivery_status || "recorded", selectedBrowserSession.last_submission_evidence || ""]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </>
+                  ) : null}
+                  {selectedBrowserSession?.last_error ? (
+                    <>
+                      <span>Last error</span>
+                      <span className="break-all text-rose-600 dark:text-rose-300">{selectedBrowserSession.last_error}</span>
+                    </>
+                  ) : null}
                   {!boundConversationUrl && pendingNewChatBind ? (
                     <>
                       <span>Pending new chat</span>

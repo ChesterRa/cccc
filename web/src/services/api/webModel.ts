@@ -79,14 +79,65 @@ export type WebModelBrowserSession = {
   auto_reload_expired_at?: string;
   auto_reload_last_error?: string;
   last_delivery_at?: string;
+  last_delivery_id?: string;
+  last_delivery_status?: string;
+  last_submission_evidence?: string;
+  last_send_selector?: string;
   last_turn_id?: string;
+  last_event_ids?: string[];
+  last_error?: string;
   error?: string;
   message?: string;
+  health_snapshot?: WebModelHealthSnapshot;
+};
+
+export type WebModelHealthSnapshot = {
+  schema?: string;
+  group_id?: string;
+  actor_id?: string;
+  tone?: "ready" | "needs" | "neutral" | "error" | string;
+  summary?: string;
+  browser?: {
+    state?: string;
+    label?: string;
+    reason?: string;
+    active?: boolean;
+    ready?: boolean;
+    logged_in_guess?: boolean;
+    url?: string;
+    viewer_attached?: boolean;
+    last_frame_at?: string;
+  };
+  target?: {
+    state?: string;
+    label?: string;
+    reason?: string;
+    url?: string;
+  };
+  delivery?: {
+    state?: string;
+    label?: string;
+    reason?: string;
+    last_delivery_id?: string;
+    last_turn_id?: string;
+    last_event_ids?: string[];
+    last_delivery_at?: string;
+    last_submission_evidence?: string;
+    last_send_selector?: string;
+    last_error?: string;
+    cursor_committed?: boolean;
+  };
+  next_action?: {
+    recommended?: string;
+    label?: string;
+    reason?: string;
+  };
 };
 
 export type WebModelBrowserSurfaceResult = {
   browser_session: WebModelBrowserSession;
   browser_surface: PresentationBrowserSurfaceState;
+  health_snapshot?: WebModelHealthSnapshot;
 };
 
 export async function fetchWebModelConnectors() {
@@ -140,6 +191,7 @@ export async function fetchWebModelBrowserSurfaceSession(
     result: {
       browser_session: resp.result.browser_session || {},
       browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+      health_snapshot: resp.result.health_snapshot,
     },
   };
 }
@@ -180,6 +232,7 @@ export async function openWebModelBrowserSurfaceSession(args: {
     result: {
       browser_session: resp.result.browser_session || {},
       browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+      health_snapshot: resp.result.health_snapshot,
     },
   };
 }
@@ -211,6 +264,7 @@ export async function closeWebModelBrowserSurfaceSession(
     result: {
       browser_session: resp.result.browser_session || {},
       browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+      health_snapshot: resp.result.health_snapshot,
     },
   };
 }
@@ -238,6 +292,7 @@ export async function bindCurrentWebModelBrowserConversation(args: {
     result: {
       browser_session: resp.result.browser_session || {},
       browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+      health_snapshot: resp.result.health_snapshot,
     },
   };
 }

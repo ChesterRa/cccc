@@ -107,6 +107,7 @@ export default defineConfig({
           text: 'Release Hub',
           items: [
             { text: 'Overview', link: '/release/' },
+            { text: 'v0.4.13 Release Notes', link: '/release/v0.4.13_release_notes' },
             { text: 'v0.4.12 Release Notes', link: '/release/v0.4.12_release_notes' },
             { text: 'v0.4.11 Release Notes', link: '/release/v0.4.11_release_notes' },
             { text: 'v0.4.10 Release Notes', link: '/release/v0.4.10_release_notes' },

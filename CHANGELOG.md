@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.13] — 2026-05-04
+
+### Added
+- **ChatGPT Web Model runtime** for GPT-5.x ChatGPT web sessions, including connector setup, browser delivery, target-chat binding, and runtime panel visibility.
+- **Remote CCCC MCP local-development tools** for ChatGPT Web Model actors: repo reads/edits, Codex-style patching, shell/exec, git, and file attachment send/read paths.
+- **`cccc_code_exec` code mode** for higher-throughput Web Model work loops, with nested MCP tool orchestration, tool discovery helpers, common work loops, and actor-scoped cells.
+- **Voice Secretary local ASR stack** with Sherpa ONNX streaming/final recognition, speaker diarization, model manifest handling, and local cache controls.
+- **ChatGPT Web Model health snapshot** exposing derived browser, target, delivery, and recommended next-action state to Web UI and API callers.
+
+### Changed
+- **ChatGPT browser delivery** now uses the daemon-managed projected browser session by default, records stronger submission evidence, avoids duplicate pending new-chat delivery, and keeps setup/runtime surfaces on one shared ChatGPT browser profile.
+- **Web Model setup** was simplified around one ChatGPT Web Model actor per CCCC instance, a single MCP URL, and clearer ChatGPT account/target-chat controls.
+- **MCP help and toolspecs** now better explain common Web Model loops, attachments, turn completion, and when to use `cccc_code_exec` versus direct tools.
+- **Voice Secretary Ask/Document/Prompt flows** were tightened after the ASR work so live transcript previews, document transcripts, Ask replies, and composer draft submissions stay separated.
+- **README and docs** now describe GPT-5.x ChatGPT Web Model as the full local-development path, while GPT-5.x Pro is documented as review/advice-only because current ChatGPT Pro sessions cannot use third-party MCP with full local access.
+
+### Fixed
+- Fixed ChatGPT prompt submission cases where inserted text could be mistaken for successful delivery without proof that ChatGPT actually accepted the prompt.
+- Fixed pending new-chat binding so already-submitted events are not resent while waiting for ChatGPT to expose the `/c/...` conversation URL.
+- Fixed stale Web Model auto-confirm watchers and tightened connector/runtime gating for local-power MCP tools.
+- Fixed internal actors, including Voice Secretary, from accidentally being counted as or converted into ChatGPT Web Model actors.
+- Fixed Docker Node.js installation so image builds include `npm`, and suppressed noisy managed-node deprecation warnings.
+- Fixed Voice Secretary ASR model/status cache edge cases and transcript display regressions.
+
 ## [0.4.12] — 2026-04-23
 
 ### Added

@@ -65,6 +65,16 @@ function iconButtonClass(primary = false): string {
 }
 
 function buildChatGptBlock(session: WebModelBrowserSession | null): StatusBlock {
+  const health = session?.health_snapshot;
+  if (health?.browser?.state) {
+    const state = String(health.browser.state || "").trim();
+    return {
+      label: "ChatGPT",
+      value: String(health.browser.label || "").trim() || (state === "ready" ? "Ready" : "Check status"),
+      detail: String(health.browser.reason || health.browser.url || "").trim() || "ChatGPT browser state.",
+      tone: state === "ready" ? "ready" : state === "failed" ? "error" : state === "closed" ? "neutral" : "needs",
+    };
+  }
   const error = String(session?.error || "").trim();
   if (error) {
     return {
@@ -99,6 +109,17 @@ function buildChatGptBlock(session: WebModelBrowserSession | null): StatusBlock 
 }
 
 function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
+  const health = session?.health_snapshot;
+  if (health?.target?.state) {
+    const state = String(health.target.state || "").trim();
+    const url = String(health.target.url || "").trim();
+    return {
+      label: "Target",
+      value: String(health.target.label || "").trim() || "Target",
+      detail: url ? shortChatGptUrl(url) : String(health.target.reason || "").trim() || "ChatGPT delivery target.",
+      tone: state === "missing" ? "needs" : "ready",
+    };
+  }
   const conversationUrl = String(session?.conversation_url || "").trim();
   if (conversationUrl) {
     return {
@@ -125,6 +146,63 @@ function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
 }
 
 function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount: number): StatusBlock {
+  const health = session?.health_snapshot;
+  if (health?.delivery?.state) {
+    const state = String(health.delivery.state || "").trim();
+    if (state === "failed") {
+      return {
+        label: "Activity",
+        value: String(health.delivery.label || "").trim() || "Delivery failed",
+        detail: String(health.delivery.reason || health.delivery.last_error || "").trim() || "The last ChatGPT delivery did not complete.",
+        tone: "error",
+      };
+    }
+    if (state === "pending_bind") {
+      return {
+        label: "Activity",
+        value: String(health.delivery.label || "").trim() || "Binding chat",
+        detail: String(health.delivery.reason || "").trim() || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
+        tone: "needs",
+      };
+    }
+    if (queuedCount > 0) {
+      return {
+        label: "Activity",
+        value: `${queuedCount} queued`,
+        detail: "Waiting for browser delivery.",
+        tone: "needs",
+      };
+    }
+    if (state === "submitted" && health.delivery.last_delivery_at) {
+      const evidence = String(health.delivery.last_submission_evidence || "").trim();
+      return {
+        label: "Activity",
+        value: `Last ${formatTime(health.delivery.last_delivery_at)}`,
+        detail: evidence ? `Submitted: ${evidence}` : String(health.delivery.reason || "").trim() || "Browser delivery completed.",
+        tone: "neutral",
+      };
+    }
+  }
+  const deliveryStatus = String(session?.last_delivery_status || "").trim();
+  const lastError = String(session?.last_error || "").trim();
+  if (deliveryStatus === "pending") {
+    return {
+      label: "Activity",
+      value: "Binding chat",
+      detail: lastError === "conversation_url_pending"
+        ? "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
+        : lastError || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
+      tone: "needs",
+    };
+  }
+  if (deliveryStatus === "failed" || lastError) {
+    return {
+      label: "Activity",
+      value: "Delivery failed",
+      detail: lastError || "The last ChatGPT delivery did not complete.",
+      tone: "error",
+    };
+  }
   if (queuedCount > 0) {
     return {
       label: "Activity",
@@ -134,10 +212,11 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
     };
   }
   if (session?.last_delivery_at) {
+    const evidence = String(session.last_submission_evidence || "").trim();
     return {
       label: "Activity",
       value: `Last ${formatTime(session.last_delivery_at)}`,
-      detail: session.last_turn_id ? String(session.last_turn_id) : "Browser delivery completed.",
+      detail: evidence ? `Submitted: ${evidence}` : session.last_turn_id ? String(session.last_turn_id) : "Browser delivery completed.",
       tone: "neutral",
     };
   }
@@ -302,6 +381,8 @@ export function WebModelRuntimePanel({
   );
   const primaryActionNeeded = !session?.ready || (!session?.conversation_url && !session?.pending_new_chat_bind);
   const showNewChatAction = !readOnly && !session?.conversation_url && !session?.pending_new_chat_bind;
+  const nextAction = session?.health_snapshot?.next_action;
+  const recommendedAction = String(nextAction?.recommended || "none").trim();
   const surfaceDisabledMessage = readOnly
     ? "Browser view is unavailable in read-only mode."
     : "";
@@ -368,6 +449,14 @@ export function WebModelRuntimePanel({
           <StatusCell key={block.label} block={block} />
         ))}
       </div>
+
+      {recommendedAction && recommendedAction !== "none" ? (
+        <div className="mt-2 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
+          <span className="font-semibold text-[var(--color-text-primary)]">Next:</span>{" "}
+          {String(nextAction?.label || "").trim() || recommendedAction}
+          {nextAction?.reason ? <span className="text-[var(--color-text-tertiary)]"> · {nextAction.reason}</span> : null}
+        </div>
+      ) : null}
 
       {canControlSurface ? (
         <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]">

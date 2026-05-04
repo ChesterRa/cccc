@@ -161,7 +161,10 @@ def build_actor_delivery_text(
     if ref_lines:
         delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(ref_lines)).strip()
     if attachments:
-        lines = ['[cccc] Attachments: use cccc_file(action="read", rel_path=...) for text blobs or action="blob_path" for local paths.']
+        lines = [
+            '[cccc] Attachments: use cccc_file(action="read", rel_path=...) for text; '
+            'use action="blob_path" for binary/local tools.'
+        ]
         for attachment in attachments[:8]:
             title = str(attachment.get("title") or attachment.get("path") or "file").strip()
             size_bytes = int(attachment.get("bytes") or 0)

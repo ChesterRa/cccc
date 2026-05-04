@@ -46,6 +46,14 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - For recall, read `memory_recall_gate`, then local `cccc_memory`; use `cccc_space(..., lane="memory")` only as deeper fallback.
 - For capabilities, try `cccc_capability_use(...)` before escalating blockers.
 
+## Common Work Loops
+
+- Review current diff: inspect `cccc_git(action="status")` and `cccc_git(action="diff")`, read exact files with `cccc_repo`, run focused validation, then reply with findings/evidence and finish the turn.
+- Patch safely: `cccc_repo(action="read")` for content and `sha256`, edit with `cccc_repo_edit(action="replace"|"multi_replace", expected_sha256=...)` or Codex-format `cccc_apply_patch`, then inspect diff and validate.
+- Longer local work: prefer `cccc_code_exec` so repo reads, patches, shell/test commands, diff inspection, and the final report stay in one focused loop; use direct tools for one-step actions.
+- Attachments: CCCC attachments are blob references, not browser uploads. Use `cccc_file(action="read")` for text blobs, `blob_path` for binary/local inspection, and `cccc_file(action="send", path=...)` to return generated files.
+- Finish Web Model turns explicitly: visible reply, refresh `cccc_agent_state` when execution state changed, then call `cccc_runtime_complete_turn` for processed event ids.
+
 ## Control Plane
 
 ### Chat
@@ -238,5 +246,6 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 ### Attachments
 
 - Inbox events may include `data.attachments[]` with paths like `state/blobs/<sha256>_<name>`.
-- Resolve blob relative paths to absolute paths with `cccc_file(action="blob_path", rel_path=...)`.
-- Send local files as attachments with `cccc_file(action="send", path=...)`.
+- Read delivered text attachments with `cccc_file(action="read", rel_path=...)` before asking the user to paste content.
+- Resolve binary or non-text blob relative paths to absolute paths with `cccc_file(action="blob_path", rel_path=...)`, then inspect them with local tools.
+- When you create a file deliverable for a user or peer, keep it under the active scope and send it as an attachment with `cccc_file(action="send", path=..., text=...)`; do not only mention a local path.

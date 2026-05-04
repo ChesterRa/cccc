@@ -115,4 +115,5 @@ def test_actor_delivery_text_points_attachments_to_file_read_tools() -> None:
 
     assert 'cccc_file(action="read", rel_path=...)' in text
     assert 'action="blob_path"' in text
+    assert "binary/local tools" in text
     assert "- notes.txt (12 bytes) [state/blobs/sha256_notes.txt]" in text

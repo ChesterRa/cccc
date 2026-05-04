@@ -586,8 +586,14 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
                     "more than one local operation or when patch/test/diff feedback should stay together.",
                     "- Direct tools remain available for simple steps: `cccc_repo`, `cccc_apply_patch`, `cccc_repo_edit`, "
                     "`cccc_exec_command`, `cccc_write_stdin`, `cccc_shell`, and `cccc_git`.",
+                    "- Delivered CCCC attachments are blob references, not browser uploads. Read text attachments with "
+                    "`cccc_file(action=\"read\", rel_path=...)`; use `blob_path` for binary files or local inspection.",
+                    "- When you create a file that the user or a peer should receive, keep it under the active scope and "
+                    "send it back with `cccc_file(action=\"send\", path=..., text=...)` instead of only mentioning a path.",
                     "- Inside `cccc_code_exec`, call nested tools as `await tools.cccc_repo({...})`, "
-                    "`await tools.cccc_apply_patch({...})`, and inspect `ALL_TOOLS` if a tool name is unclear.",
+                    "`await tools.cccc_apply_patch({...})`; inspect `COMMON_WORK_LOOPS`, `tool_names(\"repo\")`, "
+                    "`list_tools(\"repo\")`, or `tool_help(\"repo\")` if a tool name or loop is unclear; "
+                    "use `tool_help(\"repo\", {detail:\"schema\"})` only when needed.",
                     "- Prefer the Codex-style loop: read with line ranges, patch, run focused validation, then inspect `cccc_git(action=\"diff\")`.",
                     "- For exact small edits, use `cccc_repo_edit(action=\"replace\"|\"multi_replace\", "
                     "expected_sha256=...)`; use `write` only for deliberate full-file writes.",
@@ -740,7 +746,11 @@ def inbox_list(*, group_id: str, actor_id: str, limit: int = 50, kind_filter: st
 def inbox_mark_read(*, group_id: str, actor_id: str, event_id: str) -> Dict[str, Any]:
     eid = str(event_id or "").strip()
     if not eid:
-        raise MCPError(code="missing_event_id", message="missing event_id")
+        raise MCPError(
+            code="missing_event_id",
+            message="missing event_id",
+            details={"recommended_action": "Use cccc_inbox_list to get the unread event id, then mark that exact id read."},
+        )
     return _call_daemon_or_raise(
         {"op": "inbox_mark_read", "args": {"group_id": group_id, "actor_id": actor_id, "event_id": eid, "by": actor_id}},
     )

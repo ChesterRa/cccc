@@ -367,6 +367,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state
 
         _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
@@ -425,6 +426,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             data = ((result.get("event") or {}).get("data") or {})
             self.assertEqual((data.get("browser_surface") or {}).get("state"), "ready")
             self.assertEqual(data.get("sidecar_command"), ["projected_session"])
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("last_delivery_status"), "submitted")
+            self.assertEqual(browser_state.get("last_submission_evidence"), "stop_button")
+            self.assertEqual(browser_state.get("last_event_ids"), [event["id"]])
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -512,6 +517,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.daemon.runner_state_ops import read_headless_state
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event, read_last_lines
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state
 
         td, cleanup = self._with_home()
         old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
@@ -551,6 +557,9 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             state = read_headless_state(group.group_id, "peer1")
             self.assertEqual(str(state.get("status") or ""), "waiting")
             self.assertEqual(str(state.get("active_turn_id") or ""), "")
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("last_delivery_status"), "failed")
+            self.assertIn("browser unavailable", str(browser_state.get("last_error") or ""))
             self.assertTrue(
                 any("web_model.browser_delivery.failed" in line for line in read_last_lines(group.ledger_path, 20))
             )

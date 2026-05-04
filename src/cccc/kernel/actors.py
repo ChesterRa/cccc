@@ -215,7 +215,10 @@ def add_actor(
     runtime_name = str(runtime or "codex").strip() or "codex"
     runner_kind = str(runner or "pty").strip() or "pty"
     command_list = list(command or [])
-    if runtime_name == "web_model":
+    runtime_key = runtime_name.lower()
+    if runtime_key == "web_model" and str(internal_kind or "").strip():
+        raise ValueError("internal actors cannot use runtime=web_model")
+    if runtime_key == "web_model":
         runner_kind = "headless"
         command_list = []
 
@@ -303,6 +306,19 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     item = find_actor(group, actor_id)
     if item is None:
         raise ValueError(f"actor not found: {actor_id.strip()}")
+
+    current_internal_kind = str(item.get("internal_kind") or "").strip()
+    patch_runtime_key = str(patch.get("runtime") or "").strip().lower()
+    effective_runtime_key = str(patch.get("runtime") or item.get("runtime") or "").strip().lower()
+    if "runtime" in patch and patch_runtime_key == "web_model" and current_internal_kind:
+        raise ValueError("internal actors cannot use runtime=web_model")
+    if (
+        "internal_kind" in patch
+        and str(patch.get("internal_kind") or "").strip()
+        and str(patch.get("internal_kind") or "").strip() != current_internal_kind
+        and effective_runtime_key == "web_model"
+    ):
+        raise ValueError("internal actors cannot use runtime=web_model")
 
     # Note: 'role' in patch is ignored - role is auto-determined by position
     if "role" in patch:

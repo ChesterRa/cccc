@@ -81,6 +81,13 @@ function sortPresentationSlotIds(slotIds: string[]): string[] {
   });
 }
 
+function isStandardChatGptWebModelActor(actor?: Actor | null): boolean {
+  return (
+    String(actor?.runtime || "").trim().toLowerCase() === "web_model"
+    && !String(actor?.internal_kind || "").trim()
+  );
+}
+
 function LazyModalFallback({ isDark }: { isDark: boolean }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
@@ -1158,9 +1165,7 @@ export function AppModals({
     }
     return `${prefix}-${Date.now()}`;
   })();
-  const currentGroupHasChatGptWebModelActor = actors.some(
-    (actor) => String(actor.runtime || "").trim().toLowerCase() === "web_model"
-  );
+  const currentGroupHasChatGptWebModelActor = actors.some((actor) => isStandardChatGptWebModelActor(actor));
 
   const canAddActor = (() => {
     if (busy === "actor-add") return false;

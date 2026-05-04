@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional
 from ...kernel.actors import find_actor, update_actor
 from ...contracts.v1 import ActorProfileRef
 from .actor_profile_store import ProfileResolver, normalize_actor_profile_ref
+from .web_model_actor_policy import require_standard_chatgpt_web_model_actor
 
 PROFILE_CONTROLLED_FIELDS = ("runtime", "runner", "command", "submit", "env")
 _LOG = logging.getLogger("cccc.daemon.actor_profile_runtime")
@@ -197,6 +198,8 @@ def apply_profile_link_to_actor(
     item = find_actor(group, actor_id)
     if item is None:
         raise ValueError(f"actor not found: {actor_id}")
+    if str(profile.get("runtime") or "").strip().lower() == "web_model":
+        require_standard_chatgpt_web_model_actor(item)
 
     if not _same_profile_config(item, profile):
         item = update_actor(group, actor_id, _profile_patch(profile))

@@ -286,7 +286,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         with (
             patch(
                 "cccc.ports.web_model_browser_sidecar._submit_prompt",
-                return_value={"send_selector": "#composer-submit-button", "submission_evidence": "composer_cleared"},
+                return_value={"send_selector": "#composer-submit-button", "submission_evidence": "message_echo"},
             ),
             patch("cccc.ports.web_model_browser_sidecar._mark_page_pending_delivery") as mark_pending,
             patch("cccc.ports.web_model_browser_sidecar._wait_for_conversation_url", return_value="") as wait_conversation,
@@ -309,7 +309,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertEqual(browser["conversation_url"], "")
         self.assertTrue(browser["pending_conversation_url"])
         self.assertTrue(browser["submitted_without_conversation_url"])
-        self.assertEqual(browser["submission_evidence"], "composer_cleared")
+        self.assertEqual(browser["submission_evidence"], "message_echo")
 
     def test_multiple_projected_browser_viewers_do_not_evict_each_other(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime

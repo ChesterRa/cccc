@@ -642,6 +642,13 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "pending_new_chat_last_event_ids": list(turn.get("event_ids") or []),
                 "pending_new_chat_last_tab_url": str(browser_result.get("tab_url") or ""),
                 **pending_seed_state,
+                "last_delivery_at": utc_now_iso(),
+                "last_turn_id": str(turn.get("turn_id") or ""),
+                "last_event_ids": list(turn.get("event_ids") or []),
+                "last_delivery_id": pending_delivery_id,
+                "last_delivery_status": "pending",
+                "last_submission_evidence": str(browser_result.get("submission_evidence") or ""),
+                "last_send_selector": str(browser_result.get("send_selector") or ""),
                 "last_error": "conversation_url_pending",
             },
         )
@@ -752,6 +759,21 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "last_error": "",
                 },
             )
+        record_chatgpt_browser_state(
+            group.group_id,
+            aid,
+            {
+                "last_delivery_at": utc_now_iso(),
+                "last_turn_id": str(turn.get("turn_id") or ""),
+                "last_event_ids": list(turn.get("event_ids") or []),
+                "last_delivery_id": delivery_id,
+                "last_delivery_status": "submitted",
+                "last_submission_evidence": str(browser_result.get("submission_evidence") or ""),
+                "last_send_selector": str(browser_result.get("send_selector") or ""),
+                "last_tab_url": str(browser_result.get("tab_url") or ""),
+                "last_error": "",
+            },
+        )
         event = _append_delivery_event(
             group=group,
             actor_id=aid,
@@ -788,6 +810,26 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         }
 
     error = str(sidecar_result.get("error") or "browser sidecar failed")
+    stderr = str(sidecar_result.get("stderr") or "").strip()
+    stdout = str(sidecar_result.get("stdout") or "").strip()
+    if stderr:
+        error = f"{error}; stderr={stderr[-600:]}"
+    elif stdout:
+        error = f"{error}; stdout={stdout[-600:]}"
+    record_chatgpt_browser_state(
+        group.group_id,
+        aid,
+        {
+            "last_delivery_at": utc_now_iso(),
+            "last_turn_id": str(turn.get("turn_id") or ""),
+            "last_event_ids": list(turn.get("event_ids") or []),
+            "last_delivery_id": str(turn.get("delivery_id") or ""),
+            "last_delivery_status": "failed",
+            "last_submission_evidence": "",
+            "last_send_selector": "",
+            "last_error": error[:1200],
+        },
+    )
     update_headless_state(
         group.group_id,
         aid,

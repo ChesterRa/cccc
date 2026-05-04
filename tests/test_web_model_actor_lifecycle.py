@@ -157,6 +157,136 @@ class TestWebModelActorLifecycle(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_chatgpt_web_model_singleton_ignores_internal_actor_runtime_residue(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.actors import INTERNAL_KIND_VOICE_SECRETARY
+            from cccc.kernel.group import load_group
+
+            root = Path(home) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            group_id = self._create_attached_group(root)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc.setdefault("actors", []).append(
+                {
+                    "id": "voice-secretary",
+                    "title": "Voice Secretary",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "internal_kind": INTERNAL_KIND_VOICE_SECRETARY,
+                    "enabled": True,
+                }
+            )
+            group.save()
+
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "chatgpt-web",
+                    "title": "ChatGPT Web Model",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+
+            self.assertTrue(added.ok, getattr(added, "error", None))
+        finally:
+            cleanup()
+
+    def test_internal_actor_cannot_use_chatgpt_web_model_runtime_or_profile(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.actors import INTERNAL_KIND_VOICE_SECRETARY, add_actor
+            from cccc.kernel.group import load_group
+
+            root = Path(home) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            group_id = self._create_attached_group(root)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            add_actor(
+                group,
+                actor_id="voice-secretary",
+                title="Voice Secretary",
+                runtime="codex",
+                runner="headless",
+                internal_kind=INTERNAL_KIND_VOICE_SECRETARY,
+            )
+
+            direct, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "actor_id": "voice-secretary",
+                    "patch": {"runtime": "web_model", "runner": "headless"},
+                    "by": "user",
+                },
+            )
+            self.assertFalse(direct.ok)
+            self.assertIn("standard actors", direct.error.message)
+
+            profile, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "id": "web-profile",
+                        "name": "ChatGPT Web",
+                        "runtime": "web_model",
+                        "runner": "headless",
+                    },
+                },
+            )
+            self.assertTrue(profile.ok, getattr(profile, "error", None))
+
+            apply_profile, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "actor_id": "voice-secretary",
+                    "profile_id": "web-profile",
+                    "by": "user",
+                },
+            )
+            self.assertFalse(apply_profile.ok)
+            self.assertIn("standard actors", apply_profile.error.message)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_seed_does_not_inherit_web_model_runtime(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.voice_secretary_actor import build_voice_secretary_actor_seed
+
+            root = Path(home) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            group_id = self._create_attached_group(root)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            seed = build_voice_secretary_actor_seed(
+                group,
+                runtime="web_model",
+                runner="headless",
+                command=[],
+                env={},
+                default_scope_key="",
+                submit="enter",
+            )
+
+            self.assertEqual(seed.get("runtime"), "codex")
+            self.assertEqual(seed.get("runner"), "headless")
+            self.assertTrue(seed.get("command"))
+        finally:
+            cleanup()
+
     def test_actor_update_to_chatgpt_web_model_is_singleton_guarded(self) -> None:
         home, cleanup = self._with_home()
         try:

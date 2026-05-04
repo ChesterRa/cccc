@@ -28,7 +28,7 @@ from .actor_profile_runtime import (
     resolve_linked_actor_before_start,
 )
 from .actor_profile_store import ProfileResolver, get_actor_profile_by_ref, normalize_actor_profile_ref
-from .web_model_actor_policy import require_no_other_chatgpt_web_model_actor
+from .web_model_actor_policy import require_no_other_chatgpt_web_model_actor, require_standard_chatgpt_web_model_actor
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -128,7 +128,9 @@ def handle_actor_update(
     actor: Dict[str, Any]
     try:
         require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
+        current_actor = find_actor(group, actor_id) or {}
         if str(patch.get("runtime") or "").strip().lower() == "web_model":
+            require_standard_chatgpt_web_model_actor(current_actor)
             require_no_other_chatgpt_web_model_actor(group_id=group.group_id, actor_id=actor_id)
         if profile_action == "convert_to_custom":
             current = find_actor(group, actor_id)
@@ -140,6 +142,7 @@ def handle_actor_update(
             if not isinstance(profile, dict):
                 raise ValueError(f"profile not found: {current_profile_id}")
             if str(profile.get("runtime") or "").strip().lower() == "web_model":
+                require_standard_chatgpt_web_model_actor(current)
                 require_no_other_chatgpt_web_model_actor(group_id=group.group_id, actor_id=actor_id)
             apply_profile_link_to_actor(
                 group,
@@ -174,6 +177,7 @@ def handle_actor_update(
             if not isinstance(profile, dict):
                 raise ValueError(f"profile not found: {profile_id_arg}")
             if str(profile.get("runtime") or "").strip().lower() == "web_model":
+                require_standard_chatgpt_web_model_actor(current_actor)
                 require_no_other_chatgpt_web_model_actor(group_id=group.group_id, actor_id=actor_id)
             apply_profile_link_to_actor(
                 group,

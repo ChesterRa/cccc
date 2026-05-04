@@ -1011,8 +1011,13 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     headers=headers,
                 )
                 self.assertEqual(status.status_code, 200)
-                self.assertFalse(bool(((status.json().get("result") or {}).get("browser_session") or {}).get("active")))
-                self.assertEqual(((status.json().get("result") or {}).get("browser_surface") or {}).get("state"), "idle")
+                status_result = status.json().get("result") or {}
+                status_browser = status_result.get("browser_session") or {}
+                self.assertFalse(bool(status_browser.get("active")))
+                self.assertEqual((status_result.get("browser_surface") or {}).get("state"), "idle")
+                self.assertEqual((status_result.get("health_snapshot") or {}).get("schema"), "cccc.web_model.health.v1")
+                self.assertEqual((status_browser.get("health_snapshot") or {}).get("schema"), "cccc.web_model.health.v1")
+                self.assertEqual(((status_result.get("health_snapshot") or {}).get("next_action") or {}).get("recommended"), "open_chatgpt")
 
                 opened = client.post(
                     "/api/v1/web-model/browser-session/open",

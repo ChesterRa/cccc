@@ -49,6 +49,10 @@ def build_voice_secretary_actor_seed(
     runner_value = str(runner or "").strip()
     runner = runner_value if runner_value else "pty"
     runtime = runtime_value if runtime_value else "codex"
+    if runtime.lower() == "web_model":
+        runtime = "codex"
+        runner = "headless"
+        command = get_runtime_command_with_flags(runtime)
     if runtime_start_preflight_error(runtime, list(command), runner=runner):
         for candidate in PRIMARY_RUNTIMES:
             if not detect_runtime(candidate).available:

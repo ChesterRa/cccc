@@ -77,6 +77,11 @@ def _coerce_optional_int(value: Any, *, minimum: int, maximum: int) -> int | Non
     return max(minimum, min(maximum, out))
 
 
+def _mcp_error(code: str, message: str, recommended_action: str = "") -> MCPError:
+    details = {"recommended_action": recommended_action} if str(recommended_action or "").strip() else None
+    return MCPError(code=code, message=message, details=details)
+
+
 def _repo_root(group_id: str) -> tuple[Any, Path, str]:
     gid = str(group_id or "").strip()
     if not gid:
@@ -294,12 +299,13 @@ def _assert_expected_sha256(path: Path, expected_sha256: str) -> str:
         raise MCPError(code="not_found", message=f"file not found for expected_sha256 check: {path}")
     current = _sha256_file(path)
     if current.lower() != expected:
-        raise MCPError(
+        raise _mcp_error(
             code="stale_file",
             message=(
                 "file changed since it was read; re-read cccc_repo(action=read), then retry with the new sha256 "
                 f"(current_sha256={current})"
             ),
+            recommended_action="Re-read the target file with cccc_repo(action='read') and retry the write/replace with the returned sha256.",
         )
     return current
 
@@ -388,9 +394,17 @@ def _find_line_sequence(lines: List[str], needle: List[str]) -> int:
             if len(matches) > 1:
                 break
     if not matches:
-        raise MCPError(code="patch_context_not_found", message="Codex patch context was not found")
+        raise _mcp_error(
+            code="patch_context_not_found",
+            message="Codex patch context was not found",
+            recommended_action="Re-read the current file around the intended location, then retry with a smaller exact Codex patch or use cccc_repo_edit(action='replace').",
+        )
     if len(matches) > 1:
-        raise MCPError(code="patch_context_ambiguous", message="Codex patch context matched multiple locations")
+        raise _mcp_error(
+            code="patch_context_ambiguous",
+            message="Codex patch context matched multiple locations",
+            recommended_action="Add more surrounding context to the Codex patch or use cccc_repo_edit(action='replace', expected_replacements=1).",
+        )
     return matches[0]
 
 
@@ -426,9 +440,17 @@ def _apply_update_hunks(original: str, hunks: List[List[str]]) -> str:
 def _split_codex_patch_sections(patch: str) -> List[tuple[str, str, List[str]]]:
     raw_lines = str(patch or "").splitlines()
     if not raw_lines or raw_lines[0].strip() != "*** Begin Patch":
-        raise MCPError(code="invalid_patch", message="Codex apply_patch must start with *** Begin Patch")
+        raise _mcp_error(
+            code="invalid_patch",
+            message="Codex apply_patch must start with *** Begin Patch",
+            recommended_action="Use Codex patch format exactly: *** Begin Patch, file operation headers, hunks, then *** End Patch.",
+        )
     if raw_lines[-1].strip() != "*** End Patch":
-        raise MCPError(code="invalid_patch", message="Codex apply_patch must end with *** End Patch")
+        raise _mcp_error(
+            code="invalid_patch",
+            message="Codex apply_patch must end with *** End Patch",
+            recommended_action="Use Codex patch format exactly and include a final *** End Patch line.",
+        )
     sections: List[tuple[str, str, List[str]]] = []
     current_action = ""
     current_path = ""
@@ -628,20 +650,23 @@ def repo_tool(
             raise MCPError(code="file_too_large", message="file is too large for replace; use a smaller file or cccc_shell")
         count = text.count(old)
         if count <= 0:
-            raise MCPError(
+            raise _mcp_error(
                 code="old_text_not_found",
                 message="old_text was not found; re-read the file and retry with exact current text",
+                recommended_action="Call cccc_repo(action='read') for the target path, copy the exact current text, and retry replace with expected_sha256.",
             )
         expected = _coerce_optional_int(expected_replacements, minimum=1, maximum=10000)
         if expected is not None and count != expected:
-            raise MCPError(
+            raise _mcp_error(
                 code="replacement_count_mismatch",
                 message=f"old_text matched {count} times, expected {expected}; re-read and use a more specific old_text",
+                recommended_action="Re-read the file and either set the correct expected_replacements or choose a more specific old_text block.",
             )
         if not bool(replace_all) and count != 1:
-            raise MCPError(
+            raise _mcp_error(
                 code="ambiguous_old_text",
                 message=f"old_text matched {count} times; pass replace_all=true or use a more specific old_text",
+                recommended_action="Use a larger exact old_text block, set expected_replacements=1, or intentionally pass replace_all=true.",
             )
         updated = text.replace(old, str(new_text or ""), -1 if bool(replace_all) else 1)
         if len(updated) > _MAX_WRITE_CHARS:
@@ -677,16 +702,25 @@ def repo_tool(
             new = str(item.get("new_text") or "")
             count = updated.count(old)
             if count <= 0:
-                raise MCPError(code="old_text_not_found", message=f"replacement {index} old_text was not found")
+                raise _mcp_error(
+                    code="old_text_not_found",
+                    message=f"replacement {index} old_text was not found",
+                    recommended_action="Re-read the target file and rebuild the multi_replace list from exact current text.",
+                )
             expected = _coerce_optional_int(item.get("expected_replacements"), minimum=1, maximum=10000)
             if expected is not None and count != expected:
-                raise MCPError(
+                raise _mcp_error(
                     code="replacement_count_mismatch",
                     message=f"replacement {index} old_text matched {count} times, expected {expected}",
+                    recommended_action="Adjust expected_replacements or make the replacement old_text more specific after re-reading the file.",
                 )
             replace_all_item = bool(item.get("replace_all"))
             if not replace_all_item and count != 1:
-                raise MCPError(code="ambiguous_old_text", message=f"replacement {index} old_text matched {count} times")
+                raise _mcp_error(
+                    code="ambiguous_old_text",
+                    message=f"replacement {index} old_text matched {count} times",
+                    recommended_action="Use a more specific old_text block for this replacement or explicitly set replace_all=true.",
+                )
             updated = updated.replace(old, new, -1 if replace_all_item else 1)
             applied += count if replace_all_item else 1
         if len(updated) > _MAX_WRITE_CHARS:
@@ -704,7 +738,11 @@ def repo_tool(
     if act == "apply_patch":
         payload = str(patch or "")
         if not payload.strip():
-            raise MCPError(code="missing_patch", message="patch is required")
+            raise _mcp_error(
+                code="missing_patch",
+                message="patch is required",
+                recommended_action="Pass a complete Codex *** Begin Patch block in patch/input.",
+            )
         if len(payload.encode("utf-8")) > _MAX_PATCH_BYTES:
             raise MCPError(code="patch_too_large", message="patch is too large")
         return apply_codex_patch_tool(group_id=group_id, patch=payload)

@@ -505,7 +505,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any]) -> Dict[str, Any]:
         from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
-        from ...web_model_browser_sidecar import chatgpt_browser_session_status
+        from ...web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot, chatgpt_browser_session_status
 
         surface = browser_surface or await run_in_threadpool(
             get_web_model_chatgpt_browser_session_state,
@@ -513,7 +513,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             actor_id=actor_id,
         )
         browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
-        return {"ok": True, "result": {"browser_session": browser, "browser_surface": surface}}
+        health_snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id=group_id,
+            actor_id=actor_id,
+            browser_session=browser,
+            browser_surface=surface if isinstance(surface, dict) else {},
+        )
+        browser = {**browser, "health_snapshot": health_snapshot}
+        return {"ok": True, "result": {"browser_session": browser, "browser_surface": surface, "health_snapshot": health_snapshot}}
 
     @global_router.get("/api/v1/web-model/browser-session", dependencies=[Depends(require_admin)])
     async def web_model_browser_session_status(group_id: str, actor_id: str) -> Dict[str, Any]:

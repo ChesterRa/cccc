@@ -317,6 +317,83 @@ try {
         finally:
             cleanup()
 
+    def test_code_mode_exposes_tool_help_and_common_work_loops(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.common import runtime_context_override
+
+        home, _workspace, group, cleanup = self._with_home_and_group()
+        try:
+            source = r'''
+const help = tool_help("repo");
+const full = tool_help("repo", { detail: "schema" });
+const turn = tool_help("turn_complete");
+const finish = tool_help("finish_turn");
+const names = tool_names("turn_complete");
+const finishNames = tool_names("finish_turn");
+const repoNames = tool_names("repo");
+const messageNames = tool_names("message");
+const files = list_tools("file");
+text(JSON.stringify({
+  hasRepo: help.tools.some((tool) => tool.raw_name === "cccc_repo"),
+  compactByDefault: help.tools.every((tool) => tool.summary && !tool.description),
+  fullHasSchemaText: full.tools.some((tool) => tool.description && tool.description.includes("inputSchema")),
+  turnCompleteAlias: names[0] === "cccc_runtime_complete_turn",
+  finishCurated: finishNames.slice(0, 4).join(",") === "cccc_message_reply,cccc_message_send,cccc_agent_state,cccc_runtime_complete_turn",
+  finishNoRepoNoise: !finishNames.includes("cccc_apply_patch"),
+  finishToolsNarrow: finish.tools.slice(0, 4).every((tool) => ["cccc_message_reply", "cccc_message_send", "cccc_agent_state", "cccc_runtime_complete_turn"].includes(tool.raw_name)),
+  repoRanking: repoNames.slice(0, 4).join(",") === "cccc_repo,cccc_repo_edit,cccc_apply_patch,cccc_git",
+  messageRanking: messageNames.slice(0, 2).join(",") === "cccc_message_reply,cccc_message_send",
+  finishLoopAlias: turn.common_work_loops.some((loop) => loop.name === "finish_turn"),
+  fileListCompact: files.some((tool) => tool.raw_name === "cccc_file" && tool.summary),
+  hasPatchLoop: COMMON_WORK_LOOPS.some((loop) => loop.name === "patch_safely"),
+  usage: help.usage.includes("tools.<name>"),
+}));
+'''
+            with runtime_context_override(home=str(home), group_id=group.group_id, actor_id="peer1"):
+                out = mcp_server.handle_tool_call("cccc_code_exec", {"source": source, "yield_time_ms": 5000})
+            self.assertEqual(out.get("status"), "completed")
+            payload = str(out.get("output") or "")
+            self.assertIn('"hasRepo":true', payload)
+            self.assertIn('"compactByDefault":true', payload)
+            self.assertIn('"fullHasSchemaText":true', payload)
+            self.assertIn('"turnCompleteAlias":true', payload)
+            self.assertIn('"finishCurated":true', payload)
+            self.assertIn('"finishNoRepoNoise":true', payload)
+            self.assertIn('"finishToolsNarrow":true', payload)
+            self.assertIn('"repoRanking":true', payload)
+            self.assertIn('"messageRanking":true', payload)
+            self.assertIn('"finishLoopAlias":true', payload)
+            self.assertIn('"fileListCompact":true', payload)
+            self.assertIn('"hasPatchLoop":true', payload)
+            self.assertIn('"usage":true', payload)
+        finally:
+            cleanup()
+
+    def test_code_mode_nested_errors_include_recommended_action(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.common import runtime_context_override
+
+        home, workspace, group, cleanup = self._with_home_and_group()
+        try:
+            (workspace / "app.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+            source = r'''
+try {
+  await tools.cccc_repo_edit({ action: "replace", path: "app.txt", old_text: "missing", new_text: "x" });
+  text("unexpected");
+} catch (err) {
+  text(String(err.message || err));
+}
+'''
+            with runtime_context_override(home=str(home), group_id=group.group_id, actor_id="peer1"):
+                out = mcp_server.handle_tool_call("cccc_code_exec", {"source": source, "yield_time_ms": 5000})
+            self.assertEqual(out.get("status"), "completed")
+            output = str(out.get("output") or "")
+            self.assertIn("old_text_not_found", output)
+            self.assertIn("recommended_action", output)
+            self.assertIn("cccc_repo(action='read')", output)
+        finally:
+            cleanup()
+
     def test_code_mode_keeps_node_host_apis_out_of_sandbox(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.common import runtime_context_override

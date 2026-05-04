@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from ...kernel.actors import list_actors
+from ...kernel.actors import is_internal_actor, list_actors
 from ...kernel.group import load_group
 from ...kernel.registry import load_registry
 from ...paths import ensure_home
@@ -23,6 +23,23 @@ def _group_ids_from_home() -> list[str]:
     return sorted(group_id for group_id in group_ids if group_id)
 
 
+def is_chatgpt_web_model_actor(actor: Dict[str, Any]) -> bool:
+    return (
+        isinstance(actor, dict)
+        and str(actor.get("runtime") or "").strip().lower() == "web_model"
+        and not is_internal_actor(actor)
+    )
+
+
+def require_standard_chatgpt_web_model_actor(actor: Dict[str, Any]) -> None:
+    if is_internal_actor(actor):
+        actor_id = str(actor.get("id") or "").strip() or "internal actor"
+        raise ValueError(
+            "ChatGPT Web Model runtime is only available to standard actors "
+            f"(actor {actor_id} is internal)."
+        )
+
+
 def find_existing_chatgpt_web_model_actor(
     *,
     exclude_group_id: str = "",
@@ -39,7 +56,7 @@ def find_existing_chatgpt_web_model_actor(
         for actor in list_actors(group):
             if not isinstance(actor, dict):
                 continue
-            if str(actor.get("runtime") or "").strip().lower() != "web_model":
+            if not is_chatgpt_web_model_actor(actor):
                 continue
             actor_id = str(actor.get("id") or "").strip()
             if group_id == excluded_group and actor_id == excluded_actor:
