@@ -337,7 +337,7 @@ export default function WebModelConnectorsTab({
       setBrowserSession(null);
       return;
     }
-    const resp = await api.fetchWebModelBrowserSession(gid, aid);
+    const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
     if (resp.ok) {
       const nextSession = resp.result?.browser_session || null;
       const key = browserSessionKey(gid, aid);
@@ -361,7 +361,7 @@ export default function WebModelConnectorsTab({
       rows.map(async (actor) => {
         const aid = String(actor.id || "").trim();
         if (!aid) return null;
-        const resp = await api.fetchWebModelBrowserSession(gid, aid);
+        const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
         return [aid, resp.ok ? resp.result?.browser_session || {} : {}] as const;
       }),
     );
@@ -562,7 +562,7 @@ export default function WebModelConnectorsTab({
     const refresh = async () => {
       const gid = groupId;
       const aid = actorId;
-      const resp = await api.fetchWebModelBrowserSession(gid, aid);
+      const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
       if (cancelled) return;
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || {};

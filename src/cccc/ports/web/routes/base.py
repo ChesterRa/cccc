@@ -503,7 +503,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": "web-model connector not found", "details": {}})
         return {"ok": True, "result": {"revoked": True, "connector_id": str(connector_id or "").strip()}}
 
-    async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any], *, inspect: bool = True) -> Dict[str, Any]:
+    async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any], *, inspect: bool = False) -> Dict[str, Any]:
         from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
         from ...web_model_browser_sidecar import (
             build_chatgpt_web_model_health_snapshot,
@@ -528,12 +528,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {"ok": True, "result": {"browser_session": browser, "browser_surface": surface, "health_snapshot": health_snapshot}}
 
     @global_router.get("/api/v1/web-model/browser-session", dependencies=[Depends(require_admin)])
-    async def web_model_browser_session_status(group_id: str, actor_id: str, inspect: bool = True) -> Dict[str, Any]:
+    async def web_model_browser_session_status(group_id: str, actor_id: str, inspect: bool = False) -> Dict[str, Any]:
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
         return await _web_model_browser_payload(group_id, actor_id, {}, inspect=bool(inspect))
 
     @global_router.post("/api/v1/web-model/browser-session/open", dependencies=[Depends(require_admin)])
-    async def web_model_browser_session_open(req: WebModelBrowserSessionRequest, inspect: bool = True) -> Dict[str, Any]:
+    async def web_model_browser_session_open(req: WebModelBrowserSessionRequest, inspect: bool = False) -> Dict[str, Any]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
@@ -574,11 +574,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id)
+        from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
         from ...web_model_browser_sidecar import (
             CHATGPT_URL,
             _conversation_url_from_tab,
             _normalize_chatgpt_url,
-            chatgpt_browser_session_status,
+            chatgpt_browser_session_cached_status,
             record_chatgpt_browser_state,
         )
 
@@ -608,8 +609,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             )
             return await _web_model_browser_payload(group_id, actor_id, {})
 
-        browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
-        raw_url = str(req.conversation_url or browser.get("tab_url") or browser.get("last_tab_url") or "").strip()
+        surface = await run_in_threadpool(get_web_model_chatgpt_browser_session_state, group_id=group_id, actor_id=actor_id)
+        browser = await run_in_threadpool(chatgpt_browser_session_cached_status, group_id, actor_id)
+        raw_url = str(
+            req.conversation_url
+            or (surface.get("url") if isinstance(surface, dict) else "")
+            or browser.get("tab_url")
+            or browser.get("last_tab_url")
+            or ""
+        ).strip()
         conversation_url = _conversation_url_from_tab(raw_url)
         pending_url = _normalize_chatgpt_url(raw_url) if raw_url else ""
         if bool(req.new_chat):

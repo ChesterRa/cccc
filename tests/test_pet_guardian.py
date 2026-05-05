@@ -440,13 +440,13 @@ class TestPetActorSeed(unittest.TestCase):
         from cccc.kernel.pet_actor import _pet_actor_seed
 
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "cccc.kernel.pet_actor.runtime_start_preflight_error",
+            "cccc.kernel.internal_assistant_runtime.runtime_start_preflight_error",
             side_effect=lambda runtime, command, runner="pty": "missing" if runtime == "codex" else "",
         ), patch(
-            "cccc.kernel.pet_actor.detect_runtime",
+            "cccc.kernel.internal_assistant_runtime.detect_runtime",
             side_effect=lambda name: type("RuntimeInfo", (), {"available": name == "claude"})(),
         ), patch(
-            "cccc.kernel.pet_actor.get_runtime_command_with_flags",
+            "cccc.kernel.internal_assistant_runtime.get_runtime_command_with_flags",
             side_effect=lambda name: [name, "--dangerously-skip-permissions"],
         ):
             group = _FakeGroup("g-demo", Path(tmp))

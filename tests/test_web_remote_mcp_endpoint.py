@@ -993,6 +993,10 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             with (
                 patch(
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
+                    side_effect=AssertionError("deep inspection should not run for browser-session status"),
+                ),
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_cached_status",
                     return_value={"active": False, "tab_url": "https://chatgpt.com/c/test-chat"},
                 ),
                 patch("cccc.ports.web_model_browser_sidecar.record_chatgpt_browser_state") as record_browser_state,
@@ -1098,7 +1102,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                 ),
             ):
                 status = client.get(
-                    f"/api/v1/web-model/browser-session?group_id={group.group_id}&actor_id=peer1&inspect=false",
+                    f"/api/v1/web-model/browser-session?group_id={group.group_id}&actor_id=peer1",
                     headers=headers,
                 )
 

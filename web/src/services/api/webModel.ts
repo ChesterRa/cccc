@@ -168,11 +168,16 @@ export async function revokeWebModelConnector(connectorId: string) {
   );
 }
 
-export async function fetchWebModelBrowserSession(groupId: string, actorId: string) {
+export async function fetchWebModelBrowserSession(
+  groupId: string,
+  actorId: string,
+  options?: { inspect?: boolean },
+) {
   const params = new URLSearchParams({
     group_id: String(groupId || "").trim(),
     actor_id: String(actorId || "").trim(),
   });
+  if (typeof options?.inspect === "boolean") params.set("inspect", options.inspect ? "true" : "false");
   return apiJson<{ browser_session: WebModelBrowserSession }>(`/api/v1/web-model/browser-session?${params.toString()}`);
 }
 

@@ -283,7 +283,7 @@ export function WebModelRuntimePanel({
     if (!isVisible || !groupId || !actorId) return;
     let cancelled = false;
     setBusyAction("load");
-    void api.fetchWebModelBrowserSession(groupId, actorId)
+    void api.fetchWebModelBrowserSession(groupId, actorId, { inspect: false })
       .then((resp) => {
         if (cancelled) return;
         if (!resp.ok) {
