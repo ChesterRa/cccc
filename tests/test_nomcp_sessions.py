@@ -12,9 +12,11 @@ from fastapi.testclient import TestClient
 class TestNomcpSessions(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
+        old_public_url = os.environ.get("CCCC_WEB_PUBLIC_URL")
         td_ctx = tempfile.TemporaryDirectory()
         td = td_ctx.__enter__()
         os.environ["CCCC_HOME"] = td
+        os.environ["CCCC_WEB_PUBLIC_URL"] = "https://cccc.example.test/ui/"
 
         def cleanup() -> None:
             td_ctx.__exit__(None, None, None)
@@ -22,6 +24,10 @@ class TestNomcpSessions(unittest.TestCase):
                 os.environ.pop("CCCC_HOME", None)
             else:
                 os.environ["CCCC_HOME"] = old_home
+            if old_public_url is None:
+                os.environ.pop("CCCC_WEB_PUBLIC_URL", None)
+            else:
+                os.environ["CCCC_WEB_PUBLIC_URL"] = old_public_url
 
         return Path(td), cleanup
 
@@ -86,6 +92,7 @@ class TestNomcpSessions(unittest.TestCase):
         secret = str(result.get("secret") or "")
         self.assertTrue(str(session.get("sid") or "").startswith("nomcp_"))
         self.assertTrue(secret.startswith("nomcps_"))
+        self.assertIn("https://cccc.example.test/nomcp/s/", str(session.get("session_url_with_token") or ""))
         self.assertIn("?token=", str(session.get("session_url_with_token") or ""))
         return session, secret
 
@@ -112,10 +119,14 @@ class TestNomcpSessions(unittest.TestCase):
             self.assertEqual(listed.get("sid"), sid)
             self.assertFalse(listed.get("secret_available"))
             self.assertNotIn("session_url_with_token", listed)
+            self.assertGreaterEqual(int(listed.get("resource_count") or 0), 1)
+            self.assertGreaterEqual(int(listed.get("changed_file_count") or 0), 1)
 
             home_resp = client.get(f"/nomcp/s/{sid}", params={"token": secret})
             self.assertEqual(home_resp.status_code, 200)
             self.assertIn("Recommended Reading Order", home_resp.text)
+            self.assertIn("Status Summary", home_resp.text)
+            self.assertIn("Diff Summary", home_resp.text)
 
             resources = client.get(f"/nomcp/s/{sid}/resources", params={"token": secret, "format": "md"})
             self.assertEqual(resources.status_code, 200)
@@ -255,6 +266,8 @@ class TestNomcpSessions(unittest.TestCase):
             self.assertEqual(revoke.status_code, 200)
             revoked = client.get(f"/nomcp/s/{sid}/read", params={"token": secret, "path": "README.md", "format": "json"})
             self.assertEqual(revoked.status_code, 410)
+            revoked_send = client.post(f"/nomcp/s/{sid}/send?token={secret}", data={"msg_id": "revoked", "text": "body"})
+            self.assertEqual(revoked_send.status_code, 410)
 
             session2, secret2 = self._create_session(client, admin, group.group_id)
             path = home / "state" / "nomcp_sessions" / f"{session2['sid']}.json"
@@ -263,6 +276,8 @@ class TestNomcpSessions(unittest.TestCase):
             path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
             expired = client.get(f"/nomcp/s/{session2['sid']}/read", params={"token": secret2, "path": "README.md", "format": "json"})
             self.assertEqual(expired.status_code, 410)
+            expired_send = client.post(f"/nomcp/s/{session2['sid']}/send?token={secret2}", data={"msg_id": "expired", "text": "body"})
+            self.assertEqual(expired_send.status_code, 410)
         finally:
             cleanup()
 

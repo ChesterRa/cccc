@@ -16,6 +16,7 @@ import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment, Task } from "../types";
 import * as api from "../services/api";
+import { formatEventLine } from "../components/messageBubble/helpers";
 import { buildReplyComposerState } from "../utils/chatReply";
 import { copyTextToClipboard } from "../utils/copy";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
@@ -1406,6 +1407,45 @@ export function useChatTab({
     [selectedGroupId, showNotice, showError]
   );
 
+  const createNomcpReviewLink = useCallback(
+    async (ev: LedgerEvent) => {
+      const eventId = String(ev?.id || "").trim();
+      if (!selectedGroupId || !eventId) return;
+      try {
+        const eventText = formatEventLine(ev).trim();
+        const briefParts = [
+          "Review this CCCC event and the linked read-only project context. Return advisory findings only; this URL does not grant local execution access.",
+          eventText ? `Event text:\n${eventText.slice(0, 2400)}` : "",
+        ].filter(Boolean);
+        const resp = await api.createNomcpSession({
+          groupId: selectedGroupId,
+          title: `No-MCP review for ${eventId.slice(0, 8)}`,
+          brief: briefParts.join("\n\n"),
+          recipient: "user",
+          replyToEventId: eventId,
+        });
+        if (!resp.ok) {
+          showError(resp.error?.message || "Failed to create No-MCP review link");
+          return;
+        }
+        const url = String(resp.result?.session?.session_url_with_token || "").trim();
+        if (!url) {
+          showError("No-MCP review link was created, but no copyable URL was returned.");
+          return;
+        }
+        const ok = await copyTextToClipboard(url);
+        if (ok) {
+          showNotice({ message: "No-MCP review link copied" });
+        } else {
+          showError("Failed to copy No-MCP review link");
+        }
+      } catch (err) {
+        showError(err instanceof Error ? err.message : "Failed to create No-MCP review link");
+      }
+    },
+    [selectedGroupId, showNotice, showError]
+  );
+
   const copyMessageText = useCallback(
     async (ev: LedgerEvent) => {
       if (ev.kind !== "chat.message") return;
@@ -1592,6 +1632,7 @@ export function useChatTab({
     // Actions
     sendMessage,
     copyMessageLink,
+    createNomcpReviewLink,
     copyMessageText,
     startReply,
     showRecipients,

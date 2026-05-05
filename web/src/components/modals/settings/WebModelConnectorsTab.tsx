@@ -727,6 +727,10 @@ export default function WebModelConnectorsTab({
       setError("Select a group before creating a No-MCP advisory URL.");
       return "";
     }
+    if (!publicEndpointReady) {
+      setError("Set a public HTTPS Web URL before creating a No-MCP advisory URL.");
+      return "";
+    }
     setNomcpBusy(true);
     setError("");
     try {
@@ -1206,6 +1210,8 @@ export default function WebModelConnectorsTab({
                               <>
                                 <span>{nomcpDetail}</span>
                                 {nomcpSession.expires_at ? <span> · expires {formatTime(nomcpSession.expires_at)}</span> : null}
+                                <span> · {Number(nomcpSession.resource_count || 0)} resources</span>
+                                <span> · {Number(nomcpSession.changed_file_count || 0)} changed</span>
                               </>
                             ) : "No advisory URL yet"}
                           </span>
@@ -1213,6 +1219,17 @@ export default function WebModelConnectorsTab({
                             <>
                               <span>No-MCP id</span>
                               <span className="break-all font-mono">{nomcpSession.sid}</span>
+                            </>
+                          ) : null}
+                          {nomcpSession?.latest_advisory_event_id ? (
+                            <>
+                              <span>Latest advisory</span>
+                              <span className="break-all font-mono">{nomcpSession.latest_advisory_event_id}</span>
+                            </>
+                          ) : nomcpSession ? (
+                            <>
+                              <span>Advisories</span>
+                              <span>{Number(nomcpSession.advisory_count || 0)}</span>
                             </>
                           ) : null}
                           {rowSession.last_turn_id ? (
@@ -1304,7 +1321,7 @@ export default function WebModelConnectorsTab({
                       <button
                         type="button"
                         onClick={() => void copyNomcpAdvisoryUrl()}
-                        disabled={nomcpBusy || !groupId}
+                        disabled={nomcpBusy || !groupId || !publicEndpointReady}
                         className={nomcpUrl ? secondaryButtonClass("sm") : secondaryButtonClass("sm")}
                       >
                         {nomcpUrl ? "Copy No-MCP URL" : nomcpSession ? "Rotate No-MCP URL" : "Create No-MCP URL"}

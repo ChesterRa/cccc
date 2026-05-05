@@ -63,17 +63,18 @@ def _base_url(request: Request) -> str:
         if base.endswith("/ui"):
             base = base[: -len("/ui")]
         return base.rstrip("/")
-    return str(request.base_url).rstrip("/")
+    return ""
 
 
 def _with_url(request: Request, payload: Dict[str, Any], secret: str = "") -> Dict[str, Any]:
     sid = str(payload.get("sid") or "").strip()
     out = dict(payload)
+    base_url = _base_url(request)
     if sid:
-        out["session_url"] = f"{_base_url(request)}/nomcp/s/{sid}"
+        out["session_url"] = f"{base_url}/nomcp/s/{sid}" if base_url else ""
     if sid and secret:
-        out["session_url_with_token"] = nomcp_token_url(_base_url(request), sid, secret)
-        out["secret_available"] = True
+        out["session_url_with_token"] = nomcp_token_url(base_url, sid, secret) if base_url else ""
+        out["secret_available"] = bool(base_url)
     else:
         out["secret_available"] = False
     return out
@@ -99,6 +100,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def nomcp_sessions_create(req: NomcpSessionCreateRequest, request: Request) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(status_code=403, detail={"code": "read_only", "message": "No-MCP session creation is disabled in read-only mode.", "details": {}})
+        if not _base_url(request):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "public_url_required", "message": "Configure a public HTTPS Web URL before creating a No-MCP session.", "details": {}},
+            )
         try:
             result = await run_in_threadpool(
                 create_nomcp_session,

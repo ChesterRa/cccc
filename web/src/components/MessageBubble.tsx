@@ -538,6 +538,7 @@ export interface MessageBubbleProps {
     onReply: () => void;
     onShowRecipients: () => void;
     onCopyLink?: (eventId: string) => void;
+    onCreateNomcpReviewLink?: (ev: LedgerEvent) => void;
     onCopyContent?: (ev: LedgerEvent) => void;
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -562,6 +563,7 @@ export const MessageBubble = memo(function MessageBubble({
     onReply,
     onShowRecipients,
     onCopyLink,
+    onCreateNomcpReviewLink,
     onCopyContent: _onCopyContent,
     onRelay,
     onOpenSource,
@@ -957,6 +959,7 @@ export const MessageBubble = memo(function MessageBubble({
                     onCopyMessageText={() => void handleCopyMessageText()}
                     onShowRecipients={onShowRecipients}
                     onCopyLink={onCopyLink}
+                    onCreateNomcpReviewLink={onCreateNomcpReviewLink}
                     onRelay={onRelay}
                     onReply={onReply}
                     canReply={canReply}
@@ -979,6 +982,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.isHighlighted === nextProps.isHighlighted &&
         prevProps.collapseHeader === nextProps.collapseHeader &&
         prevProps.onRelay === nextProps.onRelay &&
+        prevProps.onCreateNomcpReviewLink === nextProps.onCreateNomcpReviewLink &&
         prevProps.onOpenSource === nextProps.onOpenSource &&
         prevProps.onOpenPresentationRef === nextProps.onOpenPresentationRef &&
         prevProps.onOpenTaskRef === nextProps.onOpenTaskRef &&

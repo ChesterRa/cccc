@@ -58,6 +58,7 @@ export interface VirtualMessageListProps {
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
+  onCreateNomcpReviewLink?: (ev: LedgerEvent) => void;
   onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -97,6 +98,7 @@ type VirtualMessageRowProps = {
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
+  onCreateNomcpReviewLink?: (ev: LedgerEvent) => void;
   onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -124,6 +126,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onReply,
   onShowRecipients,
   onCopyLink,
+  onCreateNomcpReviewLink,
   onCopyContent,
   onRelay,
   onOpenSource,
@@ -171,6 +174,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
           }
         }}
         onCopyLink={onCopyLink}
+        onCreateNomcpReviewLink={onCreateNomcpReviewLink}
         onCopyContent={onCopyContent}
         onRelay={onRelay}
         onOpenSource={onOpenSource}
@@ -202,6 +206,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onReply,
   onShowRecipients,
   onCopyLink,
+  onCreateNomcpReviewLink,
   onCopyContent,
   onRelay,
   onOpenSource,
@@ -1060,6 +1065,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     onReply={onReply}
                     onShowRecipients={onShowRecipients}
                     onCopyLink={onCopyLink}
+                    onCreateNomcpReviewLink={onCreateNomcpReviewLink}
                     onCopyContent={onCopyContent}
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}
@@ -1103,6 +1109,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                         }
                       }}
                       onCopyLink={onCopyLink}
+                      onCreateNomcpReviewLink={onCreateNomcpReviewLink}
                       onCopyContent={onCopyContent}
                       onRelay={onRelay}
                       onOpenSource={onOpenSource}

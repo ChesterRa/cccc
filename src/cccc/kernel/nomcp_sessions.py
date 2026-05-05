@@ -373,11 +373,26 @@ def create_nomcp_session(
 
 def mask_nomcp_session(session: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(session)
+    sent_messages = session.get("sent_messages") if isinstance(session.get("sent_messages"), dict) else {}
     out.pop("token_hash", None)
     out.pop("secret", None)
     out.pop("sent_messages", None)
     out["revoked"] = bool(str(session.get("revoked_at") or "").strip())
     out["expired"] = is_nomcp_session_expired(session)
+    out["advisory_count"] = len(sent_messages)
+    latest = sorted(
+        (item for item in sent_messages.values() if isinstance(item, dict)),
+        key=lambda item: str(item.get("at") or ""),
+        reverse=True,
+    )
+    out["latest_advisory_event_id"] = str((latest[0] if latest else {}).get("event_id") or "")
+    try:
+        resources = session_resources(session)
+        out["resource_count"] = int(resources.get("count") or 0)
+        out["changed_file_count"] = len(resources.get("changed_files") or [])
+    except Exception:
+        out["resource_count"] = 0
+        out["changed_file_count"] = 0
     return out
 
 
@@ -602,6 +617,7 @@ def session_diff(session: Dict[str, Any], rel_path: str = "") -> Dict[str, Any]:
 
 def _format_home(session: Dict[str, Any], token: str, *, markdown: bool = False) -> str:
     status = session_status(session)
+    diff = session_diff(session)
     resources = session_resources(session, token)
     sid = str(session.get("sid") or "")
     base = f"/nomcp/s/{sid}"
@@ -639,6 +655,18 @@ def _format_home(session: Dict[str, Any], token: str, *, markdown: bool = False)
             f"- Resources: {links['resources']}?token={token}",
             f"- Search: {links['search']}&token={token}",
             "",
+            "## Status Summary",
+            f"- Scope: {status.get('scope_key') or ''}",
+            f"- Branch: {status.get('branch') or ''}",
+            f"- Head: {status.get('head') or ''}",
+            f"- Changed files: {', '.join(str(item) for item in (status.get('changed_files') or [])[:20]) or 'none'}",
+            "",
+            "## Diff Summary",
+            "```",
+            str(diff.get("stat") or "no diff stat"),
+            str(diff.get("name_status") or ""),
+            "```",
+            "",
             "## Changed Files",
         ])
         lines.extend([f"- {item}: {_link_markdown(_read_url(base, item), token)}" for item in changed[:40]] or ["- none"])
@@ -661,6 +689,8 @@ def _format_home(session: Dict[str, Any], token: str, *, markdown: bool = False)
         f"<li>{_link(_read_url(base, item), token, item)}</li>"
         for item in changed[:40]
     ) or "<li>none</li>"
+    status_changed = ", ".join(html.escape(str(item)) for item in changed[:20]) or "none"
+    diff_summary = "\n".join(part for part in (str(diff.get("stat") or "no diff stat"), str(diff.get("name_status") or "")) if part.strip())
     warning_html = f'<p class="warn">{html.escape(warning)}</p>' if warning else ""
     return f"""<!doctype html>
 <meta charset="utf-8">
@@ -686,6 +716,14 @@ pre {{ background: #f6f7f9; padding: 12px; overflow: auto; border-radius: 8px; }
 <h2>Project Context</h2>
 <p class="muted">Group <code>{html.escape(str(session.get("group_id") or ""))}</code>, scope <code>{html.escape(str(session.get("scope_key") or ""))}</code>.</p>
 <ul>{body_links}</ul>
+<h2>Status Summary</h2>
+<ul>
+<li>Branch: <code>{html.escape(str(status.get("branch") or ""))}</code></li>
+<li>Head: <code>{html.escape(str(status.get("head") or ""))}</code></li>
+<li>Changed files: {status_changed}</li>
+</ul>
+<h2>Diff Summary</h2>
+<pre>{html.escape(diff_summary)}</pre>
 <h2>Changed Files</h2>
 <ul>{changed_links}</ul>
 <h2>Advisory Return</h2>

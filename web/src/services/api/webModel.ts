@@ -54,6 +54,10 @@ export type NomcpSession = {
   recipient?: string;
   allowed_paths?: string[];
   sent_message_ids?: string[];
+  advisory_count?: number;
+  latest_advisory_event_id?: string;
+  resource_count?: number;
+  changed_file_count?: number;
   session_url?: string;
   session_url_with_token?: string;
   secret_available?: boolean;
