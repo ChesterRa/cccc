@@ -35,6 +35,35 @@ export type WebModelConnectorCreateResult = {
   replaced_connector_ids?: string[];
 };
 
+export type NomcpSession = {
+  sid: string;
+  schema?: string;
+  token_preview?: string;
+  created_at?: string;
+  updated_at?: string;
+  expires_at?: string;
+  revoked_at?: string;
+  revoked?: boolean;
+  expired?: boolean;
+  group_id?: string;
+  scope_key?: string;
+  repo_root?: string;
+  title?: string;
+  brief?: string;
+  reply_to_event_id?: string;
+  recipient?: string;
+  allowed_paths?: string[];
+  sent_message_ids?: string[];
+  session_url?: string;
+  session_url_with_token?: string;
+  secret_available?: boolean;
+};
+
+export type NomcpSessionCreateResult = {
+  session: NomcpSession;
+  secret: string;
+};
+
 export type WebModelBrowserSession = {
   active?: boolean;
   ready?: boolean;
@@ -164,6 +193,41 @@ export async function createWebModelConnector(args: {
 export async function revokeWebModelConnector(connectorId: string) {
   return apiJson<{ revoked: boolean; connector_id: string }>(
     `/api/v1/web-model/connectors/${encodeURIComponent(String(connectorId || "").trim())}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchNomcpSessions(args?: { groupId?: string }) {
+  const params = new URLSearchParams();
+  if (args?.groupId) params.set("group_id", String(args.groupId || "").trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiJson<{ sessions: NomcpSession[] }>(`/api/v1/nomcp/sessions${suffix}`);
+}
+
+export async function createNomcpSession(args: {
+  groupId: string;
+  title?: string;
+  brief?: string;
+  recipient?: string;
+  replyToEventId?: string;
+  allowedPaths?: string[];
+}) {
+  return apiJson<NomcpSessionCreateResult>("/api/v1/nomcp/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      group_id: String(args.groupId || "").trim(),
+      title: String(args.title || "No-MCP advisory session").trim(),
+      brief: String(args.brief || "Review the linked CCCC project context and return advisory findings.").trim(),
+      recipient: String(args.recipient || "user").trim() || "user",
+      reply_to_event_id: String(args.replyToEventId || "").trim(),
+      allowed_paths: Array.isArray(args.allowedPaths) ? args.allowedPaths : [],
+    }),
+  });
+}
+
+export async function revokeNomcpSession(sid: string) {
+  return apiJson<{ sid: string; revoked: boolean }>(
+    `/api/v1/nomcp/sessions/${encodeURIComponent(String(sid || "").trim())}`,
     { method: "DELETE" },
   );
 }
