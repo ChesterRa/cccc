@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...ports import web_model_browser_sidecar as browser_sidecar
-from ..browser.projected_browser_runtime import _wait_cdp_endpoint, ensure_sync_playwright
+from ..browser.projected_browser_runtime import _wait_cdp_endpoint
 from ...util.time import parse_utc_iso, utc_now_iso
 
 _LOG = logging.getLogger("cccc.daemon.web_model.tool_confirm")
@@ -21,6 +21,7 @@ _DEFAULT_INTERVAL_SECONDS = 5.0
 _DEFAULT_INACTIVITY_RELOAD_SECONDS = 40.0
 _DEFAULT_RELOAD_COOLDOWN_SECONDS = 45.0
 _DEFAULT_RELOAD_WINDOW_SECONDS = 30.0 * 60.0
+_DELIVERY_SUBMITTING_RELOAD_GRACE_SECONDS = 180.0
 
 
 def web_model_tool_auto_confirm_enabled() -> bool:
@@ -79,6 +80,14 @@ def _now_dt() -> datetime:
 
 def _state_dt(state: Dict[str, Any], key: str) -> Optional[datetime]:
     return parse_utc_iso(str(state.get(key) or ""))
+
+
+def _delivery_submit_recent(state: Dict[str, Any], *, now_dt: Optional[datetime] = None) -> bool:
+    if str(state.get("last_delivery_status") or "").strip().lower() != "submitting":
+        return False
+    active_now = now_dt or _now_dt()
+    started = _state_dt(state, "last_delivery_started_at") or _state_dt(state, "last_delivery_at") or active_now
+    return (active_now - started).total_seconds() < _DELIVERY_SUBMITTING_RELOAD_GRACE_SECONDS
 
 
 def _append_auto_reload_event(group_id: str, actor_id: str, *, kind: str, data: Dict[str, Any]) -> None:
@@ -254,32 +263,21 @@ def _record_auto_confirm(group_id: str, actor_id: str, result: Dict[str, Any]) -
         pass
 
 
-def _find_reload_page(browser: Any, *, target_url: str, preferred_page: Any = None, fallback_page: Any = None) -> Any:
-    normalized_target = browser_sidecar._normalize_chatgpt_url(target_url)
-    if preferred_page is not None:
-        return preferred_page
-    if fallback_page is not None:
-        return fallback_page
-    contexts = list(getattr(browser, "contexts", []) or [])
-    context = contexts[0] if contexts else None
-    for candidate_context in contexts:
-        for page in list(getattr(candidate_context, "pages", []) or []):
-            page_url = browser_sidecar._normalize_chatgpt_url(str(getattr(page, "url", "") or ""))
-            if normalized_target and page_url == normalized_target:
-                return page
-    for candidate_context in contexts:
-        for page in list(getattr(candidate_context, "pages", []) or []):
-            if browser_sidecar._normalize_chatgpt_url(str(getattr(page, "url", "") or "")):
-                return page
-    if context is not None:
-        try:
-            return context.new_page()
-        except Exception:
-            return None
-    try:
-        return browser.new_context().new_page()
-    except Exception:
-        return None
+def _reload_chatgpt_projected_session(group_id: str, actor_id: str, *, target_url: str) -> Dict[str, Any]:
+    from .web_model_browser_session import reload_web_model_chatgpt_browser_session
+
+    return reload_web_model_chatgpt_browser_session(group_id=group_id, actor_id=actor_id, target_url=target_url)
+
+
+def _auto_confirm_chatgpt_projected_session(group_id: str, actor_id: str, *, target_url: str) -> Dict[str, Any]:
+    from .web_model_browser_session import auto_confirm_web_model_chatgpt_tool_prompts
+
+    return auto_confirm_web_model_chatgpt_tool_prompts(
+        group_id=group_id,
+        actor_id=actor_id,
+        target_url=target_url,
+        max_clicks=browser_sidecar.TOOL_CONFIRM_MAX_CLICKS,
+    )
 
 
 def _maybe_reload_stale_chatgpt_page(
@@ -305,6 +303,8 @@ def _maybe_reload_stale_chatgpt_page(
     if not bool(state.get("auto_reload_active")):
         return {"reloaded": False, "reason": "inactive"}
     now_dt = _now_dt()
+    if _delivery_submit_recent(state, now_dt=now_dt):
+        return {"reloaded": False, "reason": "delivery_submitting"}
     started_at = _state_dt(state, "auto_reload_window_started_at") or now_dt
     expires_at = _state_dt(state, "auto_reload_window_expires_at") or (
         started_at + timedelta(seconds=web_model_browser_auto_reload_window_seconds())
@@ -340,24 +340,8 @@ def _maybe_reload_stale_chatgpt_page(
     if last_reload is not None and (now_dt - last_reload).total_seconds() < cooldown_seconds:
         return {"reloaded": False, "reason": "cooldown"}
 
-    page = _find_reload_page(browser, target_url=normalized_target, preferred_page=preferred_page, fallback_page=fallback_page)
-    if page is None:
-        browser_sidecar.record_chatgpt_browser_state(
-            group_id,
-            actor_id,
-            {"auto_reload_last_error": "no_chatgpt_page_available"},
-        )
-        return {"reloaded": False, "reason": "no_page"}
-
-    before_url = str(getattr(page, "url", "") or "")
     try:
-        if browser_sidecar._normalize_chatgpt_url(before_url) != normalized_target:
-            page.goto(normalized_target, wait_until="domcontentloaded", timeout=30000)
-            action = "goto_target"
-        else:
-            page.reload(wait_until="domcontentloaded", timeout=30000)
-            action = "reload"
-        after_url = str(getattr(page, "url", "") or normalized_target)
+        reload_result = _reload_chatgpt_projected_session(group_id, actor_id, target_url=normalized_target)
     except Exception as exc:
         error = str(exc)[:1000]
         browser_sidecar.record_chatgpt_browser_state(
@@ -366,6 +350,17 @@ def _maybe_reload_stale_chatgpt_page(
             {"auto_reload_last_error": error},
         )
         return {"reloaded": False, "reason": "reload_failed", "error": error}
+    if not bool(reload_result.get("ok")):
+        error = str(reload_result.get("error") or "projected_session_reload_failed")[:1000]
+        browser_sidecar.record_chatgpt_browser_state(
+            group_id,
+            actor_id,
+            {"auto_reload_last_error": error},
+        )
+        return {"reloaded": False, "reason": str(reload_result.get("error") or "reload_failed"), "error": error}
+    action = str(reload_result.get("action") or "reload")
+    before_url = str(reload_result.get("before_url") or "")
+    after_url = str(reload_result.get("after_url") or normalized_target)
 
     try:
         current = browser_sidecar.read_chatgpt_browser_state(group_id, actor_id)
@@ -431,75 +426,65 @@ def _record_auto_confirm_scan(group_id: str, actor_id: str, result: Dict[str, An
 
 def auto_confirm_chatgpt_tool_prompts(group_id: str, actor_id: str) -> Dict[str, Any]:
     state = browser_sidecar.read_chatgpt_browser_state(group_id, actor_id)
-    process_state = browser_sidecar.read_chatgpt_browser_process_state()
-    port = int(process_state.get("cdp_port") or 0)
-    if port <= 0 or not _wait_cdp_endpoint(port, timeout_seconds=0.4):
-        return {"browser_active": False, "clicked": 0, "details": []}
     target_url = browser_sidecar._normalize_chatgpt_url(state.get("conversation_url"))
-    clicked = 0
-    candidate_count = 0
-    details: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    pages_seen = 0
-    target_page: Any = None
-    fallback_page: Any = None
-    reload_result: Dict[str, Any] = {}
-    sync_playwright = ensure_sync_playwright()
-    with sync_playwright() as pw:
-        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-        contexts = list(getattr(browser, "contexts", []) or [])
-        for context in contexts:
-            for page in list(getattr(context, "pages", []) or []):
-                page_url = str(getattr(page, "url", "") or "")
-                if "chatgpt.com" not in page_url:
-                    continue
-                normalized_page_url = browser_sidecar._normalize_chatgpt_url(page_url)
-                if normalized_page_url and fallback_page is None:
-                    fallback_page = page
-                if target_url and normalized_page_url == target_url and target_page is None:
-                    target_page = page
-                if target_url and browser_sidecar._normalize_chatgpt_url(page_url) != target_url:
-                    continue
-                pages_seen += 1
-                result = browser_sidecar._auto_confirm_page_tool_prompts(
-                    page,
-                    max_clicks=max(1, browser_sidecar.TOOL_CONFIRM_MAX_CLICKS - clicked),
-                )
-                candidate_count += int(result.get("candidate_count") or 0)
-                page_clicked = int(result.get("clicked") or 0)
-                raw_errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-                for error in raw_errors:
-                    if isinstance(error, dict):
-                        errors.append({**error, "page_url": page_url})
-                if page_clicked > 0:
-                    clicked += page_clicked
-                    raw_details = result.get("details") if isinstance(result.get("details"), list) else []
-                    for detail in raw_details:
-                        if isinstance(detail, dict):
-                            details.append({**detail, "page_url": page_url})
-                    if clicked >= browser_sidecar.TOOL_CONFIRM_MAX_CLICKS:
-                        break
-            if clicked >= browser_sidecar.TOOL_CONFIRM_MAX_CLICKS:
-                break
-        interim = {
+    if _delivery_submit_recent(state):
+        result = {
             "browser_active": True,
-            "clicked": clicked,
-            "candidate_count": candidate_count,
-            "details": details[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-            "errors": errors[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-            "pages_seen": pages_seen,
+            "clicked": 0,
+            "candidate_count": 0,
+            "details": [],
+            "errors": [],
+            "pages_seen": 0,
+            "skipped": "delivery_submitting",
         }
-        if details:
-            interim["page_url"] = str(details[0].get("page_url") or "")
-        _record_auto_confirm(group_id, actor_id, interim)
-        reload_result = _maybe_reload_stale_chatgpt_page(
-            group_id,
-            actor_id,
-            browser=browser,
-            target_url=target_url,
-            preferred_page=target_page,
-            fallback_page=fallback_page,
-        )
+        return result
+    reload_result: Dict[str, Any] = {}
+    try:
+        confirm_result = _auto_confirm_chatgpt_projected_session(group_id, actor_id, target_url=target_url)
+    except Exception as exc:
+        confirm_result = {
+            "browser_active": True,
+            "clicked": 0,
+            "candidate_count": 0,
+            "details": [],
+            "errors": [{"error": str(exc)[:300]}],
+            "pages_seen": 0,
+        }
+    if not bool(confirm_result.get("browser_active")):
+        result = {
+            "browser_active": False,
+            "clicked": 0,
+            "candidate_count": 0,
+            "details": [],
+            "errors": confirm_result.get("errors") if isinstance(confirm_result.get("errors"), list) else [],
+            "pages_seen": 0,
+        }
+        _record_auto_confirm_scan(group_id, actor_id, result)
+        return result
+
+    clicked = max(0, int(confirm_result.get("clicked") or 0))
+    candidate_count = max(0, int(confirm_result.get("candidate_count") or 0))
+    details = confirm_result.get("details") if isinstance(confirm_result.get("details"), list) else []
+    errors = confirm_result.get("errors") if isinstance(confirm_result.get("errors"), list) else []
+    pages_seen = max(0, int(confirm_result.get("pages_seen") or 0))
+    interim = {
+        "browser_active": True,
+        "clicked": clicked,
+        "candidate_count": candidate_count,
+        "details": details[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
+        "errors": errors[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
+        "pages_seen": pages_seen,
+    }
+    page_url = str(confirm_result.get("page_url") or "").strip()
+    if page_url:
+        interim["page_url"] = page_url
+    _record_auto_confirm(group_id, actor_id, interim)
+    reload_result = _maybe_reload_stale_chatgpt_page(
+        group_id,
+        actor_id,
+        browser=None,
+        target_url=target_url,
+    )
     result = {
         "browser_active": True,
         "clicked": clicked,
@@ -508,8 +493,8 @@ def auto_confirm_chatgpt_tool_prompts(group_id: str, actor_id: str) -> Dict[str,
         "errors": errors[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
         "pages_seen": pages_seen,
     }
-    if details:
-        result["page_url"] = str(details[0].get("page_url") or "")
+    if page_url:
+        result["page_url"] = page_url
     if reload_result:
         result["auto_reload"] = reload_result
     _record_auto_confirm_scan(group_id, actor_id, result)

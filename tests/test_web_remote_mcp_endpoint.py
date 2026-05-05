@@ -1068,6 +1068,52 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_web_model_browser_session_fast_status_skips_deep_inspection(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            admin = str(create_access_token("admin", is_admin=True).get("token") or "")
+            client = self._client()
+            headers = {"Authorization": f"Bearer {admin}"}
+
+            with (
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
+                    side_effect=AssertionError("deep inspection should not run"),
+                ) as deep_status,
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_cached_status",
+                    return_value={
+                        "active": True,
+                        "ready": False,
+                        "cdp_port": 9222,
+                        "conversation_url": "https://chatgpt.com/c/test-chat",
+                    },
+                ) as cached_status,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.get_web_model_chatgpt_browser_session_state",
+                    return_value={"active": True, "state": "ready", "url": "https://chatgpt.com/c/test-chat"},
+                ),
+            ):
+                status = client.get(
+                    f"/api/v1/web-model/browser-session?group_id={group.group_id}&actor_id=peer1&inspect=false",
+                    headers=headers,
+                )
+
+            self.assertEqual(status.status_code, 200)
+            cached_status.assert_called_once_with(group.group_id, "peer1")
+            deep_status.assert_not_called()
+            result = status.json().get("result") or {}
+            browser = result.get("browser_session") or {}
+            self.assertTrue(bool(browser.get("active")))
+            self.assertEqual(browser.get("conversation_url"), "https://chatgpt.com/c/test-chat")
+            self.assertEqual((result.get("browser_surface") or {}).get("state"), "ready")
+            self.assertEqual((result.get("health_snapshot") or {}).get("schema"), "cccc.web_model.health.v1")
+        finally:
+            cleanup()
+
     def test_web_model_browser_session_can_open_global_setup_surface_without_actor(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 

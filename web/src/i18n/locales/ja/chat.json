@@ -80,6 +80,7 @@
   "builtInAssistantPetOff": "コンパニオンはオフ",
   "builtInAssistantPetTurnOn": "PET をオン",
   "builtInAssistantPetTurnOff": "PET をオフ",
+  "builtInAssistantPetStopConfirm": "PET を停止しますか？",
   "builtInAssistantPetOpen": "PET を開く",
   "builtInAssistantOpenShort": "開く",
   "builtInAssistantPetEnabled": "このグループで PET を有効化しました。",

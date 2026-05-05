@@ -503,16 +503,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": "web-model connector not found", "details": {}})
         return {"ok": True, "result": {"revoked": True, "connector_id": str(connector_id or "").strip()}}
 
-    async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any]) -> Dict[str, Any]:
+    async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any], *, inspect: bool = True) -> Dict[str, Any]:
         from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
-        from ...web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot, chatgpt_browser_session_status
+        from ...web_model_browser_sidecar import (
+            build_chatgpt_web_model_health_snapshot,
+            chatgpt_browser_session_cached_status,
+            chatgpt_browser_session_status,
+        )
 
         surface = browser_surface or await run_in_threadpool(
             get_web_model_chatgpt_browser_session_state,
             group_id=group_id,
             actor_id=actor_id,
         )
-        browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
+        status_fn = chatgpt_browser_session_status if inspect else chatgpt_browser_session_cached_status
+        browser = await run_in_threadpool(status_fn, group_id, actor_id)
         health_snapshot = build_chatgpt_web_model_health_snapshot(
             group_id=group_id,
             actor_id=actor_id,
@@ -523,12 +528,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {"ok": True, "result": {"browser_session": browser, "browser_surface": surface, "health_snapshot": health_snapshot}}
 
     @global_router.get("/api/v1/web-model/browser-session", dependencies=[Depends(require_admin)])
-    async def web_model_browser_session_status(group_id: str, actor_id: str) -> Dict[str, Any]:
+    async def web_model_browser_session_status(group_id: str, actor_id: str, inspect: bool = True) -> Dict[str, Any]:
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
-        return await _web_model_browser_payload(group_id, actor_id, {})
+        return await _web_model_browser_payload(group_id, actor_id, {}, inspect=bool(inspect))
 
     @global_router.post("/api/v1/web-model/browser-session/open", dependencies=[Depends(require_admin)])
-    async def web_model_browser_session_open(req: WebModelBrowserSessionRequest) -> Dict[str, Any]:
+    async def web_model_browser_session_open(req: WebModelBrowserSessionRequest, inspect: bool = True) -> Dict[str, Any]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
@@ -547,7 +552,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 status_code=500,
                 detail={"code": "web_model_browser_open_failed", "message": str(exc), "details": {}},
             ) from exc
-        return await _web_model_browser_payload(group_id, actor_id, surface)
+        return await _web_model_browser_payload(group_id, actor_id, surface, inspect=bool(inspect))
 
     @global_router.post("/api/v1/web-model/browser-session/close", dependencies=[Depends(require_admin)])
     async def web_model_browser_session_close(req: WebModelBrowserSessionRequest) -> Dict[str, Any]:

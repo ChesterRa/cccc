@@ -228,6 +228,8 @@ export function ChatComposer({
     const gid = String(selectedGroupId || "").trim();
     if (!gid || busy === "send" || petBusy) return;
     if (petEnabled) {
+      const confirmed = window.confirm(t("builtInAssistantPetStopConfirm", { defaultValue: "Stop PET?" }));
+      if (!confirmed) return;
       setPetBusy(true);
       try {
         const resp = await updateSettings(gid, { desktop_pet_enabled: false });

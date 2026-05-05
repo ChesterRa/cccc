@@ -121,6 +121,7 @@ class _SharedJSONLTailer:
         self._subscribers: Set[asyncio.Queue[bytes | None]] = set()
         self._task: Optional[asyncio.Task[None]] = None
         self._has_subscribers = asyncio.Event()
+        self._closing = False
 
     def _ensure_open(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -176,11 +177,16 @@ class _SharedJSONLTailer:
             return
 
         while True:
+            if self._closing:
+                break
+
             # Stop when idle (no subscribers) for a while to avoid leaking tasks for long-gone groups.
             if not self._subscribers:
                 try:
                     await asyncio.wait_for(self._has_subscribers.wait(), timeout=60.0)
                 except asyncio.TimeoutError:
+                    break
+                if self._closing:
                     break
 
             if self._f is None:
@@ -259,6 +265,39 @@ class _SharedJSONLTailer:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())
 
+    async def close(self, *, timeout: float = 1.0) -> None:
+        self._closing = True
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
+        self._subscribers.clear()
+        self._has_subscribers.set()
+
+        task = self._task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            try:
+                await asyncio.wait_for(task, timeout=max(0.05, float(timeout or 1.0)))
+            except asyncio.TimeoutError:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        if self._f is not None:
+            try:
+                self._f.close()
+            except Exception:
+                pass
+        self._f = None
+        self._task = None
+
     def subscribe(self, q: asyncio.Queue[bytes | None]) -> None:
         self._subscribers.add(q)
         self._has_subscribers.set()
@@ -288,6 +327,32 @@ async def _get_tailer(path: Path, *, event_name: str, heartbeat_s: float, poll_i
             _TAILERS[key] = t
         t.ensure_started()
         return t
+
+
+def _path_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+async def close_sse_tailers_under(root: Path, *, timeout: float = 1.0) -> None:
+    """Close shared SSE tailers that keep files under root open.
+
+    This is primarily needed before deleting a group on Windows, where an open
+    read handle prevents removing files such as state/headless/events.jsonl.
+    """
+    target_root = Path(root)
+    async with _TAILERS_LOCK:
+        matches = [(key, tailer) for key, tailer in list(_TAILERS.items()) if _path_under(Path(key[1]), target_root)]
+        for key, _tailer in matches:
+            _TAILERS.pop(key, None)
+    for _key, tailer in matches:
+        try:
+            await tailer.close(timeout=timeout)
+        except Exception:
+            pass
 
 
 async def sse_jsonl_tail_shared(

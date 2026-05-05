@@ -1,10 +1,6 @@
-import json
 import os
-import shlex
-import sys
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import ANY, patch
 
 
@@ -46,6 +42,36 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
 
         record_chatgpt_browser_state(group.group_id, actor_id, {"conversation_url": url})
+
+    def _projected_submit_result(
+        self,
+        *,
+        delivery_id: str = "delivery-1",
+        tab_url: str = "https://chatgpt.com/c/test-chat",
+        conversation_url: str = "https://chatgpt.com/c/test-chat",
+        pending_conversation_url: bool = False,
+        submitted_without_conversation_url: bool = False,
+        submission_evidence: str = "message_echo",
+        send_selector: str = "#composer-submit-button",
+    ) -> dict:
+        browser: dict[str, object] = {
+            "tab_url": tab_url,
+            "submission_evidence": submission_evidence,
+            "send_selector": send_selector,
+        }
+        if conversation_url:
+            browser["conversation_url"] = conversation_url
+        if pending_conversation_url:
+            browser["pending_conversation_url"] = True
+        if submitted_without_conversation_url:
+            browser["submitted_without_conversation_url"] = True
+        return {
+            "ok": True,
+            "delivery_id": delivery_id,
+            "transport": "projected_session",
+            "browser_surface": {"state": "ready", "url": tab_url},
+            "browser": browser,
+        }
 
     def _create_group_with_codex_actor(self):
         from cccc.kernel.actors import add_actor
@@ -254,15 +280,14 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_browser_delivery_sidecar_submits_turn_and_commits_cursor(self) -> None:
+    def test_browser_delivery_projected_session_submits_turn_and_commits_cursor(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.daemon.runner_state_ops import read_headless_state
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event, read_last_lines
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -275,33 +300,22 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "browser-delivered task", "to": ["peer1"]},
             )
-            capture_path = Path(td) / "sidecar-payload.json"
-            sidecar_path = Path(td) / "sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        (
-                            f"pathlib.Path({str(capture_path)!r}).write_text("
-                            "json.dumps(payload, ensure_ascii=False), encoding='utf-8')"
-                        ),
-                        (
-                            "print(json.dumps({'ok': True, 'delivery_id': 'delivery-1', "
-                            "'browser': {'tab_url': 'https://chatgpt.com/c/1'}}))"
-                        ),
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
 
-            result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(
+                    delivery_id="delivery-1",
+                    tab_url="https://chatgpt.com/c/1",
+                    conversation_url="https://chatgpt.com/c/1",
+                )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
@@ -313,15 +327,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(browser_state.get("auto_reload_last_progress_reason"), "browser_delivery")
             self.assertEqual(browser_state.get("auto_reload_last_delivery_id"), "delivery-1")
             self.assertEqual(browser_state.get("auto_reload_last_event_ids"), [event["id"]])
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload.get("schema"), "cccc.web_model_browser_delivery.v1")
-            self.assertEqual(payload.get("action"), "submit_turn")
+            self.assertEqual(len(calls), 1)
+            payload = calls[0]
             self.assertEqual(payload.get("group_id"), group.group_id)
             self.assertEqual(payload.get("actor_id"), "peer1")
-            self.assertEqual(payload.get("trigger_event_id"), event["id"])
-            self.assertEqual(payload.get("event_ids"), [event["id"]])
+            self.assertEqual(payload.get("target_url"), "https://chatgpt.com/c/test-chat")
+            self.assertEqual(payload.get("auto_bind_new_chat"), False)
             self.assertTrue(str(payload.get("delivery_id") or "").startswith("webdelivery:peer1:"))
-            self.assertEqual(payload.get("turn_id"), payload.get("delivery_id"))
             prompt = str(payload.get("prompt") or "")
             self.assertIn("Browser batch webdelivery:peer1:", prompt)
             self.assertIn(f"events={event['id']}", prompt)
@@ -353,17 +365,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 any("web_model.browser_delivery.submitted" in line for line in read_last_lines(group.ledger_path, 20))
             )
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_builtin_browser_delivery_uses_projected_chatgpt_session(self) -> None:
+    def test_browser_delivery_uses_projected_chatgpt_session(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
@@ -371,7 +379,6 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
         try:
             group = self._create_group_with_actor()
             self._bind_chatgpt_conversation(group, url="https://chatgpt.com/c/bound-session")
@@ -384,13 +391,16 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 data={"text": "deliver through the daemon browser session", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
-            os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
             calls: list[str] = []
+            observed_submit_states: list[str] = []
 
             def submit_via_session(**kwargs) -> dict:
                 calls.append(f"projected:{kwargs.get('group_id')}:{kwargs.get('actor_id')}")
                 self.assertEqual(kwargs.get("target_url"), "https://chatgpt.com/c/bound-session")
                 self.assertIn("deliver through the daemon browser session", str(kwargs.get("prompt") or ""))
+                observed = read_chatgpt_browser_state(group.group_id, "peer1")
+                observed_submit_states.append(str(observed.get("last_delivery_status") or ""))
+                self.assertEqual(observed.get("last_event_ids"), [event["id"]])
                 return {
                     "ok": True,
                     "delivery_id": "delivery-builtin",
@@ -402,43 +412,144 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     "browser": {
                         "tab_url": "https://chatgpt.com/c/bound-session",
                         "conversation_url": "https://chatgpt.com/c/bound-session",
-                        "submission_evidence": "stop_button",
+                        "submission_evidence": "message_echo",
                     },
                 }
 
-            def run_sidecar(command, payload, *, timeout_seconds, env=None):
-                calls.append("sidecar")
-                return {"ok": False, "error": "sidecar should not run for builtin ChatGPT delivery"}
-
-            with (
-                patch(
-                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
-                    side_effect=submit_via_session,
-                ),
-                patch("cccc.daemon.actors.web_model_browser_delivery._run_sidecar", side_effect=run_sidecar),
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
             ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
             self.assertEqual(calls, [f"projected:{group.group_id}:peer1"])
+            self.assertEqual(observed_submit_states, ["submitting"])
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
             data = ((result.get("event") or {}).get("data") or {})
             self.assertEqual((data.get("browser_surface") or {}).get("state"), "ready")
-            self.assertEqual(data.get("sidecar_command"), ["projected_session"])
+            self.assertEqual(data.get("delivery_transport"), "projected_session")
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(browser_state.get("last_delivery_status"), "submitted")
-            self.assertEqual(browser_state.get("last_submission_evidence"), "stop_button")
+            self.assertEqual(browser_state.get("last_submission_evidence"), "message_echo")
             self.assertEqual(browser_state.get("last_event_ids"), [event["id"]])
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
+            cleanup()
+
+    def test_builtin_browser_delivery_retries_once_after_transient_projected_page_close(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group, url="https://chatgpt.com/c/bound-session")
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "retry transient page close", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[str] = []
+
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(str(kwargs.get("delivery_id") or ""))
+                if len(calls) == 1:
+                    raise RuntimeError("Page.evaluate: Target page, context or browser has been closed")
+                return {
+                    "ok": True,
+                    "delivery_id": "delivery-after-retry",
+                    "transport": "projected_session",
+                    "browser_surface": {
+                        "state": "ready",
+                        "url": "https://chatgpt.com/c/bound-session",
+                    },
+                    "browser": {
+                        "tab_url": "https://chatgpt.com/c/bound-session",
+                        "conversation_url": "https://chatgpt.com/c/bound-session",
+                        "submission_evidence": "message_echo",
+                    },
+                }
+
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                    side_effect=submit_via_session,
+                ),
+                patch("cccc.daemon.actors.web_model_browser_session.close_web_model_chatgpt_browser_session") as close_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "submitted")
+            self.assertEqual(len(calls), 2)
+            close_session.assert_called_once_with(group_id=group.group_id, actor_id="peer1")
+            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_builtin_browser_delivery_retries_once_after_transient_hidden_input_click(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group, url="https://chatgpt.com/c/bound-session")
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "retry hidden input click", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[str] = []
+
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(str(kwargs.get("delivery_id") or ""))
+                if len(calls) == 1:
+                    raise RuntimeError(
+                        'Locator.click: Timeout 5000ms exceeded; locator("textarea:not([disabled])").first; element is not visible'
+                    )
+                return self._projected_submit_result(delivery_id="delivery-after-retry")
+
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                    side_effect=submit_via_session,
+                ),
+                patch("cccc.daemon.actors.web_model_browser_session.close_web_model_chatgpt_browser_session") as close_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "submitted")
+            self.assertEqual(len(calls), 2)
+            close_session.assert_called_once_with(group_id=group.group_id, actor_id="peer1")
+            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
     def test_browser_delivery_reseeds_legacy_bootstrap_marker_without_digest(self) -> None:
@@ -446,8 +557,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -467,60 +577,98 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "legacy marker should reseed", "to": ["peer1"]},
             )
-            capture_path = Path(td) / "sidecar-payload.json"
-            sidecar_path = Path(td) / "sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        (
-                            f"pathlib.Path({str(capture_path)!r}).write_text("
-                            "json.dumps(payload, ensure_ascii=False), encoding='utf-8')"
-                        ),
-                        "print(json.dumps({'ok': True, 'delivery_id': 'delivery-legacy'}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
 
-            result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(delivery_id="delivery-legacy")
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            prompt = str(payload.get("prompt") or "")
-            self.assertTrue(bool(payload.get("bootstrap_seed")))
+            self.assertEqual(len(calls), 1)
+            prompt = str(calls[0].get("prompt") or "")
             self.assertIn("Session bootstrap for this browser chat", prompt)
             self.assertIn("Platform Invariants:", prompt)
-            self.assertTrue(str(payload.get("bootstrap_seed_version") or ""))
-            self.assertTrue(str(payload.get("bootstrap_seed_digest") or ""))
-            self.assertEqual(payload.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/c/test-chat")
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_browser_delivery_sidecar_failure_leaves_turn_unread(self) -> None:
+    def test_browser_delivery_reseeds_after_headless_actor_restart(self) -> None:
+        from cccc.daemon.actors import web_model_browser_delivery as delivery
+        from cccc.daemon.runner_state_ops import write_headless_state
+        from cccc.kernel.actors import find_actor
+        from cccc.kernel.ledger import append_event
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            actor = find_actor(group, "peer1")
+            seed_text = delivery._build_web_model_bootstrap_seed(group, actor or {})
+            seed_digest = delivery._bootstrap_seed_digest(seed_text)
+            record_chatgpt_browser_state(
+                group.group_id,
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/test-chat",
+                    "bootstrap_seed_delivered_at": "2000-01-01T00:00:00Z",
+                    "bootstrap_seed_version": "web-model-bootstrap-normal-system-prompt-v2",
+                    "bootstrap_seed_digest": seed_digest,
+                    "bootstrap_seed_conversation_url": "https://chatgpt.com/c/test-chat",
+                },
+            )
+            write_headless_state(group.group_id, "peer1")
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "first message after restart should reseed", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
+
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(delivery_id="delivery-restart-seed")
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = delivery.submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertEqual(len(calls), 1)
+            prompt = str(calls[0].get("prompt") or "")
+            self.assertIn("Session bootstrap for this browser chat", prompt)
+            self.assertIn("first message after restart should reseed", prompt)
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_browser_delivery_projected_session_failure_leaves_turn_unread(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.daemon.runner_state_ops import read_headless_state
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event, read_last_lines
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -533,23 +681,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "retry after failed browser delivery", "to": ["peer1"]},
             )
-            sidecar_path = Path(td) / "failing-sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import sys",
-                        "sys.stderr.write('browser unavailable')",
-                        "sys.exit(2)",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
-            result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=RuntimeError("browser unavailable"),
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "failed")
@@ -564,10 +702,6 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 any("web_model.browser_delivery.failed" in line for line in read_last_lines(group.ledger_path, 20))
             )
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -615,8 +749,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -636,53 +769,35 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "create a fresh ChatGPT chat", "to": ["peer1"]},
             )
-            capture_path = Path(td) / "sidecar-payload.json"
-            sidecar_path = Path(td) / "sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        (
-                            f"pathlib.Path({str(capture_path)!r}).write_text("
-                            "json.dumps(payload, ensure_ascii=False), encoding='utf-8')"
-                        ),
-                        (
-                            "print(json.dumps({'ok': True, 'delivery_id': 'delivery-new-chat', "
-                            "'browser': {'tab_url': 'https://chatgpt.com/c/new-chat', "
-                            "'conversation_url': 'https://chatgpt.com/c/new-chat', "
-                            "'auto_bind_new_chat': True}}))"
-                        ),
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
 
-            result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(
+                    delivery_id="delivery-new-chat",
+                    tab_url="https://chatgpt.com/c/new-chat",
+                    conversation_url="https://chatgpt.com/c/new-chat",
+                )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload.get("target_url"), "https://chatgpt.com/")
-            self.assertEqual(payload.get("auto_bind_new_chat"), True)
-            self.assertEqual(payload.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/")
+            self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/")
+            self.assertEqual(calls[0].get("auto_bind_new_chat"), True)
+            self.assertIn("Session bootstrap for this browser chat", str(calls[0].get("prompt") or ""))
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/new-chat")
             self.assertEqual(state.get("pending_new_chat_bind"), False)
             self.assertEqual(state.get("pending_new_chat_url"), "")
             self.assertEqual(state.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/c/new-chat")
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -695,8 +810,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event, read_last_lines
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -716,27 +830,27 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "new chat but no final URL", "to": ["peer1"]},
             )
-            sidecar_path = Path(td) / "sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import sys",
-                        "json.load(sys.stdin)",
-                        "print(json.dumps({'ok': True, 'delivery_id': 'delivery-no-url', 'browser': {'tab_url': 'https://chatgpt.com/', 'pending_conversation_url': True, 'submitted_without_conversation_url': True}}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
-            with patch(
-                "cccc.daemon.actors.web_model_tool_confirm_watcher.ensure_web_model_tool_confirm_watcher",
-                return_value=True,
-            ) as ensure_watcher:
+            def submit_via_session(**kwargs) -> dict:
+                return self._projected_submit_result(
+                    delivery_id="delivery-no-url",
+                    tab_url="https://chatgpt.com/",
+                    conversation_url="",
+                    pending_conversation_url=True,
+                    submitted_without_conversation_url=True,
+                )
+
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                    side_effect=submit_via_session,
+                ),
+                patch(
+                    "cccc.daemon.actors.web_model_tool_confirm_watcher.ensure_web_model_tool_confirm_watcher",
+                    return_value=True,
+                ) as ensure_watcher,
+            ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
@@ -762,10 +876,6 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 any("web_model.browser_delivery.pending" in line for line in read_last_lines(group.ledger_path, 20))
             )
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -778,8 +888,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -799,24 +908,22 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "new chat creates URL slowly", "to": ["peer1"]},
             )
-            first_sidecar = Path(td) / "sidecar-first.py"
-            first_sidecar.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import sys",
-                        "json.load(sys.stdin)",
-                        "print(json.dumps({'ok': True, 'delivery_id': 'delivery-pending-url', 'browser': {'tab_url': 'https://chatgpt.com/', 'pending_conversation_url': True, 'submitted_without_conversation_url': True}}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(first_sidecar))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
-            first_result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=first["id"])
+            def first_submit(**kwargs) -> dict:
+                return self._projected_submit_result(
+                    delivery_id="delivery-pending-url",
+                    tab_url="https://chatgpt.com/",
+                    conversation_url="",
+                    pending_conversation_url=True,
+                    submitted_without_conversation_url=True,
+                )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=first_submit,
+            ):
+                first_result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=first["id"])
             self.assertTrue(first_result.get("ok"), first_result)
             self.assertEqual(first_result.get("status"), "target_chat_binding_pending")
             self.assertEqual(get_cursor(group, "peer1")[0], first["id"])
@@ -836,45 +943,30 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "follow-up after URL exists", "to": ["peer1"]},
             )
-            capture_path = Path(td) / "sidecar-second-payload.json"
-            second_sidecar = Path(td) / "sidecar-second.py"
-            second_sidecar.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        (
-                            f"pathlib.Path({str(capture_path)!r}).write_text("
-                            "json.dumps(payload, ensure_ascii=False), encoding='utf-8')"
-                        ),
-                        "print(json.dumps({'ok': True, 'delivery_id': 'delivery-follow-up', 'browser': {'tab_url': 'https://chatgpt.com/c/delayed-chat', 'conversation_url': 'https://chatgpt.com/c/delayed-chat'}}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(second_sidecar))}"
-            )
+            calls: list[dict] = []
 
-            second_result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=second["id"])
+            def second_submit(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(
+                    delivery_id="delivery-follow-up",
+                    tab_url="https://chatgpt.com/c/delayed-chat",
+                    conversation_url="https://chatgpt.com/c/delayed-chat",
+                )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=second_submit,
+            ):
+                second_result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=second["id"])
 
             self.assertTrue(second_result.get("ok"), second_result)
             self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload.get("target_url"), "https://chatgpt.com/c/delayed-chat")
-            self.assertEqual(payload.get("event_ids"), [second["id"]])
-            self.assertEqual(payload.get("bootstrap_seed"), False)
-            self.assertNotIn("Session bootstrap for this browser chat", str(payload.get("prompt") or ""))
+            self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/c/delayed-chat")
+            self.assertNotIn("Session bootstrap for this browser chat", str(calls[0].get("prompt") or ""))
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/delayed-chat")
             self.assertEqual(state.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/c/delayed-chat")
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -887,8 +979,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -910,28 +1001,26 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "do not create another new chat", "to": ["peer1"]},
             )
-            sidecar_path = Path(td) / "sidecar-should-not-run.py"
-            sidecar_path.write_text("raise SystemExit('sidecar should not run while bind is pending')\n", encoding="utf-8")
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
-            with patch(
-                "cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation",
-                return_value={"ok": True, "resolved": False, "pending": True, "submitted": True},
-            ) as resolve:
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation",
+                    return_value={"ok": True, "resolved": False, "pending": True, "submitted": True},
+                ) as resolve,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                    side_effect=AssertionError("submit should not run while bind is pending"),
+                ) as submit,
+            ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "target_chat_binding_pending")
             self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             resolve.assert_called_once_with(group.group_id, "peer1")
+            submit.assert_not_called()
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -944,8 +1033,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -972,56 +1060,40 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "retry stale new chat", "to": ["peer1"]},
             )
-            capture_path = Path(td) / "sidecar-payload.json"
-            sidecar_path = Path(td) / "sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        (
-                            f"pathlib.Path({str(capture_path)!r}).write_text("
-                            "json.dumps(payload, ensure_ascii=False), encoding='utf-8')"
-                        ),
-                        (
-                            "print(json.dumps({'ok': True, 'delivery_id': 'delivery-retry', "
-                            "'browser': {'tab_url': 'https://chatgpt.com/c/retry-chat', "
-                            "'conversation_url': 'https://chatgpt.com/c/retry-chat', "
-                            "'auto_bind_new_chat': True}}))"
-                        ),
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
 
-            with patch(
-                "cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation",
-                return_value={"ok": True, "resolved": False, "pending": True, "submitted": True},
-            ) as resolve:
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(
+                    delivery_id="delivery-retry",
+                    tab_url="https://chatgpt.com/c/retry-chat",
+                    conversation_url="https://chatgpt.com/c/retry-chat",
+                )
+
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation",
+                    return_value={"ok": True, "resolved": False, "pending": True, "submitted": True},
+                ) as resolve,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                    side_effect=submit_via_session,
+                ),
+            ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload.get("target_url"), "https://chatgpt.com/")
-            self.assertEqual(payload.get("auto_bind_new_chat"), True)
-            self.assertEqual(payload.get("bootstrap_seed"), True)
+            self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/")
+            self.assertEqual(calls[0].get("auto_bind_new_chat"), True)
+            self.assertIn("Session bootstrap for this browser chat", str(calls[0].get("prompt") or ""))
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/retry-chat")
             self.assertEqual(state.get("pending_new_chat_bind"), False)
             resolve.assert_called_once_with(group.group_id, "peer1")
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -1034,8 +1106,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -1057,25 +1128,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "send after ChatGPT URL exists", "to": ["peer1"]},
             )
-            capture_path = Path(td) / "sidecar-resolved-payload.json"
-            sidecar_path = Path(td) / "sidecar-resolved.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        f"pathlib.Path({str(capture_path)!r}).write_text(json.dumps(payload), encoding='utf-8')",
-                        "print(json.dumps({'ok': True, 'delivery_id': 'delivery-resolved', 'browser': {'tab_url': 'https://chatgpt.com/c/resolved', 'conversation_url': 'https://chatgpt.com/c/resolved'}}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
 
             def resolve(group_id: str, actor_id: str) -> dict[str, object]:
                 record_chatgpt_browser_state(
@@ -1090,23 +1144,32 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 )
                 return {"ok": True, "resolved": True, "conversation_url": "https://chatgpt.com/c/resolved"}
 
-            with patch("cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation", side_effect=resolve):
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(
+                    delivery_id="delivery-resolved",
+                    tab_url="https://chatgpt.com/c/resolved",
+                    conversation_url="https://chatgpt.com/c/resolved",
+                )
+
+            with (
+                patch("cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation", side_effect=resolve),
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                    side_effect=submit_via_session,
+                ),
+            ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload.get("target_url"), "https://chatgpt.com/c/resolved")
-            self.assertEqual(payload.get("auto_bind_new_chat"), False)
+            self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/c/resolved")
+            self.assertEqual(calls[0].get("auto_bind_new_chat"), False)
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/resolved")
             self.assertEqual(state.get("pending_new_chat_bind"), False)
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
@@ -1118,8 +1181,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
 
-        td, cleanup = self._with_home()
-        old_command = os.environ.get("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND")
+        _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
@@ -1145,41 +1207,24 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 by="user",
                 data={"text": "deliver this one", "to": ["peer1"]},
             )
-
-            capture_path = Path(td) / "sidecar-payload.json"
-            sidecar_path = Path(td) / "sidecar.py"
-            sidecar_path.write_text(
-                "\n".join(
-                    [
-                        "import json",
-                        "import pathlib",
-                        "import sys",
-                        "payload = json.load(sys.stdin)",
-                        (
-                            f"pathlib.Path({str(capture_path)!r}).write_text("
-                            "json.dumps(payload, ensure_ascii=False), encoding='utf-8')"
-                        ),
-                        "print(json.dumps({'ok': True, 'delivery_id': 'delivery-2'}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = (
-                f"{shlex.quote(sys.executable)} {shlex.quote(str(sidecar_path))}"
-            )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
 
-            result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=new_event["id"])
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result(delivery_id="delivery-2")
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=new_event["id"])
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(get_cursor(group, "peer1")[0], new_event["id"])
-            payload = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload.get("event_ids"), [old_event["id"], new_event["id"]])
+            prompt = str(calls[0].get("prompt") or "")
+            self.assertIn(f"events={old_event['id']},{new_event['id']}", prompt)
         finally:
-            if old_command is None:
-                os.environ.pop("CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND", None)
-            else:
-                os.environ["CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND"] = old_command
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:

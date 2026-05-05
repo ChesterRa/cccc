@@ -6,7 +6,7 @@ GPT-5.x Pro is different. Current ChatGPT platform restrictions may prevent GPT-
 
 There are two delivery modes behind the same actor identity:
 
-1. **Browser delivery**: CCCC injects the current unread message batch into a bound ChatGPT web chat through a CCCC-owned browser sidecar. A successful injection commits the actor cursor.
+1. **Browser delivery**: CCCC injects the current unread message batch into a bound ChatGPT web chat through the shared daemon-owned projected browser session. A successful injection commits the actor cursor.
 2. **Remote-MCP pull**: ChatGPT calls `cccc_runtime_wait_next_turn` through MCP and receives a pull-mode turn. Pull mode advances the cursor on `cccc_runtime_complete_turn`.
 
 In both modes, the model uses CCCC tools for visible replies and workspace work. Browser delivery does not depend on a completion call; `cccc_runtime_complete_turn` remains useful for remote-MCP pull and optional evidence, but it is not a browser-delivery gate.
@@ -81,41 +81,17 @@ Use the current ChatGPT web settings for custom MCP apps/connectors:
 
 ### ChatGPT Browser Delivery
 
-Browser delivery is the proactive path for ChatGPT web. The bundled sidecar controls an already logged-in Chrome/Edge profile and submits CCCC message batches into the explicitly bound chat. The web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If GPT-5.x Pro cannot see that connector, use it outside the runtime path for advisory review instead.
+Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared daemon-owned projected Chrome/Edge browser session for settings, runtime inspection, tool-confirm approval, auto-reload, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If GPT-5.x Pro cannot see that connector, use it outside the runtime path for advisory review instead.
 
-The default sidecar command is bundled as:
-
-```bash
-cccc-web-model-browser-sidecar
-```
-
-Override it only when testing a custom sidecar:
-
-```bash
-export CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND="/path/to/custom-sidecar"
-```
-
-The daemon passes one JSON payload on stdin and expects JSON on stdout. The default submit timeout is 120 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. The sidecar looks for Chrome or Edge automatically; set `CCCC_WEB_MODEL_BROWSER_BINARY` if the browser is in a custom location.
+The default submit timeout is 120 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. Browser startup is handled by the projected browser runtime, which requires a real system Chrome or Edge CDP-capable browser for ChatGPT.
 
 The login and delivery paths share this profile:
 
 ```text
-CCCC_HOME/state/web_model_browser/<group_id>/<actor_id>/chrome_profile
+CCCC_HOME/state/web_model_browser/_shared/chatgpt_web/chrome_profile
 ```
 
-For Linux background delivery without showing a browser window, install `xvfb`. Browser delivery defaults to background mode when `xvfb-run` is available. You can also force it on the ChatGPT Web Model actor environment:
-
-```bash
-CCCC_WEB_MODEL_BROWSER_VISIBILITY=background
-```
-
-This runs normal Chrome in a virtual display. True Chrome headless remains an explicit experimental opt-in:
-
-```bash
-CCCC_WEB_MODEL_BROWSER_VISIBILITY=headless
-```
-
-Then choose one of these opt-ins:
+Enable browser delivery with:
 
 ```bash
 export CCCC_WEB_MODEL_DELIVERY_MODE=browser
@@ -191,8 +167,8 @@ curl -s "$CONNECTOR_URL" \
 - `cccc_repo` is read-only and annotated as read-only for MCP clients.
 - The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Seeing a management tool in ChatGPT does not grant permission; role checks happen on `tools/call`.
 - ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.
-- ChatGPT proactive delivery depends on the browser sidecar command and an active logged-in browser profile.
-- New ChatGPT chats are supported through a pending auto-bind state: the first successful browser delivery must return a concrete `chatgpt.com/c/...` URL before CCCC commits the actor cursor.
+- ChatGPT proactive delivery depends on the shared projected browser session and an active logged-in browser profile.
+- New ChatGPT chats are supported through a pending auto-bind state: the first successful browser delivery commits the submitted batch, then CCCC waits for ChatGPT to expose the concrete `chatgpt.com/c/...` URL before binding future deliveries to that conversation.
 - GPT-5.x is selected inside ChatGPT. CCCC treats ChatGPT Web Model as one browser-delivery/runtime path, not as a separate provider per model.
 - GPT-5.x Pro currently should be documented as advisory/review support unless the ChatGPT session actually exposes the CCCC connector and write-capable tools.
 - ChatGPT Web Model prompt/help behavior intentionally reuses the normal CCCC agent help path; only the transport note is runtime-specific.

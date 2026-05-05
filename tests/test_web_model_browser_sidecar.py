@@ -1,7 +1,4 @@
-import io
-import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,11 +21,8 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         return td, cleanup
 
-    def test_browser_delivery_uses_builtin_sidecar_for_chatgpt_provider(self) -> None:
-        from cccc.daemon.actors.web_model_browser_delivery import (
-            resolve_web_model_browser_delivery_command,
-            web_model_browser_delivery_enabled,
-        )
+    def test_browser_delivery_enabled_for_chatgpt_provider(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import web_model_browser_delivery_enabled
 
         actor = {
             "id": "peer1",
@@ -38,12 +32,8 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         }
 
         self.assertTrue(web_model_browser_delivery_enabled("g-test", actor))
-        self.assertEqual(
-            resolve_web_model_browser_delivery_command(actor),
-            [sys.executable, "-m", "cccc.ports.web_model_browser_sidecar"],
-        )
 
-    def test_browser_delivery_pull_mode_disables_builtin_sidecar(self) -> None:
+    def test_browser_delivery_pull_mode_disables_proactive_delivery(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import web_model_browser_delivery_enabled
 
         actor = {
@@ -55,58 +45,6 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         }
 
         self.assertFalse(web_model_browser_delivery_enabled("g-test", actor))
-
-    def test_sidecar_dry_run_validates_stdin_payload(self) -> None:
-        from cccc.ports import web_model_browser_sidecar
-
-        payload = {
-            "schema": "cccc.web_model_browser_delivery.v1",
-            "action": "submit_turn",
-            "provider": "chatgpt_web",
-            "group_id": "g-test",
-            "actor_id": "peer1",
-            "turn_id": "turn-1",
-            "event_ids": ["evt-1"],
-            "prompt": "Use CCCC MCP tools.",
-        }
-        stdin = io.StringIO(json.dumps(payload))
-        stdout = io.StringIO()
-
-        with patch.object(sys, "stdin", stdin), patch.object(sys, "stdout", stdout):
-            code = web_model_browser_sidecar.main(["--dry-run"])
-
-        self.assertEqual(code, 0)
-        out = json.loads(stdout.getvalue())
-        self.assertTrue(out.get("ok"))
-        self.assertEqual((out.get("browser") or {}).get("dry_run"), True)
-        self.assertEqual((out.get("browser") or {}).get("turn_id"), "turn-1")
-
-    def test_sidecar_returns_error_for_invalid_schema(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import run_payload
-
-        result = run_payload({"schema": "bad", "action": "submit_turn", "prompt": "x"}, dry_run=True)
-
-        self.assertFalse(result.get("ok"))
-        self.assertIn("schema", str(result.get("error") or ""))
-
-    def test_browser_launch_command_supports_background_xvfb_mode(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import _browser_launch_command
-
-        with patch("cccc.ports.web_model_browser_sidecar.shutil.which", return_value="/usr/bin/xvfb-run"):
-            cmd = _browser_launch_command("/usr/bin/google-chrome", Path("/tmp/profile"), 9222, "background")
-
-        self.assertEqual(cmd[:4], ["/usr/bin/xvfb-run", "-a", "-s", "-screen 0 1280x900x24"])
-        self.assertIn("/usr/bin/google-chrome", cmd)
-        self.assertIn("--remote-debugging-port=9222", cmd)
-
-    def test_delivery_visibility_defaults_to_background_on_linux_when_xvfb_exists(self) -> None:
-        from cccc.ports import web_model_browser_sidecar as sidecar
-
-        with (
-            patch.object(sidecar.sys, "platform", "linux"),
-            patch.object(sidecar.shutil, "which", return_value="/usr/bin/xvfb-run"),
-        ):
-            self.assertEqual(sidecar._default_delivery_visibility(), "background")
 
     def test_chatgpt_conversation_url_normalization_strips_query(self) -> None:
         from cccc.ports.web_model_browser_sidecar import _conversation_url_from_tab
@@ -179,6 +117,102 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual((snapshot.get("delivery") or {}).get("last_error"), "")
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "wait_for_chat_bind")
 
+    def test_cached_browser_session_status_does_not_inspect_page(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            chatgpt_browser_session_cached_status,
+            record_chatgpt_browser_process_state,
+            record_chatgpt_browser_state,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_process_state(
+                {
+                    "pid": 12345,
+                    "cdp_port": 9222,
+                    "visibility": "projected",
+                    "last_tab_url": "https://chatgpt.com/",
+                }
+            )
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/test-chat",
+                    "last_delivery_status": "submitted",
+                    "last_delivery_id": "delivery-1",
+                },
+            )
+
+            with (
+                patch("cccc.ports.web_model_browser_sidecar._wait_cdp_endpoint", side_effect=AssertionError("unexpected cdp probe")),
+                patch("cccc.ports.web_model_browser_sidecar._inspect_chatgpt_browser", side_effect=AssertionError("unexpected page inspect")),
+            ):
+                status = chatgpt_browser_session_cached_status("g-test", "peer1")
+
+            self.assertTrue(bool(status.get("active")))
+            self.assertEqual(status.get("cdp_port"), 9222)
+            self.assertEqual(status.get("conversation_url"), "https://chatgpt.com/c/test-chat")
+            self.assertEqual(status.get("last_delivery_id"), "delivery-1")
+            self.assertFalse(bool(status.get("ready")))
+        finally:
+            cleanup()
+
+    def test_health_snapshot_reports_browser_delivery_submitting(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
+
+        with patch("cccc.ports.web_model_browser_sidecar.utc_now_iso", return_value="2026-05-04T00:01:00Z"):
+            snapshot = build_chatgpt_web_model_health_snapshot(
+                group_id="g-test",
+                actor_id="peer1",
+                browser_session={
+                    "active": True,
+                    "ready": True,
+                    "tab_url": "https://chatgpt.com/c/test",
+                    "conversation_url": "https://chatgpt.com/c/test",
+                    "last_delivery_status": "submitting",
+                    "last_delivery_started_at": "2026-05-04T00:00:00Z",
+                    "last_delivery_timeout_seconds": 120,
+                    "last_delivery_id": "delivery-1",
+                    "last_turn_id": "turn-1",
+                    "last_event_ids": ["event-1"],
+                },
+                browser_surface={"active": True, "state": "ready"},
+            )
+
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "submitting")
+        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
+
+    def test_health_snapshot_ages_out_stale_browser_delivery_submitting(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
+
+        with patch("cccc.ports.web_model_browser_sidecar.utc_now_iso", return_value="2026-05-04T00:03:00Z"):
+            snapshot = build_chatgpt_web_model_health_snapshot(
+                group_id="g-test",
+                actor_id="peer1",
+                browser_session={
+                    "active": True,
+                    "ready": True,
+                    "tab_url": "https://chatgpt.com/c/test",
+                    "conversation_url": "https://chatgpt.com/c/test",
+                    "last_delivery_status": "submitting",
+                    "last_delivery_started_at": "2026-05-04T00:00:00Z",
+                    "last_delivery_timeout_seconds": 120,
+                    "last_delivery_id": "delivery-1",
+                    "last_turn_id": "turn-1",
+                    "last_event_ids": ["event-1"],
+                },
+                browser_surface={"active": True, "state": "ready"},
+            )
+
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "failed")
+        self.assertEqual(delivery.get("last_error"), "delivery_submitting_stale")
+        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "retry_delivery")
+
     def test_health_snapshot_recommends_restart_for_browser_failure(self) -> None:
         from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
 
@@ -218,6 +252,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         with (
             patch.object(sidecar, "_composer_text", return_value=""),
             patch.object(sidecar, "_submission_echo_found", return_value=False),
+            patch.object(sidecar.time, "time", side_effect=[0.0, 0.0, 2.0]),
         ):
             self.assertFalse(
                 sidecar._wait_for_submission(
@@ -227,6 +262,51 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                     timeout_seconds=1.0,
                 )
             )
+
+    def test_submission_wait_does_not_accept_stop_button_without_echo(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Locator:
+            first = None
+
+            def __init__(self) -> None:
+                self.first = self
+
+            def is_visible(self, timeout: int = 0) -> bool:
+                return True
+
+        class _Page:
+            def locator(self, selector: str) -> _Locator:
+                return _Locator()
+
+        with (
+            patch.object(sidecar, "_submission_echo_found", return_value=False),
+            patch.object(sidecar.time, "time", side_effect=[0.0, 0.0, 2.0]),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            self.assertEqual(
+                sidecar._wait_for_submission(
+                    _Page(),
+                    "#prompt-textarea",
+                    prompt="hello",
+                    timeout_seconds=1.0,
+                ),
+                "stop_without_echo",
+            )
+
+    def test_submission_echo_needles_prefer_delivery_markers(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        prompt = (
+            "[CCCC] Session bootstrap for this browser chat:\n"
+            "[cccc] Browser batch webdelivery:peer1:abc123 events=4f83d1b3133d49ef8584fcfd2f2ca55f actor=peer1\n"
+            "[cccc] user -> peer1: hello"
+        )
+
+        needles = sidecar._submission_echo_needles(prompt)
+
+        self.assertIn("Browser batch webdelivery:peer1:abc123", needles)
+        self.assertIn("events=4f83d1b3133d49ef8584fcfd2f2ca55f", needles)
 
     def test_composer_text_reads_contenteditable_via_dom_evaluate(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
@@ -253,6 +333,128 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(sidecar._composer_text(page, "#prompt-textarea"), "Inserted prompt")
         self.assertEqual(page.selector, "#prompt-textarea")
 
+    def test_clear_and_type_prompt_uses_keyboard_for_contenteditable(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Keyboard:
+            def __init__(self) -> None:
+                self.pressed: list[str] = []
+                self.inserted: list[str] = []
+
+            def press(self, key: str) -> None:
+                self.pressed.append(key)
+
+            def insert_text(self, text: str) -> None:
+                self.inserted.append(text)
+
+        class _Locator:
+            first = None
+
+            def __init__(self) -> None:
+                self.first = self
+                self.clicked = False
+                self.fill_called = False
+                self.evaluate_calls = 0
+
+            def click(self, *_args, **_kwargs) -> None:
+                self.clicked = True
+
+            def evaluate(self, *_args, **_kwargs):
+                self.evaluate_calls += 1
+                if self.evaluate_calls == 1:
+                    return False
+                return None
+
+            def fill(self, *_args, **_kwargs) -> None:  # pragma: no cover - should not be reached
+                self.fill_called = True
+                raise AssertionError("contenteditable composer should use keyboard input, not fill()")
+
+        class _Page:
+            def __init__(self) -> None:
+                self.keyboard = _Keyboard()
+                self.locator_obj = _Locator()
+
+            def locator(self, _selector: str) -> _Locator:
+                return self.locator_obj
+
+        page = _Page()
+
+        sidecar._clear_and_type_prompt(page, "#prompt-textarea", "hello")
+
+        self.assertTrue(page.locator_obj.clicked)
+        self.assertFalse(page.locator_obj.fill_called)
+        self.assertIn("Backspace", page.keyboard.pressed)
+        self.assertEqual(page.keyboard.inserted, ["hello"])
+
+    def test_clear_and_type_prompt_uses_fill_for_textarea(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Keyboard:
+            def press(self, _key: str) -> None:  # pragma: no cover - should not be reached
+                raise AssertionError("textarea fill path should not use keyboard fallback")
+
+            def insert_text(self, _text: str) -> None:  # pragma: no cover - should not be reached
+                raise AssertionError("textarea fill path should not use keyboard fallback")
+
+        class _Locator:
+            first = None
+
+            def __init__(self) -> None:
+                self.first = self
+                self.filled = ""
+
+            def click(self, *_args, **_kwargs) -> None:
+                return None
+
+            def evaluate(self, *_args, **_kwargs):
+                return True
+
+            def fill(self, text: str, *_args, **_kwargs) -> None:
+                self.filled = text
+
+        class _Page:
+            def __init__(self) -> None:
+                self.keyboard = _Keyboard()
+                self.locator_obj = _Locator()
+
+            def locator(self, _selector: str) -> _Locator:
+                return self.locator_obj
+
+        page = _Page()
+
+        sidecar._clear_and_type_prompt(page, "textarea", "hello")
+
+        self.assertEqual(page.locator_obj.filled, "hello")
+
+    def test_send_selectors_do_not_target_voice_button_by_style_class(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        self.assertNotIn("button.composer-submit-button-color", sidecar.SEND_BUTTON_SELECTORS)
+        self.assertNotIn("button.composer-submit-btn", sidecar.SEND_BUTTON_SELECTORS)
+
+    def test_input_selectors_do_not_use_broad_hidden_textarea_fallback(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        self.assertNotIn("textarea:not([disabled])", sidecar.INPUT_SELECTORS)
+
+    def test_visible_input_selector_returns_marked_candidate(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Page:
+            def __init__(self) -> None:
+                self.selectors = []
+
+            def evaluate(self, _script: str, selectors: list[str]) -> str:
+                self.selectors = selectors
+                return '[data-cccc-chatgpt-input-candidate="cccc-chatgpt-composer-input"]'
+
+        page = _Page()
+
+        selector = sidecar._visible_input_selector(page, timeout_seconds=1.0)
+
+        self.assertEqual(selector, '[data-cccc-chatgpt-input-candidate="cccc-chatgpt-composer-input"]')
+        self.assertNotIn("textarea:not([disabled])", page.selectors)
+
     def test_submit_prompt_waits_for_delayed_insert_before_clicking_send(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
 
@@ -264,7 +466,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             patch.object(sidecar, "_clear_and_type_prompt") as clear_prompt,
             patch.object(sidecar, "_composer_text", side_effect=["", "", prompt]),
             patch.object(sidecar, "_click_send", return_value="#composer-submit-button") as click_send,
-            patch.object(sidecar, "_wait_for_submission", return_value="stop_button") as wait_for_submission,
+            patch.object(sidecar, "_wait_for_submission", return_value="message_echo") as wait_for_submission,
             patch.object(sidecar.time, "sleep", return_value=None),
         ):
             result = sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
@@ -273,7 +475,45 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         click_send.assert_called_once_with(page)
         wait_for_submission.assert_called_once()
         self.assertEqual(result.get("send_selector"), "#composer-submit-button")
-        self.assertEqual(result.get("submission_evidence"), "stop_button")
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
+
+    def test_submit_prompt_rejects_stop_button_without_message_echo(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        page = object()
+        prompt = "Browser-delivered CCCC message"
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_clear_and_type_prompt"),
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_click_send", return_value="#composer-submit-button"),
+            patch.object(sidecar, "_wait_for_submission", return_value="stop_without_echo"),
+            patch.object(sidecar, "_submission_diagnostics", return_value={"stop_visible": True}),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "submitted message did not appear"):
+                sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+    def test_submit_prompt_reselects_input_after_focus_failure(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        page = object()
+        prompt = "Browser-delivered CCCC message"
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", side_effect=["textarea[name='prompt-textarea']", "[data-cccc-chatgpt-input-candidate='cccc-chatgpt-composer-input']"]) as selector,
+            patch.object(sidecar, "_clear_and_type_prompt", side_effect=[RuntimeError("element is not visible"), None]) as clear_prompt,
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_click_send", return_value="#composer-submit-button"),
+            patch.object(sidecar, "_wait_for_submission", return_value="message_echo"),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            result = sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+        self.assertEqual(selector.call_count, 2)
+        self.assertEqual(clear_prompt.call_count, 2)
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
 
     def test_submit_prompt_tries_request_submit_before_keyboard_fallback(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
@@ -447,14 +687,102 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_browser_launch_command_supports_true_headless_opt_in(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import _browser_launch_command
+    def test_chatgpt_browser_inspection_uses_short_cdp_connect_timeout(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
 
-        cmd = _browser_launch_command("/usr/bin/google-chrome", Path("/tmp/profile"), 9222, "headless")
+        class _Context:
+            pages: list[object] = []
 
-        self.assertEqual(cmd[0], "/usr/bin/google-chrome")
-        self.assertIn("--headless=new", cmd)
-        self.assertIn("--disable-gpu", cmd)
+        class _Browser:
+            contexts = [_Context()]
+
+        class _Chromium:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def connect_over_cdp(self, endpoint: str, **kwargs):
+                self.calls.append((endpoint, dict(kwargs)))
+                return _Browser()
+
+        class _Playwright:
+            def __init__(self) -> None:
+                self.chromium = _Chromium()
+
+        class _CM:
+            def __init__(self) -> None:
+                self.playwright = _Playwright()
+
+            def __enter__(self):
+                return self.playwright
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        cm = _CM()
+
+        with patch.object(sidecar, "ensure_sync_playwright", return_value=lambda: cm):
+            result = sidecar._inspect_chatgpt_browser(9222)
+
+        self.assertFalse(result.get("ready"))
+        self.assertEqual(cm.playwright.chromium.calls, [("http://127.0.0.1:9222", {"timeout": sidecar.CDP_CONNECT_TIMEOUT_MS})])
+
+    def test_pending_conversation_resolution_uses_short_cdp_connect_timeout(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Context:
+            pages: list[object] = []
+
+        class _Browser:
+            contexts = [_Context()]
+
+        class _Chromium:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def connect_over_cdp(self, endpoint: str, **kwargs):
+                self.calls.append((endpoint, dict(kwargs)))
+                return _Browser()
+
+        class _Playwright:
+            def __init__(self) -> None:
+                self.chromium = _Chromium()
+
+        class _CM:
+            def __init__(self) -> None:
+                self.playwright = _Playwright()
+
+            def __enter__(self):
+                return self.playwright
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        _, cleanup = self._with_home()
+        try:
+            sidecar.record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "",
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": "https://chatgpt.com/",
+                    "pending_new_chat_submitted": True,
+                    "pending_new_chat_delivery_id": "browser:test",
+                    "last_tab_url": "",
+                },
+            )
+            sidecar.record_chatgpt_browser_process_state({"cdp_port": 9223, "profile_dir": "/tmp/profile"})
+            cm = _CM()
+            with (
+                patch.object(sidecar, "_wait_cdp_endpoint", return_value=True),
+                patch.object(sidecar, "ensure_sync_playwright", return_value=lambda: cm),
+            ):
+                result = sidecar.resolve_pending_chatgpt_conversation("g-test", "peer1")
+
+            self.assertTrue(result.get("pending"))
+            self.assertEqual(cm.playwright.chromium.calls, [("http://127.0.0.1:9223", {"timeout": sidecar.CDP_CONNECT_TIMEOUT_MS})])
+        finally:
+            cleanup()
 
     def test_tool_confirm_matcher_script_targets_chatgpt_tool_confirm_panel(self) -> None:
         from cccc.ports.web_model_browser_sidecar import _chatgpt_tool_confirm_script
@@ -538,48 +866,6 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertTrue(page.clicked)
         self.assertIn('button[data-cccc-auto-confirm-candidate-id="cand-1"]', page.selector)
         self.assertIn("shared data", page.script)
-
-    def test_session_status_action_does_not_require_prompt(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import run_payload
-
-        with patch("cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status", return_value={"active": False}):
-            result = run_payload(
-                {
-                    "schema": "cccc.web_model_browser_delivery.v1",
-                    "action": "session_status",
-                    "group_id": "g-test",
-                    "actor_id": "peer1",
-                },
-                dry_run=True,
-            )
-
-        self.assertTrue(result.get("ok"))
-        self.assertEqual((result.get("browser") or {}).get("active"), False)
-
-    def test_background_delivery_reuses_active_projected_browser(self) -> None:
-        from cccc.ports import web_model_browser_sidecar as sidecar
-
-        _, cleanup = self._with_home()
-        try:
-            root = sidecar.chatgpt_browser_profile_root("g-test", "peer1")
-            sidecar.record_chatgpt_browser_process_state(
-                {
-                    "pid": 1234,
-                    "cdp_port": 9222,
-                    "visibility": "projected",
-                    "profile_dir": str(sidecar.chatgpt_browser_profile_dir("g-test", "peer1")),
-                },
-            )
-
-            with patch.object(sidecar, "_wait_cdp_endpoint", return_value=True), patch.object(sidecar, "_stop_browser_state") as stop:
-                state = sidecar._start_or_reuse_browser(root, visibility="background")
-
-            self.assertEqual(state.get("cdp_port"), 9222)
-            self.assertEqual(state.get("visibility"), "projected")
-            self.assertTrue(state.get("reused"))
-            stop.assert_not_called()
-        finally:
-            cleanup()
 
     def test_projected_chatgpt_session_requires_system_browser_cdp(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
@@ -696,6 +982,83 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_projected_chatgpt_failed_startup_does_not_persist_dead_cdp_metadata(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            sidecar.record_chatgpt_browser_process_state(
+                {
+                    "pid": 1234,
+                    "cdp_port": 9222,
+                    "profile_dir": str(sidecar.chatgpt_browser_profile_dir("g-test", "peer1")),
+                    "visibility": "projected",
+                    "last_tab_url": "https://chatgpt.com/",
+                }
+            )
+
+            web_model_browser_session._record_projected_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "active": True,
+                    "state": "failed",
+                    "url": "https://chatgpt.com/",
+                    "metadata": {
+                        "pid": 4321,
+                        "cdp_port": 9333,
+                        "profile_dir": str(sidecar.chatgpt_browser_profile_dir("g-test", "peer1")),
+                    },
+                },
+            )
+
+            state = sidecar.read_chatgpt_browser_process_state()
+            self.assertEqual(int(state.get("pid") or 0), 0)
+            self.assertEqual(int(state.get("cdp_port") or 0), 0)
+            self.assertEqual(str(state.get("visibility") or ""), "projected")
+        finally:
+            cleanup()
+
+    def test_projected_chatgpt_session_closes_stale_starting_instance_before_open(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+
+        _, cleanup = self._with_home()
+        try:
+            stale = {
+                "active": True,
+                "state": "starting",
+                "started_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+                "metadata": {"cdp_port": 9222, "pid": 1234},
+            }
+            opened = {
+                "active": True,
+                "state": "ready",
+                "url": "https://chatgpt.com/",
+                "metadata": {"cdp_port": 9333, "pid": 4321},
+            }
+            with (
+                patch.object(web_model_browser_session._MANAGER, "info", side_effect=[stale, {"active": False, "state": "idle"}]),
+                patch.object(web_model_browser_session._MANAGER, "close", return_value={"closed": True}) as close_manager,
+                patch.object(web_model_browser_session._MANAGER, "open", return_value=opened) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
+                patch.object(web_model_browser_session, "ensure_web_model_tool_confirm_watcher", return_value=True),
+            ):
+                result = web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(result, opened)
+            close_manager.assert_called_once_with(key="chatgpt_web")
+            close_browser.assert_any_call("g-test", "peer1")
+            open_session.assert_called_once()
+        finally:
+            cleanup()
+
     def test_projected_chatgpt_session_adopts_existing_shared_cdp_process(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
         from cccc.ports import web_model_browser_sidecar as sidecar
@@ -805,7 +1168,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_projected_chatgpt_close_also_closes_sidecar_browser_state(self) -> None:
+    def test_projected_chatgpt_close_also_closes_recorded_browser_process(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
 
         _, cleanup = self._with_home()
@@ -824,6 +1187,38 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             close_browser.assert_called_once_with("g-test", "peer1")
         finally:
             cleanup()
+
+    def test_projected_chatgpt_background_writes_skip_during_delivery_lock(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+
+        class BusyLock:
+            def acquire(self, blocking=True):
+                self.blocking = blocking
+                return False
+
+            def release(self):  # pragma: no cover - should not be called
+                raise AssertionError("busy lock should not be released by caller")
+
+        with (
+            patch.object(web_model_browser_session, "_SESSION_WRITE_LOCK", BusyLock()),
+            patch.object(web_model_browser_session._MANAGER, "info", return_value={"active": True, "state": "ready"}) as info,
+            patch.object(web_model_browser_session._MANAGER, "execute") as execute,
+        ):
+            reload_result = web_model_browser_session.reload_web_model_chatgpt_browser_session(
+                group_id="g-test",
+                actor_id="peer1",
+                target_url="https://chatgpt.com/c/test",
+            )
+            confirm_result = web_model_browser_session.auto_confirm_web_model_chatgpt_tool_prompts(
+                group_id="g-test",
+                actor_id="peer1",
+                target_url="https://chatgpt.com/c/test",
+            )
+
+        self.assertEqual(reload_result.get("error"), "browser_delivery_in_progress")
+        self.assertEqual(confirm_result.get("skipped"), "browser_delivery_in_progress")
+        self.assertGreaterEqual(info.call_count, 2)
+        execute.assert_not_called()
 
     def test_close_chatgpt_browser_session_cleans_profile_processes_when_pid_state_is_stale(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar

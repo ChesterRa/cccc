@@ -165,6 +165,14 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
         tone: "needs",
       };
     }
+    if (state === "submitting") {
+      return {
+        label: "Activity",
+        value: String(health.delivery.label || "").trim() || "Submitting",
+        detail: String(health.delivery.reason || "").trim() || "CCCC is injecting this batch into ChatGPT.",
+        tone: "needs",
+      };
+    }
     if (queuedCount > 0) {
       return {
         label: "Activity",
@@ -192,6 +200,14 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       detail: lastError === "conversation_url_pending"
         ? "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
         : lastError || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
+      tone: "needs",
+    };
+  }
+  if (deliveryStatus === "submitting") {
+    return {
+      label: "Activity",
+      value: "Submitting",
+      detail: "CCCC is injecting this batch into ChatGPT.",
       tone: "needs",
     };
   }
@@ -340,7 +356,7 @@ export function WebModelRuntimePanel({
   };
 
   const loadBrowserSurfaceSession = useCallback(async () => {
-    const resp = await api.fetchWebModelBrowserSurfaceSession(groupId, actorId);
+    const resp = await api.fetchWebModelBrowserSurfaceSession(groupId, actorId, { inspect: false });
     if (resp.ok) {
       setSession(resp.result.browser_session || {});
       setError("");
@@ -361,7 +377,7 @@ export function WebModelRuntimePanel({
         error: { code: "browser_surface_unavailable", message, details: {} },
       };
     }
-    const resp = await api.openWebModelBrowserSurfaceSession({ groupId, actorId, width, height });
+    const resp = await api.openWebModelBrowserSurfaceSession({ groupId, actorId, width, height, inspect: false });
     if (resp.ok) {
       setSession(resp.result.browser_session || {});
       setError("");

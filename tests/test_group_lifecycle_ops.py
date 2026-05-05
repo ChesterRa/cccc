@@ -400,5 +400,73 @@ class TestGroupLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_start_pet_falls_back_when_foreman_is_web_model(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "group-start-web-model-pet", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add_foreman, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "chatgpt-web",
+                    "title": "ChatGPT Web Model",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            group = load_group(group_id)
+            assert group is not None
+            group.doc["features"] = {"desktop_pet_enabled": True}
+            group.doc["running"] = False
+            group.save()
+
+            captured: list[dict[str, object]] = []
+
+            def _fake_codex_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str], model: str = ""):
+                captured.append(
+                    {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "cwd": cwd,
+                        "env": dict(env),
+                        "model": model,
+                    }
+                )
+
+                class _Session:
+                    pass
+
+                return _Session()
+
+            with patch("cccc.daemon.group.group_lifecycle_ops.codex_app_supervisor.start_actor", side_effect=_fake_codex_start_actor):
+                start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+
+            self.assertTrue(start.ok, getattr(start, "error", None))
+            reloaded = load_group(group_id)
+            assert reloaded is not None
+            pet_actor = get_pet_actor(reloaded)
+            self.assertIsNotNone(pet_actor)
+            assert pet_actor is not None
+            self.assertEqual(str(pet_actor.get("runtime") or ""), "codex")
+            self.assertEqual(str(pet_actor.get("runner") or ""), "headless")
+            self.assertTrue(pet_actor.get("command"))
+            pet_launches = [item for item in captured if item.get("actor_id") == PET_ACTOR_ID]
+            self.assertEqual(len(pet_launches), 1)
+        finally:
+            cleanup()
+
 if __name__ == "__main__":
     unittest.main()

@@ -1140,6 +1140,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 status_code=400,
                 detail={"code": "confirmation_required", "message": f"confirm must equal group_id: {group_id}"}
             )
+        group = load_group(group_id)
+        if group is not None:
+            from ..streams import close_sse_tailers_under
+
+            await close_sse_tailers_under(group.path)
         return await ctx.daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
 
     @group_router.get("/context")

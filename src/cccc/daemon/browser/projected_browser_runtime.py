@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from urllib.request import urlopen
 
 from ...util.process import terminate_pid
@@ -566,6 +566,7 @@ def launch_projected_browser_runtime(
     require_system_browser_cdp: bool = False,
     existing_cdp_port: int = 0,
     existing_browser_metadata: dict[str, Any] | None = None,
+    startup_metadata_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> PlaywrightProjectedRuntime:
     sync_playwright = ensure_sync_playwright()
     playwright_cm = sync_playwright()
@@ -578,9 +579,19 @@ def launch_projected_browser_runtime(
     existing_port = int(existing_cdp_port or 0)
     if existing_port > 0:
         try:
+            if startup_metadata_callback is not None:
+                metadata = dict(existing_browser_metadata or {})
+                metadata.update(
+                    {
+                        "cdp_port": existing_port,
+                        "profile_dir": str(metadata.get("profile_dir") or profile_dir),
+                        "adopted": True,
+                    }
+                )
+                startup_metadata_callback(metadata)
             if not _wait_cdp_endpoint(existing_port, timeout_seconds=1.0):
                 raise RuntimeError("existing CDP endpoint is not reachable")
-            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{existing_port}")
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{existing_port}", timeout=15000)
             contexts = list(getattr(browser, "contexts", []) or [])
             context = contexts[0] if contexts else None
             if context is None:
@@ -667,9 +678,20 @@ def launch_projected_browser_runtime(
                     env=browser_env,
                     start_new_session=True,
                 )
+                if startup_metadata_callback is not None:
+                    startup_metadata_callback(
+                        {
+                            "cdp_port": int(port),
+                            "pid": int(getattr(proc, "pid", 0) or 0),
+                            "profile_dir": str(system_profile_dir),
+                            "browser_binary": str(binary),
+                            "channel": str(channel),
+                            "started_at": utc_now_iso(),
+                        }
+                    )
                 if not _wait_cdp_endpoint(port, timeout_seconds=12.0):
                     raise RuntimeError("cdp endpoint did not become ready")
-                browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{int(port)}")
+                browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{int(port)}", timeout=15000)
                 contexts = list(getattr(browser, "contexts", []) or [])
                 context = contexts[0] if contexts else None
                 if context is None:
@@ -897,6 +919,15 @@ class ProjectedBrowserSession:
             if snapshot["state"] in {"ready", "failed"}:
                 return snapshot
             time.sleep(0.05)
+        self._set_state(
+            "failed",
+            message=f"Browser surface failed: startup timed out after {max(1.0, float(timeout)):.0f}s.",
+            error={
+                "code": "browser_surface_startup_timeout",
+                "message": "browser surface startup timed out",
+            },
+        )
+        self.close()
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
@@ -980,6 +1011,14 @@ class ProjectedBrowserSession:
             self._state = str(state or self._state)
             self._message = str(message or self._message)
             self._error = dict(error or {})
+            self._updated_at = utc_now_iso()
+            self._frame_cond.notify_all()
+
+    def _record_startup_metadata(self, metadata: dict[str, Any]) -> None:
+        if not isinstance(metadata, dict):
+            return
+        with self._lock:
+            self._metadata = {**self._metadata, **metadata}
             self._updated_at = utc_now_iso()
             self._frame_cond.notify_all()
 
@@ -1089,6 +1128,67 @@ class ProjectedBrowserSession:
                     **submit,
                 },
             }
+        elif kind == "chatgpt_auto_confirm_tools":
+            from ...ports.web_model_browser_sidecar import (
+                TOOL_CONFIRM_MAX_CLICKS,
+                _auto_confirm_page_tool_prompts,
+                _normalize_chatgpt_url,
+            )
+
+            target_url = _normalize_chatgpt_url(payload.get("target_url"))
+            page = runtime.page
+            page_url = str(getattr(page, "url", "") or "")
+            normalized_page_url = _normalize_chatgpt_url(page_url)
+            if not normalized_page_url:
+                return {
+                    "ok": True,
+                    "browser_active": True,
+                    "clicked": 0,
+                    "candidate_count": 0,
+                    "details": [],
+                    "errors": [],
+                    "pages_seen": 0,
+                    "page_url": page_url,
+                    "skipped": "non_chatgpt_page",
+                }
+            if target_url and normalized_page_url != target_url:
+                return {
+                    "ok": True,
+                    "browser_active": True,
+                    "clicked": 0,
+                    "candidate_count": 0,
+                    "details": [],
+                    "errors": [],
+                    "pages_seen": 0,
+                    "page_url": page_url,
+                    "skipped": "target_mismatch",
+                }
+            try:
+                max_clicks = int(payload.get("max_clicks") or TOOL_CONFIRM_MAX_CLICKS)
+            except Exception:
+                max_clicks = TOOL_CONFIRM_MAX_CLICKS
+            result = _auto_confirm_page_tool_prompts(
+                page,
+                max_clicks=max(1, min(max_clicks, TOOL_CONFIRM_MAX_CLICKS)),
+            )
+            if not isinstance(result, dict):
+                result = {"clicked": 0, "details": []}
+            errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+            if result.get("error"):
+                errors = [*errors, {"error": str(result.get("error") or "")[:300]}]
+            with self._lock:
+                self._url = str(runtime.current_url() or page_url or self._url)
+                self._updated_at = utc_now_iso()
+            return {
+                "ok": True,
+                "browser_active": True,
+                "clicked": max(0, int(result.get("clicked") or 0)),
+                "candidate_count": max(0, int(result.get("candidate_count") or 0)),
+                "details": result.get("details") if isinstance(result.get("details"), list) else [],
+                "errors": errors,
+                "pages_seen": 1,
+                "page_url": str(runtime.current_url() or page_url),
+            }
         elif kind == "close":
             self._stop_event.set()
             return {"ok": True}
@@ -1114,6 +1214,7 @@ class ProjectedBrowserSession:
                 require_system_browser_cdp=self.require_system_browser_cdp,
                 existing_cdp_port=self.existing_cdp_port,
                 existing_browser_metadata=self.existing_browser_metadata,
+                startup_metadata_callback=self._record_startup_metadata,
             )
             with self._lock:
                 self._strategy = str(getattr(runtime, "strategy", "") or "")

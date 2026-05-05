@@ -80,6 +80,7 @@
   "builtInAssistantPetOff": "Companion off",
   "builtInAssistantPetTurnOn": "Turn PET on",
   "builtInAssistantPetTurnOff": "Turn PET off",
+  "builtInAssistantPetStopConfirm": "Stop PET?",
   "builtInAssistantPetOpen": "Open PET",
   "builtInAssistantOpenShort": "Open",
   "builtInAssistantPetEnabled": "PET enabled for this group.",

@@ -401,7 +401,7 @@ export default function WebModelConnectorsTab({
   const loadBrowserSurfaceSession = useCallback(async () => {
     const gid = groupId;
     const aid = actorId;
-    const resp = await api.fetchWebModelBrowserSurfaceSession(gid, aid);
+    const resp = await api.fetchWebModelBrowserSurfaceSession(gid, aid, { inspect: false });
     if (resp.ok) {
       const nextSession = resp.result.browser_session || null;
       const key = browserSessionKey(gid, aid);
@@ -425,6 +425,7 @@ export default function WebModelConnectorsTab({
       actorId: aid,
       width: size.width,
       height: size.height,
+      inspect: false,
     });
     if (resp.ok) {
       const nextSession = resp.result.browser_session || null;

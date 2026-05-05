@@ -1,18 +1,20 @@
 """Shared projected ChatGPT browser session for ChatGPT Web Model actors.
 
 The Web settings/runtime panels and default browser delivery use the same
-daemon-owned browser session. The legacy sidecar path is reserved for custom
-delivery commands and recovery compatibility.
+daemon-owned browser session.
 """
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
 from ..browser.projected_browser_runtime import ProjectedBrowserSessionManager, _wait_cdp_endpoint
+from ...util.time import parse_utc_iso, utc_now_iso
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
+    TOOL_CONFIRM_MAX_CLICKS,
     _conversation_url_from_tab,
     _normalize_chatgpt_url,
     chatgpt_browser_profile_dir,
@@ -34,6 +36,8 @@ _MANAGER = ProjectedBrowserSessionManager(
 )
 _CHANNEL_CANDIDATES = ("chrome", "msedge")
 _GLOBAL_SESSION_KEY = "chatgpt_web"
+_SESSION_WRITE_LOCK = threading.RLock()
+_STARTING_STALE_SECONDS = 30.0
 
 
 def _session_key(group_id: str, actor_id: str) -> str:
@@ -46,8 +50,14 @@ def _metadata(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
-def _record_sidecar_state(group_id: str, actor_id: str, snapshot: dict[str, Any]) -> None:
+def _record_projected_browser_state(group_id: str, actor_id: str, snapshot: dict[str, Any]) -> None:
     meta = _metadata(snapshot)
+    snapshot_state = str((snapshot or {}).get("state") or "").strip().lower()
+    if snapshot_state == "failed":
+        _clear_projected_browser_state_if_matching(group_id, actor_id, snapshot)
+        return
+    if snapshot_state != "ready":
+        return
     cdp_port = int(meta.get("cdp_port") or 0)
     if cdp_port <= 0:
         return
@@ -71,7 +81,7 @@ def _record_sidecar_state(group_id: str, actor_id: str, snapshot: dict[str, Any]
     )
 
 
-def _clear_sidecar_state_if_matching(group_id: str, actor_id: str, snapshot: dict[str, Any]) -> None:
+def _clear_projected_browser_state_if_matching(group_id: str, actor_id: str, snapshot: dict[str, Any]) -> None:
     meta = _metadata(snapshot)
     cdp_port = int(meta.get("cdp_port") or 0)
     current = read_chatgpt_browser_process_state()
@@ -124,6 +134,35 @@ def _same_path(left: str | Path, right: str | Path) -> bool:
         return str(left or "").strip() == str(right or "").strip()
 
 
+def _age_seconds(ts: str) -> float | None:
+    dt = parse_utc_iso(str(ts or "").strip())
+    now_dt = parse_utc_iso(utc_now_iso())
+    if dt is None or now_dt is None:
+        return None
+    return max(0.0, (now_dt - dt).total_seconds())
+
+
+def _stale_starting_surface(surface: dict[str, Any]) -> bool:
+    if str((surface or {}).get("state") or "").strip() != "starting":
+        return False
+    age = _age_seconds(str((surface or {}).get("started_at") or (surface or {}).get("updated_at") or ""))
+    return age is not None and age >= _STARTING_STALE_SECONDS
+
+
+def _close_stale_starting_surface(group_id: str, actor_id: str, surface: dict[str, Any]) -> dict[str, Any]:
+    if not _stale_starting_surface(surface):
+        return surface
+    try:
+        _MANAGER.close(key=_session_key(group_id, actor_id))
+    except Exception:
+        pass
+    try:
+        close_chatgpt_browser_session(group_id, actor_id)
+    except Exception:
+        pass
+    return _MANAGER.info(key=_session_key(group_id, actor_id))
+
+
 def _adoptable_shared_browser_state(group_id: str, actor_id: str) -> dict[str, Any]:
     state = read_chatgpt_browser_process_state()
     port = int(state.get("cdp_port") or 0)
@@ -146,8 +185,9 @@ def open_web_model_chatgpt_browser_session(
     height: int,
 ) -> dict[str, Any]:
     existing = _MANAGER.info(key=_session_key(group_id, actor_id))
+    existing = _close_stale_starting_surface(group_id, actor_id, existing)
     if bool(existing.get("active")) and str(existing.get("state") or "").strip() in {"starting", "ready"}:
-        _record_sidecar_state(group_id, actor_id, existing)
+        _record_projected_browser_state(group_id, actor_id, existing)
         ensure_web_model_tool_confirm_watcher(group_id, actor_id)
         return existing
 
@@ -182,20 +222,47 @@ def open_web_model_chatgpt_browser_session(
             system_profile_subdir="",
             require_system_browser_cdp=True,
         )
-    _record_sidecar_state(group_id, actor_id, state)
+    _record_projected_browser_state(group_id, actor_id, state)
     ensure_web_model_tool_confirm_watcher(group_id, actor_id)
     return state
 
 
 def get_web_model_chatgpt_browser_session_state(*, group_id: str, actor_id: str) -> dict[str, Any]:
     state = _MANAGER.info(key=_session_key(group_id, actor_id))
+    state = _close_stale_starting_surface(group_id, actor_id, state)
     if bool(state.get("active")):
-        _record_sidecar_state(group_id, actor_id, state)
+        _record_projected_browser_state(group_id, actor_id, state)
         ensure_web_model_tool_confirm_watcher(group_id, actor_id)
     return state
 
 
 def submit_prompt_via_web_model_chatgpt_browser_session(
+    *,
+    group_id: str,
+    actor_id: str,
+    prompt: str,
+    target_url: str,
+    auto_bind_new_chat: bool,
+    delivery_id: str,
+    timeout_seconds: float,
+    input_timeout_seconds: float = 30.0,
+    new_chat_bind_timeout_seconds: float = 20.0,
+) -> dict[str, Any]:
+    with _SESSION_WRITE_LOCK:
+        return _submit_prompt_via_web_model_chatgpt_browser_session_locked(
+            group_id=group_id,
+            actor_id=actor_id,
+            prompt=prompt,
+            target_url=target_url,
+            auto_bind_new_chat=auto_bind_new_chat,
+            delivery_id=delivery_id,
+            timeout_seconds=timeout_seconds,
+            input_timeout_seconds=input_timeout_seconds,
+            new_chat_bind_timeout_seconds=new_chat_bind_timeout_seconds,
+        )
+
+
+def _submit_prompt_via_web_model_chatgpt_browser_session_locked(
     *,
     group_id: str,
     actor_id: str,
@@ -259,6 +326,156 @@ def submit_prompt_via_web_model_chatgpt_browser_session(
     }
 
 
+def reload_web_model_chatgpt_browser_session(
+    *,
+    group_id: str,
+    actor_id: str,
+    target_url: str = "",
+    timeout_seconds: float = 35.0,
+) -> dict[str, Any]:
+    acquired = _SESSION_WRITE_LOCK.acquire(blocking=False)
+    if not acquired:
+        return {
+            "ok": False,
+            "error": "browser_delivery_in_progress",
+            "browser_surface": _MANAGER.info(key=_session_key(group_id, actor_id)),
+        }
+    try:
+        return _reload_web_model_chatgpt_browser_session_locked(
+            group_id=group_id,
+            actor_id=actor_id,
+            target_url=target_url,
+            timeout_seconds=timeout_seconds,
+        )
+    finally:
+        _SESSION_WRITE_LOCK.release()
+
+
+def _reload_web_model_chatgpt_browser_session_locked(
+    *,
+    group_id: str,
+    actor_id: str,
+    target_url: str = "",
+    timeout_seconds: float = 35.0,
+) -> dict[str, Any]:
+    surface = _MANAGER.info(key=_session_key(group_id, actor_id))
+    surface = _close_stale_starting_surface(group_id, actor_id, surface)
+    state = str(surface.get("state") or "").strip()
+    if not bool(surface.get("active")) or state not in {"ready", "starting"}:
+        return {
+            "ok": False,
+            "error": "projected_session_not_active",
+            "browser_surface": surface,
+        }
+    normalized_target = _normalize_chatgpt_url(target_url)
+    before_url = str(surface.get("url") or "")
+    if normalized_target and _normalize_chatgpt_url(before_url) != normalized_target:
+        kind = "navigate"
+        payload = {"url": normalized_target}
+        action = "goto_target"
+    else:
+        kind = "refresh"
+        payload = {}
+        action = "reload"
+    _MANAGER.execute(
+        key=_session_key(group_id, actor_id),
+        kind=kind,
+        payload=payload,
+        timeout=max(5.0, float(timeout_seconds or 35.0)),
+    )
+    after = _MANAGER.info(key=_session_key(group_id, actor_id))
+    _record_projected_browser_state(group_id, actor_id, after)
+    return {
+        "ok": True,
+        "action": action,
+        "before_url": before_url,
+        "after_url": str(after.get("url") or normalized_target or before_url),
+        "browser_surface": after,
+    }
+
+
+def auto_confirm_web_model_chatgpt_tool_prompts(
+    *,
+    group_id: str,
+    actor_id: str,
+    target_url: str = "",
+    max_clicks: int = 3,
+    timeout_seconds: float = 12.0,
+) -> dict[str, Any]:
+    acquired = _SESSION_WRITE_LOCK.acquire(blocking=False)
+    if not acquired:
+        return {
+            "browser_active": True,
+            "clicked": 0,
+            "candidate_count": 0,
+            "details": [],
+            "errors": [],
+            "pages_seen": 0,
+            "skipped": "browser_delivery_in_progress",
+            "browser_surface": _MANAGER.info(key=_session_key(group_id, actor_id)),
+        }
+    try:
+        return _auto_confirm_web_model_chatgpt_tool_prompts_locked(
+            group_id=group_id,
+            actor_id=actor_id,
+            target_url=target_url,
+            max_clicks=max_clicks,
+            timeout_seconds=timeout_seconds,
+        )
+    finally:
+        _SESSION_WRITE_LOCK.release()
+
+
+def _auto_confirm_web_model_chatgpt_tool_prompts_locked(
+    *,
+    group_id: str,
+    actor_id: str,
+    target_url: str = "",
+    max_clicks: int = 3,
+    timeout_seconds: float = 12.0,
+) -> dict[str, Any]:
+    surface = _MANAGER.info(key=_session_key(group_id, actor_id))
+    surface = _close_stale_starting_surface(group_id, actor_id, surface)
+    state = str(surface.get("state") or "").strip()
+    if not bool(surface.get("active")) or state not in {"ready", "starting"}:
+        return {
+            "browser_active": False,
+            "clicked": 0,
+            "candidate_count": 0,
+            "details": [],
+            "errors": [],
+            "pages_seen": 0,
+            "browser_surface": surface,
+        }
+    normalized_target = _normalize_chatgpt_url(target_url)
+    try:
+        click_limit = int(max_clicks or TOOL_CONFIRM_MAX_CLICKS)
+    except Exception:
+        click_limit = TOOL_CONFIRM_MAX_CLICKS
+    result = _MANAGER.execute(
+        key=_session_key(group_id, actor_id),
+        kind="chatgpt_auto_confirm_tools",
+        payload={
+            "target_url": normalized_target,
+            "max_clicks": max(1, min(click_limit, TOOL_CONFIRM_MAX_CLICKS)),
+        },
+        timeout=max(2.0, float(timeout_seconds or 12.0)),
+    )
+    after = _MANAGER.info(key=_session_key(group_id, actor_id))
+    _record_projected_browser_state(group_id, actor_id, after)
+    return {
+        "browser_active": True,
+        "clicked": max(0, int(result.get("clicked") or 0)),
+        "candidate_count": max(0, int(result.get("candidate_count") or 0)),
+        "details": result.get("details") if isinstance(result.get("details"), list) else [],
+        "errors": result.get("errors") if isinstance(result.get("errors"), list) else [],
+        "pages_seen": max(0, int(result.get("pages_seen") or 0)),
+        "page_url": str(result.get("page_url") or after.get("url") or ""),
+        "skipped": str(result.get("skipped") or ""),
+        "browser_surface": after,
+    }
+
+
 def close_web_model_chatgpt_browser_session(*, group_id: str, actor_id: str) -> dict[str, Any]:
     stop_web_model_tool_confirm_watcher(group_id, actor_id)
     before = _MANAGER.info(key=_session_key(group_id, actor_id))
@@ -266,7 +483,7 @@ def close_web_model_chatgpt_browser_session(*, group_id: str, actor_id: str) -> 
     try:
         close_chatgpt_browser_session(group_id, actor_id)
     except Exception:
-        _clear_sidecar_state_if_matching(group_id, actor_id, before)
+        _clear_projected_browser_state_if_matching(group_id, actor_id, before)
     return result
 
 
@@ -282,6 +499,7 @@ def close_all_web_model_chatgpt_browser_sessions() -> None:
 
 
 def can_attach_web_model_chatgpt_browser_socket(*, group_id: str, actor_id: str):
+    _close_stale_starting_surface(group_id, actor_id, _MANAGER.info(key=_session_key(group_id, actor_id)))
     return _MANAGER.can_attach(key=_session_key(group_id, actor_id))
 
 

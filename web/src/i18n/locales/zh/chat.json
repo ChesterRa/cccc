@@ -80,6 +80,7 @@
   "builtInAssistantPetOff": "陪伴助手已关闭",
   "builtInAssistantPetTurnOn": "开启 PET",
   "builtInAssistantPetTurnOff": "关闭 PET",
+  "builtInAssistantPetStopConfirm": "确定要关闭 PET 吗？",
   "builtInAssistantPetOpen": "打开 PET",
   "builtInAssistantOpenShort": "打开",
   "builtInAssistantPetEnabled": "PET 已为当前工作组启用。",

@@ -179,11 +179,13 @@ export async function fetchWebModelBrowserSession(groupId: string, actorId: stri
 export async function fetchWebModelBrowserSurfaceSession(
   groupId: string,
   actorId: string,
+  options?: { inspect?: boolean },
 ): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
   const params = new URLSearchParams({
     group_id: String(groupId || "").trim(),
     actor_id: String(actorId || "").trim(),
   });
+  if (options?.inspect === false) params.set("inspect", "false");
   const resp = await apiJson<WebModelBrowserSurfaceResult>(`/api/v1/web-model/browser-session?${params.toString()}`);
   if (!resp.ok) return resp;
   return {
@@ -216,8 +218,12 @@ export async function openWebModelBrowserSurfaceSession(args: {
   actorId: string;
   width?: number;
   height?: number;
+  inspect?: boolean;
 }): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
-  const resp = await apiJson<WebModelBrowserSurfaceResult>("/api/v1/web-model/browser-session/open", {
+  const params = new URLSearchParams();
+  if (args.inspect === false) params.set("inspect", "false");
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const resp = await apiJson<WebModelBrowserSurfaceResult>(`/api/v1/web-model/browser-session/open${suffix}`, {
     method: "POST",
     body: JSON.stringify({
       group_id: String(args.groupId || "").trim(),

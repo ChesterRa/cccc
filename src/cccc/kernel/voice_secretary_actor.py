@@ -5,7 +5,8 @@ from typing import Any, Dict, Optional
 from ..util.conv import coerce_bool
 from .actors import INTERNAL_KIND_VOICE_SECRETARY, add_actor, find_actor, find_foreman, remove_actor, update_actor
 from .group import Group
-from .runtime import PRIMARY_RUNTIMES, detect_runtime, get_runtime_command_with_flags, runtime_start_preflight_error
+from .internal_assistant_runtime import normalize_internal_assistant_launch_seed
+from .runtime import get_runtime_command_with_flags
 
 
 VOICE_SECRETARY_ACTOR_ID = "voice-secretary"
@@ -45,21 +46,11 @@ def build_voice_secretary_actor_seed(
     default_scope_key: str,
     submit: str,
 ) -> Dict[str, Any]:
-    runtime_value = str(runtime or "").strip()
-    runner_value = str(runner or "").strip()
-    runner = runner_value if runner_value else "pty"
-    runtime = runtime_value if runtime_value else "codex"
-    if runtime.lower() == "web_model":
-        runtime = "codex"
-        runner = "headless"
-        command = get_runtime_command_with_flags(runtime)
-    if runtime_start_preflight_error(runtime, list(command), runner=runner):
-        for candidate in PRIMARY_RUNTIMES:
-            if not detect_runtime(candidate).available:
-                continue
-            runtime = candidate
-            command = get_runtime_command_with_flags(candidate)
-            break
+    runtime, runner, command = normalize_internal_assistant_launch_seed(
+        runtime=runtime,
+        runner=runner,
+        command=list(command),
+    )
     return {
         "title": VOICE_SECRETARY_ACTOR_TITLE,
         "runtime": runtime,

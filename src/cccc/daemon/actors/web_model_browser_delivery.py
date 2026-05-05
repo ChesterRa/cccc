@@ -1,8 +1,8 @@
 """Browser-delivery adapter for website-hosted model actors.
 
-This module owns the daemon-side protocol boundary. Built-in ChatGPT delivery
-uses the shared projected browser session; custom delivery commands still use
-the external sidecar-compatible payload.
+This module owns the daemon-side protocol boundary. ChatGPT delivery uses the
+shared projected browser session so browser writes are serialized through one
+daemon-owned command queue.
 """
 
 from __future__ import annotations
@@ -10,9 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shlex
-import subprocess
-import sys
 import threading
 import hashlib
 from typing import Any, Dict, List, Optional
@@ -24,7 +21,6 @@ from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...kernel.web_model_connectors import list_web_model_connectors
 from ...util.time import parse_utc_iso, utc_now_iso
-from ...util.node_env import with_node_deprecation_warnings_suppressed
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
     _conversation_url_from_tab,
@@ -34,17 +30,13 @@ from ...ports.web_model_browser_sidecar import (
 )
 from ..messaging.actor_turn_rendering import render_actor_event_batch_for_delivery
 from ..messaging.delivery import MCP_REMINDER_LINE
-from ..runner_state_ops import update_headless_state
+from ..runner_state_ops import read_headless_state, update_headless_state
 from .web_model_runtime_ops import commit_web_model_delivered_turn
 
 _LOG = logging.getLogger("cccc.daemon.web_model.browser_delivery")
 _IN_FLIGHT_LOCK = threading.Lock()
 _IN_FLIGHT: set[tuple[str, str]] = set()
 
-_COMMAND_ENV_KEYS = (
-    "CCCC_WEB_MODEL_BROWSER_DELIVERY_COMMAND",
-    "CCCC_WEB_MODEL_BROWSER_COMMAND",
-)
 _MODE_ENV_KEYS = (
     "CCCC_WEB_MODEL_DELIVERY_MODE",
     "CCCC_WEB_MODEL_DELIVERY",
@@ -110,40 +102,6 @@ def _float_setting(actor: Dict[str, Any], keys: tuple[str, ...], *, default: flo
     return max(minimum, min(value, maximum))
 
 
-def resolve_web_model_browser_delivery_command(actor: Dict[str, Any]) -> List[str]:
-    raw = _setting(actor, _COMMAND_ENV_KEYS)
-    if not raw:
-        return [sys.executable, "-m", "cccc.ports.web_model_browser_sidecar"]
-    try:
-        return [part for part in shlex.split(raw) if part]
-    except ValueError:
-        return []
-
-
-def _uses_builtin_chatgpt_sidecar(command: List[str]) -> bool:
-    expected = [sys.executable, "-m", "cccc.ports.web_model_browser_sidecar"]
-    return [str(item or "").strip() for item in command] == expected
-
-
-def _ensure_chatgpt_browser_session(group_id: str, actor_id: str) -> Dict[str, Any]:
-    from .web_model_browser_session import open_web_model_chatgpt_browser_session
-
-    surface = open_web_model_chatgpt_browser_session(
-        group_id=group_id,
-        actor_id=actor_id,
-        width=1366,
-        height=900,
-    )
-    state = str(surface.get("state") or "").strip()
-    if state not in {"ready", "starting"}:
-        message = str(surface.get("message") or "ChatGPT browser session is not ready").strip()
-        raise RuntimeError(message or "ChatGPT browser session is not ready")
-    meta = surface.get("metadata") if isinstance(surface.get("metadata"), dict) else {}
-    if int((meta or {}).get("cdp_port") or 0) <= 0:
-        raise RuntimeError("ChatGPT browser session has no CDP endpoint")
-    return surface
-
-
 def _provider_from_actor_or_connector(group_id: str, actor: Dict[str, Any]) -> str:
     actor_provider = str(actor.get("web_model_provider") or "").strip().lower()
     if actor_provider:
@@ -187,7 +145,7 @@ def web_model_browser_delivery_enabled(group_id: str, actor: Dict[str, Any]) -> 
     )
     if not browser_requested:
         return False
-    return bool(resolve_web_model_browser_delivery_command(actor))
+    return True
 
 
 def _build_web_model_bootstrap_seed(group: Any, actor: Dict[str, Any]) -> str:
@@ -285,76 +243,54 @@ def build_web_model_browser_turn_prompt(turn: Dict[str, Any], *, bootstrap_seed_
     )
 
 
-def _sidecar_payload(
-    *,
+def _record_delivery_submitting(
     group_id: str,
     actor_id: str,
-    provider: str,
+    *,
     turn: Dict[str, Any],
-    prompt: str,
-    trigger_event_id: str = "",
-    target_url: str = "",
-    bootstrap_seed: bool = False,
-    bootstrap_seed_digest: str = "",
-    auto_bind_new_chat: bool = False,
-) -> Dict[str, Any]:
-    return {
-        "schema": "cccc.web_model_browser_delivery.v1",
-        "action": "submit_turn",
-        "created_at": utc_now_iso(),
-        "provider": provider,
-        "group_id": group_id,
-        "actor_id": actor_id,
-        "delivery_id": str(turn.get("delivery_id") or turn.get("turn_id") or "").strip(),
-        "turn_id": str(turn.get("turn_id") or "").strip(),
-        "event_ids": list(turn.get("event_ids") or []),
-        "latest_event_id": str(turn.get("latest_event_id") or "").strip(),
-        "trigger_event_id": str(trigger_event_id or "").strip(),
-        "browser_visibility": _setting({}, ("CCCC_WEB_MODEL_BROWSER_VISIBILITY", "CCCC_WEB_MODEL_BROWSER_MODE", "CCCC_WEB_MODEL_BROWSER_HEADLESS")),
-        "target_url": str(target_url or "").strip(),
-        "auto_bind_new_chat": bool(auto_bind_new_chat),
-        "bootstrap_seed": bool(bootstrap_seed),
-        "bootstrap_seed_version": _BOOTSTRAP_SEED_VERSION if bool(bootstrap_seed) else "",
-        "bootstrap_seed_digest": str(bootstrap_seed_digest or "").strip() if bool(bootstrap_seed) else "",
-        "bootstrap_seed_conversation_url": str(target_url or "").strip() if bool(bootstrap_seed) else "",
-        "prompt": prompt,
-        "turn": turn,
-    }
-
-
-def _sidecar_env(actor: Dict[str, Any]) -> Dict[str, str]:
-    env = os.environ.copy()
-    env.update(_actor_env(actor))
-    return with_node_deprecation_warnings_suppressed(env)
-
-
-def _run_sidecar(command: List[str], payload: Dict[str, Any], *, timeout_seconds: float, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    proc = subprocess.run(
-        command,
-        input=json.dumps(payload, ensure_ascii=False),
-        text=True,
-        capture_output=True,
-        timeout=timeout_seconds,
-        env=env,
-    )
-    stdout = str(proc.stdout or "").strip()
-    stderr = str(proc.stderr or "").strip()
-    if proc.returncode != 0:
-        return {
-            "ok": False,
-            "error": f"browser sidecar exited with status {proc.returncode}",
-            "stderr": stderr[-2000:],
-            "stdout": stdout[-2000:],
-        }
-    if not stdout:
-        return {"ok": True}
+    delivery_id: str,
+    timeout_seconds: float,
+) -> None:
+    now = utc_now_iso()
     try:
-        parsed = json.loads(stdout)
+        record_chatgpt_browser_state(
+            group_id,
+            actor_id,
+            {
+                "last_delivery_at": now,
+                "last_delivery_started_at": now,
+                "last_turn_id": str(turn.get("turn_id") or ""),
+                "last_event_ids": list(turn.get("event_ids") or []),
+                "last_delivery_id": str(delivery_id or turn.get("delivery_id") or ""),
+                "last_delivery_timeout_seconds": float(timeout_seconds or _DEFAULT_TIMEOUT_SECONDS),
+                "last_delivery_status": "submitting",
+                "last_submission_evidence": "",
+                "last_send_selector": "",
+                "last_error": "",
+            },
+        )
     except Exception:
-        return {"ok": True, "stdout": stdout[-2000:]}
-    if isinstance(parsed, dict):
-        return parsed
-    return {"ok": True, "result": parsed}
+        pass
+
+
+def _is_transient_projected_browser_error(error: str) -> bool:
+    lowered = str(error or "").lower()
+    if any(
+        fragment in lowered
+        for fragment in (
+            "target page, context or browser has been closed",
+            "browser command timed out",
+            "page.evaluate",
+            "page.goto",
+            "page.reload",
+            "locator.click",
+            "element is not visible",
+            "composer input was found but could not be focused",
+            "chatgpt prompt insertion did not stick",
+        )
+    ):
+        return True
+    return False
 
 
 def _append_delivery_event(
@@ -467,7 +403,16 @@ def _bootstrap_seed_required(group_id: str, actor_id: str, *, target_url: str = 
         state = read_chatgpt_browser_state(group_id, actor_id)
     except Exception:
         return True
-    if not str(state.get("bootstrap_seed_delivered_at") or "").strip():
+    delivered_at_raw = str(state.get("bootstrap_seed_delivered_at") or "").strip()
+    if not delivered_at_raw:
+        return True
+    try:
+        headless_state = read_headless_state(group_id, actor_id)
+    except Exception:
+        headless_state = {}
+    started_at = parse_utc_iso(str(headless_state.get("started_at") or ""))
+    delivered_at = parse_utc_iso(delivered_at_raw)
+    if started_at is not None and delivered_at is not None and started_at > delivered_at:
         return True
     if str(state.get("bootstrap_seed_version") or "").strip() != _BOOTSTRAP_SEED_VERSION:
         return True
@@ -529,68 +474,75 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         update_headless_state(group.group_id, aid, status="waiting", active_turn_id="", latest_event_id="")
         return {"ok": True, "status": "idle"}
 
-    command = resolve_web_model_browser_delivery_command(actor)
-    delivery_command_label = ["projected_session"] if _uses_builtin_chatgpt_sidecar(command) else command[:1]
     provider = _provider_from_actor_or_connector(group.group_id, actor) or "chatgpt_web"
     candidate_seed_text = _build_web_model_bootstrap_seed(group, actor)
     seed_digest = _bootstrap_seed_digest(candidate_seed_text)
     bootstrap_seed = _bootstrap_seed_required(group.group_id, aid, target_url=target_url, seed_digest=seed_digest)
     bootstrap_seed_text = candidate_seed_text if bootstrap_seed else ""
     prompt = build_web_model_browser_turn_prompt(turn, bootstrap_seed_text=bootstrap_seed_text)
-    payload = _sidecar_payload(
-        group_id=group.group_id,
-        actor_id=aid,
-        provider=provider,
+    delivery_id = str(turn.get("delivery_id") or "")
+    delivery_timeout_seconds = _timeout_seconds(actor)
+    _record_delivery_submitting(
+        group.group_id,
+        aid,
         turn=turn,
-        prompt=prompt,
-        trigger_event_id=trigger_event_id,
-        target_url=target_url,
-        bootstrap_seed=bootstrap_seed,
-        bootstrap_seed_digest=seed_digest,
-        auto_bind_new_chat=auto_bind_new_chat,
+        delivery_id=delivery_id,
+        timeout_seconds=delivery_timeout_seconds,
     )
     browser_surface: Dict[str, Any] = {}
     try:
-        if _uses_builtin_chatgpt_sidecar(command):
-            from .web_model_browser_session import submit_prompt_via_web_model_chatgpt_browser_session
+        from .web_model_browser_session import close_web_model_chatgpt_browser_session, submit_prompt_via_web_model_chatgpt_browser_session
 
-            sidecar_result = submit_prompt_via_web_model_chatgpt_browser_session(
-                group_id=group.group_id,
-                actor_id=aid,
-                prompt=prompt,
-                target_url=target_url,
-                auto_bind_new_chat=auto_bind_new_chat,
-                delivery_id=str(payload.get("delivery_id") or turn.get("delivery_id") or ""),
-                timeout_seconds=_timeout_seconds(actor),
-                input_timeout_seconds=_float_setting(
-                    actor,
-                    ("CCCC_WEB_MODEL_BROWSER_INPUT_TIMEOUT_SECONDS",),
-                    default=30.0,
-                    minimum=5.0,
-                    maximum=300.0,
-                ),
-                new_chat_bind_timeout_seconds=_float_setting(
-                    actor,
-                    ("CCCC_WEB_MODEL_NEW_CHAT_BIND_TIMEOUT_SECONDS",),
-                    default=20.0,
-                    minimum=1.0,
-                    maximum=120.0,
-                ),
+        submit_kwargs = {
+            "group_id": group.group_id,
+            "actor_id": aid,
+            "prompt": prompt,
+            "target_url": target_url,
+            "auto_bind_new_chat": auto_bind_new_chat,
+            "delivery_id": delivery_id,
+            "timeout_seconds": delivery_timeout_seconds,
+            "input_timeout_seconds": _float_setting(
+                actor,
+                ("CCCC_WEB_MODEL_BROWSER_INPUT_TIMEOUT_SECONDS",),
+                default=30.0,
+                minimum=5.0,
+                maximum=300.0,
+            ),
+            "new_chat_bind_timeout_seconds": _float_setting(
+                actor,
+                ("CCCC_WEB_MODEL_NEW_CHAT_BIND_TIMEOUT_SECONDS",),
+                default=20.0,
+                minimum=1.0,
+                maximum=120.0,
+            ),
+        }
+        try:
+            delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(**submit_kwargs)
+        except Exception as first_exc:
+            first_error = str(first_exc)
+            if not _is_transient_projected_browser_error(first_error):
+                raise
+            try:
+                close_web_model_chatgpt_browser_session(group_id=group.group_id, actor_id=aid)
+            except Exception:
+                pass
+            _record_delivery_submitting(
+                group.group_id,
+                aid,
+                turn=turn,
+                delivery_id=delivery_id,
+                timeout_seconds=delivery_timeout_seconds,
             )
-            browser_surface = (
-                sidecar_result.get("browser_surface")
-                if isinstance(sidecar_result.get("browser_surface"), dict)
-                else _ensure_chatgpt_browser_session(group.group_id, aid)
-            )
-        else:
-            sidecar_result = _run_sidecar(command, payload, timeout_seconds=_timeout_seconds(actor), env=_sidecar_env(actor))
-    except subprocess.TimeoutExpired:
-        sidecar_result = {"ok": False, "error": "browser sidecar timed out"}
+            try:
+                delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(**submit_kwargs)
+            except Exception as second_exc:
+                raise RuntimeError(f"{second_exc}; retry_after_transient_error={first_error[:300]}") from second_exc
+        browser_surface = delivery_result.get("browser_surface") if isinstance(delivery_result.get("browser_surface"), dict) else {}
     except Exception as exc:
-        sidecar_result = {"ok": False, "error": str(exc)}
+        delivery_result = {"ok": False, "error": str(exc)}
 
-    ok = bool(sidecar_result.get("ok", True))
-    browser_result = sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {}
+    ok = bool(delivery_result.get("ok", True))
+    browser_result = delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {}
     delivered_conversation_url = str(browser_result.get("conversation_url") or "").strip() or _conversation_url_from_tab(
         browser_result.get("tab_url")
     )
@@ -605,13 +557,13 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
     )
     if ok and auto_bind_new_chat and not delivered_conversation_url and not pending_conversation_url:
         ok = False
-        sidecar_result = {
-            **sidecar_result,
+        delivery_result = {
+            **delivery_result,
             "ok": False,
             "error": "new ChatGPT chat did not produce a conversation URL",
         }
     if pending_conversation_url:
-        pending_delivery_id = str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or "")
+        pending_delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
         commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by=aid)
         pending_seed_state = (
             {
@@ -681,9 +633,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             kind="web_model.browser_delivery.pending",
             data={
                 "provider": provider,
-                "delivery_id": str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or ""),
+                "delivery_id": str(delivery_result.get("delivery_id") or turn.get("delivery_id") or ""),
                 "trigger_event_id": str(trigger_event_id or "").strip(),
-                "sidecar_command": delivery_command_label,
+                "delivery_transport": "projected_session",
                 "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
                 "bootstrap_seed": bool(bootstrap_seed),
@@ -695,7 +647,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "state": str(browser_surface.get("state") or ""),
                     "url": str(browser_surface.get("url") or ""),
                 },
-                "browser": sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {},
+                "browser": delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {},
             },
         )
         return {
@@ -705,11 +657,11 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "cursor_committed": bool(commit.get("cursor_committed")),
             "commit": commit,
             "event": event,
-            "sidecar": sidecar_result,
+            "delivery": delivery_result,
             "reschedule": False,
         }
     if ok:
-        delivery_id = str(sidecar_result.get("delivery_id") or turn.get("delivery_id") or "")
+        delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
         try:
             from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
 
@@ -783,7 +735,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "provider": provider,
                 "delivery_id": delivery_id,
                 "trigger_event_id": str(trigger_event_id or "").strip(),
-                "sidecar_command": delivery_command_label,
+                "delivery_transport": "projected_session",
                 "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
                 "bootstrap_seed": bool(bootstrap_seed),
@@ -795,7 +747,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "state": str(browser_surface.get("state") or ""),
                     "url": str(browser_surface.get("url") or ""),
                 },
-                "browser": sidecar_result.get("browser") if isinstance(sidecar_result.get("browser"), dict) else {},
+                "browser": delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {},
             },
         )
         return {
@@ -805,17 +757,11 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "cursor_committed": bool(commit.get("cursor_committed")),
             "commit": commit,
             "event": event,
-            "sidecar": sidecar_result,
+            "delivery": delivery_result,
             "reschedule": bool(commit.get("ok")) and bool(commit.get("cursor_committed")) and _has_unread_work(group, aid),
         }
 
-    error = str(sidecar_result.get("error") or "browser sidecar failed")
-    stderr = str(sidecar_result.get("stderr") or "").strip()
-    stdout = str(sidecar_result.get("stdout") or "").strip()
-    if stderr:
-        error = f"{error}; stderr={stderr[-600:]}"
-    elif stdout:
-        error = f"{error}; stdout={stdout[-600:]}"
+    error = str(delivery_result.get("error") or "browser delivery failed")
     record_chatgpt_browser_state(
         group.group_id,
         aid,
@@ -846,7 +792,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "provider": provider,
             "trigger_event_id": str(trigger_event_id or "").strip(),
             "error": error,
-            "sidecar_command": delivery_command_label,
+            "delivery_transport": "projected_session",
         },
     )
     return {

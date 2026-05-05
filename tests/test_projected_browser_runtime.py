@@ -131,8 +131,8 @@ class _FakeChromium:
         self.last_context = _FakeContext()
         return self.last_context
 
-    def connect_over_cdp(self, endpoint: str):
-        self.connect_calls.append(endpoint)
+    def connect_over_cdp(self, endpoint: str, **kwargs):
+        self.connect_calls.append((endpoint, dict(kwargs)))
         self.last_browser = _FakeBrowser()
         return self.last_browser
 
@@ -239,7 +239,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         with (
             patch(
                 "cccc.ports.web_model_browser_sidecar._submit_prompt",
-                return_value={"send_selector": "#composer-submit-button", "submission_evidence": "stop_button"},
+                return_value={"send_selector": "#composer-submit-button", "submission_evidence": "message_echo"},
             ) as submit_prompt,
             patch("cccc.ports.web_model_browser_sidecar._mark_page_pending_delivery") as mark_pending,
             patch("cccc.ports.web_model_browser_sidecar._wait_for_conversation_url") as wait_conversation,
@@ -263,7 +263,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         browser = result["browser"]
         self.assertEqual(browser["conversation_url"], "https://chatgpt.com/c/bound-session")
         self.assertFalse(browser["pending_conversation_url"])
-        self.assertEqual(browser["submission_evidence"], "stop_button")
+        self.assertEqual(browser["submission_evidence"], "message_echo")
         self.assertEqual(browser["cdp_port"], 4567)
         self.assertEqual(browser["pid"], 7654)
 
@@ -310,6 +310,46 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertTrue(browser["pending_conversation_url"])
         self.assertTrue(browser["submitted_without_conversation_url"])
         self.assertEqual(browser["submission_evidence"], "message_echo")
+
+    def test_chatgpt_auto_confirm_command_uses_projected_session_page(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        page = _FakePage()
+        page.url = "https://chatgpt.com/c/bound-session"
+        projected = _FakeSubmitRuntime(page)
+        session = runtime.ProjectedBrowserSession(
+            session_key="test-browser-session",
+            profile_dir=runtime.Path("/tmp/projected-browser-test"),
+            url="https://chatgpt.com",
+            width=1280,
+            height=800,
+            headless=False,
+            channel_candidates=("chrome",),
+        )
+
+        with patch(
+            "cccc.ports.web_model_browser_sidecar._auto_confirm_page_tool_prompts",
+            return_value={
+                "clicked": 1,
+                "candidate_count": 1,
+                "details": [{"title": "Run tool?", "label": "Confirm"}],
+            },
+        ) as auto_confirm:
+            result = session._apply_command(
+                projected,
+                "chatgpt_auto_confirm_tools",
+                {
+                    "target_url": "https://chatgpt.com/c/bound-session",
+                    "max_clicks": 2,
+                },
+            )
+
+        auto_confirm.assert_called_once_with(page, max_clicks=2)
+        self.assertTrue(result.get("browser_active"))
+        self.assertEqual(result.get("clicked"), 1)
+        self.assertEqual(result.get("candidate_count"), 1)
+        self.assertEqual(result.get("pages_seen"), 1)
+        self.assertEqual(result.get("page_url"), "https://chatgpt.com/c/bound-session")
 
     def test_multiple_projected_browser_viewers_do_not_evict_each_other(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
@@ -456,7 +496,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                 channel_candidates=("chrome", None),
             )
 
-        self.assertEqual(fake_cm.playwright.chromium.connect_calls, ["http://127.0.0.1:9222"])
+        self.assertEqual(fake_cm.playwright.chromium.connect_calls, [("http://127.0.0.1:9222", {"timeout": 15000})])
         self.assertEqual(fake_cm.playwright.chromium.launch_calls, [])
         self.assertIn("system_browser_cdp", str(getattr(launched, "strategy", "") or ""))
         launched.close()
@@ -578,7 +618,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(fake_cm.playwright.chromium.connect_calls, ["http://127.0.0.1:9444"])
+        self.assertEqual(fake_cm.playwright.chromium.connect_calls, [("http://127.0.0.1:9444", {"timeout": 15000})])
         self.assertEqual(fake_cm.playwright.chromium.launch_calls, [])
         start_display.assert_not_called()
         popen.assert_not_called()

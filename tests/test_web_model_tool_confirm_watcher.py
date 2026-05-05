@@ -175,16 +175,27 @@ class TestWebModelToolConfirmWatcher(unittest.TestCase):
             )
             page = FakePage()
 
-            result = watcher._maybe_reload_stale_chatgpt_page(
-                "g-test",
-                "peer1",
-                browser=FakeBrowser(page),
-                target_url="https://chatgpt.com/c/test",
-                preferred_page=page,
-            )
+            with patch.object(
+                watcher,
+                "_reload_chatgpt_projected_session",
+                return_value={
+                    "ok": True,
+                    "action": "reload",
+                    "before_url": "https://chatgpt.com/c/test",
+                    "after_url": "https://chatgpt.com/c/test",
+                },
+            ) as reload_session:
+                result = watcher._maybe_reload_stale_chatgpt_page(
+                    "g-test",
+                    "peer1",
+                    browser=FakeBrowser(page),
+                    target_url="https://chatgpt.com/c/test",
+                    preferred_page=page,
+                )
 
             self.assertTrue(result.get("reloaded"), result)
-            self.assertEqual(page.reload_calls, 1)
+            reload_session.assert_called_once_with("g-test", "peer1", target_url="https://chatgpt.com/c/test")
+            self.assertEqual(page.reload_calls, 0)
             self.assertEqual(page.goto_calls, [])
             state = read_chatgpt_browser_state("g-test", "peer1")
             self.assertEqual(state.get("auto_reload_count"), 1)
@@ -237,16 +248,27 @@ class TestWebModelToolConfirmWatcher(unittest.TestCase):
             )
             page = FakePage()
 
-            result = watcher._maybe_reload_stale_chatgpt_page(
-                "g-test",
-                "peer1",
-                browser=FakeBrowser(page),
-                target_url="",
-                preferred_page=page,
-            )
+            with patch.object(
+                watcher,
+                "_reload_chatgpt_projected_session",
+                return_value={
+                    "ok": True,
+                    "action": "reload",
+                    "before_url": "https://chatgpt.com/",
+                    "after_url": "https://chatgpt.com/",
+                },
+            ) as reload_session:
+                result = watcher._maybe_reload_stale_chatgpt_page(
+                    "g-test",
+                    "peer1",
+                    browser=FakeBrowser(page),
+                    target_url="",
+                    preferred_page=page,
+                )
 
             self.assertTrue(result.get("reloaded"), result)
-            self.assertEqual(page.reload_calls, 1)
+            reload_session.assert_called_once_with("g-test", "peer1", target_url="https://chatgpt.com/")
+            self.assertEqual(page.reload_calls, 0)
             self.assertEqual(page.goto_calls, [])
             state = read_chatgpt_browser_state("g-test", "peer1")
             self.assertEqual(state.get("auto_reload_last_page_url"), "https://chatgpt.com/")
@@ -258,47 +280,8 @@ class TestWebModelToolConfirmWatcher(unittest.TestCase):
         from cccc.daemon.actors import web_model_tool_confirm_watcher as watcher
         from cccc.ports import web_model_browser_sidecar as sidecar
 
-        class FakePage:
-            url = "https://chatgpt.com/c/test"
-
-            def __init__(self) -> None:
-                self.reload_calls = 0
-
-            def reload(self, *, wait_until: str, timeout: int) -> None:
-                _ = (wait_until, timeout)
-                self.reload_calls += 1
-
-            def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
-                _ = (wait_until, timeout)
-                self.url = url
-
-        fake_page = FakePage()
-
-        class FakeContext:
-            def __init__(self, page: FakePage) -> None:
-                self.pages = [page]
-
-        class FakeBrowser:
-            def __init__(self, page: FakePage) -> None:
-                self.contexts = [FakeContext(page)]
-
-        class FakeChromium:
-            def connect_over_cdp(self, _endpoint: str):
-                return FakeBrowser(fake_page)
-
-        class FakePlaywright:
-            chromium = FakeChromium()
-
-        class FakePlaywrightContext:
-            def __enter__(self):
-                return FakePlaywright()
-
-            def __exit__(self, _exc_type, _exc, _tb):
-                return False
-
         _, cleanup = self._with_home()
         try:
-            sidecar.record_chatgpt_browser_process_state({"cdp_port": 9222})
             sidecar.record_chatgpt_browser_state(
                 "g-test",
                 "peer1",
@@ -311,23 +294,101 @@ class TestWebModelToolConfirmWatcher(unittest.TestCase):
                     "auto_reload_last_progress_reason": "browser_delivery",
                 },
             )
-            with patch.object(watcher, "_wait_cdp_endpoint", return_value=True), patch.object(
+            with patch.object(
                 watcher,
-                "ensure_sync_playwright",
-                return_value=lambda: FakePlaywrightContext(),
+                "_auto_confirm_chatgpt_projected_session",
+                return_value={
+                    "browser_active": True,
+                    "clicked": 0,
+                    "candidate_count": 1,
+                    "errors": [{"title": "Confirm?", "error": "blocked"}],
+                    "details": [],
+                    "pages_seen": 1,
+                    "page_url": "https://chatgpt.com/c/test",
+                },
             ), patch.object(
-                watcher.browser_sidecar,
-                "_auto_confirm_page_tool_prompts",
-                return_value={"clicked": 0, "candidate_count": 1, "errors": [{"title": "Confirm?", "error": "blocked"}]},
+                watcher,
+                "_reload_chatgpt_projected_session",
+                return_value={
+                    "ok": True,
+                    "action": "reload",
+                    "before_url": "https://chatgpt.com/c/test",
+                    "after_url": "https://chatgpt.com/c/test",
+                },
             ):
                 result = watcher.auto_confirm_chatgpt_tool_prompts("g-test", "peer1")
 
             self.assertEqual(result.get("clicked"), 0)
             self.assertEqual((result.get("auto_reload") or {}).get("reloaded"), True)
-            self.assertEqual(fake_page.reload_calls, 1)
             state = sidecar.read_chatgpt_browser_state("g-test", "peer1")
             self.assertEqual(state.get("auto_confirm_candidate_count"), 1)
             self.assertEqual(state.get("auto_reload_last_progress_reason"), "auto_reload")
+        finally:
+            cleanup()
+
+    def test_auto_confirm_skips_while_browser_delivery_is_submitting(self) -> None:
+        from cccc.daemon.actors import web_model_tool_confirm_watcher as watcher
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            sidecar.record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/test",
+                    "last_delivery_status": "submitting",
+                    "last_delivery_started_at": watcher.utc_now_iso(),
+                    "auto_reload_active": True,
+                },
+            )
+
+            with patch.object(watcher, "_auto_confirm_chatgpt_projected_session") as auto_confirm:
+                result = watcher.auto_confirm_chatgpt_tool_prompts("g-test", "peer1")
+
+            auto_confirm.assert_not_called()
+            self.assertEqual(result.get("skipped"), "delivery_submitting")
+            self.assertEqual(result.get("clicked"), 0)
+        finally:
+            cleanup()
+
+    def test_stale_reload_window_skips_during_browser_delivery_submit(self) -> None:
+        from datetime import datetime, timezone
+
+        from cccc.daemon.actors import web_model_tool_confirm_watcher as watcher
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        class FakeBrowser:
+            contexts = []
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/test",
+                    "last_delivery_status": "submitting",
+                    "last_delivery_started_at": "2026-05-03T00:00:30Z",
+                    "auto_reload_active": True,
+                    "auto_reload_window_started_at": "2026-05-03T00:00:00Z",
+                    "auto_reload_window_expires_at": "2026-05-03T00:30:00Z",
+                    "auto_reload_last_progress_at": "2026-05-03T00:00:00Z",
+                },
+            )
+            with (
+                patch.object(watcher, "_now_dt", return_value=datetime(2026, 5, 3, 0, 1, tzinfo=timezone.utc)),
+                patch.object(watcher, "_reload_chatgpt_projected_session") as reload_session,
+            ):
+                result = watcher._maybe_reload_stale_chatgpt_page(
+                    "g-test",
+                    "peer1",
+                    browser=FakeBrowser(),
+                    target_url="https://chatgpt.com/c/test",
+                )
+
+            self.assertEqual(result.get("reason"), "delivery_submitting")
+            reload_session.assert_not_called()
         finally:
             cleanup()
 
