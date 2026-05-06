@@ -173,7 +173,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set((state) => {
       const prevGid = String(state.selectedGroupId || "").trim();
 
-      // 切组前先把当前视图快照落到缓存，回切时才能做到秒开。
+      // Cache the current view before switching groups so returning to it is instant.
       if (prevGid && prevGid !== gid) {
         saveCurrentViewSnapshot(prevGid, state);
       }

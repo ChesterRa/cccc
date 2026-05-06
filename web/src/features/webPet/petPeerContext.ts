@@ -382,9 +382,10 @@ export function usePetPeerContext(input: {
 
     let cancelled = false;
     const cached = petPeerContextCache.get(groupId) ?? null;
-    // 同步更新 state.groupId 以避免在 fetch 期间产生 state.groupId !== groupId 的
-    // "中间态"，该中间态会导致每次重渲染创建新对象，引发 VirtualMessageList 级联刷新
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 有意为之的同步状态机转换
+    // Synchronously update state.groupId so fetches do not create a transient
+    // state.groupId !== groupId phase that recreates objects on every render
+    // and cascades into VirtualMessageList refreshes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional synchronous state-machine transition
     setState({
       groupId,
       rawContext: cached,

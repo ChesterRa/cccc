@@ -356,7 +356,7 @@ export function WebModelRuntimePanel({
   };
 
   const loadBrowserSurfaceSession = useCallback(async () => {
-    const resp = await api.fetchWebModelBrowserSurfaceSession(groupId, actorId, { inspect: false });
+    const resp = await api.fetchWebModelBrowserSurfaceSession(groupId, actorId, { inspect: true });
     if (resp.ok) {
       setSession(resp.result.browser_session || {});
       setError("");
@@ -377,7 +377,7 @@ export function WebModelRuntimePanel({
         error: { code: "browser_surface_unavailable", message, details: {} },
       };
     }
-    const resp = await api.openWebModelBrowserSurfaceSession({ groupId, actorId, width, height, inspect: false });
+    const resp = await api.openWebModelBrowserSurfaceSession({ groupId, actorId, width, height, inspect: true });
     if (resp.ok) {
       setSession(resp.result.browser_session || {});
       setError("");

@@ -102,7 +102,7 @@ export default function App() {
     replyTarget,
     setDestGroupId,
     setReplyTarget,
-    setToText,
+    setReplyToText,
     switchGroup,
   } = useComposerStore();
 
@@ -240,7 +240,7 @@ export default function App() {
           : policy === "foreman"
             ? ["@foreman"]
             : [];
-      setToText(defaultTo.join(", "));
+      setReplyToText(defaultTo.join(", "));
 
       setReplyTarget({
         eventId: String(ev.id),
@@ -249,7 +249,7 @@ export default function App() {
       });
       requestAnimationFrame(() => composerRef.current?.focus());
     },
-    [selectedGroupId, actors, composerRef, groupSettings, setDestGroupId, setReplyTarget, setToText]
+    [selectedGroupId, actors, composerRef, groupSettings, setDestGroupId, setReplyTarget, setReplyToText]
   );
 
   const { parseUrlDeepLink } = useDeepLink({

@@ -506,7 +506,7 @@ class FeishuAdapter(IMAdapter):
             if isinstance(msg_mentions, list):
                 for m in msg_mentions:
                     key = m.get("key", "")    # e.g. "@_user_1"
-                    name = m.get("name", "")  # e.g. "张三"
+                    name = m.get("name", "")  # e.g. localized display name
                     if key and name:
                         text = text.replace(key, f"@{name}")
 

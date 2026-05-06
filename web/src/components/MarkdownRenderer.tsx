@@ -29,8 +29,8 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
                 const finalLang = lang?.toLowerCase().trim() || 'code';
                 const escaped = instance.utils.escapeHtml(str);
 
-                // 代码块带 Copy 按钮，无语法高亮
-                // 使用 CSS 类切换显示状态，避免直接修改 innerHTML 与 React reconciliation 冲突
+                // Render code blocks with a copy button, without syntax highlighting.
+                // Toggle state through CSS classes to avoid direct innerHTML edits during React reconciliation.
                 return (
                     '<div class="code-block-wrapper relative group">' +
                     '<div class="code-block-header flex items-center justify-between">' +
@@ -54,7 +54,7 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
         return md.render(content || "");
     }, [md, content]);
 
-    // 使用事件委托处理复制逻辑
+    // Use event delegation for copy handling.
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -74,7 +74,7 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
             try {
                 const copied = await copyTextToClipboard(code);
                 if (!copied) throw new Error('copy failed');
-                // 使用 CSS 类切换显示状态，避免修改 innerHTML 导致 React DOM 同步错误
+                // Toggle state through CSS classes to avoid React DOM sync issues from innerHTML edits.
                 button.classList.add('copied', 'pointer-events-none');
                 const copyIcon = button.querySelector('.copy-icon');
                 const copyText = button.querySelector('.copy-text');

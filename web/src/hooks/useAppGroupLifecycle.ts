@@ -55,7 +55,8 @@ export function useAppGroupLifecycle({
     }
   }, [hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
 
-  // 切组前先切换 composer 归属，避免首帧读到旧组草稿。
+  // Move composer ownership before the group switch renders, avoiding a first-frame
+  // read from the previous group's draft.
   useLayoutEffect(() => {
     switchGroup(prevGroupIdRef.current, selectedGroupId || null);
     prevGroupIdRef.current = selectedGroupId || null;

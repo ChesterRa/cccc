@@ -93,7 +93,7 @@ class TestNomcpSessions(unittest.TestCase):
         self.assertTrue(str(session.get("sid") or "").startswith("nomcp_"))
         self.assertTrue(secret.startswith("nomcps_"))
         self.assertIn("https://cccc.example.test/nomcp/s/", str(session.get("session_url_with_token") or ""))
-        self.assertIn("?token=", str(session.get("session_url_with_token") or ""))
+        self.assertIn(f"token={secret}", str(session.get("session_url_with_token") or ""))
         return session, secret
 
     def _ledger_events(self, group) -> list[dict]:
@@ -124,14 +124,20 @@ class TestNomcpSessions(unittest.TestCase):
 
             home_resp = client.get(f"/nomcp/s/{sid}", params={"token": secret})
             self.assertEqual(home_resp.status_code, 200)
+            self.assertIn("text/html", str(home_resp.headers.get("content-type") or ""))
             self.assertIn("Recommended Reading Order", home_resp.text)
             self.assertIn("Status Summary", home_resp.text)
             self.assertIn("Diff Summary", home_resp.text)
+            self.assertIn("Changed Files", home_resp.text)
+            self.assertIn("docs/note.md", home_resp.text)
+            self.assertNotIn("nomcp-public-ping", home_resp.text)
+            self.assertNotIn("NOMCP_OK", home_resp.text)
 
             resources = client.get(f"/nomcp/s/{sid}/resources", params={"token": secret, "format": "md"})
             self.assertEqual(resources.status_code, 200)
             self.assertIn("docs/note.md", resources.text)
             self.assertNotIn(".env", resources.text)
+            self.assertIn(f"/nomcp/s/{sid}/read?path=docs%2Fnote.md&token={secret}", resources.text)
 
             read_resp = client.get(
                 f"/nomcp/s/{sid}/read",
@@ -219,6 +225,8 @@ class TestNomcpSessions(unittest.TestCase):
             client = self._client()
             session, secret = self._create_session(client, admin, group.group_id, reply_to_event_id="evt_parent")
             sid = session["sid"]
+
+            self.assertEqual([event for event in self._ledger_events(group) if event.get("kind") == "chat.message"], [])
 
             resp = client.post(f"/nomcp/s/{sid}/send?token={secret}", data={"msg_id": "m1", "text": "advisory body"})
             self.assertEqual(resp.status_code, 200)

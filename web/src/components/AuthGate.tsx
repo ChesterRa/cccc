@@ -31,7 +31,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const isLocalAccess = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
   const localRecoveryPath = "~/.cccc/access_tokens.yaml";
 
-  // 启动时探测受保护接口：若返回 401/403，说明 token 认证已启用且当前尚未登录。
+  // Probe a protected endpoint on startup; 401/403 means token auth is enabled
+  // and this browser is not authenticated yet.
   useEffect(() => {
     if (forceLoginRef.current) {
       api.clearAuthToken();
@@ -46,7 +47,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         api.clearAuthToken();
         setStatus("login");
       } else {
-        // 服务不可达等其他问题先不拦截，交给 App 自己处理。
+        // Do not block startup for service reachability or other app-level errors.
         setStatus("authenticated");
       }
     });

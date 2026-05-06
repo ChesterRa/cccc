@@ -175,7 +175,6 @@ export function ChatTab({
     // Actions
     sendMessage,
     copyMessageLink,
-    createNomcpReviewLink,
     copyMessageText,
     startReply,
     showRecipients,
@@ -710,7 +709,6 @@ export function ChatTab({
                   onReply={startReply}
                   onShowRecipients={showRecipients}
                   onCopyLink={copyMessageLink}
-                  onCreateNomcpReviewLink={createNomcpReviewLink}
                   onCopyContent={copyMessageText}
                   onRelay={relayMessage}
                   onOpenSource={openSourceMessage}

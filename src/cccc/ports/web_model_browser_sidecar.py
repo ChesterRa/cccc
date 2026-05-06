@@ -1042,6 +1042,8 @@ def _submission_echo_needles(prompt: str) -> list[str]:
     event_match = re.search(r"\bevents=([0-9a-fA-F,]{12,})", normalized)
     if event_match:
         needles.append(f"events={event_match.group(1)}")
+    if needles:
+        return needles
     fallback = normalized[:120] if len(normalized) >= 24 else normalized
     if fallback:
         needles.append(fallback)
@@ -1473,7 +1475,7 @@ def _session_payload(
         "auto_reload_expired_at": str(state.get("auto_reload_expired_at") or ""),
         "auto_reload_last_error": str(state.get("auto_reload_last_error") or ""),
         "ready": False,
-        "login_required": True,
+        "login_required": False,
     }
     if inspection:
         payload.update(inspection)
@@ -1481,12 +1483,16 @@ def _session_payload(
 
 
 def chatgpt_browser_session_cached_status(group_id: str, actor_id: str) -> dict[str, Any]:
-    """Return persisted ChatGPT browser state without connecting to the page."""
+    """Return persisted ChatGPT browser state without inspecting the page.
+
+    The cheap CDP liveness check prevents a stale persisted port from being
+    surfaced as an active sign-in-required browser after daemon restart.
+    """
 
     actor_state = read_chatgpt_browser_state(group_id, actor_id)
     browser_state = read_chatgpt_browser_process_state()
     state = _combined_session_state(actor_state, browser_state)
-    return _session_payload(state, check_alive=False)
+    return _session_payload(state)
 
 
 def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, Any]:

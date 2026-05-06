@@ -206,16 +206,13 @@ export default function WebModelConnectorsTab({
   const [groups, setGroups] = useState<GroupMeta[]>([]);
   const [actors, setActors] = useState<Actor[]>([]);
   const [connectors, setConnectors] = useState<api.WebModelConnector[]>([]);
-  const [nomcpSessions, setNomcpSessions] = useState<api.NomcpSession[]>([]);
   const [remoteState, setRemoteState] = useState<RemoteAccessState | null>(null);
   const [groupId, setGroupId] = useState("");
   const [actorId, setActorId] = useState("");
   const [busy, setBusy] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
-  const [nomcpBusy, setNomcpBusy] = useState(false);
   const [startBusyId, setStartBusyId] = useState("");
   const [revokeBusyId, setRevokeBusyId] = useState("");
-  const [revokeNomcpBusySid, setRevokeNomcpBusySid] = useState("");
   const [actorCreateBusy, setActorCreateBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -247,15 +244,6 @@ export default function WebModelConnectorsTab({
     () => activeConnectors.filter((connector) => String(connector.group_id || "") === groupId),
     [activeConnectors, groupId],
   );
-  const currentGroupNomcpSessions = useMemo(
-    () => nomcpSessions.filter((session) => (
-      String(session.group_id || "") === groupId
-      && !session.revoked
-      && !session.expired
-    )),
-    [groupId, nomcpSessions],
-  );
-  const currentNomcpSession = currentGroupNomcpSessions[0] || null;
   const selectedActor = useMemo(
     () => webModelActors.find((actor) => actor.id === actorId) || null,
     [actorId, webModelActors],
@@ -329,7 +317,6 @@ export default function WebModelConnectorsTab({
       ? "Sign in to ChatGPT, then choose where this actor should deliver messages."
       : "Choose the ChatGPT conversation where this actor should deliver messages.";
   const selectedActorLabel = selectedActor ? String(selectedActor.title || selectedActor.id || "").trim() : "";
-
   const pushNotice = useCallback((value: string) => {
     setNotice(value);
     window.setTimeout(() => setNotice(""), 1600);
@@ -341,15 +328,6 @@ export default function WebModelConnectorsTab({
       setConnectors(resp.result?.connectors || []);
     } else {
       setError(resp.error?.message || "Failed to load ChatGPT Web Model MCP URL.");
-    }
-  }, []);
-
-  const loadNomcpSessions = useCallback(async () => {
-    const resp = await api.fetchNomcpSessions();
-    if (resp.ok) {
-      setNomcpSessions(resp.result?.sessions || []);
-    } else {
-      setError(resp.error?.message || "Failed to load No-MCP advisory sessions.");
     }
   }, []);
 
@@ -422,7 +400,7 @@ export default function WebModelConnectorsTab({
   const loadBrowserSurfaceSession = useCallback(async () => {
     const gid = groupId;
     const aid = actorId;
-    const resp = await api.fetchWebModelBrowserSurfaceSession(gid, aid, { inspect: false });
+    const resp = await api.fetchWebModelBrowserSurfaceSession(gid, aid, { inspect: true });
     if (resp.ok) {
       const nextSession = resp.result.browser_session || null;
       const key = browserSessionKey(gid, aid);
@@ -446,7 +424,7 @@ export default function WebModelConnectorsTab({
       actorId: aid,
       width: size.width,
       height: size.height,
-      inspect: false,
+      inspect: true,
     });
     if (resp.ok) {
       const nextSession = resp.result.browser_session || null;
@@ -472,7 +450,6 @@ export default function WebModelConnectorsTab({
         api.fetchGroups(),
         api.fetchRemoteAccessState(),
         loadConnectors(),
-        loadNomcpSessions(),
       ]);
       if (remoteResp.ok) {
         setRemoteState(remoteResp.result?.remote_access || null);
@@ -494,7 +471,7 @@ export default function WebModelConnectorsTab({
     } finally {
       setBusy(false);
     }
-  }, [currentGroupId, isActive, loadConnectors, loadNomcpSessions]);
+  }, [currentGroupId, isActive, loadConnectors]);
 
   useEffect(() => {
     void loadInitial();
@@ -584,7 +561,7 @@ export default function WebModelConnectorsTab({
     const refresh = async () => {
       const gid = groupId;
       const aid = actorId;
-      const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
+      const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: true });
       if (cancelled) return;
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || {};
@@ -719,78 +696,6 @@ export default function WebModelConnectorsTab({
       setError("Failed to revoke connector.");
     } finally {
       setRevokeBusyId("");
-    }
-  };
-
-  const createNomcpAdvisorySession = async (replaceSid = ""): Promise<string> => {
-    if (!groupId) {
-      setError("Select a group before creating a No-MCP advisory URL.");
-      return "";
-    }
-    if (!publicEndpointReady) {
-      setError("Set a public HTTPS Web URL before creating a No-MCP advisory URL.");
-      return "";
-    }
-    setNomcpBusy(true);
-    setError("");
-    try {
-      const targetTitle = selectedActorLabel || ownerActorLabel || actorId || "ChatGPT Web Model";
-      const resp = await api.createNomcpSession({
-        groupId,
-        title: `No-MCP advisory for ${targetTitle}`,
-        brief: "Use this read-only CCCC project context when ChatGPT cannot access MCP tools. Return advisory findings only; do not treat this as local execution access.",
-        recipient: "user",
-      });
-      if (!resp.ok) {
-        setError(resp.error?.message || "Failed to create No-MCP advisory URL.");
-        return "";
-      }
-      const created = resp.result?.session;
-      const url = String(created?.session_url_with_token || "").trim();
-      if (replaceSid) {
-        await api.revokeNomcpSession(replaceSid);
-      }
-      await loadNomcpSessions();
-      if (created) {
-        setNomcpSessions((current) => [created, ...current.filter((session) => session.sid !== created.sid)]);
-      }
-      pushNotice(replaceSid ? "No-MCP advisory URL rotated." : "No-MCP advisory URL created.");
-      return url;
-    } catch {
-      setError("Failed to create No-MCP advisory URL.");
-      return "";
-    } finally {
-      setNomcpBusy(false);
-    }
-  };
-
-  const copyNomcpAdvisoryUrl = async () => {
-    const existingUrl = String(currentNomcpSession?.session_url_with_token || "").trim();
-    if (existingUrl) {
-      await copyValue(existingUrl, "No-MCP URL");
-      return;
-    }
-    const url = await createNomcpAdvisorySession(currentNomcpSession?.sid || "");
-    if (url) await copyValue(url, "No-MCP URL");
-  };
-
-  const revokeNomcpSession = async (sid: string) => {
-    const clean = String(sid || "").trim();
-    if (!clean) return;
-    setRevokeNomcpBusySid(clean);
-    setError("");
-    try {
-      const resp = await api.revokeNomcpSession(clean);
-      if (resp.ok) {
-        await loadNomcpSessions();
-        pushNotice("No-MCP advisory URL revoked.");
-      } else {
-        setError(resp.error?.message || "Failed to revoke No-MCP advisory URL.");
-      }
-    } catch {
-      setError("Failed to revoke No-MCP advisory URL.");
-    } finally {
-      setRevokeNomcpBusySid("");
     }
   };
 
@@ -996,7 +901,7 @@ export default function WebModelConnectorsTab({
               <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
                 ChatGPT connects from the cloud, so CCCC needs a public HTTPS Web URL. The copied MCP URL already contains
                 the actor token; set ChatGPT Authentication to No Auth. If the selected ChatGPT model cannot use MCP,
-                share the No-MCP URL for read-only advisory review instead.
+                ChatGPT Web Model requires a GPT-5.x chat that can see and use the CCCC MCP connector.
               </p>
               <div className="mt-2 break-all font-mono text-xs text-[var(--color-text-primary)]">
                 {configuredPublicUrl || "No public Web URL configured"}
@@ -1050,8 +955,6 @@ export default function WebModelConnectorsTab({
             {chatGptActorRow ? [chatGptActorRow].map(({ actor, connector }) => {
               const queuedCount = webModelQueuedCount(actor);
               const mcpUrl = connectorMcpUrl(connector || null);
-              const nomcpSession = currentNomcpSession;
-              const nomcpUrl = String(nomcpSession?.session_url_with_token || "").trim();
               const connectorUrl = String(connector?.connector_url || "").trim();
               const rowLocalWarning = Boolean(mcpUrl || connectorUrl) && isLocalConnectorUrl(mcpUrl || connectorUrl);
               const rowHttpsWarning = Boolean(mcpUrl || connectorUrl) && !isHttpsUrl(mcpUrl || connectorUrl);
@@ -1073,12 +976,8 @@ export default function WebModelConnectorsTab({
                   ? String(rowHealth?.target?.label || "").trim() || "New chat armed"
                   : String(rowHealth?.target?.label || "").trim() || "Not set";
               const mcpDetail = mcpUrl ? (chatGptSeen ? "Connected" : "URL ready") : connector ? "Needs rotation" : "Not created";
-              const nomcpDetail = nomcpUrl
-                ? "Copy ready"
-                : nomcpSession
-                  ? "Rotate to copy"
-                  : "Not created";
               const browserDetail = String(rowHealth?.browser?.label || "").trim() || (browserLoginReady ? "Signed in" : browserOpen ? "Open, sign-in needed" : "Not open");
+              const browserNeedsSignIn = String(rowHealth?.browser?.state || "").trim() === "sign_in_required";
               const cardStatus = !publicEndpointReady
                 ? { label: "Needs public URL", tone: "needs" as const }
                 : !actorRunning
@@ -1087,8 +986,10 @@ export default function WebModelConnectorsTab({
                     ? { label: "Needs MCP URL", tone: "needs" as const }
                     : !chatGptSeen
                       ? { label: "Connect in ChatGPT", tone: "needs" as const }
-                      : !browserLoginReady
+                      : browserNeedsSignIn
                         ? { label: "Needs sign-in", tone: "needs" as const }
+                        : !browserLoginReady
+                          ? { label: "Open ChatGPT", tone: "needs" as const }
                         : !targetReady && !rowPendingNewChat
                           ? { label: "Needs target chat", tone: "needs" as const }
                           : { label: "Ready", tone: "ready" as const };
@@ -1107,10 +1008,12 @@ export default function WebModelConnectorsTab({
                       : "Create the ChatGPT MCP URL."
                     : !chatGptSeen
                       ? "Paste the MCP URL into ChatGPT New App with Authentication set to No Auth."
+                    : browserNeedsSignIn
+                      ? "Open the embedded browser and sign in to ChatGPT."
                     : !targetReady && !rowPendingNewChat
                       ? "Bind an existing ChatGPT conversation or arm new-chat auto-bind."
                     : !browserLoginReady
-                      ? "Open the embedded browser and sign in to ChatGPT."
+                      ? "Open ChatGPT to verify the existing browser profile."
                       : healthNextAction || "Ready for browser delivery.";
               const setupPrimary = actorRunning && Boolean(mcpUrl) && chatGptSeen && (!browserLoginReady || (!targetReady && !rowPendingNewChat));
               return (
@@ -1204,34 +1107,6 @@ export default function WebModelConnectorsTab({
                               <span className="break-all text-rose-600 dark:text-rose-300">{connector.last_error}</span>
                             </>
                           ) : null}
-                          <span>No-MCP advisory</span>
-                          <span>
-                            {nomcpSession ? (
-                              <>
-                                <span>{nomcpDetail}</span>
-                                {nomcpSession.expires_at ? <span> · expires {formatTime(nomcpSession.expires_at)}</span> : null}
-                                <span> · {Number(nomcpSession.resource_count || 0)} resources</span>
-                                <span> · {Number(nomcpSession.changed_file_count || 0)} changed</span>
-                              </>
-                            ) : "No advisory URL yet"}
-                          </span>
-                          {nomcpSession?.sid ? (
-                            <>
-                              <span>No-MCP id</span>
-                              <span className="break-all font-mono">{nomcpSession.sid}</span>
-                            </>
-                          ) : null}
-                          {nomcpSession?.latest_advisory_event_id ? (
-                            <>
-                              <span>Latest advisory</span>
-                              <span className="break-all font-mono">{nomcpSession.latest_advisory_event_id}</span>
-                            </>
-                          ) : nomcpSession ? (
-                            <>
-                              <span>Advisories</span>
-                              <span>{Number(nomcpSession.advisory_count || 0)}</span>
-                            </>
-                          ) : null}
                           {rowSession.last_turn_id ? (
                             <>
                               <span>Last turn</span>
@@ -1266,26 +1141,6 @@ export default function WebModelConnectorsTab({
                               Revoke MCP URL
                             </button>
                           ) : null}
-                          {nomcpSession ? (
-                            <button
-                              type="button"
-                              onClick={() => void createNomcpAdvisorySession(nomcpSession.sid)}
-                              disabled={nomcpBusy}
-                              className={secondaryButtonClass("sm")}
-                            >
-                              Rotate No-MCP URL
-                            </button>
-                          ) : null}
-                          {nomcpSession ? (
-                            <button
-                              type="button"
-                              onClick={() => void revokeNomcpSession(nomcpSession.sid)}
-                              disabled={revokeNomcpBusySid === nomcpSession.sid}
-                              className={dangerButtonClass("sm")}
-                            >
-                              Revoke No-MCP URL
-                            </button>
-                          ) : null}
                         </div>
                       </details>
                     </div>
@@ -1318,14 +1173,6 @@ export default function WebModelConnectorsTab({
                           Create MCP URL
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => void copyNomcpAdvisoryUrl()}
-                        disabled={nomcpBusy || !groupId || !publicEndpointReady}
-                        className={nomcpUrl ? secondaryButtonClass("sm") : secondaryButtonClass("sm")}
-                      >
-                        {nomcpUrl ? "Copy No-MCP URL" : nomcpSession ? "Rotate No-MCP URL" : "Create No-MCP URL"}
-                      </button>
                       <button
                         type="button"
                         onClick={() => manageActorChat(actor.id)}

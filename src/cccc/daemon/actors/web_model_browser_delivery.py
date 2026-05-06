@@ -157,6 +157,8 @@ def _build_web_model_bootstrap_seed(group: Any, actor: Dict[str, Any]) -> str:
         "- Use CCCC MCP tools for visible replies, handoffs, local workspace work, validation, and evidence.\n"
         "- For non-trivial local development work, default to cccc_code_exec so repo reads, patches, tests, diffs, "
         "and reports stay in one focused Codex-style loop; use direct tools only for simple one-step actions.\n"
+        "- If CCCC MCP tools are not visible in the selected ChatGPT model, you do not have CCCC local access "
+        "in this chat; tell the user to switch to a GPT-5.x ChatGPT session that can see the CCCC connector.\n"
         "- Text typed only in this web chat is not delivered to CCCC users or peers."
     )
     return "\n\n".join(
@@ -219,7 +221,11 @@ def _browser_delivery_batch(group: Any, *, actor_id: str) -> Dict[str, Any]:
     }
 
 
-def build_web_model_browser_turn_prompt(turn: Dict[str, Any], *, bootstrap_seed_text: str = "") -> str:
+def build_web_model_browser_turn_prompt(
+    turn: Dict[str, Any],
+    *,
+    bootstrap_seed_text: str = "",
+) -> str:
     actor_id = str(turn.get("actor_id") or "").strip()
     delivery_id = str(turn.get("delivery_id") or turn.get("turn_id") or "").strip()
     event_ids = [
@@ -479,7 +485,6 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
     seed_digest = _bootstrap_seed_digest(candidate_seed_text)
     bootstrap_seed = _bootstrap_seed_required(group.group_id, aid, target_url=target_url, seed_digest=seed_digest)
     bootstrap_seed_text = candidate_seed_text if bootstrap_seed else ""
-    prompt = build_web_model_browser_turn_prompt(turn, bootstrap_seed_text=bootstrap_seed_text)
     delivery_id = str(turn.get("delivery_id") or "")
     delivery_timeout_seconds = _timeout_seconds(actor)
     _record_delivery_submitting(
@@ -488,6 +493,10 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         turn=turn,
         delivery_id=delivery_id,
         timeout_seconds=delivery_timeout_seconds,
+    )
+    prompt = build_web_model_browser_turn_prompt(
+        turn,
+        bootstrap_seed_text=bootstrap_seed_text,
     )
     browser_surface: Dict[str, Any] = {}
     try:

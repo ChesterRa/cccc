@@ -292,6 +292,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("do not call `cccc_runtime_wait_next_turn` first", markdown)
         self.assertIn("remote MCP pull", markdown)
         self.assertIn("Web chat text alone is not a visible CCCC reply", markdown)
+        self.assertIn("you do not have CCCC local access", markdown)
         self.assertIn("`cccc_shell`", markdown)
         self.assertIn("`cccc_git`", markdown)
         self.assertIn("Delivered CCCC attachments are blob references", markdown)

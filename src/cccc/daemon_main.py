@@ -81,7 +81,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             if pid_is_alive(pid):
                 print(f"ccccd: pid file points to a live process (pid={pid}) but IPC is not responding; refusing to spawn duplicate daemon")
                 return 1
-            # 进程不存在，清理陈旧状态文件。
+            # The recorded process is gone; clean up stale state files.
             print("ccccd: cleaning up stale state from crashed daemon")
             try:
                 paths.sock_path.unlink(missing_ok=True)

@@ -117,7 +117,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual((snapshot.get("delivery") or {}).get("last_error"), "")
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "wait_for_chat_bind")
 
-    def test_cached_browser_session_status_does_not_inspect_page(self) -> None:
+    def test_cached_browser_session_status_checks_stale_cdp_without_page_inspect(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
             chatgpt_browser_session_cached_status,
             record_chatgpt_browser_process_state,
@@ -145,16 +145,22 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             )
 
             with (
-                patch("cccc.ports.web_model_browser_sidecar._wait_cdp_endpoint", side_effect=AssertionError("unexpected cdp probe")),
+                patch("cccc.ports.web_model_browser_sidecar._wait_cdp_endpoint", return_value=True) as wait_cdp,
                 patch("cccc.ports.web_model_browser_sidecar._inspect_chatgpt_browser", side_effect=AssertionError("unexpected page inspect")),
             ):
                 status = chatgpt_browser_session_cached_status("g-test", "peer1")
 
+            wait_cdp.assert_called_once()
             self.assertTrue(bool(status.get("active")))
             self.assertEqual(status.get("cdp_port"), 9222)
             self.assertEqual(status.get("conversation_url"), "https://chatgpt.com/c/test-chat")
             self.assertEqual(status.get("last_delivery_id"), "delivery-1")
             self.assertFalse(bool(status.get("ready")))
+            self.assertFalse(bool(status.get("login_required")))
+            with patch("cccc.ports.web_model_browser_sidecar._wait_cdp_endpoint", return_value=False):
+                stale_status = chatgpt_browser_session_cached_status("g-test", "peer1")
+            self.assertFalse(bool(stale_status.get("active")))
+            self.assertFalse(bool(stale_status.get("login_required")))
         finally:
             cleanup()
 
@@ -307,6 +313,14 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         self.assertIn("Browser batch webdelivery:peer1:abc123", needles)
         self.assertIn("events=4f83d1b3133d49ef8584fcfd2f2ca55f", needles)
+        self.assertNotIn("[CCCC] Session bootstrap for this browser chat:", needles)
+
+    def test_submission_echo_needles_use_fallback_only_without_delivery_markers(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        needles = sidecar._submission_echo_needles("plain browser prompt without delivery markers")
+
+        self.assertEqual(needles, ["plain browser prompt without delivery markers"])
 
     def test_composer_text_reads_contenteditable_via_dom_evaluate(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar

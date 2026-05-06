@@ -580,6 +580,9 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
                     "`cccc_runtime_wait_next_turn` to get work.",
                     "- Web chat text alone is not a visible CCCC reply. Use `cccc_message_send` or "
                     "`cccc_message_reply` for peer/user-visible communication.",
+                    "- If CCCC MCP tools are not visible in the selected ChatGPT model, you do not have CCCC local access "
+                    "in this chat. Do not claim local execution; tell the user to switch to a GPT-5.x ChatGPT session "
+                    "that can see the CCCC connector.",
                     "- For non-trivial local workspace work, default to `cccc_code_exec`: use JavaScript `tools.*` "
                     "calls to compose repo reads, patches, shell/test commands, git diff, and visible reports in one focused flow.",
                     "- Use direct repo/shell/git tools for simple one-step actions; use `cccc_code_exec` when the work needs "

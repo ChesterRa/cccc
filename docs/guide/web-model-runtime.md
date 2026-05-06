@@ -2,7 +2,7 @@
 
 The `web_model` runtime lets a ChatGPT web chat participate in a CCCC group through browser delivery plus a remote MCP connector. In ChatGPT sessions that expose the CCCC MCP connector, **GPT-5.x** can act as a first-class local development actor: it can receive routed CCCC messages, call CCCC MCP tools, edit the active workspace, run scoped commands, inspect git output, and report back through the same coordination layer as Codex or Claude Code.
 
-GPT-5.x Pro is different. Current ChatGPT platform restrictions may prevent GPT-5.x Pro from seeing or using full third-party MCP/local write tools. In CCCC, GPT-5.x Pro should be treated as an advisory/review surface for planning, architecture critique, debugging hypotheses, and implementation review based on conversation context, pasted diffs, test output, and project summaries. Local execution should remain with MCP-capable runtimes.
+GPT-5.x Pro is different. Current ChatGPT platform restrictions mean GPT-5.x Pro should not be treated as a CCCC local-development runtime: it cannot use the CCCC MCP connector, and its web fetcher may block public/private tunnel URLs before they reach CCCC. In practice this means no reliable local access: no CCCC MCP tools, no repository reads, no shell/git work, and no No-MCP resource fallback. Use a GPT-5.x ChatGPT session that can see the CCCC connector for local development; use Pro only as an external advisory model when you manually provide the needed context.
 
 There are two delivery modes behind the same actor identity:
 
@@ -24,7 +24,7 @@ MCP tool model: ChatGPT registers a remote MCP schema up front, so the ChatGPT W
 - A public HTTPS URL that reaches `cccc web`.
 - A ChatGPT account with remote MCP connector support.
 
-ChatGPT developer mode supports remote MCP over SSE or streamable HTTP and does not connect to local MCP servers. Full local development requires the selected ChatGPT conversation to expose the CCCC connector and its write-capable tools. GPT-5.x Pro may be unavailable for that path; use it for advisory/review workflows when it cannot see the connector.
+ChatGPT developer mode supports remote MCP over SSE or streamable HTTP and does not connect to local MCP servers. Full local development requires the selected ChatGPT conversation to expose the CCCC connector and its write-capable tools. If the selected model cannot see the CCCC connector, that chat has no CCCC local access.
 
 ## CCCC Setup
 
@@ -81,7 +81,7 @@ Use the current ChatGPT web settings for custom MCP apps/connectors:
 
 ### ChatGPT Browser Delivery
 
-Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared daemon-owned projected Chrome/Edge browser session for settings, runtime inspection, tool-confirm approval, auto-reload, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If GPT-5.x Pro cannot see that connector, use it outside the runtime path for advisory review instead.
+Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared daemon-owned projected Chrome/Edge browser session for settings, runtime inspection, tool-confirm approval, auto-reload, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If the selected model cannot see MCP tools, switch to an MCP-capable GPT-5.x chat before assigning local work.
 
 The default submit timeout is 120 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. Browser startup is handled by the projected browser runtime, which requires a real system Chrome or Edge CDP-capable browser for ChatGPT.
 
@@ -170,7 +170,7 @@ curl -s "$CONNECTOR_URL" \
 - ChatGPT proactive delivery depends on the shared projected browser session and an active logged-in browser profile.
 - New ChatGPT chats are supported through a pending auto-bind state: the first successful browser delivery commits the submitted batch, then CCCC waits for ChatGPT to expose the concrete `chatgpt.com/c/...` URL before binding future deliveries to that conversation.
 - GPT-5.x is selected inside ChatGPT. CCCC treats ChatGPT Web Model as one browser-delivery/runtime path, not as a separate provider per model.
-- GPT-5.x Pro currently should be documented as advisory/review support unless the ChatGPT session actually exposes the CCCC connector and write-capable tools.
+- GPT-5.x Pro currently has no reliable CCCC local access. Do not document it as a local-development runtime or No-MCP fallback path.
 - ChatGPT Web Model prompt/help behavior intentionally reuses the normal CCCC agent help path; only the transport note is runtime-specific.
 
 ## References

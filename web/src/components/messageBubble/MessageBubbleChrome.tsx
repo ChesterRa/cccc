@@ -104,7 +104,6 @@ export function MessageFooter({
   onCopyMessageText,
   onShowRecipients,
   onCopyLink,
-  onCreateNomcpReviewLink,
   onRelay,
   onReply,
   canReply,
@@ -125,7 +124,6 @@ export function MessageFooter({
   onCopyMessageText: () => void;
   onShowRecipients: () => void;
   onCopyLink?: (eventId: string) => void;
-  onCreateNomcpReviewLink?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onReply: () => void;
   canReply: boolean;
@@ -295,19 +293,6 @@ export function MessageFooter({
               title={t("copyLink")}
             >
               {t("copyLink")}
-            </button>
-          ) : null}
-          {eventId && onCreateNomcpReviewLink ? (
-            <button
-              type="button"
-              className={classNames(
-                "touch-target-sm rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
-              )}
-              onClick={() => onCreateNomcpReviewLink(event)}
-              title={t("createNomcpReviewLink", { defaultValue: "Create No-MCP review link" })}
-            >
-              {t("nomcpReview", { defaultValue: "No-MCP review" })}
             </button>
           ) : null}
           {eventId && onRelay ? (

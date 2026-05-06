@@ -217,9 +217,9 @@ Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O wi
 
 ChatGPT Web can join a CCCC group as a real actor, not just an external chat window. CCCC delivers group messages into one explicitly bound ChatGPT conversation through browser delivery, while ChatGPT calls back into CCCC through a single actor-bound remote MCP connector.
 
-In supported ChatGPT sessions, **GPT-5.x** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents. This gives Plus/Pro paid ChatGPT users an experience close to a native Codex-style local coding agent when the selected chat exposes the CCCC MCP connector.
+In supported ChatGPT sessions, **GPT-5.x** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents. This gives paid ChatGPT users an experience close to a native Codex-style local coding agent when the selected GPT-5.x chat exposes the CCCC MCP connector.
 
-**GPT-5.x Pro note:** ChatGPT platform restrictions currently prevent GPT-5.x Pro from using full third-party MCP/local write tools in the same way. In CCCC, GPT-5.x Pro is best used as an advisory surface for planning, architecture review, debugging hypotheses, and critique based on conversation context, pasted diffs, test output, and project summaries. Local execution should remain with MCP-capable runtimes such as Codex, Claude Code, or ChatGPT Web Model using a GPT-5.x session that can access the CCCC connector.
+**GPT-5.x Pro note:** GPT-5.x Pro currently cannot be treated as a CCCC local-development runtime. ChatGPT Pro sessions do not expose the third-party CCCC MCP connector, and their web fetcher may block private or public tunnel URLs before they reach CCCC. That means Pro has no reliable local access in CCCC: no MCP tools, no repository reads, no shell/git work, and no No-MCP resource fallback. Use a GPT-5.x ChatGPT session that can see the CCCC connector for local development; use Pro only for external advisory work when you manually provide the needed context.
 
 Shortest setup path:
 
@@ -409,7 +409,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk, WeCom, Weixin |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
-| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect ChatGPT Web / MCP-capable GPT-5.x as a CCCC actor; use GPT-5.x Pro for advisory review |
+| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect MCP-capable ChatGPT GPT-5.x as a CCCC actor |
 | [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP capability governance |
 | [Best Practices](https://chesterra.github.io/cccc/guide/best-practices) | Recommended patterns and workflows |
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | Frequently asked questions |

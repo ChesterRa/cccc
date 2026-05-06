@@ -58,7 +58,6 @@ export interface VirtualMessageListProps {
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
-  onCreateNomcpReviewLink?: (ev: LedgerEvent) => void;
   onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -98,7 +97,6 @@ type VirtualMessageRowProps = {
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
-  onCreateNomcpReviewLink?: (ev: LedgerEvent) => void;
   onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -126,7 +124,6 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onReply,
   onShowRecipients,
   onCopyLink,
-  onCreateNomcpReviewLink,
   onCopyContent,
   onRelay,
   onOpenSource,
@@ -174,7 +171,6 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
           }
         }}
         onCopyLink={onCopyLink}
-        onCreateNomcpReviewLink={onCreateNomcpReviewLink}
         onCopyContent={onCopyContent}
         onRelay={onRelay}
         onOpenSource={onOpenSource}
@@ -206,7 +202,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onReply,
   onShowRecipients,
   onCopyLink,
-  onCreateNomcpReviewLink,
   onCopyContent,
   onRelay,
   onOpenSource,
@@ -298,8 +293,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     anchorOffsetPx: number;
   } | null>(null);
   const lastScrollTopRef = useRef(0);
-  // 标记容器正在处理 resize（如 footer 回复栏出现/消失），
-  // 防止 handleScroll 将浏览器裁剪 scrollTop 误判为用户上滑
+  // Mark container resize work, such as the footer reply bar appearing or
+  // disappearing, so handleScroll does not treat browser-clamped scrollTop as user scroll-up.
   const isContainerResizingRef = useRef(false);
   const forceStickToBottomUntilRef = useRef(0);
 
@@ -850,9 +845,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (!scrollEl || !observedEl || typeof ResizeObserver === "undefined") return;
 
     const observer = new ResizeObserver(() => {
-      // 这里监听消息内容层，而不是滚动容器本身。
-      // 图片加载、流式正文补全、附件列表展开都会改变内容层高度，
-      // 但不会改变滚动容器自身高度；如果只观察容器就会漏掉追底。
+      // Observe the message content layer rather than the scroll container.
+      // Images, streaming text, and expanded attachment lists change content height
+      // without changing the container size; observing only the container misses bottom-follow updates.
       isContainerResizingRef.current = true;
       lastScrollTopRef.current = scrollEl.scrollTop;
 
@@ -1065,7 +1060,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     onReply={onReply}
                     onShowRecipients={onShowRecipients}
                     onCopyLink={onCopyLink}
-                    onCreateNomcpReviewLink={onCreateNomcpReviewLink}
                     onCopyContent={onCopyContent}
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}
@@ -1109,7 +1103,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                         }
                       }}
                       onCopyLink={onCopyLink}
-                      onCreateNomcpReviewLink={onCreateNomcpReviewLink}
                       onCopyContent={onCopyContent}
                       onRelay={onRelay}
                       onOpenSource={onOpenSource}

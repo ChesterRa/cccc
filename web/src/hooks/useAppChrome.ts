@@ -57,7 +57,8 @@ export function useAppChrome({
     return () => window.removeEventListener("focus", handleFocus);
   }, [refreshWebAccessSession]);
 
-  // 首屏引导和基础能力探测保持一次性执行，避免函数引用变化导致重放。
+  // Run first-screen routing and capability probing once; function reference
+  // changes should not replay this bootstrap work.
   useEffect(() => {
     parseUrlDeepLink();
     refreshGroups();

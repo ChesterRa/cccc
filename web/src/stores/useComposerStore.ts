@@ -12,7 +12,8 @@ export function getEffectiveComposerDestGroupId(
   const dest = String(destGroupId || "").trim();
 
   if (!selected) return dest;
-  // 切组首帧 composer 可能仍挂在旧组，先避免把旧目标组带到新组。
+  // During the first frame after a group switch, composer state may still belong
+  // to the previous group; avoid carrying that old destination into the new group.
   if (active !== selected) return selected;
   return dest || selected;
 }
@@ -42,12 +43,14 @@ interface ComposerState {
 
   // Drafts per group (memory only)
   drafts: Record<string, GroupDraft>;
+  normalToTextByGroup: Record<string, string>;
 
   // Actions
   setComposerText: (text: string | ((prev: string) => string)) => void;
   setComposerFiles: (files: File[]) => void;
   appendComposerFiles: (files: File[]) => void;
   setToText: (text: string) => void;
+  setReplyToText: (text: string) => void;
   setReplyTarget: (target: ReplyTarget) => void;
   setQuotedPresentationRef: (ref: PresentationMessageRef | null) => void;
   setPriority: (priority: "normal" | "attention") => void;
@@ -76,6 +79,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   replyRequired: false,
   destGroupId: "",
   drafts: {},
+  normalToTextByGroup: {},
 
   setComposerText: (text) =>
     set((state) => ({
@@ -98,22 +102,72 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       return { composerFiles: next };
     }),
 
-  setToText: (text) => set({ toText: text }),
-  setReplyTarget: (target) => set({ replyTarget: target }),
+  setToText: (text) =>
+    set((state) => {
+      const nextText = String(text || "");
+      if (state.replyTarget || !state.activeGroupId) {
+        return { toText: nextText };
+      }
+      return {
+        toText: nextText,
+        normalToTextByGroup: {
+          ...state.normalToTextByGroup,
+          [state.activeGroupId]: nextText,
+        },
+      };
+    }),
+  setReplyToText: (text) =>
+    set((state) => {
+      const activeGroupId = String(state.activeGroupId || "").trim();
+      const normalToTextByGroup =
+        activeGroupId && !state.replyTarget
+          ? {
+              ...state.normalToTextByGroup,
+              [activeGroupId]: state.toText,
+            }
+          : state.normalToTextByGroup;
+      return {
+        toText: String(text || ""),
+        normalToTextByGroup,
+      };
+    }),
+  setReplyTarget: (target) =>
+    set((state) => {
+      if (target) {
+        return { replyTarget: target };
+      }
+      const activeGroupId = String(state.activeGroupId || "").trim();
+      const normalToText = activeGroupId ? state.normalToTextByGroup[activeGroupId] : undefined;
+      return {
+        replyTarget: null,
+        toText: normalToText ?? state.toText,
+      };
+    }),
   setQuotedPresentationRef: (ref) => set({ quotedPresentationRef: ref }),
   setPriority: (priority) => set({ priority }),
   setReplyRequired: (value) => set({ replyRequired: !!value }),
   setDestGroupId: (groupId) => set({ destGroupId: String(groupId || "").trim() }),
 
   clearComposer: () =>
-    set({
-      composerText: "",
-      composerFiles: [],
-      toText: "",
-      replyTarget: null,
-      quotedPresentationRef: null,
-      priority: "normal",
-      replyRequired: false,
+    set((state) => {
+      const activeGroupId = String(state.activeGroupId || "").trim();
+      const normalToText = activeGroupId ? state.normalToTextByGroup[activeGroupId] : undefined;
+      const nextToText = state.replyTarget ? (normalToText ?? "") : state.toText;
+      return {
+        composerText: "",
+        composerFiles: [],
+        toText: nextToText,
+        replyTarget: null,
+        quotedPresentationRef: null,
+        priority: "normal",
+        replyRequired: false,
+        normalToTextByGroup: activeGroupId
+          ? {
+              ...state.normalToTextByGroup,
+              [activeGroupId]: nextToText,
+            }
+          : state.normalToTextByGroup,
+      };
     }),
 
   switchGroup: (fromGroupId, toGroupId) => {
@@ -149,17 +203,20 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     const draft = toGroupId ? newDrafts[toGroupId] : null;
     const normalizedDestGroupId = String(toGroupId || "").trim();
 
+    const nextToText = draft?.toText ?? (toGroupId ? state.normalToTextByGroup[toGroupId] : undefined) ?? "";
+
     set({
       activeGroupId: normalizedDestGroupId,
       drafts: newDrafts,
       composerText: draft?.composerText || "",
       composerFiles: draft?.composerFiles || [],
-      toText: draft?.toText || "",
+      toText: nextToText,
       replyTarget: draft?.replyTarget || null,
       quotedPresentationRef: draft?.quotedPresentationRef || null,
       priority: draft?.priority || "normal",
       replyRequired: draft?.replyRequired || false,
-      // 切组后先回到当前组，跨组发送由用户显式重新选择，避免恢复草稿时误触发远端拉取。
+      // After switching groups, return delivery to the current group. Cross-group
+      // sends must be selected explicitly so restored drafts do not trigger remote fetches.
       destGroupId: normalizedDestGroupId,
     });
   },

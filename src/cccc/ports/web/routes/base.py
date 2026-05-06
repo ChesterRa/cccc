@@ -518,6 +518,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
         status_fn = chatgpt_browser_session_status if inspect else chatgpt_browser_session_cached_status
         browser = await run_in_threadpool(status_fn, group_id, actor_id)
+        if isinstance(surface, dict) and surface.get("active") and not browser.get("active"):
+            browser = {
+                **browser,
+                "active": True,
+                "state": surface.get("state") or browser.get("state") or "ready",
+                "url": surface.get("url") or browser.get("url") or "",
+            }
+            metadata = surface.get("metadata") if isinstance(surface.get("metadata"), dict) else {}
+            if metadata.get("cdp_port") and not browser.get("cdp_port"):
+                browser["cdp_port"] = metadata.get("cdp_port")
         health_snapshot = build_chatgpt_web_model_health_snapshot(
             group_id=group_id,
             actor_id=actor_id,
@@ -580,6 +590,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             _conversation_url_from_tab,
             _normalize_chatgpt_url,
             chatgpt_browser_session_cached_status,
+            chatgpt_browser_session_status,
             record_chatgpt_browser_state,
         )
 
@@ -611,6 +622,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         surface = await run_in_threadpool(get_web_model_chatgpt_browser_session_state, group_id=group_id, actor_id=actor_id)
         browser = await run_in_threadpool(chatgpt_browser_session_cached_status, group_id, actor_id)
+        browser_has_url = bool(str(browser.get("tab_url") or browser.get("last_tab_url") or "").strip())
+        if not req.conversation_url and not bool(req.new_chat) and not browser_has_url:
+            browser = await run_in_threadpool(chatgpt_browser_session_status, group_id, actor_id)
         raw_url = str(
             req.conversation_url
             or (surface.get("url") if isinstance(surface, dict) else "")

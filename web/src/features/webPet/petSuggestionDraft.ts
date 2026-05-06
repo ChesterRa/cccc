@@ -149,7 +149,11 @@ export function stagePetReminderDraft(reminder: PetReminder): boolean {
   composerStore.setDestGroupId(groupId);
 
   if (!isCrossGroup && !shouldPreserveDraft) {
-    composerStore.setToText(payload.toText);
+    if (payload.replyTo) {
+      composerStore.setReplyToText(payload.toText);
+    } else {
+      composerStore.setToText(payload.toText);
+    }
     composerStore.setReplyTarget(
       payload.replyTo ? findReplyTarget(groupId, payload.replyTo) : null,
     );

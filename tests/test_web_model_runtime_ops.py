@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import ANY, patch
 
 
@@ -42,6 +43,15 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
 
         record_chatgpt_browser_state(group.group_id, actor_id, {"conversation_url": url})
+
+    def _attach_repo_scope(self, group, root: Path):
+        from cccc.kernel.group import attach_scope_to_group
+        from cccc.kernel.registry import load_registry
+        from cccc.kernel.scope import detect_scope
+
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "README.md").write_text("repo context\n", encoding="utf-8")
+        return attach_scope_to_group(load_registry(), group, detect_scope(root), set_active=True)
 
     def _projected_submit_result(
         self,
@@ -369,6 +379,62 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_browser_delivery_does_not_include_nomcp_fallback_when_public_https_is_available(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.kernel.ledger import append_event
+
+        home, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        old_public_url = os.environ.get("CCCC_WEB_PUBLIC_URL")
+        try:
+            group = self._create_group_with_actor()
+            group = self._attach_repo_scope(group, Path(home) / "repo")
+            self._bind_chatgpt_conversation(group, url="https://chatgpt.com/c/nomcp-fallback")
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "review this if MCP is unavailable", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            os.environ["CCCC_WEB_PUBLIC_URL"] = "https://cccc.example.test/ui/"
+            prompts: list[str] = []
+
+            def submit_via_session(**kwargs) -> dict:
+                prompts.append(str(kwargs.get("prompt") or ""))
+                return self._projected_submit_result(
+                    delivery_id="delivery-nomcp",
+                    tab_url="https://chatgpt.com/c/nomcp-fallback",
+                    conversation_url="https://chatgpt.com/c/nomcp-fallback",
+                )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertEqual(len(prompts), 1)
+            prompt = prompts[0]
+            self.assertIn("review this if MCP is unavailable", prompt)
+            self.assertIn("If you respond: use MCP", prompt)
+            self.assertNotIn("No-MCP", prompt)
+            self.assertNotIn("/nomcp/", prompt)
+            self.assertNotIn("delivery-direct-test", prompt)
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            if old_public_url is None:
+                os.environ.pop("CCCC_WEB_PUBLIC_URL", None)
+            else:
+                os.environ["CCCC_WEB_PUBLIC_URL"] = old_public_url
             cleanup()
 
     def test_browser_delivery_uses_projected_chatgpt_session(self) -> None:
