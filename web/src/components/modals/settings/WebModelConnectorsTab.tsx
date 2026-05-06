@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import type { Actor, GroupMeta, RemoteAccessState } from "../../../types";
 import * as api from "../../../services/api";
 import { copyTextToClipboard } from "../../../utils/copy";
@@ -25,6 +26,7 @@ interface WebModelConnectorsTabProps {
 }
 
 const DEFAULT_PROVIDER = "chatgpt_web";
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 function isLocalConnectorUrl(url: string): boolean {
   try {
@@ -73,15 +75,15 @@ function connectorMcpUrl(connector?: api.WebModelConnector | null, secret?: stri
   return connectorUrlWithToken(String(connector?.connector_url || "").trim(), String(secret || "").trim());
 }
 
-function connectorActivityLabel(connector: api.WebModelConnector): string {
+function connectorActivityLabel(connector: api.WebModelConnector, wm: Translate): string {
   const status = String(connector.last_call_status || "").trim();
   const wait = String(connector.last_wait_status || "").trim();
   const tool = String(connector.last_tool_name || "").trim();
-  if (!connector.last_activity_at) return "not seen yet";
-  if (status === "error") return "last call failed";
-  if (tool === "cccc_runtime_wait_next_turn" && wait) return `wait: ${wait}`;
-  if (tool === "cccc_runtime_complete_turn" && wait) return `complete: ${wait}`;
-  return tool || String(connector.last_method || "").trim() || "seen";
+  if (!connector.last_activity_at) return wm("activity.notSeenYet");
+  if (status === "error") return wm("activity.lastCallFailed");
+  if (tool === "cccc_runtime_wait_next_turn" && wait) return wm("activity.wait", { status: wait });
+  if (tool === "cccc_runtime_complete_turn" && wait) return wm("activity.complete", { status: wait });
+  return tool || String(connector.last_method || "").trim() || wm("activity.seen");
 }
 
 function webModelQueuedCount(actor?: Actor | null): number {
@@ -188,11 +190,11 @@ function SetupSection({
   );
 }
 
-function healthNextActionText(health?: api.WebModelHealthSnapshot | null): string {
+function healthNextActionText(health: api.WebModelHealthSnapshot | null | undefined, wm: Translate): string {
   const action = health?.next_action;
   const recommended = String(action?.recommended || "none").trim();
   if (!recommended || recommended === "none") return "";
-  const label = String(action?.label || "").trim() || recommended;
+  const label = wm(`nextAction.${recommended}`, { defaultValue: String(action?.label || "").trim() || recommended });
   const reason = String(action?.reason || "").trim();
   return reason ? `${label}: ${reason}` : label;
 }
@@ -203,6 +205,8 @@ export default function WebModelConnectorsTab({
   currentGroupId = "",
   onOpenWebAccess,
 }: WebModelConnectorsTabProps) {
+  const { t } = useTranslation("settings");
+  const wm = useCallback<Translate>((key, options) => t(`webModels.chatgpt.${key}`, options), [t]);
   const [groups, setGroups] = useState<GroupMeta[]>([]);
   const [actors, setActors] = useState<Actor[]>([]);
   const [connectors, setConnectors] = useState<api.WebModelConnector[]>([]);
@@ -290,32 +294,32 @@ export default function WebModelConnectorsTab({
   const currentBrowserConversationUrl = isChatGptConversationUrl(currentBrowserUrl) ? currentBrowserUrl : "";
   const hasDeliveryTarget = Boolean(boundConversationUrl || pendingNewChatBind);
   const targetModeLabel = boundConversationUrl
-    ? "Existing ChatGPT chat"
+    ? wm("target.existingChat")
     : pendingNewChatBind
-      ? "New chat on next delivery"
-      : "No target selected";
+      ? wm("target.newChatNextDelivery")
+      : wm("target.noneSelected");
   const targetModeTone: SetupTone = hasDeliveryTarget ? "ready" : "needs";
   const targetModeDetail = boundConversationUrl
     ? shortConversationLabel(boundConversationUrl)
     : pendingNewChatBind
-      ? "CCCC will create and bind the /c/... URL after the next message is sent."
-      : "Choose an existing chat or select new-chat delivery before sending work.";
+      ? wm("target.newChatDetail")
+      : wm("target.noneDetail");
   const browserStatusLabel = String(selectedHealth?.browser?.label || "").trim() || (browserReady
-    ? "ChatGPT ready"
+    ? wm("browser.ready")
     : browserActive
-      ? "Sign-in needed"
-      : "Not open");
+      ? wm("browser.signInNeeded")
+      : wm("browser.notOpen"));
   const targetStatusLabel = String(selectedHealth?.target?.label || "").trim() || (boundConversationUrl
-    ? "Target chat bound"
+    ? wm("target.bound")
     : pendingNewChatBind
-      ? "New chat armed"
-      : "Target chat needed");
+      ? wm("target.newChatArmed")
+      : wm("target.needed"));
   const setupReady = browserReady && Boolean(boundConversationUrl || pendingNewChatBind);
   const setupSummary = setupReady
     ? `${browserStatusLabel} · ${targetStatusLabel}`
     : !browserReady
-      ? "Sign in to ChatGPT, then choose where this actor should deliver messages."
-      : "Choose the ChatGPT conversation where this actor should deliver messages.";
+      ? wm("chatSetup.summarySignIn")
+      : wm("chatSetup.summaryChooseTarget");
   const selectedActorLabel = selectedActor ? String(selectedActor.title || selectedActor.id || "").trim() : "";
   const pushNotice = useCallback((value: string) => {
     setNotice(value);
@@ -327,9 +331,9 @@ export default function WebModelConnectorsTab({
     if (resp.ok) {
       setConnectors(resp.result?.connectors || []);
     } else {
-      setError(resp.error?.message || "Failed to load ChatGPT Web Model MCP URL.");
+      setError(resp.error?.message || wm("errors.loadConnectorFailed"));
     }
-  }, []);
+  }, [wm]);
 
   const loadBrowserSession = useCallback(async (gid: string = groupId, aid: string = actorId) => {
     if ((gid && !aid) || (!gid && aid)) {
@@ -347,9 +351,9 @@ export default function WebModelConnectorsTab({
       const currentSelection = currentSelectionRef.current;
       if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
     } else {
-      setError(resp.error?.message || "Failed to load ChatGPT browser session.");
+      setError(resp.error?.message || wm("errors.loadBrowserSessionFailed"));
     }
-  }, [actorId, groupId]);
+  }, [actorId, groupId, wm]);
 
   const loadBrowserSessionsForActors = useCallback(async (gid: string, rows: Actor[]) => {
     if (!gid || !rows.length) {
@@ -393,9 +397,9 @@ export default function WebModelConnectorsTab({
     } else {
       setActors([]);
       setActorId("");
-      setError(resp.error?.message || "Failed to load actors.");
+      setError(resp.error?.message || wm("errors.loadActorsFailed"));
     }
-  }, []);
+  }, [wm]);
 
   const loadBrowserSurfaceSession = useCallback(async () => {
     const gid = groupId;
@@ -411,10 +415,10 @@ export default function WebModelConnectorsTab({
       const currentSelection = currentSelectionRef.current;
       if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
     } else {
-      setError(resp.error?.message || "Failed to load ChatGPT browser session.");
+      setError(resp.error?.message || wm("errors.loadBrowserSessionFailed"));
     }
     return resp;
-  }, [actorId, groupId]);
+  }, [actorId, groupId, wm]);
 
   const startBrowserSurfaceSession = useCallback(async (size: { width: number; height: number }) => {
     const gid = groupId;
@@ -436,10 +440,10 @@ export default function WebModelConnectorsTab({
       const currentSelection = currentSelectionRef.current;
       if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
     } else {
-      setError(resp.error?.message || "Failed to open ChatGPT browser.");
+      setError(resp.error?.message || wm("errors.openBrowserFailed"));
     }
     return resp;
-  }, [actorId, groupId]);
+  }, [actorId, groupId, wm]);
 
   const loadInitial = useCallback(async () => {
     if (!isActive) return;
@@ -464,14 +468,14 @@ export default function WebModelConnectorsTab({
           return String(nextGroups[0]?.group_id || "").trim();
         });
       } else {
-        setError(groupsResp.error?.message || "Failed to load groups.");
+        setError(groupsResp.error?.message || wm("errors.loadGroupsFailed"));
       }
     } catch {
-      setError("Failed to load ChatGPT Web Model settings.");
+      setError(wm("errors.loadSettingsFailed"));
     } finally {
       setBusy(false);
     }
-  }, [currentGroupId, isActive, loadConnectors]);
+  }, [currentGroupId, isActive, loadConnectors, wm]);
 
   useEffect(() => {
     void loadInitial();
@@ -587,7 +591,7 @@ export default function WebModelConnectorsTab({
   const createChatGptWebModelActor = async () => {
     const gid = String(createActorGroupId || preferredCreateActorGroupId || "").trim();
     if (!gid) {
-      setError("Create or select a group before adding ChatGPT Web Model.");
+      setError(wm("errors.createOrSelectGroup"));
       return;
     }
     setActorCreateBusy(true);
@@ -604,7 +608,7 @@ export default function WebModelConnectorsTab({
         { title: "ChatGPT Web Model" },
       );
       if (!resp.ok) {
-        setError(resp.error?.message || "Failed to create ChatGPT Web Model actor.");
+        setError(resp.error?.message || wm("errors.createActorFailed"));
         return;
       }
       const createdActorId = String(resp.result?.actor?.id || "").trim();
@@ -618,9 +622,9 @@ export default function WebModelConnectorsTab({
       setChatManagerOpen(true);
       setShowBrowserSurface(true);
       setBrowserSurfaceRefreshNonce((value) => value + 1);
-      pushNotice("ChatGPT Web Model actor created.");
+      pushNotice(wm("notices.actorCreated"));
     } catch {
-      setError("Failed to create ChatGPT Web Model actor.");
+      setError(wm("errors.createActorFailed"));
     } finally {
       setActorCreateBusy(false);
     }
@@ -629,7 +633,7 @@ export default function WebModelConnectorsTab({
   const createConnector = async (targetActorId = actorId) => {
     const aid = String(targetActorId || "").trim();
     if (!groupId || !aid) {
-      setError("Select a group with the ChatGPT Web Model actor first.");
+      setError(wm("errors.selectActorFirst"));
       return;
     }
     setCreateBusy(true);
@@ -645,13 +649,13 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         setActorId(aid);
         const replaced = resp.result?.replaced_connector_ids || [];
-        pushNotice(replaced.length ? "Connector rotated. Previous connector revoked." : "Connector created.");
+        pushNotice(replaced.length ? wm("notices.connectorRotated") : wm("notices.connectorCreated"));
         await loadConnectors();
       } else {
-        setError(resp.error?.message || "Failed to create connector.");
+        setError(resp.error?.message || wm("errors.createConnectorFailed"));
       }
     } catch {
-      setError("Failed to create connector.");
+      setError(wm("errors.createConnectorFailed"));
     } finally {
       setCreateBusy(false);
     }
@@ -665,16 +669,16 @@ export default function WebModelConnectorsTab({
     try {
       const resp = await api.startActor(groupId, aid);
       if (resp.ok) {
-        pushNotice("Actor started.");
+        pushNotice(wm("notices.actorStarted"));
         await loadActorsForGroup(groupId);
         setChatManagerOpen(true);
         setShowBrowserSurface(true);
         setBrowserSurfaceRefreshNonce((value) => value + 1);
       } else {
-        setError(resp.error?.message || "Failed to start actor.");
+        setError(resp.error?.message || wm("errors.startActorFailed"));
       }
     } catch {
-      setError("Failed to start actor.");
+      setError(wm("errors.startActorFailed"));
     } finally {
       setStartBusyId("");
     }
@@ -690,10 +694,10 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         await loadConnectors();
       } else {
-        setError(resp.error?.message || "Failed to revoke connector.");
+        setError(resp.error?.message || wm("errors.revokeConnectorFailed"));
       }
     } catch {
-      setError("Failed to revoke connector.");
+      setError(wm("errors.revokeConnectorFailed"));
     } finally {
       setRevokeBusyId("");
     }
@@ -704,7 +708,7 @@ export default function WebModelConnectorsTab({
     setChatManagerOpen(true);
     setShowBrowserSurface(true);
     setBrowserSurfaceRefreshNonce((value) => value + 1);
-    pushNotice("ChatGPT sign-in surface opened below.");
+    pushNotice(wm("notices.signInSurfaceOpened"));
   };
 
   const checkBrowserSessionStatus = async () => {
@@ -739,12 +743,12 @@ export default function WebModelConnectorsTab({
         if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
         setShowBrowserSurface(true);
         setBrowserSurfaceRestartNonce((value) => value + 1);
-        pushNotice("ChatGPT browser restarted.");
+        pushNotice(wm("notices.browserRestarted"));
       } else {
-        setError(resp.error?.message || "Failed to restart ChatGPT browser.");
+        setError(resp.error?.message || wm("errors.restartBrowserFailed"));
       }
     } catch {
-      setError("Failed to restart ChatGPT browser.");
+      setError(wm("errors.restartBrowserFailed"));
     } finally {
       setBrowserBusy(false);
     }
@@ -768,13 +772,13 @@ export default function WebModelConnectorsTab({
         if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
           setBrowserSession(nextSession);
           setShowBrowserSurface(false);
-          pushNotice("ChatGPT browser session closed.");
+          pushNotice(wm("notices.browserClosed"));
         }
       } else {
-        setError(resp.error?.message || "Failed to close ChatGPT browser session.");
+        setError(resp.error?.message || wm("errors.closeBrowserFailed"));
       }
     } catch {
-      setError("Failed to close ChatGPT browser session.");
+      setError(wm("errors.closeBrowserFailed"));
     } finally {
       setBrowserBusy(false);
     }
@@ -804,13 +808,13 @@ export default function WebModelConnectorsTab({
         if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
           setBrowserSession(nextSession);
           setConversationUrlDraft("");
-          pushNotice(options?.newChat ? "New ChatGPT chat selected for next delivery." : "ChatGPT conversation bound to this actor.");
+          pushNotice(options?.newChat ? wm("notices.newChatSelected") : wm("notices.conversationBound"));
         }
       } else {
-        setError(resp.error?.message || "Failed to bind ChatGPT conversation.");
+        setError(resp.error?.message || wm("errors.bindConversationFailed"));
       }
     } catch {
-      setError("Failed to bind ChatGPT conversation.");
+      setError(wm("errors.bindConversationFailed"));
     } finally {
       setBrowserBusy(false);
     }
@@ -844,7 +848,7 @@ export default function WebModelConnectorsTab({
 
   const copyValue = async (value: string, labelText: string) => {
     const ok = await copyTextToClipboard(value);
-    pushNotice(ok ? `${labelText} copied.` : "Copy failed.");
+    pushNotice(ok ? wm("notices.copied", { label: labelText }) : wm("notices.copyFailed"));
   };
 
   return (
@@ -852,16 +856,15 @@ export default function WebModelConnectorsTab({
       <div className={settingsWorkspaceHeaderClass(isDark)}>
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-            ChatGPT Runtime
+            {wm("header.kicker")}
           </div>
-          <h3 className="mt-1 text-base font-semibold text-[var(--color-text-primary)]">ChatGPT Web Model setup</h3>
+          <h3 className="mt-1 text-base font-semibold text-[var(--color-text-primary)]">{wm("header.title")}</h3>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--color-text-tertiary)]">
-            Connect one ChatGPT conversation to CCCC as a real actor: public CCCC endpoint, one ChatGPT MCP URL,
-            ChatGPT sign-in, then one target conversation.
+            {wm("header.description")}
           </p>
         </div>
         <button type="button" onClick={() => void loadInitial()} disabled={busy} className={secondaryButtonClass("sm")}>
-          Refresh
+          {wm("buttons.refresh")}
         </button>
       </div>
 
@@ -880,7 +883,7 @@ export default function WebModelConnectorsTab({
         <section className={settingsWorkspacePanelClass(isDark)}>
           <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_auto] lg:items-start">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">Current owner</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("owner.title")}</div>
               <div className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">
                 {chatGptActorRow ? (
                   <>
@@ -889,22 +892,30 @@ export default function WebModelConnectorsTab({
                     <span className="font-mono text-[var(--color-text-primary)]">{ownerActorLabel || actorId}</span>
                   </>
                 ) : (
-                  <span>No ChatGPT Web Model actor configured</span>
+                  <span>{wm("owner.none")}</span>
                 )}
               </div>
               <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                ChatGPT Web Model is a single CCCC runtime seat. It belongs to one group/actor identity and is configured here globally.
+                {wm("owner.hint")}
               </div>
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">Global prerequisites</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.title")}</div>
               <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
-                ChatGPT connects from the cloud, so CCCC needs a public HTTPS Web URL. The copied MCP URL already contains
-                the actor token; set ChatGPT Authentication to No Auth. If the selected ChatGPT model cannot use MCP,
-                ChatGPT Web Model requires a GPT-5.x chat that can see and use the CCCC MCP connector.
+                {wm("prerequisites.description")}
               </p>
+              <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
+                <div className="font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.setupOrderTitle")}</div>
+                <ol className="mt-1 list-decimal space-y-1 pl-4">
+                  <li>{wm("prerequisites.setupOrder.publicAccess")}</li>
+                  <li>{wm("prerequisites.setupOrder.actor")}</li>
+                  <li>{wm("prerequisites.setupOrder.chatgptSettings")}</li>
+                  <li>{wm("prerequisites.setupOrder.createApp")}</li>
+                  <li>{wm("prerequisites.setupOrder.signInAndTarget")}</li>
+                </ol>
+              </div>
               <div className="mt-2 break-all font-mono text-xs text-[var(--color-text-primary)]">
-                {configuredPublicUrl || "No public Web URL configured"}
+                {configuredPublicUrl || wm("prerequisites.noPublicUrl")}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span
@@ -915,7 +926,7 @@ export default function WebModelConnectorsTab({
                       : "border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-300",
                   ].join(" ")}
                 >
-                  {publicEndpointReady ? "Public HTTPS ready" : "Public HTTPS needed"}
+                  {publicEndpointReady ? wm("prerequisites.publicHttpsReady") : wm("prerequisites.publicHttpsNeeded")}
                 </span>
                 <span
                   className={[
@@ -925,13 +936,13 @@ export default function WebModelConnectorsTab({
                       : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
                   ].join(" ")}
                 >
-                  {uiAccessTokenPresent ? "Access token ready" : "Access token needed"}
+                  {uiAccessTokenPresent ? wm("prerequisites.accessTokenReady") : wm("prerequisites.accessTokenNeeded")}
                 </span>
               </div>
             </div>
             {onOpenWebAccess ? (
               <button type="button" onClick={onOpenWebAccess} className={secondaryButtonClass("sm")}>
-                Open Web Access
+                {wm("buttons.openWebAccess")}
               </button>
             ) : null}
           </div>
@@ -940,15 +951,15 @@ export default function WebModelConnectorsTab({
         <section className={settingsWorkspacePanelClass(isDark)}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">ChatGPT Web Model actor</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("actorSection.title")}</div>
               <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                One ChatGPT MCP app maps to one CCCC actor. Create another CCCC actor only after removing this one.
+                {wm("actorSection.description")}
               </div>
             </div>
           </div>
           {extraChatGptActorRows.length ? (
             <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-              Multiple ChatGPT Web Model actors exist in this group. This setup supports one; keep one actor and remove the extras.
+              {wm("actorSection.multipleWarning")}
             </div>
           ) : null}
           <div className="mt-3 space-y-3">
@@ -973,48 +984,48 @@ export default function WebModelConnectorsTab({
               const targetDetail = targetReady
                 ? shortConversationLabel(targetUrl)
                 : rowPendingNewChat
-                  ? String(rowHealth?.target?.label || "").trim() || "New chat armed"
-                  : String(rowHealth?.target?.label || "").trim() || "Not set";
-              const mcpDetail = mcpUrl ? (chatGptSeen ? "Connected" : "URL ready") : connector ? "Needs rotation" : "Not created";
-              const browserDetail = String(rowHealth?.browser?.label || "").trim() || (browserLoginReady ? "Signed in" : browserOpen ? "Open, sign-in needed" : "Not open");
+                  ? String(rowHealth?.target?.label || "").trim() || wm("target.newChatArmed")
+                  : String(rowHealth?.target?.label || "").trim() || wm("common.notSet");
+              const mcpDetail = mcpUrl ? (chatGptSeen ? wm("mcp.connected") : wm("mcp.urlReady")) : connector ? wm("mcp.needsRotation") : wm("mcp.notCreated");
+              const browserDetail = String(rowHealth?.browser?.label || "").trim() || (browserLoginReady ? wm("browser.signedIn") : browserOpen ? wm("browser.openSignInNeeded") : wm("browser.notOpen"));
               const browserNeedsSignIn = String(rowHealth?.browser?.state || "").trim() === "sign_in_required";
               const cardStatus = !publicEndpointReady
-                ? { label: "Needs public URL", tone: "needs" as const }
+                ? { label: wm("cardStatus.needsPublicUrl"), tone: "needs" as const }
                 : !actorRunning
-                  ? { label: "Needs start", tone: "needs" as const }
+                  ? { label: wm("cardStatus.needsStart"), tone: "needs" as const }
                   : !mcpUrl
-                    ? { label: "Needs MCP URL", tone: "needs" as const }
+                    ? { label: wm("cardStatus.needsMcpUrl"), tone: "needs" as const }
                     : !chatGptSeen
-                      ? { label: "Connect in ChatGPT", tone: "needs" as const }
+                      ? { label: wm("cardStatus.connectInChatGpt"), tone: "needs" as const }
                       : browserNeedsSignIn
-                        ? { label: "Needs sign-in", tone: "needs" as const }
+                        ? { label: wm("cardStatus.needsSignIn"), tone: "needs" as const }
                         : !browserLoginReady
-                          ? { label: "Open ChatGPT", tone: "needs" as const }
+                          ? { label: wm("cardStatus.openChatGpt"), tone: "needs" as const }
                         : !targetReady && !rowPendingNewChat
-                          ? { label: "Needs target chat", tone: "needs" as const }
-                          : { label: "Ready", tone: "ready" as const };
+                          ? { label: wm("cardStatus.needsTargetChat"), tone: "needs" as const }
+                          : { label: wm("cardStatus.ready"), tone: "ready" as const };
               const mcpTone: SetupTone = mcpUrl && chatGptSeen ? "ready" : mcpUrl ? "neutral" : "needs";
               const targetTone: SetupTone = String(rowHealth?.target?.state || "").trim() === "missing" ? "needs" : targetReady || rowPendingNewChat ? "ready" : "needs";
               const browserState = String(rowHealth?.browser?.state || "").trim();
               const browserTone: SetupTone = browserState === "failed" ? "warn" : browserState === "ready" ? "ready" : browserLoginReady ? "ready" : browserOpen ? "needs" : "neutral";
-              const healthNextAction = healthNextActionText(rowHealth);
+              const healthNextAction = healthNextActionText(rowHealth, wm);
               const nextAction = !publicEndpointReady
-                ? "Set the public HTTPS URL in Web Access."
+                ? wm("next.setPublicHttps")
                 : !actorRunning
-                  ? "Start the ChatGPT Web Model actor."
+                  ? wm("next.startActor")
                   : !mcpUrl
                     ? connector
-                      ? "Rotate the connector once to generate the ChatGPT MCP URL."
-                      : "Create the ChatGPT MCP URL."
+                      ? wm("next.rotateConnector")
+                      : wm("next.createConnector")
                     : !chatGptSeen
-                      ? "Paste the MCP URL into ChatGPT New App with Authentication set to No Auth."
+                      ? wm("next.pasteMcpUrl")
                     : browserNeedsSignIn
-                      ? "Open the embedded browser and sign in to ChatGPT."
+                      ? wm("next.signIn")
                     : !targetReady && !rowPendingNewChat
-                      ? "Bind an existing ChatGPT conversation or arm new-chat auto-bind."
+                      ? wm("next.bindTarget")
                     : !browserLoginReady
-                      ? "Open ChatGPT to verify the existing browser profile."
-                      : healthNextAction || "Ready for browser delivery.";
+                      ? wm("next.verifyProfile")
+                      : healthNextAction || wm("next.ready");
               const setupPrimary = actorRunning && Boolean(mcpUrl) && chatGptSeen && (!browserLoginReady || (!targetReady && !rowPendingNewChat));
               return (
                 <div
@@ -1040,82 +1051,82 @@ export default function WebModelConnectorsTab({
                         </span>
                         {queuedCount > 0 ? (
                           <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-200">
-                            {queuedCount} queued
+                            {wm("queue.queued", { count: queuedCount })}
                           </span>
                         ) : null}
                       </div>
 
                       <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                        <SetupStatusLine label="MCP app" detail={mcpDetail} tone={mcpTone} />
-                        <SetupStatusLine label="ChatGPT session" detail={browserDetail} tone={browserTone} />
-                        <SetupStatusLine label="Target chat" detail={targetDetail} tone={targetTone} />
+                        <SetupStatusLine label={wm("setupLine.mcpApp")} detail={mcpDetail} tone={mcpTone} />
+                        <SetupStatusLine label={wm("setupLine.chatgptSession")} detail={browserDetail} tone={browserTone} />
+                        <SetupStatusLine label={wm("setupLine.targetChat")} detail={targetDetail} tone={targetTone} />
                       </div>
 
                       <div className="mt-3 text-sm leading-5 text-[var(--color-text-secondary)]">
-                        Next: {nextAction}
+                        {wm("next.prefix", { action: nextAction })}
                       </div>
 
                       {connector && !mcpUrl ? (
                         <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          Rotate this older connector once to generate a copyable ChatGPT MCP URL.
+                          {wm("warnings.rotateOldConnector")}
                         </div>
                       ) : null}
                       {rowLocalWarning ? (
                         <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          MCP URL is local-only. Browser-hosted models need a public HTTPS URL.
+                          {wm("warnings.localMcpUrl")}
                         </div>
                       ) : null}
                       {rowHttpsWarning && !rowLocalWarning ? (
                         <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          MCP URL is not HTTPS. Use a public HTTPS tunnel or reverse proxy.
+                          {wm("warnings.nonHttpsMcpUrl")}
                         </div>
                       ) : null}
 
                       <details className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                        <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">Details and controls</summary>
+                        <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("details.summary")}</summary>
                         <div className="mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[120px_1fr]">
                           {connector ? (
                             <>
-                              <span>ChatGPT app</span>
-                              <span>{chatGptSeen ? `seen ${formatTime(connector.last_activity_at)}` : "not seen yet"}</span>
+                              <span>{wm("details.chatgptApp")}</span>
+                              <span>{chatGptSeen ? wm("activity.seenAt", { time: formatTime(connector.last_activity_at) }) : wm("activity.notSeenYet")}</span>
                             </>
                           ) : (
                             <>
-                              <span>ChatGPT app</span>
-                              <span>No MCP app URL yet</span>
+                              <span>{wm("details.chatgptApp")}</span>
+                              <span>{wm("mcp.noAppUrl")}</span>
                             </>
                           )}
-                          <span>Target chat</span>
+                          <span>{wm("details.targetChat")}</span>
                           <span className="break-all font-mono">
-                            {targetUrl || (rowPendingNewChat ? `new pending ${rowPendingUrl || "https://chatgpt.com/"}` : "none")}
+                            {targetUrl || (rowPendingNewChat ? wm("target.newPending", { url: rowPendingUrl || "https://chatgpt.com/" }) : wm("common.none"))}
                           </span>
                           {connector?.connector_id ? (
                             <>
-                              <span>MCP URL id</span>
+                              <span>{wm("details.mcpUrlId")}</span>
                               <span className="break-all font-mono">{connector.connector_id}</span>
                             </>
                           ) : null}
                           {connector ? (
                             <>
-                              <span>Remote</span>
-                              <span>{connectorActivityLabel(connector)}</span>
+                              <span>{wm("details.remote")}</span>
+                              <span>{connectorActivityLabel(connector, wm)}</span>
                             </>
                           ) : null}
                       {connector?.last_error ? (
                             <>
-                              <span>Last MCP error</span>
+                              <span>{wm("details.lastMcpError")}</span>
                               <span className="break-all text-rose-600 dark:text-rose-300">{connector.last_error}</span>
                             </>
                           ) : null}
                           {rowSession.last_turn_id ? (
                             <>
-                              <span>Last turn</span>
+                              <span>{wm("details.lastTurn")}</span>
                               <span className="break-all font-mono">{rowSession.last_turn_id}</span>
                             </>
                           ) : null}
                           {rowSession.profile_dir ? (
                             <>
-                              <span>Profile</span>
+                              <span>{wm("details.profile")}</span>
                               <span className="break-all font-mono">{rowSession.profile_dir}</span>
                             </>
                           ) : null}
@@ -1128,7 +1139,7 @@ export default function WebModelConnectorsTab({
                               disabled={createBusy || !groupId}
                               className={secondaryButtonClass("sm")}
                             >
-                              Rotate MCP URL
+                              {wm("buttons.rotateMcpUrl")}
                             </button>
                           ) : null}
                           {connector ? (
@@ -1138,7 +1149,7 @@ export default function WebModelConnectorsTab({
                               disabled={revokeBusyId === connector.connector_id}
                               className={dangerButtonClass("sm")}
                             >
-                              Revoke MCP URL
+                              {wm("buttons.revokeMcpUrl")}
                             </button>
                           ) : null}
                         </div>
@@ -1152,16 +1163,16 @@ export default function WebModelConnectorsTab({
                           disabled={startBusyId === actor.id}
                           className={primaryButtonClass(startBusyId === actor.id)}
                         >
-                          Start actor
+                          {wm("buttons.startActor")}
                         </button>
                       ) : null}
                       {mcpUrl ? (
                         <button
                           type="button"
-                          onClick={() => void copyValue(mcpUrl, "MCP URL")}
+                          onClick={() => void copyValue(mcpUrl, wm("copyLabels.mcpUrl"))}
                           className={chatGptSeen ? secondaryButtonClass("sm") : primaryButtonClass(false)}
                         >
-                          Copy MCP URL
+                          {wm("buttons.copyMcpUrl")}
                         </button>
                       ) : (
                         <button
@@ -1170,7 +1181,7 @@ export default function WebModelConnectorsTab({
                           disabled={createBusy || !groupId}
                           className={primaryButtonClass(createBusy)}
                         >
-                          Create MCP URL
+                          {wm("buttons.createMcpUrl")}
                         </button>
                       )}
                       <button
@@ -1178,26 +1189,26 @@ export default function WebModelConnectorsTab({
                         onClick={() => manageActorChat(actor.id)}
                         className={setupPrimary ? primaryButtonClass(false) : secondaryButtonClass("sm")}
                       >
-                        Set up ChatGPT
+                        {wm("buttons.setupChatGpt")}
                       </button>
                     </div>
                   </div>
                 </div>
               );
             }) : (
-              <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-4">
+                <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-4">
                 <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  Create the ChatGPT Web Model actor here
+                  {wm("empty.title")}
                 </div>
                 <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
-                  This creates the single CCCC actor identity that the ChatGPT MCP app will use. After creation, continue here to create the MCP URL, sign in to ChatGPT, and choose the target chat.
+                  {wm("empty.description")}
                 </p>
                 <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[var(--color-text-primary)]">ChatGPT browser</div>
+                      <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("empty.browserTitle")}</div>
                       <p className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                        You can sign in before creating the actor. CCCC keeps this one global ChatGPT page and reuses it later.
+                        {wm("empty.browserDescription")}
                       </p>
                     </div>
                     <button
@@ -1206,7 +1217,7 @@ export default function WebModelConnectorsTab({
                       disabled={browserBusy}
                       className={primaryButtonClass(browserBusy)}
                     >
-                      Open ChatGPT
+                      {wm("buttons.openChatGpt")}
                     </button>
                   </div>
                   {showBrowserSurface ? (
@@ -1221,14 +1232,14 @@ export default function WebModelConnectorsTab({
                         webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl("", "")}
                         fallbackUrl="https://chatgpt.com/"
                         labels={{
-                          starting: "Opening ChatGPT...",
-                          waiting: "Waiting for ChatGPT...",
-                          ready: "ChatGPT surface ready",
-                          failed: "ChatGPT surface failed",
-                          closed: "ChatGPT surface closed.",
-                          reconnecting: "Reconnecting ChatGPT surface...",
-                          reconnect: "Reconnect",
-                          frameAlt: "ChatGPT browser frame",
+                          starting: wm("browserSurface.starting"),
+                          waiting: wm("browserSurface.waiting"),
+                          ready: wm("browserSurface.ready"),
+                          failed: wm("browserSurface.failed"),
+                          closed: wm("browserSurface.closed"),
+                          reconnecting: wm("browserSurface.reconnecting"),
+                          reconnect: wm("browserSurface.reconnect"),
+                          frameAlt: wm("browserSurface.frameAlt"),
                         }}
                       />
                     </div>
@@ -1236,7 +1247,7 @@ export default function WebModelConnectorsTab({
                 </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
                   <label className="block">
-                    <span className={labelClass(isDark)}>Owner group</span>
+                    <span className={labelClass(isDark)}>{wm("empty.ownerGroup")}</span>
                     {groups.length > 1 ? (
                       <SelectCombobox
                         items={groups
@@ -1248,13 +1259,13 @@ export default function WebModelConnectorsTab({
                           .filter((item): item is { value: string; label: string } => item !== null)}
                         value={createActorGroupId}
                         onChange={setCreateActorGroupId}
-                        ariaLabel="Owner group"
+                        ariaLabel={wm("empty.ownerGroup")}
                         className={inputClass(isDark)}
                         searchable
                       />
                     ) : (
                       <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">
-                        {createActorGroupLabel || "No group available"}
+                        {createActorGroupLabel || wm("empty.noGroupAvailable")}
                       </div>
                     )}
                   </label>
@@ -1264,12 +1275,12 @@ export default function WebModelConnectorsTab({
                     disabled={actorCreateBusy || !String(createActorGroupId || preferredCreateActorGroupId || "").trim()}
                     className={primaryButtonClass(actorCreateBusy)}
                   >
-                    Create actor
+                    {wm("buttons.createActor")}
                   </button>
                 </div>
                 {!groups.length ? (
                   <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                    Create a CCCC group first, then return here to add ChatGPT Web Model.
+                    {wm("empty.createGroupFirst")}
                   </div>
                 ) : null}
               </div>
@@ -1282,7 +1293,7 @@ export default function WebModelConnectorsTab({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  ChatGPT setup for {selectedActorLabel || actorId}
+                  {wm("chatSetup.title", { actor: selectedActorLabel || actorId })}
                 </div>
                 <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
                   {setupSummary}
@@ -1297,7 +1308,7 @@ export default function WebModelConnectorsTab({
                       : "border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-300",
                   ].join(" ")}
                 >
-                  {setupReady ? "Ready" : "Setup needed"}
+                  {setupReady ? wm("chatSetup.ready") : wm("chatSetup.setupNeeded")}
                 </span>
                 <button
                   type="button"
@@ -1307,20 +1318,20 @@ export default function WebModelConnectorsTab({
                   }}
                   className={secondaryButtonClass("sm")}
                 >
-                  Hide
+                  {wm("buttons.hide")}
                 </button>
               </div>
             </div>
 
             <div className="mt-4 space-y-4">
-              <SetupSection title="1. ChatGPT account">
+              <SetupSection title={wm("chatSetup.accountTitle")}>
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div className="min-w-0 text-sm leading-6 text-[var(--color-text-secondary)]">
                     <span className="font-semibold text-[var(--color-text-primary)]">
-                      {browserReady ? "Signed in" : browserActive ? "Browser open" : "Browser not open"}
+                      {browserReady ? wm("browser.signedIn") : browserActive ? wm("browser.open") : wm("browser.notOpen")}
                     </span>
                     <span className="ml-2 text-xs text-[var(--color-text-tertiary)]">
-                      {browserReady ? "CCCC can use this browser profile for ChatGPT delivery." : "Open ChatGPT here and sign in once."}
+                      {browserReady ? wm("chatSetup.accountReadyHint") : wm("chatSetup.accountOpenHint")}
                     </span>
                     {selectedBrowserSession?.error ? (
                       <div className="mt-1 text-xs leading-5 text-rose-600 dark:text-rose-300">{selectedBrowserSession.error}</div>
@@ -1333,17 +1344,17 @@ export default function WebModelConnectorsTab({
                       disabled={browserBusy || !groupId || !actorId}
                       className={browserReady ? secondaryButtonClass("sm") : primaryButtonClass(browserBusy)}
                     >
-                      Open ChatGPT
+                      {wm("buttons.openChatGpt")}
                     </button>
                   </div>
                 </div>
               </SetupSection>
 
-              <SetupSection title="2. Delivery target">
+              <SetupSection title={wm("chatSetup.deliveryTargetTitle")}>
                 <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                      Delivery target
+                      {wm("target.deliveryTarget")}
                     </div>
                     <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(targetModeTone)].join(" ")}>
                       {targetModeLabel}
@@ -1352,9 +1363,9 @@ export default function WebModelConnectorsTab({
                   <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
                     {boundConversationUrl ? (
                       <span>
-                        Future messages go to{" "}
+                        {wm("target.futureMessagesPrefix")}{" "}
                         <span className="break-all font-mono text-[var(--color-text-primary)]">{targetModeDetail}</span>
-                        {" "}until you choose another target.
+                        {" "}{wm("target.futureMessagesSuffix")}
                       </span>
                     ) : (
                       <span>{targetModeDetail}</span>
@@ -1362,7 +1373,9 @@ export default function WebModelConnectorsTab({
                   </div>
                   {boundConversationUrl && currentBrowserUrl && currentBrowserUrl !== boundConversationUrl ? (
                     <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                      The browser is currently at {currentBrowserConversationUrl ? shortConversationLabel(currentBrowserConversationUrl) : "ChatGPT home"}; delivery still uses the bound target above.
+                      {wm("target.browserAtDifferentTarget", {
+                        current: currentBrowserConversationUrl ? shortConversationLabel(currentBrowserConversationUrl) : wm("target.chatgptHome"),
+                      })}
                     </div>
                   ) : null}
                 </div>
@@ -1373,7 +1386,7 @@ export default function WebModelConnectorsTab({
                     disabled={browserBusy || !currentBrowserConversationUrl || !groupId || !actorId}
                     className={currentBrowserConversationUrl && !boundConversationUrl ? primaryButtonClass(browserBusy) : secondaryButtonClass("sm")}
                   >
-                    Use current ChatGPT chat
+                    {wm("buttons.useCurrentChat")}
                   </button>
                   <button
                     type="button"
@@ -1381,14 +1394,14 @@ export default function WebModelConnectorsTab({
                     disabled={browserBusy || !groupId || !actorId}
                     className={!boundConversationUrl && !pendingNewChatBind ? primaryButtonClass(browserBusy) : secondaryButtonClass("sm")}
                   >
-                    {pendingNewChatBind ? "New ChatGPT chat selected" : "Start a new ChatGPT chat"}
+                    {pendingNewChatBind ? wm("buttons.newChatSelected") : wm("buttons.startNewChat")}
                   </button>
                 </div>
                 <details className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                  <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">Manual fallback: paste a ChatGPT URL</summary>
+                  <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("target.manualFallback")}</summary>
                   <div className="mt-2 grid gap-3 lg:grid-cols-[1fr_auto]">
                     <label className="block">
-                      <span className={labelClass(isDark)}>ChatGPT conversation URL</span>
+                      <span className={labelClass(isDark)}>{wm("target.conversationUrl")}</span>
                       <input
                         value={conversationUrlDraft}
                         onChange={(event) => setConversationUrlDraft(event.target.value)}
@@ -1403,7 +1416,7 @@ export default function WebModelConnectorsTab({
                         disabled={browserBusy || !groupId || !actorId || !isChatGptConversationUrl(conversationUrlDraft)}
                         className={secondaryButtonClass("sm")}
                       >
-                        Save target URL
+                        {wm("buttons.saveTargetUrl")}
                       </button>
                     </div>
                   </div>
@@ -1411,10 +1424,10 @@ export default function WebModelConnectorsTab({
               </SetupSection>
 
               {showBrowserSurface && groupId && actorId ? (
-                <SetupSection title="Embedded ChatGPT browser">
+                <SetupSection title={wm("embedded.title")}>
                   <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
-                      Reload restarts the embedded ChatGPT browser while preserving this actor, group, browser profile, and delivery target.
+                      {wm("embedded.reloadDescription")}
                     </div>
                     <button
                       type="button"
@@ -1422,7 +1435,7 @@ export default function WebModelConnectorsTab({
                       disabled={browserBusy || !groupId || !actorId}
                       className={secondaryButtonClass("sm")}
                     >
-                      Reload ChatGPT page
+                      {wm("buttons.reloadChatGpt")}
                     </button>
                   </div>
                   <ProjectedBrowserSurfacePanel
@@ -1435,39 +1448,39 @@ export default function WebModelConnectorsTab({
                     webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl(groupId, actorId)}
                     fallbackUrl="https://chatgpt.com/"
                     labels={{
-                      starting: "Opening ChatGPT...",
-                      waiting: "Waiting for ChatGPT...",
-                      ready: "ChatGPT surface ready",
-                      failed: "ChatGPT surface failed",
-                      closed: "ChatGPT surface closed.",
-                      reconnecting: "Reconnecting ChatGPT surface...",
-                      reconnect: "Reconnect",
-                      frameAlt: "ChatGPT browser frame",
+                      starting: wm("browserSurface.starting"),
+                      waiting: wm("browserSurface.waiting"),
+                      ready: wm("browserSurface.ready"),
+                      failed: wm("browserSurface.failed"),
+                      closed: wm("browserSurface.closed"),
+                      reconnecting: wm("browserSurface.reconnecting"),
+                      reconnect: wm("browserSurface.reconnect"),
+                      frameAlt: wm("browserSurface.frameAlt"),
                     }}
                   />
                 </SetupSection>
               ) : null}
 
               <details className="text-xs leading-5 text-[var(--color-text-tertiary)]">
-                <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">Advanced</summary>
+                <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("advanced.summary")}</summary>
                 <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[140px_1fr]">
-                  <span>Status</span>
+                  <span>{wm("advanced.status")}</span>
                   <span>{browserStatusLabel} · {targetStatusLabel}</span>
-                  {healthNextActionText(selectedHealth) ? (
+                  {healthNextActionText(selectedHealth, wm) ? (
                     <>
-                      <span>Recommended</span>
-                      <span>{healthNextActionText(selectedHealth)}</span>
+                      <span>{wm("advanced.recommended")}</span>
+                      <span>{healthNextActionText(selectedHealth, wm)}</span>
                     </>
                   ) : null}
-                  <span>{browserActive ? "Current browser tab" : "Last browser tab"}</span>
-                  <span className="break-all font-mono">{currentBrowserUrl || "none"}</span>
-                  <span>Delivery target</span>
-                  <span className="break-all font-mono">{boundConversationUrl || (pendingNewChatBind ? "new chat on next delivery" : "none")}</span>
+                  <span>{browserActive ? wm("advanced.currentBrowserTab") : wm("advanced.lastBrowserTab")}</span>
+                  <span className="break-all font-mono">{currentBrowserUrl || wm("common.none")}</span>
+                  <span>{wm("advanced.deliveryTarget")}</span>
+                  <span className="break-all font-mono">{boundConversationUrl || (pendingNewChatBind ? wm("target.newChatNextDelivery") : wm("common.none"))}</span>
                   {selectedBrowserSession?.last_delivery_status || selectedBrowserSession?.last_delivery_at ? (
                     <>
-                      <span>Last delivery</span>
+                      <span>{wm("advanced.lastDelivery")}</span>
                       <span className="break-all font-mono">
-                        {[selectedBrowserSession.last_delivery_status || "recorded", selectedBrowserSession.last_submission_evidence || ""]
+                        {[selectedBrowserSession.last_delivery_status || wm("advanced.recorded"), selectedBrowserSession.last_submission_evidence || ""]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>
@@ -1475,25 +1488,25 @@ export default function WebModelConnectorsTab({
                   ) : null}
                   {selectedBrowserSession?.last_error ? (
                     <>
-                      <span>Last error</span>
+                      <span>{wm("advanced.lastError")}</span>
                       <span className="break-all text-rose-600 dark:text-rose-300">{selectedBrowserSession.last_error}</span>
                     </>
                   ) : null}
                   {!boundConversationUrl && pendingNewChatBind ? (
                     <>
-                      <span>Pending new chat</span>
+                      <span>{wm("advanced.pendingNewChat")}</span>
                       <span className="break-all font-mono">{pendingNewChatUrl || "https://chatgpt.com/"}</span>
                     </>
                   ) : null}
                   {selectedBrowserSession?.profile_dir ? (
                     <>
-                      <span>Profile</span>
+                      <span>{wm("details.profile")}</span>
                       <span className="break-all font-mono">{selectedBrowserSession.profile_dir}</span>
                     </>
                   ) : null}
                   {selectedBrowserSession?.visibility ? (
                     <>
-                      <span>Mode</span>
+                      <span>{wm("advanced.mode")}</span>
                       <span>{selectedBrowserSession.visibility}</span>
                     </>
                   ) : null}
@@ -1505,7 +1518,7 @@ export default function WebModelConnectorsTab({
                     disabled={browserBusy || !groupId || !actorId}
                     className={secondaryButtonClass("sm")}
                   >
-                    Check status
+                    {wm("buttons.checkStatus")}
                   </button>
                   <button
                     type="button"
@@ -1513,7 +1526,7 @@ export default function WebModelConnectorsTab({
                     disabled={browserBusy || !browserActive}
                     className={secondaryButtonClass("sm")}
                   >
-                    Close browser
+                    {wm("buttons.closeBrowser")}
                   </button>
                 </div>
               </details>

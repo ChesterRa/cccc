@@ -312,7 +312,7 @@ Recommended options:
 | gemini | `gemini` | Gemini CLI |
 | kimi | `kimi --yolo` | Kimi CLI |
 | neovate | `neovate` | Neovate Code |
-| web_model | Remote MCP + browser delivery | ChatGPT Web conversation with an MCP-capable GPT-5.x session; GPT-5.x Pro is advisory/review unless CCCC MCP tools are visible in that session |
+| web_model | Remote MCP + browser delivery | ChatGPT Web conversation with an MCP-capable GPT-5.x session; GPT-5.x Pro is advisory-only and has no reliable CCCC local access |
 | custom | Custom | Any command |
 
 CCCC first-class runtime support is the nine named runtimes above. `custom` remains the manual fallback for any other command.

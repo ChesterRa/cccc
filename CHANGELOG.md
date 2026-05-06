@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.14] — 2026-05-07
+
+### Added
+- **Session-scoped No-MCP advisory groundwork** for future web agents that cannot attach a CCCC MCP connector, with read-only project context, bounded resource access, and idempotent advisory-message return.
+- **Localized ChatGPT Web Model settings** in English, Simplified Chinese, and Japanese, under a provider-scoped Web Models i18n structure that leaves room for future web-model providers.
+
+### Changed
+- **ChatGPT Web Model setup documentation** now follows the current ChatGPT Apps/Connectors flow, including public HTTPS tunnel guidance, the fields to fill, the `No Auth` MCP configuration, and a note that exact ChatGPT menu names may vary by plan and workspace.
+- **GPT-5.x / GPT-5.x Pro messaging** now clearly positions MCP-capable GPT-5.x ChatGPT sessions as the supported local-development path, while documenting GPT-5.x Pro as advisory-only because it cannot reliably access CCCC MCP or local resources.
+- **ChatGPT Web Model browser status handling** now uses cheaper cached status for routine reads and reserves live browser inspection for explicit actions such as opening the surface or binding the current ChatGPT tab.
+- **Composer recipients** are preserved per group for normal sends and restored after reply flows, reducing repeated recipient selection without leaking recipients across groups.
+
+### Fixed
+- Fixed ChatGPT Web Model setup/open/bind flows that could show stale or inactive browser state after opening the global setup surface or binding the current tab.
+- Fixed Web Model settings copy and i18n structure that treated all future Web Model providers as if they were ChatGPT-specific.
+- Fixed release and setup documentation that still implied a No-MCP fallback could make GPT-5.x Pro a reliable local runtime.
+
 ## [0.4.13] — 2026-05-04
 
 ### Added

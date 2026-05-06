@@ -16,7 +16,8 @@
     "myProfiles": "我的配置",
     "branding": "品牌",
     "developer": "开发者",
-    "webAccess": "Web 访问"
+    "webAccess": "Web 访问",
+    "webModels": "Web 模型"
   },
   "navigation": {
     "targetScope": "目标范围",
@@ -276,8 +277,8 @@
     "operationFailedReason": "操作未生效（{{reason}}）。",
     "enableScope": {
       "session": "会话",
-        "actor": "智能体",
-        "group": "工作组"
+      "actor": "智能体",
+      "group": "工作组"
     },
     "failedSafetyMode": "更新外部能力安全模式失败。",
     "safetyModeTitle": "外部能力策略",
@@ -996,6 +997,242 @@
     "clearTruncate": "清除（截断）",
     "refresh": "刷新",
     "clear": "清除"
+  },
+  "webModels": {
+    "chatgpt": {
+      "header": {
+        "kicker": "ChatGPT Runtime",
+        "title": "ChatGPT Web Model 设置",
+        "description": "将一个 ChatGPT 会话连接成 CCCC 里的真实 actor：先准备公网 CCCC 入口，再创建 ChatGPT MCP URL，登录 ChatGPT，最后选择目标会话。"
+      },
+      "owner": {
+        "title": "当前归属",
+        "none": "尚未配置 ChatGPT Web Model actor",
+        "hint": "ChatGPT Web Model 是全局唯一的 CCCC runtime 席位。它归属于一个工作组/actor 身份，并在这里统一配置。"
+      },
+      "prerequisites": {
+        "title": "全局前置条件",
+        "description": "ChatGPT 从云端连接，因此 CCCC 需要一个公网 HTTPS Web URL。复制的 MCP URL 已经包含 actor token；ChatGPT 里的 Authentication 请选择 No Auth。ChatGPT Web Model 需要使用能看到并调用 CCCC MCP connector 的 GPT-5.x 会话。",
+        "setupOrderTitle": "配置顺序",
+        "setupOrder": {
+          "publicAccess": "设置公网 HTTPS Web Access，并创建 Admin Access Token。",
+          "actor": "创建/启动 ChatGPT Web Model actor，并复制它的 MCP URL。",
+          "chatgptSettings": "在 ChatGPT 打开 Settings > Apps > Advanced settings > Create app。",
+          "createApp": "创建名为 CCCC 的 app，填入这个 MCP URL，Authentication 选择 No Auth。",
+          "signInAndTarget": "在下方登录 ChatGPT，然后绑定当前 ChatGPT 会话，或选择下一次投递时新建会话。"
+        },
+        "noPublicUrl": "尚未配置公网 Web URL",
+        "publicHttpsReady": "公网 HTTPS 已就绪",
+        "publicHttpsNeeded": "需要公网 HTTPS",
+        "accessTokenReady": "访问令牌已就绪",
+        "accessTokenNeeded": "需要访问令牌"
+      },
+      "actorSection": {
+        "title": "ChatGPT Web Model actor",
+        "description": "一个 ChatGPT MCP app 对应一个 CCCC actor。只有移除当前 actor 后，才应创建另一个。",
+        "multipleWarning": "当前工作组里存在多个 ChatGPT Web Model actor。此设置只支持一个，请保留一个并移除多余项。"
+      },
+      "target": {
+        "existingChat": "已有 ChatGPT 会话",
+        "newChatNextDelivery": "下次投递时新建会话",
+        "noneSelected": "尚未选择目标",
+        "newChatDetail": "CCCC 会在下一条消息发送后创建并绑定 /c/... URL。",
+        "noneDetail": "请选择已有会话，或选择下次投递时新建会话。",
+        "bound": "目标会话已绑定",
+        "newChatArmed": "已准备新建会话",
+        "needed": "需要目标会话",
+        "newPending": "新会话待绑定 {{url}}",
+        "deliveryTarget": "投递目标",
+        "futureMessagesPrefix": "后续消息会发到",
+        "futureMessagesSuffix": "直到你选择其它目标。",
+        "browserAtDifferentTarget": "浏览器当前在 {{current}}；投递仍然使用上方绑定的目标。",
+        "chatgptHome": "ChatGPT 首页",
+        "manualFallback": "手动兜底：粘贴 ChatGPT URL",
+        "conversationUrl": "ChatGPT 会话 URL"
+      },
+      "browser": {
+        "ready": "ChatGPT 已就绪",
+        "signInNeeded": "需要登录",
+        "notOpen": "未打开",
+        "signedIn": "已登录",
+        "open": "浏览器已打开",
+        "openSignInNeeded": "已打开，需要登录"
+      },
+      "mcp": {
+        "connected": "已连接",
+        "urlReady": "URL 已就绪",
+        "needsRotation": "需要轮换",
+        "notCreated": "尚未创建",
+        "noAppUrl": "尚无 MCP app URL"
+      },
+      "chatSetup": {
+        "summarySignIn": "先登录 ChatGPT，然后选择这个 actor 应该投递到哪里。",
+        "summaryChooseTarget": "选择这个 actor 应投递到的 ChatGPT 会话。",
+        "title": "{{actor}} 的 ChatGPT 设置",
+        "ready": "已就绪",
+        "setupNeeded": "需要设置",
+        "accountTitle": "1. ChatGPT 账号",
+        "accountReadyHint": "CCCC 可以使用这个浏览器 profile 进行 ChatGPT 投递。",
+        "accountOpenHint": "在这里打开 ChatGPT，并登录一次。",
+        "deliveryTargetTitle": "2. 投递目标"
+      },
+      "cardStatus": {
+        "needsPublicUrl": "需要公网 URL",
+        "needsStart": "需要启动",
+        "needsMcpUrl": "需要 MCP URL",
+        "connectInChatGpt": "需要在 ChatGPT 中连接",
+        "needsSignIn": "需要登录",
+        "openChatGpt": "打开 ChatGPT",
+        "needsTargetChat": "需要目标会话",
+        "ready": "已就绪"
+      },
+      "next": {
+        "prefix": "下一步：{{action}}",
+        "setPublicHttps": "在 Web Access 中设置公网 HTTPS URL。",
+        "startActor": "启动 ChatGPT Web Model actor。",
+        "rotateConnector": "轮换一次 connector，以生成 ChatGPT MCP URL。",
+        "createConnector": "创建 ChatGPT MCP URL。",
+        "pasteMcpUrl": "把 MCP URL 粘贴到 ChatGPT New App，并将 Authentication 设为 No Auth。",
+        "signIn": "打开内嵌浏览器并登录 ChatGPT。",
+        "bindTarget": "绑定已有 ChatGPT 会话，或准备新建会话自动绑定。",
+        "verifyProfile": "打开 ChatGPT，确认现有浏览器 profile 可用。",
+        "ready": "已可进行浏览器投递。"
+      },
+      "queue": {
+        "queued": "{{count}} 条排队"
+      },
+      "setupLine": {
+        "mcpApp": "MCP app",
+        "chatgptSession": "ChatGPT 会话",
+        "targetChat": "目标会话"
+      },
+      "warnings": {
+        "rotateOldConnector": "请轮换一次这个旧 connector，以生成可复制的 ChatGPT MCP URL。",
+        "localMcpUrl": "MCP URL 仍是本地地址。网页端模型需要公网 HTTPS URL。",
+        "nonHttpsMcpUrl": "MCP URL 不是 HTTPS。请使用公网 HTTPS tunnel 或反向代理。"
+      },
+      "details": {
+        "summary": "详情和控制",
+        "chatgptApp": "ChatGPT app",
+        "targetChat": "目标会话",
+        "mcpUrlId": "MCP URL id",
+        "remote": "远端",
+        "lastMcpError": "最近 MCP 错误",
+        "lastTurn": "最近 turn",
+        "profile": "Profile"
+      },
+      "empty": {
+        "title": "在这里创建 ChatGPT Web Model actor",
+        "description": "这会创建 ChatGPT MCP app 使用的唯一 CCCC actor 身份。创建后继续在这里生成 MCP URL、登录 ChatGPT，并选择目标会话。",
+        "browserTitle": "ChatGPT 浏览器",
+        "browserDescription": "你可以先登录，再创建 actor。CCCC 会保留这个全局唯一的 ChatGPT 页面并在后续复用。",
+        "ownerGroup": "归属工作组",
+        "noGroupAvailable": "没有可用工作组",
+        "createGroupFirst": "请先创建一个 CCCC 工作组，然后回到这里添加 ChatGPT Web Model。"
+      },
+      "embedded": {
+        "title": "内嵌 ChatGPT 浏览器",
+        "reloadDescription": "重新加载会重启内嵌 ChatGPT 浏览器，同时保留当前 actor、工作组、浏览器 profile 和投递目标。"
+      },
+      "advanced": {
+        "summary": "高级",
+        "status": "状态",
+        "recommended": "建议",
+        "currentBrowserTab": "当前浏览器 tab",
+        "lastBrowserTab": "最近浏览器 tab",
+        "deliveryTarget": "投递目标",
+        "lastDelivery": "最近投递",
+        "recorded": "已记录",
+        "lastError": "最近错误",
+        "pendingNewChat": "待绑定新会话",
+        "mode": "模式"
+      },
+      "browserSurface": {
+        "starting": "正在打开 ChatGPT...",
+        "waiting": "正在等待 ChatGPT...",
+        "ready": "ChatGPT 页面已就绪",
+        "failed": "ChatGPT 页面打开失败",
+        "closed": "ChatGPT 页面已关闭。",
+        "reconnecting": "正在重新连接 ChatGPT 页面...",
+        "reconnect": "重新连接",
+        "frameAlt": "ChatGPT 浏览器画面"
+      },
+      "buttons": {
+        "refresh": "刷新",
+        "openWebAccess": "打开 Web Access",
+        "rotateMcpUrl": "轮换 MCP URL",
+        "revokeMcpUrl": "撤销 MCP URL",
+        "startActor": "启动 actor",
+        "copyMcpUrl": "复制 MCP URL",
+        "createMcpUrl": "创建 MCP URL",
+        "setupChatGpt": "设置 ChatGPT",
+        "openChatGpt": "打开 ChatGPT",
+        "createActor": "创建 actor",
+        "hide": "隐藏",
+        "useCurrentChat": "使用当前 ChatGPT 会话",
+        "newChatSelected": "已选择新建 ChatGPT 会话",
+        "startNewChat": "新建 ChatGPT 会话",
+        "saveTargetUrl": "保存目标 URL",
+        "reloadChatGpt": "重新加载 ChatGPT 页面",
+        "checkStatus": "检查状态",
+        "closeBrowser": "关闭浏览器"
+      },
+      "activity": {
+        "notSeenYet": "尚未访问",
+        "lastCallFailed": "最近调用失败",
+        "wait": "wait: {{status}}",
+        "complete": "complete: {{status}}",
+        "seen": "已访问",
+        "seenAt": "访问于 {{time}}"
+      },
+      "copyLabels": {
+        "mcpUrl": "MCP URL"
+      },
+      "notices": {
+        "actorCreated": "ChatGPT Web Model actor 已创建。",
+        "connectorRotated": "Connector 已轮换，旧 connector 已撤销。",
+        "connectorCreated": "Connector 已创建。",
+        "actorStarted": "Actor 已启动。",
+        "signInSurfaceOpened": "ChatGPT 登录页面已在下方打开。",
+        "browserRestarted": "ChatGPT 浏览器已重启。",
+        "browserClosed": "ChatGPT 浏览器会话已关闭。",
+        "newChatSelected": "下一次投递将新建 ChatGPT 会话。",
+        "conversationBound": "ChatGPT 会话已绑定到这个 actor。",
+        "copied": "{{label}} 已复制。",
+        "copyFailed": "复制失败。"
+      },
+      "errors": {
+        "loadConnectorFailed": "加载 ChatGPT Web Model MCP URL 失败。",
+        "loadBrowserSessionFailed": "加载 ChatGPT 浏览器会话失败。",
+        "openBrowserFailed": "打开 ChatGPT 浏览器失败。",
+        "loadActorsFailed": "加载 actors 失败。",
+        "loadGroupsFailed": "加载工作组失败。",
+        "loadSettingsFailed": "加载 ChatGPT Web Model 设置失败。",
+        "createOrSelectGroup": "请先创建或选择工作组，再添加 ChatGPT Web Model。",
+        "createActorFailed": "创建 ChatGPT Web Model actor 失败。",
+        "selectActorFirst": "请先选择包含 ChatGPT Web Model actor 的工作组。",
+        "createConnectorFailed": "创建 connector 失败。",
+        "startActorFailed": "启动 actor 失败。",
+        "revokeConnectorFailed": "撤销 connector 失败。",
+        "restartBrowserFailed": "重启 ChatGPT 浏览器失败。",
+        "closeBrowserFailed": "关闭 ChatGPT 浏览器会话失败。",
+        "bindConversationFailed": "绑定 ChatGPT 会话失败。"
+      },
+      "nextAction": {
+        "open_chatgpt": "打开 ChatGPT",
+        "restart_browser": "重启浏览器",
+        "reload_page": "重新加载页面",
+        "wait_for_chat_bind": "等待会话绑定",
+        "bind_current_chat": "绑定当前会话",
+        "retry_delivery": "重试投递",
+        "inspect_error": "检查错误",
+        "login_chatgpt": "登录 ChatGPT"
+      },
+      "common": {
+        "none": "无",
+        "notSet": "未设置"
+      }
+    }
   },
   "webAccess": {
     "title": "Web 访问",

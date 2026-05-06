@@ -16,7 +16,8 @@
     "myProfiles": "My Profiles",
     "branding": "Branding",
     "developer": "Developer",
-    "webAccess": "Web Access"
+    "webAccess": "Web Access",
+    "webModels": "Web Models"
   },
   "navigation": {
     "targetScope": "Target Scope",
@@ -996,6 +997,242 @@
     "clearTruncate": "Clear (truncate)",
     "refresh": "Refresh",
     "clear": "Clear"
+  },
+  "webModels": {
+    "chatgpt": {
+      "header": {
+        "kicker": "ChatGPT Runtime",
+        "title": "ChatGPT Web Model setup",
+        "description": "Connect one ChatGPT conversation to CCCC as a real actor: public CCCC endpoint, one ChatGPT MCP URL, ChatGPT sign-in, then one target conversation."
+      },
+      "owner": {
+        "title": "Current owner",
+        "none": "No ChatGPT Web Model actor configured",
+        "hint": "ChatGPT Web Model is a single CCCC runtime seat. It belongs to one group/actor identity and is configured here globally."
+      },
+      "prerequisites": {
+        "title": "Global prerequisites",
+        "description": "ChatGPT connects from the cloud, so CCCC needs a public HTTPS Web URL. The copied MCP URL already contains the actor token; set ChatGPT Authentication to No Auth. ChatGPT Web Model requires a GPT-5.x chat that can see and use the CCCC MCP connector.",
+        "setupOrderTitle": "Setup order",
+        "setupOrder": {
+          "publicAccess": "Set public HTTPS Web Access and an Admin Access Token.",
+          "actor": "Create/start the ChatGPT Web Model actor and copy its MCP URL.",
+          "chatgptSettings": "In ChatGPT, open Settings > Apps > Advanced settings > Create app.",
+          "createApp": "Create an app named CCCC with that MCP URL and Authentication set to No Auth.",
+          "signInAndTarget": "Sign in below, then bind the current ChatGPT chat or select a new chat for the next delivery."
+        },
+        "noPublicUrl": "No public Web URL configured",
+        "publicHttpsReady": "Public HTTPS ready",
+        "publicHttpsNeeded": "Public HTTPS needed",
+        "accessTokenReady": "Access token ready",
+        "accessTokenNeeded": "Access token needed"
+      },
+      "actorSection": {
+        "title": "ChatGPT Web Model actor",
+        "description": "One ChatGPT MCP app maps to one CCCC actor. Create another CCCC actor only after removing this one.",
+        "multipleWarning": "Multiple ChatGPT Web Model actors exist in this group. This setup supports one; keep one actor and remove the extras."
+      },
+      "target": {
+        "existingChat": "Existing ChatGPT chat",
+        "newChatNextDelivery": "New chat on next delivery",
+        "noneSelected": "No target selected",
+        "newChatDetail": "CCCC will create and bind the /c/... URL after the next message is sent.",
+        "noneDetail": "Choose an existing chat or select new-chat delivery before sending work.",
+        "bound": "Target chat bound",
+        "newChatArmed": "New chat armed",
+        "needed": "Target chat needed",
+        "newPending": "new pending {{url}}",
+        "deliveryTarget": "Delivery target",
+        "futureMessagesPrefix": "Future messages go to",
+        "futureMessagesSuffix": "until you choose another target.",
+        "browserAtDifferentTarget": "The browser is currently at {{current}}; delivery still uses the bound target above.",
+        "chatgptHome": "ChatGPT home",
+        "manualFallback": "Manual fallback: paste a ChatGPT URL",
+        "conversationUrl": "ChatGPT conversation URL"
+      },
+      "browser": {
+        "ready": "ChatGPT ready",
+        "signInNeeded": "Sign-in needed",
+        "notOpen": "Not open",
+        "signedIn": "Signed in",
+        "open": "Browser open",
+        "openSignInNeeded": "Open, sign-in needed"
+      },
+      "mcp": {
+        "connected": "Connected",
+        "urlReady": "URL ready",
+        "needsRotation": "Needs rotation",
+        "notCreated": "Not created",
+        "noAppUrl": "No MCP app URL yet"
+      },
+      "chatSetup": {
+        "summarySignIn": "Sign in to ChatGPT, then choose where this actor should deliver messages.",
+        "summaryChooseTarget": "Choose the ChatGPT conversation where this actor should deliver messages.",
+        "title": "ChatGPT setup for {{actor}}",
+        "ready": "Ready",
+        "setupNeeded": "Setup needed",
+        "accountTitle": "1. ChatGPT account",
+        "accountReadyHint": "CCCC can use this browser profile for ChatGPT delivery.",
+        "accountOpenHint": "Open ChatGPT here and sign in once.",
+        "deliveryTargetTitle": "2. Delivery target"
+      },
+      "cardStatus": {
+        "needsPublicUrl": "Needs public URL",
+        "needsStart": "Needs start",
+        "needsMcpUrl": "Needs MCP URL",
+        "connectInChatGpt": "Connect in ChatGPT",
+        "needsSignIn": "Needs sign-in",
+        "openChatGpt": "Open ChatGPT",
+        "needsTargetChat": "Needs target chat",
+        "ready": "Ready"
+      },
+      "next": {
+        "prefix": "Next: {{action}}",
+        "setPublicHttps": "Set the public HTTPS URL in Web Access.",
+        "startActor": "Start the ChatGPT Web Model actor.",
+        "rotateConnector": "Rotate the connector once to generate the ChatGPT MCP URL.",
+        "createConnector": "Create the ChatGPT MCP URL.",
+        "pasteMcpUrl": "Paste the MCP URL into ChatGPT New App with Authentication set to No Auth.",
+        "signIn": "Open the embedded browser and sign in to ChatGPT.",
+        "bindTarget": "Bind an existing ChatGPT conversation or arm new-chat auto-bind.",
+        "verifyProfile": "Open ChatGPT to verify the existing browser profile.",
+        "ready": "Ready for browser delivery."
+      },
+      "queue": {
+        "queued": "{{count}} queued"
+      },
+      "setupLine": {
+        "mcpApp": "MCP app",
+        "chatgptSession": "ChatGPT session",
+        "targetChat": "Target chat"
+      },
+      "warnings": {
+        "rotateOldConnector": "Rotate this older connector once to generate a copyable ChatGPT MCP URL.",
+        "localMcpUrl": "MCP URL is local-only. Browser-hosted models need a public HTTPS URL.",
+        "nonHttpsMcpUrl": "MCP URL is not HTTPS. Use a public HTTPS tunnel or reverse proxy."
+      },
+      "details": {
+        "summary": "Details and controls",
+        "chatgptApp": "ChatGPT app",
+        "targetChat": "Target chat",
+        "mcpUrlId": "MCP URL id",
+        "remote": "Remote",
+        "lastMcpError": "Last MCP error",
+        "lastTurn": "Last turn",
+        "profile": "Profile"
+      },
+      "empty": {
+        "title": "Create the ChatGPT Web Model actor here",
+        "description": "This creates the single CCCC actor identity that the ChatGPT MCP app will use. After creation, continue here to create the MCP URL, sign in to ChatGPT, and choose the target chat.",
+        "browserTitle": "ChatGPT browser",
+        "browserDescription": "You can sign in before creating the actor. CCCC keeps this one global ChatGPT page and reuses it later.",
+        "ownerGroup": "Owner group",
+        "noGroupAvailable": "No group available",
+        "createGroupFirst": "Create a CCCC group first, then return here to add ChatGPT Web Model."
+      },
+      "embedded": {
+        "title": "Embedded ChatGPT browser",
+        "reloadDescription": "Reload restarts the embedded ChatGPT browser while preserving this actor, group, browser profile, and delivery target."
+      },
+      "advanced": {
+        "summary": "Advanced",
+        "status": "Status",
+        "recommended": "Recommended",
+        "currentBrowserTab": "Current browser tab",
+        "lastBrowserTab": "Last browser tab",
+        "deliveryTarget": "Delivery target",
+        "lastDelivery": "Last delivery",
+        "recorded": "recorded",
+        "lastError": "Last error",
+        "pendingNewChat": "Pending new chat",
+        "mode": "Mode"
+      },
+      "browserSurface": {
+        "starting": "Opening ChatGPT...",
+        "waiting": "Waiting for ChatGPT...",
+        "ready": "ChatGPT surface ready",
+        "failed": "ChatGPT surface failed",
+        "closed": "ChatGPT surface closed.",
+        "reconnecting": "Reconnecting ChatGPT surface...",
+        "reconnect": "Reconnect",
+        "frameAlt": "ChatGPT browser frame"
+      },
+      "buttons": {
+        "refresh": "Refresh",
+        "openWebAccess": "Open Web Access",
+        "rotateMcpUrl": "Rotate MCP URL",
+        "revokeMcpUrl": "Revoke MCP URL",
+        "startActor": "Start actor",
+        "copyMcpUrl": "Copy MCP URL",
+        "createMcpUrl": "Create MCP URL",
+        "setupChatGpt": "Set up ChatGPT",
+        "openChatGpt": "Open ChatGPT",
+        "createActor": "Create actor",
+        "hide": "Hide",
+        "useCurrentChat": "Use current ChatGPT chat",
+        "newChatSelected": "New ChatGPT chat selected",
+        "startNewChat": "Start a new ChatGPT chat",
+        "saveTargetUrl": "Save target URL",
+        "reloadChatGpt": "Reload ChatGPT page",
+        "checkStatus": "Check status",
+        "closeBrowser": "Close browser"
+      },
+      "activity": {
+        "notSeenYet": "not seen yet",
+        "lastCallFailed": "last call failed",
+        "wait": "wait: {{status}}",
+        "complete": "complete: {{status}}",
+        "seen": "seen",
+        "seenAt": "seen {{time}}"
+      },
+      "copyLabels": {
+        "mcpUrl": "MCP URL"
+      },
+      "notices": {
+        "actorCreated": "ChatGPT Web Model actor created.",
+        "connectorRotated": "Connector rotated. Previous connector revoked.",
+        "connectorCreated": "Connector created.",
+        "actorStarted": "Actor started.",
+        "signInSurfaceOpened": "ChatGPT sign-in surface opened below.",
+        "browserRestarted": "ChatGPT browser restarted.",
+        "browserClosed": "ChatGPT browser session closed.",
+        "newChatSelected": "New ChatGPT chat selected for next delivery.",
+        "conversationBound": "ChatGPT conversation bound to this actor.",
+        "copied": "{{label}} copied.",
+        "copyFailed": "Copy failed."
+      },
+      "errors": {
+        "loadConnectorFailed": "Failed to load ChatGPT Web Model MCP URL.",
+        "loadBrowserSessionFailed": "Failed to load ChatGPT browser session.",
+        "openBrowserFailed": "Failed to open ChatGPT browser.",
+        "loadActorsFailed": "Failed to load actors.",
+        "loadGroupsFailed": "Failed to load groups.",
+        "loadSettingsFailed": "Failed to load ChatGPT Web Model settings.",
+        "createOrSelectGroup": "Create or select a group before adding ChatGPT Web Model.",
+        "createActorFailed": "Failed to create ChatGPT Web Model actor.",
+        "selectActorFirst": "Select a group with the ChatGPT Web Model actor first.",
+        "createConnectorFailed": "Failed to create connector.",
+        "startActorFailed": "Failed to start actor.",
+        "revokeConnectorFailed": "Failed to revoke connector.",
+        "restartBrowserFailed": "Failed to restart ChatGPT browser.",
+        "closeBrowserFailed": "Failed to close ChatGPT browser session.",
+        "bindConversationFailed": "Failed to bind ChatGPT conversation."
+      },
+      "nextAction": {
+        "open_chatgpt": "Open ChatGPT",
+        "restart_browser": "Restart browser",
+        "reload_page": "Reload page",
+        "wait_for_chat_bind": "Wait for chat binding",
+        "bind_current_chat": "Bind current chat",
+        "retry_delivery": "Retry delivery",
+        "inspect_error": "Inspect error",
+        "login_chatgpt": "Sign in to ChatGPT"
+      },
+      "common": {
+        "none": "none",
+        "notSet": "Not set"
+      }
+    }
   },
   "webAccess": {
     "title": "Web Access",

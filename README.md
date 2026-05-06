@@ -217,18 +217,25 @@ Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O wi
 
 ChatGPT Web can join a CCCC group as a real actor, not just an external chat window. CCCC delivers group messages into one explicitly bound ChatGPT conversation through browser delivery, while ChatGPT calls back into CCCC through a single actor-bound remote MCP connector.
 
-In supported ChatGPT sessions, **GPT-5.x** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents. This gives paid ChatGPT users an experience close to a native Codex-style local coding agent when the selected GPT-5.x chat exposes the CCCC MCP connector.
+In supported ChatGPT sessions, **GPT-5.x** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents. When the selected GPT-5.x chat exposes the CCCC MCP connector, this gives eligible ChatGPT environments an experience close to a native Codex-style local coding agent. It can also turn ChatGPT web capacity into additional local-development agent capacity, reducing pressure on native Codex usage for work that can run well through ChatGPT Web.
 
 **GPT-5.x Pro note:** GPT-5.x Pro currently cannot be treated as a CCCC local-development runtime. ChatGPT Pro sessions do not expose the third-party CCCC MCP connector, and their web fetcher may block private or public tunnel URLs before they reach CCCC. That means Pro has no reliable local access in CCCC: no MCP tools, no repository reads, no shell/git work, and no No-MCP resource fallback. Use a GPT-5.x ChatGPT session that can see the CCCC connector for local development; use Pro only for external advisory work when you manually provide the needed context.
 
-Shortest setup path:
+Zero-to-ready setup:
 
-1. Expose `cccc web` through a public HTTPS URL or tunnel.
+1. Start `cccc web`, expose it through a public HTTPS URL, then enter that URL in `Settings > Global > Web Access`.
+   - Recommended options: Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy such as Caddy/Nginx on a public HTTPS host.
+   - ChatGPT cannot use `localhost`, plain HTTP, or private tailnet-only URLs as the MCP server URL.
 2. Create an Admin Access Token in `Settings > Global > Web Access`.
-3. Add an actor with runtime `ChatGPT Web Model`.
-4. In `Settings > Global > ChatGPT Web Model`, create/copy the single MCP URL for that actor.
-5. In ChatGPT Developer mode, create a custom MCP connector with that URL and `No Auth`.
-6. Bind a specific `https://chatgpt.com/c/...` conversation to the actor, then choose a GPT-5.x model that can see and use the CCCC MCP connector.
+3. Open `Settings > Global > ChatGPT Web Model`, create/start the single ChatGPT Web Model actor, then create and copy its MCP URL.
+4. In ChatGPT, open `Settings > Apps > Advanced settings > Create app`, then create a custom MCP app with these fields:
+   - Name: `CCCC`
+   - Description: `CCCC local workspace connector`
+   - MCP Server URL: paste the copied CCCC MCP URL
+   - Authentication: `No Auth`
+   - ChatGPT menu names may vary by plan and workspace. If this exact path is not available, look for Apps or Connectors settings, enable Developer Mode if required, then create a custom MCP app/connector with the copied CCCC MCP URL and `No Auth`.
+5. Sign in through the embedded ChatGPT browser in CCCC, choose a GPT-5.x chat that can see the CCCC MCP app, and bind that chat as the delivery target.
+6. Send a small test message to the actor. ChatGPT should receive it in the bound chat and reply through CCCC MCP tools.
 
 Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
