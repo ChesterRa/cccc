@@ -176,7 +176,7 @@ def capability_search(
     trust_tier: str = "",
     qualification_status: str = "",
     limit: int = 30,
-    include_external: bool = True,
+    include_external: bool = False,
 ) -> Dict[str, Any]:
     """Search capability registry (built-in packs + synced external catalogs)."""
     return _call_daemon_or_raise(
@@ -575,9 +575,10 @@ def capability_use(
             timeout_s=120.0,
         )
     else:
-        from ..server import handle_tool_call
+        from ..server import capability_use_nested_builtin_call_scope, handle_tool_call
 
-        tool_result = handle_tool_call(call_tool, tool_args)
+        with capability_use_nested_builtin_call_scope():
+            tool_result = handle_tool_call(call_tool, tool_args)
     out = {
         "group_id": group_id,
         "actor_id": target_actor,

@@ -18,6 +18,8 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_project_info",
     "cccc_capability_search",
     "cccc_capability_state",
+    "cccc_capability_enable",
+    "cccc_capability_use",
     "cccc_inbox_list",
     "cccc_inbox_mark_read",
     "cccc_message_send",
@@ -34,14 +36,15 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
 )
 
 CORE_ADMIN_TOOLS: Tuple[str, ...] = (
-    "cccc_capability_enable",
-    "cccc_capability_block",
-    "cccc_capability_import",
-    "cccc_capability_uninstall",
-    "cccc_capability_use",
 )
 
 CORE_TOOL_NAMES: Tuple[str, ...] = CORE_BASIC_TOOLS + CORE_ADMIN_TOOLS
+
+CAPABILITY_ADMIN_TOOLS: Tuple[str, ...] = (
+    "cccc_capability_import",
+    "cccc_capability_block",
+    "cccc_capability_uninstall",
+)
 
 # Pet keeps a dedicated minimal core surface. The mutation lane stays on
 # cccc_pet_decisions, with cccc_agent_state reserved for profile refresh.
@@ -74,9 +77,12 @@ WEB_MODEL_CORE_TOOLS: Tuple[str, ...] = CORE_BASIC_TOOLS + (
     "cccc_git",
 )
 
+WEB_MODEL_FOREMAN_TOOLS: Tuple[str, ...] = WEB_MODEL_CORE_TOOLS + CORE_ADMIN_TOOLS
+
 # ChatGPT-style remote MCP clients parse the tool schema at connector setup and
-# may not reliably refresh later. Web Model actors therefore advertise a stable
-# built-in schema, while call-time permission checks still enforce actor role.
+# may not reliably refresh later. Web Model actors therefore advertise a stable,
+# role-aware core schema. Built-in capability packs stay behind capability_use
+# instead of being eagerly listed for every Web Model actor.
 WEB_MODEL_ADVERTISED_EXCLUDED_TOOLS: Tuple[str, ...] = (
     "cccc_pet_decisions",
     "cccc_voice_secretary_document",
@@ -159,6 +165,12 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
             "cccc_debug",
         ),
         "tags": ("terminal", "debug", "diagnostics"),
+    },
+    "pack:capability-admin": {
+        "title": "Capability Admin",
+        "description": "Foreman/admin capability governance: import, block, and uninstall capability records.",
+        "tool_names": CAPABILITY_ADMIN_TOOLS,
+        "tags": ("capability", "admin", "governance"),
     },
 }
 
@@ -1122,10 +1134,13 @@ def all_pack_tool_name_set() -> Set[str]:
     return names
 
 
-def web_model_advertised_tool_names(all_tool_names: Iterable[str]) -> Set[str]:
+def web_model_advertised_tool_names(all_tool_names: Iterable[str], *, actor_role: str = "") -> Set[str]:
     """Return the stable built-in tool schema advertised to Web Model clients."""
+    role = str(actor_role or "").strip().lower()
+    base = WEB_MODEL_FOREMAN_TOOLS if role == "foreman" else WEB_MODEL_CORE_TOOLS
     excluded = set(WEB_MODEL_ADVERTISED_EXCLUDED_TOOLS)
-    return {str(name).strip() for name in all_tool_names if str(name).strip() and str(name).strip() not in excluded}
+    available = {str(name).strip() for name in all_tool_names if str(name).strip()}
+    return {str(name).strip() for name in base if str(name).strip() in available and str(name).strip() not in excluded}
 
 
 def resolve_core_tool_names(

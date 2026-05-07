@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -282,24 +283,22 @@ await new Promise(() => {});
         finally:
             cleanup()
 
-    def test_code_mode_does_not_bypass_web_model_foreman_tool_gate(self) -> None:
+    def test_code_mode_hides_web_model_foreman_tools_from_peer(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.common import runtime_context_override
 
         home, _workspace, group, cleanup = self._with_home_and_group()
         try:
             source = r'''
-try {
-  await tools.cccc_actor({ action: "list" });
-  text("unexpected");
-} catch (err) {
-  text(String(err.message || err));
-}
+text(JSON.stringify({
+  has_actor: Object.prototype.hasOwnProperty.call(tools, "cccc_actor"),
+  has_shell: Object.prototype.hasOwnProperty.call(tools, "cccc_shell")
+}));
 '''
             with runtime_context_override(home=str(home), group_id=group.group_id, actor_id="peer1"):
                 out = mcp_server.handle_tool_call("cccc_code_exec", {"source": source, "yield_time_ms": 5000})
             self.assertEqual(out.get("status"), "completed")
-            self.assertIn("requires a Web Model foreman actor", str(out.get("output") or ""))
+            self.assertEqual(json.loads(str(out.get("output") or "{}")), {"has_actor": False, "has_shell": True})
         finally:
             cleanup()
 
@@ -328,6 +327,7 @@ const help = tool_help("repo");
 const full = tool_help("repo", { detail: "schema" });
 const turn = tool_help("turn_complete");
 const finish = tool_help("finish_turn");
+const messageHelp = tool_help("message");
 const names = tool_names("turn_complete");
 const finishNames = tool_names("finish_turn");
 const repoNames = tool_names("repo");
@@ -343,6 +343,7 @@ text(JSON.stringify({
   finishToolsNarrow: finish.tools.slice(0, 4).every((tool) => ["cccc_message_reply", "cccc_message_send", "cccc_agent_state", "cccc_runtime_complete_turn"].includes(tool.raw_name)),
   repoRanking: repoNames.slice(0, 4).join(",") === "cccc_repo,cccc_repo_edit,cccc_apply_patch,cccc_git",
   messageRanking: messageNames.slice(0, 2).join(",") === "cccc_message_reply,cccc_message_send",
+  trackedSendBounded: messageHelp.notes.some((note) => note.includes("durable delegation")),
   finishLoopAlias: turn.common_work_loops.some((loop) => loop.name === "finish_turn"),
   fileListCompact: files.some((tool) => tool.raw_name === "cccc_file" && tool.summary),
   hasPatchLoop: COMMON_WORK_LOOPS.some((loop) => loop.name === "patch_safely"),
@@ -362,6 +363,7 @@ text(JSON.stringify({
             self.assertIn('"finishToolsNarrow":true', payload)
             self.assertIn('"repoRanking":true', payload)
             self.assertIn('"messageRanking":true', payload)
+            self.assertIn('"trackedSendBounded":true', payload)
             self.assertIn('"finishLoopAlias":true', payload)
             self.assertIn('"fileListCompact":true', payload)
             self.assertIn('"hasPatchLoop":true', payload)

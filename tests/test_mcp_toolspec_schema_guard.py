@@ -130,13 +130,20 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertFalse(edit_annotations.get("readOnlyHint"))
         self.assertTrue(edit_annotations.get("destructiveHint"))
         edit_props = ((repo_edit.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo_edit, dict) else {}
-        self.assertEqual((edit_props.get("action") or {}).get("enum"), ["replace", "multi_replace", "write", "apply_patch", "mkdir", "delete", "move"])
+        self.assertEqual((edit_props.get("action") or {}).get("enum"), ["replace", "multi_replace", "write", "mkdir", "delete", "move"])
         self.assertIn("old_text", edit_props)
         self.assertIn("replacements", edit_props)
         self.assertIn("expected_sha256", edit_props)
+        self.assertNotIn("patch", edit_props)
         apply_patch = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_apply_patch"), None)
         self.assertIsInstance(apply_patch, dict)
         self.assertIn("Codex-style", str(apply_patch.get("description") or ""))
+
+    def test_capability_search_defaults_to_local_sources(self) -> None:
+        search = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_capability_search"), None)
+        self.assertIsInstance(search, dict)
+        props = ((search.get("inputSchema") or {}).get("properties") or {}) if isinstance(search, dict) else {}
+        self.assertEqual((props.get("include_external") or {}).get("default"), False)
 
     def test_web_model_local_power_tools_are_not_generic_core_tools(self) -> None:
         from cccc.kernel.capabilities import CORE_BASIC_TOOLS, WEB_MODEL_CORE_TOOLS, resolve_core_tool_names

@@ -26,6 +26,7 @@ export type WebModelConnector = {
   last_error?: string;
   connector_url?: string;
   connector_url_with_token?: string;
+  connector_url_path_token?: string;
   secret_available?: boolean;
 };
 

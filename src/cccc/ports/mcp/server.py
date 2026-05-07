@@ -1,12 +1,12 @@
 """
 CCCC MCP Server - IM-style Agent Collaboration Tools
 
-Static MCP surface:
+Static MCP surface (role and capability-pack visibility may hide some tools):
 - cccc_help / cccc_bootstrap / cccc_project_info
 - cccc_inbox_list / cccc_inbox_mark_read
 - cccc_message_send / cccc_message_reply
 - cccc_file / cccc_repo / cccc_repo_edit / cccc_apply_patch / cccc_shell / cccc_exec_command / cccc_write_stdin / cccc_git / cccc_voice_secretary_document / cccc_voice_secretary_request / cccc_group / cccc_actor / cccc_runtime_list
-- cccc_capability_search / cccc_capability_enable / cccc_capability_block / cccc_capability_state / cccc_capability_import / cccc_capability_uninstall / cccc_capability_use
+- cccc_capability_search / cccc_capability_enable / cccc_capability_state / cccc_capability_use
 - cccc_space / cccc_automation
 - cccc_context_get / cccc_coordination / cccc_task / cccc_agent_state
 - cccc_context_sync (advanced batch op)
@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 # Kernel/util imports needed by routing
@@ -30,6 +32,7 @@ from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
 from ...kernel.capabilities import (
     BUILTIN_CAPABILITY_PACKS,
+    CAPABILITY_ADMIN_TOOLS,
     CORE_ADMIN_TOOLS,
     WEB_MODEL_CORE_TOOLS,
     resolve_visible_tool_names,
@@ -208,8 +211,31 @@ def _normalize_to_arg(raw: Any) -> Optional[List[str]]:
 
 
 _BUILTIN_MCP_TOOL_NAMES = frozenset(str(spec.get("name") or "") for spec in MCP_TOOLS if isinstance(spec, dict))
-_WEB_MODEL_ADVERTISED_TOOL_NAMES = frozenset(web_model_advertised_tool_names(_BUILTIN_MCP_TOOL_NAMES))
+_WEB_MODEL_PEER_ADVERTISED_TOOL_NAMES = frozenset(
+    web_model_advertised_tool_names(_BUILTIN_MCP_TOOL_NAMES, actor_role="peer")
+)
+_WEB_MODEL_FOREMAN_ADVERTISED_TOOL_NAMES = frozenset(
+    web_model_advertised_tool_names(_BUILTIN_MCP_TOOL_NAMES, actor_role="foreman")
+)
+_WEB_MODEL_PACK_TOOL_NAMES = frozenset(
+    str(name or "").strip()
+    for name in set().union(*(set(pack.get("tool_names") or ()) for pack in BUILTIN_CAPABILITY_PACKS.values()))
+    if str(name or "").strip() in _BUILTIN_MCP_TOOL_NAMES
+)
 _WEB_MODEL_PEER_ALLOWED_TOOL_NAMES = frozenset(WEB_MODEL_CORE_TOOLS)
+_CAPABILITY_USE_NESTED_BUILTIN_CALL: ContextVar[bool] = ContextVar(
+    "cccc_capability_use_nested_builtin_call",
+    default=False,
+)
+
+
+@contextmanager
+def capability_use_nested_builtin_call_scope():
+    token = _CAPABILITY_USE_NESTED_BUILTIN_CALL.set(True)
+    try:
+        yield
+    finally:
+        _CAPABILITY_USE_NESTED_BUILTIN_CALL.reset(token)
 
 
 def _argument_or_default(arguments: Dict[str, Any], key: str, default: Any) -> Any:
@@ -263,20 +289,26 @@ def _authorize_web_model_builtin_tool_call(name: str) -> None:
         return
     if str(actor.get("runtime") or "").strip().lower() != "web_model":
         return
-    if tool_name not in _WEB_MODEL_ADVERTISED_TOOL_NAMES:
+    try:
+        role = str(get_effective_role(group, aid) or "").strip().lower()
+    except Exception:
+        role = "peer"
+    if (
+        role == "foreman"
+        and bool(_CAPABILITY_USE_NESTED_BUILTIN_CALL.get())
+        and tool_name in _WEB_MODEL_PACK_TOOL_NAMES
+    ):
+        return
+    if role == "foreman" and tool_name in _WEB_MODEL_FOREMAN_ADVERTISED_TOOL_NAMES:
+        return
+    if tool_name in _WEB_MODEL_PEER_ALLOWED_TOOL_NAMES:
+        return
+    if role == "foreman":
         raise MCPError(
             code="permission_denied",
             message=f"{tool_name} is not available to Web Model actors",
             details={"group_id": gid, "actor_id": aid, "tool_name": tool_name},
         )
-    try:
-        role = str(get_effective_role(group, aid) or "").strip().lower()
-    except Exception:
-        role = "peer"
-    if role == "foreman":
-        return
-    if tool_name in _WEB_MODEL_PEER_ALLOWED_TOOL_NAMES:
-        return
     raise MCPError(
         code="permission_denied",
         message=f"{tool_name} requires a Web Model foreman actor",
@@ -714,16 +746,17 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         _require_web_model_actor(gid, aid)
         action = str(arguments.get("action") or "").strip().lower()
         if not action:
-            if str(arguments.get("patch") or "").strip():
-                action = "apply_patch"
-            elif isinstance(arguments.get("replacements"), list):
+            if isinstance(arguments.get("replacements"), list):
                 action = "multi_replace"
             elif str(arguments.get("content") or ""):
                 action = "write"
             else:
                 action = "replace"
-        if action not in {"replace", "multi_replace", "write", "apply_patch", "mkdir", "delete", "move"}:
-            raise MCPError(code="invalid_action", message="cccc_repo_edit action must be replace|multi_replace|write|apply_patch|mkdir|delete|move")
+        if action not in {"replace", "multi_replace", "write", "mkdir", "delete", "move"}:
+            raise MCPError(
+                code="invalid_action",
+                message="cccc_repo_edit action must be replace|multi_replace|write|mkdir|delete|move; use cccc_apply_patch for Codex patches",
+            )
         return repo_tool(
             group_id=gid,
             action=action,
@@ -735,7 +768,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             expected_sha256=str(arguments.get("expected_sha256") or arguments.get("expected_hash") or ""),
             expected_replacements=arguments.get("expected_replacements"),
             replace_all=coerce_bool(arguments.get("replace_all"), default=False),
-            patch=str(arguments.get("patch") or ""),
             recursive=coerce_bool(arguments.get("recursive"), default=False),
             exist_ok=coerce_bool(arguments.get("exist_ok"), default=True),
         )
@@ -959,7 +991,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             trust_tier=str(arguments.get("trust_tier") or ""),
             qualification_status=str(arguments.get("qualification_status") or ""),
             limit=min(max(int(arguments.get("limit") or 30), 1), 200),
-            include_external=coerce_bool(arguments.get("include_external"), default=True),
+            include_external=coerce_bool(arguments.get("include_external"), default=False),
         )
 
     if name == "cccc_capability_enable":
@@ -1423,10 +1455,14 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
                 ]
         except Exception:
             pass
-    admin_excluded = set(CORE_ADMIN_TOOLS) if actor_role == "peer" else set()
+    admin_excluded = (set(CORE_ADMIN_TOOLS) | set(CAPABILITY_ADMIN_TOOLS)) if actor_role == "peer" else set()
 
     if actor_is_web_model:
-        names = set(_WEB_MODEL_ADVERTISED_TOOL_NAMES)
+        names = (
+            set(_WEB_MODEL_FOREMAN_ADVERTISED_TOOL_NAMES)
+            if actor_role == "foreman"
+            else set(_WEB_MODEL_PEER_ADVERTISED_TOOL_NAMES)
+        )
         if not code_mode_enabled():
             names -= CODE_MODE_TOOL_NAMES
         return [spec for spec in MCP_TOOLS if str(spec.get("name") or "") in names]

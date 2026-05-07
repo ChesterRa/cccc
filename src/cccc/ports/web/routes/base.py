@@ -27,7 +27,7 @@ from ....kernel.web_model_connectors import (
 from ....daemon.actors.web_model_actor_policy import require_no_other_chatgpt_web_model_actor
 from ....daemon.runner_state_ops import headless_state_running
 from ....util.conv import coerce_bool
-from ....util.time import utc_now_iso
+from ....util.time import parse_utc_iso, utc_now_iso
 from ..branding import (
     build_branding_payload,
     delete_branding_asset,
@@ -54,6 +54,7 @@ from ..schemas import (
 )
 
 _WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
+_WEB_MODEL_CONNECTOR_GET_ACTIVITY_MIN_SECONDS = 30.0
 
 
 class WebModelConnectorCreateRequest(BaseModel):
@@ -218,6 +219,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         return f"{url}{sep}{urlencode({'token': token})}"
 
+    def _connector_path_token_url(connector_url: str, secret: str) -> str:
+        url = str(connector_url or "").strip().rstrip("/")
+        token = str(secret or "").strip()
+        if not url or not token:
+            return ""
+        from urllib.parse import quote
+
+        return f"{url}/token/{quote(token, safe='')}"
+
     def _web_model_connector_web_payload(request: Request, item: Dict[str, Any]) -> Dict[str, Any]:
         connector_id = str(item.get("connector_id") or "").strip()
         entry = mask_web_model_connector(item)
@@ -228,6 +238,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         token_url = _connector_url_with_token(connector_url, secret)
         if token_url:
             entry["connector_url_with_token"] = token_url
+        path_token_url = _connector_path_token_url(connector_url, secret)
+        if path_token_url:
+            entry["connector_url_path_token"] = path_token_url
         return entry
 
     def _is_global_web_model_browser_setup(group_id: str, actor_id: str) -> bool:
@@ -264,8 +277,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return str(auth[7:] or "").strip()
         return str(request.query_params.get("token") or "").strip()
 
-    def _resolve_web_model_connector(request: Request, connector_id: str) -> Dict[str, Any]:
-        secret = _extract_bearer_or_query_token(request)
+    def _resolve_web_model_connector(request: Request, connector_id: str, *, secret_override: str = "") -> Dict[str, Any]:
+        secret = str(secret_override or "").strip() or _extract_bearer_or_query_token(request)
         connector = verify_web_model_connector_secret(connector_id, secret)
         if connector is None:
             raise HTTPException(
@@ -313,6 +326,32 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not coerce_bool(actor.get("enabled"), default=True) or not headless_state_running(group_id, actor_id):
             _reject_live_binding("connector_actor_stopped", "web-model connector actor is stopped")
         return connector
+
+    def _record_web_model_connector_probe_activity(connector_id: str) -> None:
+        cid = str(connector_id or "").strip()
+        if not cid:
+            return
+        connectors = load_web_model_connectors()
+        entry = connectors.get(cid)
+        if not isinstance(entry, dict) or bool(entry.get("revoked")):
+            return
+        last_activity_raw = str(entry.get("last_activity_at") or "").strip()
+        last_method = str(entry.get("last_method") or "").strip().upper()
+        if last_activity_raw and last_method != "GET":
+            return
+        last_activity = parse_utc_iso(last_activity_raw)
+        now = parse_utc_iso(utc_now_iso())
+        if (
+            last_activity is not None
+            and now is not None
+            and (now - last_activity).total_seconds() < _WEB_MODEL_CONNECTOR_GET_ACTIVITY_MIN_SECONDS
+        ):
+            return
+        record_web_model_connector_activity(
+            cid,
+            method="GET",
+            call_status="ok",
+        )
 
     async def _handle_remote_mcp_payload(payload: Any, *, connector: Optional[Dict[str, Any]] = None) -> Response:
         from ...mcp.main import handle_request as handle_mcp_request
@@ -817,6 +856,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid JSON body"}) from exc
         return await _handle_remote_mcp_payload(payload, connector=connector)
 
+    @global_router.post("/mcp/web-model/{connector_id}/token/{secret}")
+    async def web_model_mcp_jsonrpc_path_token(connector_id: str, secret: str, request: Request) -> Response:
+        """Compatibility URL for clients that drop or reject query-token MCP URLs."""
+        connector = _resolve_web_model_connector(request, connector_id, secret_override=secret)
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid JSON body"}) from exc
+        return await _handle_remote_mcp_payload(payload, connector=connector)
+
     @global_router.get("/mcp/web-model/{connector_id}")
     async def web_model_mcp_sse_probe(connector_id: str, request: Request) -> StreamingResponse:
         """Streamable-HTTP probe path for remote MCP clients that open GET/SSE."""
@@ -824,10 +873,28 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         connector_id_clean = str(connector.get("connector_id") or "").strip()
         if connector_id_clean:
             await run_in_threadpool(
-                record_web_model_connector_activity,
+                _record_web_model_connector_probe_activity,
                 connector_id_clean,
-                method="GET",
-                call_status="ok",
+            )
+
+        async def _events():
+            yield b": cccc web-model connector ready\n\n"
+
+        return StreamingResponse(
+            _events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @global_router.get("/mcp/web-model/{connector_id}/token/{secret}")
+    async def web_model_mcp_sse_probe_path_token(connector_id: str, secret: str, request: Request) -> StreamingResponse:
+        """Path-token probe variant for remote MCP clients that do not preserve query strings."""
+        connector = _resolve_web_model_connector(request, connector_id, secret_override=secret)
+        connector_id_clean = str(connector.get("connector_id") or "").strip()
+        if connector_id_clean:
+            await run_in_threadpool(
+                _record_web_model_connector_probe_activity,
+                connector_id_clean,
             )
 
         async def _events():
@@ -841,6 +908,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @global_router.options("/mcp/web-model/{connector_id}")
     async def web_model_mcp_options(connector_id: str) -> Response:
+        return Response(
+            status_code=204,
+            headers={
+                "Allow": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "authorization, content-type, accept, mcp-protocol-version, mcp-session-id",
+            },
+        )
+
+    @global_router.options("/mcp/web-model/{connector_id}/token/{secret}")
+    async def web_model_mcp_path_token_options(connector_id: str, secret: str) -> Response:
         return Response(
             status_code=204,
             headers={

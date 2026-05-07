@@ -130,7 +130,11 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_tracked_send",
-        "description": "Create a durable task and send one linked visible delegation message. Use only when owner/scope/done/evidence must survive chat; do not use for ordinary discussion or quick solo work.",
+        "description": (
+            "Foreman-first durable delegation tool: create a task and send one linked visible delegation message. "
+            "Use only when owner/scope/done/evidence must survive chat. "
+            "For ordinary discussion, quick handoffs, or solo work, use cccc_message_send/reply instead."
+        ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -387,9 +391,9 @@ MCP_TOOLS = [
     {
         "name": "cccc_repo_edit",
         "description": (
-            "Write to the active workspace repository for remote runtimes: action=replace|multi_replace|write|apply_patch|mkdir|delete|move. "
-            "For small code edits, prefer read -> replace/multi_replace with expected_sha256, then cccc_git diff. "
-            "For file-oriented patches, prefer cccc_apply_patch with Codex *** Begin Patch format."
+            "Write to the active workspace repository for remote runtimes: action=replace|multi_replace|write|mkdir|delete|move. "
+            "For exact small edits, prefer cccc_repo(action=read) -> replace/multi_replace with expected_sha256, then cccc_git diff. "
+            "Use cccc_apply_patch for structural or multi-file Codex *** Begin Patch patches."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(
@@ -397,7 +401,7 @@ MCP_TOOLS = [
                 **_COMMON_GROUP,
                 "action": {
                     "type": "string",
-                    "enum": ["replace", "multi_replace", "write", "apply_patch", "mkdir", "delete", "move"],
+                    "enum": ["replace", "multi_replace", "write", "mkdir", "delete", "move"],
                     "default": "replace",
                 },
                 "path": {"type": "string", "description": "Relative path under the active workspace root; required for write/delete/move/mkdir."},
@@ -411,7 +415,6 @@ MCP_TOOLS = [
                 "expected_sha256": {"type": "string", "description": "Optional sha256 from cccc_repo(action=read); rejects stale writes/replaces."},
                 "expected_replacements": {"type": "integer", "minimum": 1, "maximum": 10000, "description": "Optional exact old_text match count for action=replace."},
                 "replace_all": {"type": "boolean", "default": False, "description": "For action=replace, replace every old_text match instead of requiring a single exact match."},
-                "patch": {"type": "string", "description": "For action=apply_patch; must be Codex *** Begin Patch format. Git unified diff is not accepted here."},
                 "recursive": {"type": "boolean", "default": False, "description": "Required true to delete directories."},
                 "exist_ok": {"type": "boolean", "default": True, "description": "For action=mkdir."},
             }
@@ -420,9 +423,9 @@ MCP_TOOLS = [
     {
         "name": "cccc_apply_patch",
         "description": (
-            "Codex-style file patch tool for Web Model local development. "
+            "Codex-style file patch tool for structural or multi-file edits. "
             "Use *** Begin Patch / *** Add File / *** Update File / *** Delete File / *** End Patch. "
-            "File paths must be relative to the active workspace root."
+            "File paths must be relative to the active workspace root. For exact small edits, prefer cccc_repo_edit replace/multi_replace with expected_sha256."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(
@@ -436,9 +439,9 @@ MCP_TOOLS = [
     {
         "name": "cccc_shell",
         "description": (
-            "Web Model local-power shell execution in the group's active workspace. "
-            "Run tests, builds, rg, scripts, and other local commands from a cwd constrained to the active scope root. "
-            "Returns ok, returncode, stdout, stderr, and truncation flags. For long-running commands, prefer cccc_exec_command."
+            "Short one-shot shell execution in the group's active workspace. "
+            "Use for quick tests, builds, rg, scripts, and local commands from a cwd constrained to the active scope root. "
+            "Returns ok, returncode, stdout, stderr, and truncation flags. For long-running, streaming, or interactive commands, use cccc_exec_command plus cccc_write_stdin."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(
@@ -456,8 +459,8 @@ MCP_TOOLS = [
     {
         "name": "cccc_exec_command",
         "description": (
-            "Codex-style session shell execution in the group's active workspace. "
-            "Starts a command and returns output plus session_id when it is still running; use cccc_write_stdin to poll or send input."
+            "Codex-style session shell execution for long-running, streaming, or interactive commands in the group's active workspace. "
+            "Starts a command and returns output plus session_id when it is still running; use cccc_write_stdin to poll or send input. Use cccc_shell for short one-shot commands."
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
         "inputSchema": _obj(
@@ -647,7 +650,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_capability_search",
-        "description": "Search capability registry (built-in + external sources).",
+        "description": "Search local/built-in capability registry by default; set include_external=true only when intentionally querying remote sources.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -658,13 +661,13 @@ MCP_TOOLS = [
                 "trust_tier": {"type": "string", "default": ""},
                 "qualification_status": {"type": "string", "default": ""},
                 "limit": {"type": "integer", "default": 30, "minimum": 1, "maximum": 200},
-                "include_external": {"type": "boolean", "default": True},
+                "include_external": {"type": "boolean", "default": False},
             }
         ),
     },
     {
         "name": "cccc_capability_enable",
-        "description": "Enable/disable a capability for session/actor/group scope.",
+        "description": "Enable or disable an existing capability for session/actor/group scope. Peers can mutate only their own session/actor scope; group scope requires foreman.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -682,7 +685,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_capability_block",
-        "description": "Block/unblock a capability at group/global scope (foreman can mutate group scope).",
+        "description": "Foreman/admin governance tool to block or unblock a capability at group/global scope.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -705,24 +708,10 @@ MCP_TOOLS = [
     {
         "name": "cccc_capability_import",
         "description": (
-            "Import an agent-prepared normalized capability record (mcp_toolpack or skill) from any external source. "
-            "Daemon performs validation/probe/persist and can optionally enable after import. "
-            "record.source_id is optional; empty/unknown values are normalized to manual_import. "
-            "Use source_id=agent_self_proposed for autonomous low-risk capsule skill proposals; "
-            "self-proposed skill capability_id values must use skill:agent_self_proposed:<stable-slug>; "
-            "include required When to use/Avoid when/Procedure/Pitfalls/Verification sections; "
-            "real imports missing them are rejected to preserve the last valid active version, "
-            "direct import is acceptable for low-risk syntax-valid proposals, "
-            "while dry_run is recommended before immediate enablement or unclear-risk records; "
-            "reuse the same capability_id to update stale/incomplete/wrong self-proposed skills instead of duplicating; "
-            "import results report scope/import_action/record_changed/already_active/active_after_import; "
-            "import_action is the primary create/update/unchanged signal, while record_changed only compares an existing record; "
-            "already_active is the pre-import binding and active_after_import is the post-import runnable binding; "
-            "when active/readiness_preview.active, do not enable again; "
-            "verify full active capsule updates via capability_state.active_capsule_skills[].capsule_text; "
-            "use scope=session for a temporary trial, scope=actor for cross-session reusable self-proposed skills, "
-            "and scope=group only for shared team-wide behavior. "
-            "Dry runs return readiness_preview; external capability actionability follows external capability safety mode."
+            "Foreman/admin governance tool to import an agent-prepared normalized capability record (mcp_toolpack or skill). "
+            "Use source_id=agent_self_proposed and capability_id=skill:agent_self_proposed:<stable-slug> for low-risk autonomous capsule skill proposals. "
+            "Self-proposed skills must include When to use, Avoid when, Procedure, Pitfalls, and Verification sections; reuse the same capability_id for updates instead of duplicating. "
+            "Use dry_run before unclear-risk records or immediate enablement; import results report import_action, active_after_import, and readiness_preview."
         ),
         "inputSchema": _obj(
             {
@@ -816,9 +805,8 @@ MCP_TOOLS = [
     {
         "name": "cccc_capability_uninstall",
         "description": (
-            "Uninstall a capability from local use: revoke bindings and runtime cache, remove current-group actor autoload references, "
-            "and for source_id=agent_self_proposed skill records also remove the generated local catalog record plus all actor/profile autoload references. "
-            "External registry catalog records are not deleted."
+            "Foreman/admin governance tool to uninstall a capability from local use: revoke bindings/runtime cache and remove actor/profile autoload references. "
+            "For source_id=agent_self_proposed skills, also remove the generated local catalog record. External registry records are not deleted."
         ),
         "inputSchema": _obj(
             {
@@ -833,14 +821,11 @@ MCP_TOOLS = [
     {
         "name": "cccc_capability_use",
         "description": (
-            "One-step capability use: enable capability and optionally call a target tool. "
-            "For skill:* capabilities this is runtime capsule activation (not full local skill package install). "
-            "Use cccc_capability_import to create or update self-proposed capsule skills; use capability_use only to activate an existing valid skill id. "
-            "Returns top-level scope/requested_scope so callers do not have to infer activation scope from nested enable_result. "
-            "Use scope=session for temporary activation and scope=actor for cross-session reuse by the selected actor. "
-            "Legacy self-proposed ids under skill:agent:* are invalid; re-import under skill:agent_self_proposed:<stable-slug>, then call cccc_capability_uninstall on the legacy id. "
-            "If enable returns activation_pending, relist/reconnect before claiming success; inspect diagnostics/resolution_plan for blockers. "
-            "For skill:* capsule runtime, success is primarily visible in capability_state.active_capsule_skills, not necessarily in dynamic_tools."
+            "Use an existing capability: enable it and optionally call one target tool. "
+            "This is the preferred path for built-in capability pack tools that may be hidden from tools/list. "
+            "For skill:* capabilities this activates the runtime capsule, not a local package install. "
+            "Use scope=session for temporary activation and scope=actor for reuse by the selected actor; group scope requires foreman. "
+            "If enable returns activation_pending, relist/reconnect before claiming success; inspect diagnostics/resolution_plan for blockers."
         ),
         "inputSchema": _obj(
             {
@@ -959,7 +944,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_sync",
-        "description": "Advanced atomic batch sync for context ops. Prefer higher-level coordination/task/agent_state tools unless you need one-shot multi-op writes.",
+        "description": "Low-level atomic batch sync for context ops. Prefer coordination/task/agent_state for normal updates; use this only for deliberate one-shot multi-op writes.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -1123,7 +1108,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_memory_admin",
-        "description": "ReMe file-memory admin ops: action=index_sync|context_check|compact|daily_flush.",
+        "description": "Maintenance-only ReMe file-memory ops: index_sync|context_check|compact|daily_flush. Use cccc_memory for normal memory search/read/write.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,

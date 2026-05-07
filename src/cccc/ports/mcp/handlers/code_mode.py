@@ -109,6 +109,7 @@ _TOOL_HELP_COMPACT_NOTES = {
     "message": [
         "Visible CCCC delivery must use cccc_message_send or cccc_message_reply.",
         "Use cccc_message_reply with event_id/reply_to for an existing thread.",
+        "Use cccc_tracked_send only for durable delegation that needs a task plus linked visible message.",
         "Verify to/reply_to before sending; avoid routine @all.",
     ],
     "state": [

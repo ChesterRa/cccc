@@ -175,13 +175,16 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertIn("cccc_exec_command", names)
             self.assertIn("cccc_write_stdin", names)
             self.assertIn("cccc_git", names)
-            self.assertIn("cccc_actor", names)
-            self.assertIn("cccc_group", names)
+            self.assertIn("cccc_capability_search", names)
+            self.assertIn("cccc_capability_state", names)
             self.assertIn("cccc_capability_enable", names)
-            self.assertIn("cccc_context_sync", names)
-            self.assertIn("cccc_terminal", names)
-            self.assertIn("cccc_debug", names)
-            self.assertIn("cccc_space", names)
+            self.assertIn("cccc_capability_use", names)
+            self.assertNotIn("cccc_actor", names)
+            self.assertNotIn("cccc_group", names)
+            self.assertNotIn("cccc_context_sync", names)
+            self.assertNotIn("cccc_terminal", names)
+            self.assertNotIn("cccc_debug", names)
+            self.assertNotIn("cccc_space", names)
             self.assertNotIn("cccc_voice_secretary_document", names)
             self.assertNotIn("cccc_voice_secretary_request", names)
             self.assertNotIn("cccc_voice_secretary_composer", names)
@@ -244,7 +247,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_web_model_peer_sees_stable_schema_but_control_tools_are_role_gated(self) -> None:
+    def test_web_model_peer_schema_hides_foreman_and_pack_tools(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
@@ -262,11 +265,17 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(list_resp.status_code, 200)
             tools = ((list_resp.json().get("result") or {}).get("tools") or [])
             names = {str(item.get("name") or "") for item in tools if isinstance(item, dict)}
-            self.assertIn("cccc_actor", names)
-            self.assertIn("cccc_capability_enable", names)
             self.assertIn("cccc_shell", names)
             self.assertIn("cccc_exec_command", names)
             self.assertIn("cccc_write_stdin", names)
+            self.assertIn("cccc_capability_enable", names)
+            self.assertIn("cccc_capability_use", names)
+            self.assertNotIn("cccc_actor", names)
+            self.assertNotIn("cccc_capability_import", names)
+            self.assertNotIn("cccc_capability_block", names)
+            self.assertNotIn("cccc_capability_uninstall", names)
+            self.assertNotIn("cccc_context_sync", names)
+            self.assertNotIn("cccc_space", names)
             self.assertNotIn("cccc_voice_secretary_document", names)
 
             actor_call = client.post(
@@ -283,26 +292,27 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertTrue(bool((actor_call.json().get("result") or {}).get("isError")))
             self.assertIn("requires a Web Model foreman actor", actor_call.text)
 
-            cap_call = client.post(
-                f"/mcp/web-model/{connector_id}",
-                headers={"Authorization": f"Bearer {secret}"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 3,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "cccc_capability_enable",
-                        "arguments": {"capability_id": "pack:diagnostics", "scope": "group"},
+            with patch("cccc.ports.mcp.common.call_daemon", side_effect=self._local_call_daemon):
+                cap_call = client.post(
+                    f"/mcp/web-model/{connector_id}",
+                    headers={"Authorization": f"Bearer {secret}"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "cccc_capability_enable",
+                            "arguments": {"capability_id": "pack:diagnostics", "scope": "group"},
+                        },
                     },
-                },
-            )
+                )
             self.assertEqual(cap_call.status_code, 200)
             self.assertTrue(bool((cap_call.json().get("result") or {}).get("isError")))
             self.assertIn("permission_denied", cap_call.text)
         finally:
             cleanup()
 
-    def test_web_model_foreman_can_call_advertised_control_tools(self) -> None:
+    def test_web_model_foreman_uses_capability_use_for_pack_tools(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
@@ -312,15 +322,51 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             client = self._client()
             connector_id, secret = self._create_connector(client, admin, group)
 
+            list_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 200}},
+            )
+            self.assertEqual(list_resp.status_code, 200)
+            tools = ((list_resp.json().get("result") or {}).get("tools") or [])
+            names = {str(item.get("name") or "") for item in tools if isinstance(item, dict)}
+            self.assertIn("cccc_capability_use", names)
+            self.assertIn("cccc_capability_enable", names)
+            self.assertNotIn("cccc_capability_import", names)
+            self.assertNotIn("cccc_capability_block", names)
+            self.assertNotIn("cccc_capability_uninstall", names)
+            self.assertNotIn("cccc_actor", names)
+            self.assertNotIn("cccc_space", names)
+
+            direct_actor_call = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "cccc_actor", "arguments": {"action": "list"}},
+                },
+            )
+            self.assertEqual(direct_actor_call.status_code, 200)
+            self.assertTrue(bool((direct_actor_call.json().get("result") or {}).get("isError")))
+            self.assertIn("is not available to Web Model actors", direct_actor_call.text)
+
             with patch("cccc.ports.mcp.common.call_daemon", side_effect=self._local_call_daemon):
                 actor_call = client.post(
                     f"/mcp/web-model/{connector_id}",
                     headers={"Authorization": f"Bearer {secret}"},
                     json={
                         "jsonrpc": "2.0",
-                        "id": 1,
+                        "id": 3,
                         "method": "tools/call",
-                        "params": {"name": "cccc_actor", "arguments": {"action": "list"}},
+                        "params": {
+                            "name": "cccc_capability_use",
+                            "arguments": {
+                                "tool_name": "cccc_actor",
+                                "tool_arguments": {"action": "list"},
+                            },
+                        },
                     },
                 )
             self.assertEqual(actor_call.status_code, 200)
@@ -328,7 +374,8 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             payload = json.loads(
                 (((actor_call.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}"
             )
-            self.assertEqual((payload.get("actors") or [{}])[0].get("id"), "peer1")
+            result = payload.get("tool_result") or {}
+            self.assertEqual((result.get("actors") or [{}])[0].get("id"), "peer1")
 
             with patch("cccc.ports.mcp.common.call_daemon", side_effect=self._local_call_daemon):
                 cap_call = client.post(
@@ -336,7 +383,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     headers={"Authorization": f"Bearer {secret}"},
                     json={
                         "jsonrpc": "2.0",
-                        "id": 2,
+                        "id": 4,
                         "method": "tools/call",
                         "params": {
                             "name": "cccc_capability_enable",
@@ -370,7 +417,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
 
     def test_web_model_connector_url_prefers_public_web_url(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
-        from urllib.parse import parse_qs, urlparse
+        from urllib.parse import parse_qs, quote, urlparse
 
         _, cleanup = self._with_home()
         old_public_url = os.environ.get("CCCC_WEB_PUBLIC_URL")
@@ -396,6 +443,12 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             created_parsed = urlparse(created_url)
             self.assertEqual(f"{created_parsed.scheme}://{created_parsed.netloc}{created_parsed.path}", connector.get("connector_url"))
             self.assertEqual(parse_qs(created_parsed.query).get("token"), [secret])
+            created_path_url = str(connector.get("connector_url_path_token") or "")
+            self.assertEqual(
+                created_path_url,
+                f"{connector.get('connector_url')}/token/{quote(secret, safe='')}",
+            )
+            self.assertNotIn("?", created_path_url)
             self.assertNotIn("secret", connector)
 
             listing = client.get("/api/v1/web-model/connectors", headers={"Authorization": f"Bearer {admin}"})
@@ -405,6 +458,12 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             listed_parsed = urlparse(listed_url)
             self.assertEqual(f"{listed_parsed.scheme}://{listed_parsed.netloc}{listed_parsed.path}", listed.get("connector_url"))
             self.assertEqual(parse_qs(listed_parsed.query).get("token"), [secret])
+            listed_path_url = str(listed.get("connector_url_path_token") or "")
+            self.assertEqual(
+                listed_path_url,
+                f"{listed.get('connector_url')}/token/{quote(secret, safe='')}",
+            )
+            self.assertNotIn("?", listed_path_url)
             self.assertNotIn("secret", listed)
         finally:
             if old_public_url is None:
@@ -1239,6 +1298,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
 
     def test_web_model_connector_supports_streamable_http_probe_and_options(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
+        from cccc.kernel.web_model_connectors import load_web_model_connectors
 
         _, cleanup = self._with_home()
         try:
@@ -1266,5 +1326,30 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(probe.status_code, 200)
             self.assertIn("text/event-stream", str(probe.headers.get("content-type") or ""))
             self.assertIn("connector ready", probe.text)
+            first_probe_activity = str(((load_web_model_connectors().get(connector_id) or {}).get("last_activity_at")) or "")
+            self.assertTrue(first_probe_activity)
+
+            path_options = client.options(f"/mcp/web-model/{connector_id}/token/{secret}")
+            self.assertEqual(path_options.status_code, 204)
+            self.assertIn("POST", str(path_options.headers.get("allow") or ""))
+
+            bad_path_probe = client.get(f"/mcp/web-model/{connector_id}/token/bad-secret")
+            self.assertEqual(bad_path_probe.status_code, 401)
+
+            path_probe = client.get(f"/mcp/web-model/{connector_id}/token/{secret}")
+            self.assertEqual(path_probe.status_code, 200)
+            self.assertIn("text/event-stream", str(path_probe.headers.get("content-type") or ""))
+            self.assertIn("connector ready", path_probe.text)
+            self.assertEqual(
+                str(((load_web_model_connectors().get(connector_id) or {}).get("last_activity_at")) or ""),
+                first_probe_activity,
+            )
+
+            init_resp = client.post(
+                f"/mcp/web-model/{connector_id}/token/{secret}",
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            )
+            self.assertEqual(init_resp.status_code, 200)
+            self.assertEqual((init_resp.json().get("result") or {}).get("serverInfo", {}).get("name"), "cccc-mcp")
         finally:
             cleanup()

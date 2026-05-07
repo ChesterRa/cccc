@@ -553,7 +553,6 @@ def repo_tool(
     action: str,
     path: str = "",
     content: str = "",
-    patch: str = "",
     dest_path: str = "",
     old_text: str = "",
     new_text: str = "",
@@ -735,18 +734,6 @@ def repo_tool(
             "sha256": _sha256_file(target),
         }
 
-    if act == "apply_patch":
-        payload = str(patch or "")
-        if not payload.strip():
-            raise _mcp_error(
-                code="missing_patch",
-                message="patch is required",
-                recommended_action="Pass a complete Codex *** Begin Patch block in patch/input.",
-            )
-        if len(payload.encode("utf-8")) > _MAX_PATCH_BYTES:
-            raise MCPError(code="patch_too_large", message="patch is too large")
-        return apply_codex_patch_tool(group_id=group_id, patch=payload)
-
     if act == "mkdir":
         target.mkdir(parents=True, exist_ok=bool(exist_ok))
         return {"root_path": str(root), "path": _relative(root, target), "created": True}
@@ -781,7 +768,10 @@ def repo_tool(
             "moved": True,
         }
 
-    raise MCPError(code="invalid_action", message="cccc_repo action must be info|list|list_dir|read|write|replace|multi_replace|apply_patch|mkdir|delete|move")
+    raise MCPError(
+        code="invalid_action",
+        message="cccc_repo action must be info|list|list_dir|read; use cccc_repo_edit for writes and cccc_apply_patch for Codex patches",
+    )
 
 
 def shell_tool(

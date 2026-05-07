@@ -835,7 +835,7 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
     actor_id = str(args.get("actor_id") or args.get("by") or "").strip()
     query = str(args.get("query") or "").strip()
     limit = max(1, min(int(args.get("limit") or 30), 200))
-    include_external = bool(args.get("include_external", True))
+    include_external = bool(args.get("include_external", False))
     kind_filter = str(args.get("kind") or "").strip().lower()
     source_filter = str(args.get("source_id") or "").strip()
     trust_filter = str(args.get("trust_tier") or "").strip().lower()
@@ -876,21 +876,29 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
         remote_error = ""
         with _CATALOG_LOCK:
             catalog_path, catalog_doc = _pkg()._load_catalog_doc()
-            if include_external and _pkg()._ensure_curated_catalog_records(catalog_doc, policy=policy):
+            if _pkg()._ensure_curated_catalog_records(catalog_doc, policy=policy):
                 _pkg()._save_catalog_doc(catalog_path, catalog_doc)
-            if include_external:
-                for item in (
-                    catalog_doc.get("records")
-                    if isinstance(catalog_doc.get("records"), dict)
-                    else {}
-                ).values():
-                    if isinstance(item, dict):
-                        external_records.append(dict(item))
+            curated_default_ids = {
+                str(item.get("capability_id") or "").strip()
+                for item in (policy.get("curated_skill_entries") if isinstance(policy.get("curated_skill_entries"), list) else [])
+                if isinstance(item, dict) and str(item.get("capability_id") or "").strip()
+            }
+            local_catalog_sources = {"manual_import", "agent_self_proposed", "github_skills_curated", "anthropic_skills"}
+            for item in (
+                catalog_doc.get("records")
+                if isinstance(catalog_doc.get("records"), dict)
+                else {}
+            ).values():
+                if not isinstance(item, dict):
+                    continue
+                source_id = str(item.get("source_id") or "").strip()
+                capability_id = str(item.get("capability_id") or "").strip()
+                if include_external or source_id in local_catalog_sources or capability_id in curated_default_ids:
+                    external_records.append(dict(item))
             source_states = _render_source_states(catalog_doc)
 
         records: List[Dict[str, Any]] = _build_builtin_search_records()
-        if include_external:
-            records.extend(external_records)
+        records.extend(external_records)
         deduped_records: Dict[str, Dict[str, Any]] = {}
         for rec in records:
             cap_id = str(rec.get("capability_id") or "").strip()
