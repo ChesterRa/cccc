@@ -111,6 +111,127 @@ class TestServeOps(unittest.TestCase):
                 else:
                     os.environ["CCCC_HOME"] = old_home
 
+    def test_actor_activity_prewarms_running_web_model_browser_session(self) -> None:
+        from cccc.daemon import serve_ops
+        from cccc.daemon.runner_state_ops import write_headless_state
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        with tempfile.TemporaryDirectory() as home:
+            os.environ["CCCC_HOME"] = home
+            try:
+                reg = load_registry()
+                created = create_group(reg, title="web-model-activity", topic="")
+                group = load_group(created.group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                add_actor(
+                    group,
+                    actor_id="chatgpt-web-1",
+                    title="ChatGPT Web Model",
+                    runtime="web_model",
+                    runner="headless",
+                    env={"CCCC_WEB_MODEL_DELIVERY_MODE": "browser"},
+                )
+                group.save()
+                write_headless_state(created.group_id, "chatgpt-web-1")
+
+                class _Broadcaster:
+                    def publish(self, event: dict) -> None:
+                        _ = event
+
+                stop_event = threading.Event()
+                with patch(
+                    "cccc.daemon.actors.web_model_browser_session.schedule_web_model_chatgpt_browser_session_warmup",
+                    return_value=True,
+                ) as warmup:
+                    thread = serve_ops.start_actor_activity_thread(
+                        stop_event=stop_event,
+                        home=Path(home),
+                        pty_supervisor=object(),
+                        headless_supervisor=object(),
+                        codex_supervisor=object(),
+                        event_broadcaster=_Broadcaster(),
+                        load_group=load_group,
+                        interval_seconds=1.0,
+                    )
+                    for _ in range(20):
+                        if warmup.called:
+                            break
+                        time.sleep(0.05)
+                    stop_event.set()
+                    thread.join(timeout=1.0)
+
+                warmup.assert_called()
+                kwargs = warmup.call_args.kwargs
+                self.assertEqual(kwargs.get("group_id"), created.group_id)
+                self.assertEqual(kwargs.get("actor_id"), "chatgpt-web-1")
+                self.assertEqual(kwargs.get("reason"), "actor_activity_running")
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+
+    def test_actor_activity_does_not_prewarm_pull_web_model_browser_session(self) -> None:
+        from cccc.daemon import serve_ops
+        from cccc.daemon.runner_state_ops import write_headless_state
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        with tempfile.TemporaryDirectory() as home:
+            os.environ["CCCC_HOME"] = home
+            try:
+                reg = load_registry()
+                created = create_group(reg, title="web-model-pull-activity", topic="")
+                group = load_group(created.group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                add_actor(
+                    group,
+                    actor_id="web-model-1",
+                    title="Web Model",
+                    runtime="web_model",
+                    runner="headless",
+                    env={"CCCC_WEB_MODEL_DELIVERY_MODE": "remote_mcp"},
+                )
+                group.save()
+                write_headless_state(created.group_id, "web-model-1")
+
+                class _Broadcaster:
+                    def publish(self, event: dict) -> None:
+                        _ = event
+
+                stop_event = threading.Event()
+                with patch(
+                    "cccc.daemon.actors.web_model_browser_session.schedule_web_model_chatgpt_browser_session_warmup",
+                    return_value=True,
+                ) as warmup:
+                    thread = serve_ops.start_actor_activity_thread(
+                        stop_event=stop_event,
+                        home=Path(home),
+                        pty_supervisor=object(),
+                        headless_supervisor=object(),
+                        codex_supervisor=object(),
+                        event_broadcaster=_Broadcaster(),
+                        load_group=load_group,
+                        interval_seconds=1.0,
+                    )
+                    time.sleep(0.25)
+                    stop_event.set()
+                    thread.join(timeout=1.0)
+
+                warmup.assert_not_called()
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+
 
 if __name__ == "__main__":
     unittest.main()

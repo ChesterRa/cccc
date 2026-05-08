@@ -49,7 +49,7 @@ _BROWSER_PROVIDERS = {"chatgpt_web", "browser_web_model", "chatgpt_browser"}
 _PULL_MODES = {"", "pull", "native", "remote_mcp", "off", "disabled", "none"}
 _EXPLICIT_PULL_MODES = _PULL_MODES - {""}
 _BROWSER_MODES = {"browser", "chatgpt", "chatgpt_browser", "browser_delivery"}
-_DEFAULT_TIMEOUT_SECONDS = 120.0
+_DEFAULT_TIMEOUT_SECONDS = 30.0
 _PROMPT_TEXT_LIMIT = 48_000
 _MAX_BROWSER_DELIVERY_EVENTS = 20
 _PENDING_NEW_CHAT_RETRY_AFTER_SECONDS = 60.0
@@ -293,6 +293,7 @@ def _is_transient_projected_browser_error(error: str) -> bool:
             "element is not visible",
             "composer input was found but could not be focused",
             "chatgpt prompt insertion did not stick",
+            "chatgpt prompt was inserted but did not submit",
         )
     ):
         return True
@@ -493,6 +494,21 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         turn=turn,
         delivery_id=delivery_id,
         timeout_seconds=delivery_timeout_seconds,
+    )
+    _append_delivery_event(
+        group=group,
+        actor_id=aid,
+        turn=turn,
+        kind="web_model.browser_delivery.submitting",
+        data={
+            "provider": provider,
+            "delivery_id": delivery_id,
+            "trigger_event_id": str(trigger_event_id or "").strip(),
+            "delivery_transport": "projected_session",
+            "target_url": target_url,
+            "auto_bind_new_chat": bool(auto_bind_new_chat),
+            "timeout_seconds": float(delivery_timeout_seconds),
+        },
     )
     prompt = build_web_model_browser_turn_prompt(
         turn,
@@ -771,6 +787,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         }
 
     error = str(delivery_result.get("error") or "browser delivery failed")
+    commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by="system")
     record_chatgpt_browser_state(
         group.group_id,
         aid,
@@ -800,8 +817,13 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         data={
             "provider": provider,
             "trigger_event_id": str(trigger_event_id or "").strip(),
+            "delivery_id": str(turn.get("delivery_id") or ""),
             "error": error,
             "delivery_transport": "projected_session",
+            "cursor_committed": bool(commit.get("cursor_committed")),
+            "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+            "target_url": target_url,
+            "auto_bind_new_chat": bool(auto_bind_new_chat),
         },
     )
     return {
@@ -809,6 +831,8 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         "status": "failed",
         "turn_id": str(turn.get("turn_id") or ""),
         "error": error,
+        "cursor_committed": bool(commit.get("cursor_committed")),
+        "commit": commit,
         "event": event,
     }
 

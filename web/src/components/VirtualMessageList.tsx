@@ -20,6 +20,7 @@ import {
   shouldUseVirtualizedMessageList,
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
+import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
   void previousMessage;
@@ -47,6 +48,7 @@ export interface VirtualMessageListProps {
   readOnly?: boolean;
   groupId: string;
   groupLabelById: Record<string, string>;
+  webModelDeliveryStatusByEventId?: Record<string, WebModelDeliveryStatus>;
   viewKey?: string;
   initialScrollTargetId?: string;
   initialScrollAnchorId?: string;
@@ -93,6 +95,7 @@ type VirtualMessageRowProps = {
   readOnly?: boolean;
   groupId: string;
   groupLabelById: Record<string, string>;
+  webModelDeliveryStatus?: WebModelDeliveryStatus;
   highlightEventId?: string;
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
@@ -120,6 +123,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   readOnly,
   groupId,
   groupLabelById,
+  webModelDeliveryStatus,
   highlightEventId,
   onReply,
   onShowRecipients,
@@ -162,6 +166,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         readOnly={readOnly}
         groupId={groupId}
         groupLabelById={groupLabelById}
+        webModelDeliveryStatus={webModelDeliveryStatus}
         isHighlighted={!!highlightEventId && String(message.id || "") === String(highlightEventId)}
         collapseHeader={collapseHeader}
         onReply={() => onReply(message)}
@@ -191,6 +196,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   readOnly,
   groupId,
   groupLabelById,
+  webModelDeliveryStatusByEventId,
   viewKey: _viewKey,
   initialScrollTargetId,
   initialScrollAnchorId,
@@ -1056,6 +1062,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     readOnly={readOnly}
                     groupId={groupId}
                     groupLabelById={groupLabelById}
+                    webModelDeliveryStatus={message.id ? webModelDeliveryStatusByEventId?.[String(message.id)] : undefined}
                     highlightEventId={effectiveHighlightEventId}
                     onReply={onReply}
                     onShowRecipients={onShowRecipients}
@@ -1094,6 +1101,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       readOnly={readOnly}
                       groupId={groupId}
                       groupLabelById={groupLabelById}
+                      webModelDeliveryStatus={message.id ? webModelDeliveryStatusByEventId?.[String(message.id)] : undefined}
                       isHighlighted={!!effectiveHighlightEventId && String(message.id || "") === String(effectiveHighlightEventId)}
                       collapseHeader={grouping.collapseHeader}
                       onReply={() => onReply(message)}

@@ -13,6 +13,10 @@ from ..space.notebooklm_auth_browser_runtime import (
     attach_notebooklm_auth_browser_socket,
     can_attach_notebooklm_auth_browser_socket,
 )
+from ..actors.web_model_browser_session import (
+    attach_web_model_chatgpt_browser_socket,
+    can_attach_web_model_chatgpt_browser_socket,
+)
 
 
 def _set_blocking_io(conn: Any) -> None:
@@ -201,6 +205,58 @@ def try_handle_socket_special_op(
             if resp.ok:
                 _set_blocking_io(conn)
                 if attach_notebooklm_auth_browser_socket(sock=conn):
+                    return True
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return True
+
+    if op == "web_model_browser_attach":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        if group_id or actor_id:
+            group = load_group(group_id) if group_id else None
+            if group is None:
+                resp = error("group_not_found", f"group not found: {group_id}")
+            else:
+                actor = find_actor(group, actor_id)
+                if not isinstance(actor, dict):
+                    resp = error("actor_not_found", f"actor not found: {actor_id}")
+                elif str(actor.get("runtime") or "").strip().lower() != "web_model":
+                    resp = error(
+                        "invalid_actor_runtime",
+                        "ChatGPT browser sessions can only be bound to actors using runtime=web_model",
+                        details={"group_id": group_id, "actor_id": actor_id},
+                    )
+                else:
+                    ok, info = can_attach_web_model_chatgpt_browser_socket(group_id=group_id, actor_id=actor_id)
+                    if not ok:
+                        resp = error(
+                            str(info.get("code") or "browser_surface_attach_failed"),
+                            str(info.get("message") or "browser surface attach failed"),
+                            details=dict(info.get("details") or {}),
+                        )
+                    else:
+                        resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
+        else:
+            ok, info = can_attach_web_model_chatgpt_browser_socket(group_id="", actor_id="")
+            if not ok:
+                resp = error(
+                    str(info.get("code") or "browser_surface_attach_failed"),
+                    str(info.get("message") or "browser surface attach failed"),
+                    details=dict(info.get("details") or {}),
+                )
+            else:
+                resp = DaemonResponse(ok=True, result={"group_id": "", "actor_id": ""})
+
+        try:
+            send_json(conn, dump_response(resp))
+            if resp.ok:
+                _set_blocking_io(conn)
+                if attach_web_model_chatgpt_browser_socket(group_id=group_id, actor_id=actor_id, sock=conn):
                     return True
         except Exception:
             pass

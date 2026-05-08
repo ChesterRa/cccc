@@ -7,6 +7,7 @@ daemon-owned browser session.
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,10 @@ _CHANNEL_CANDIDATES = ("chrome", "msedge")
 _GLOBAL_SESSION_KEY = "chatgpt_web"
 _SESSION_WRITE_LOCK = threading.RLock()
 _STARTING_STALE_SECONDS = 30.0
+_WARMUP_RETRY_SECONDS = 30.0
+_WARMUP_LOCK = threading.RLock()
+_WARMUP_IN_FLIGHT: set[str] = set()
+_WARMUP_LAST_ATTEMPT: dict[str, float] = {}
 
 
 def _session_key(group_id: str, actor_id: str) -> str:
@@ -234,6 +239,78 @@ def get_web_model_chatgpt_browser_session_state(*, group_id: str, actor_id: str)
         _record_projected_browser_state(group_id, actor_id, state)
         ensure_web_model_tool_confirm_watcher(group_id, actor_id)
     return state
+
+
+def schedule_web_model_chatgpt_browser_session_warmup(
+    *,
+    group_id: str,
+    actor_id: str,
+    reason: str = "",
+    retry_seconds: float = _WARMUP_RETRY_SECONDS,
+) -> bool:
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid:
+        return False
+    key = _session_key(gid, aid)
+    surface = _MANAGER.info(key=key)
+    surface = _close_stale_starting_surface(gid, aid, surface)
+    if bool(surface.get("active")) and str(surface.get("state") or "").strip() in {"ready", "starting"}:
+        _record_projected_browser_state(gid, aid, surface)
+        ensure_web_model_tool_confirm_watcher(gid, aid)
+        return False
+    now = time.monotonic()
+    retry_window = max(0.0, float(retry_seconds or 0.0))
+    with _WARMUP_LOCK:
+        if key in _WARMUP_IN_FLIGHT:
+            return False
+        last = float(_WARMUP_LAST_ATTEMPT.get(key) or 0.0)
+        if retry_window > 0 and now - last < retry_window:
+            return False
+        _WARMUP_IN_FLIGHT.add(key)
+        _WARMUP_LAST_ATTEMPT[key] = now
+
+    def _worker() -> None:
+        try:
+            with _SESSION_WRITE_LOCK:
+                result = open_web_model_chatgpt_browser_session(
+                    group_id=gid,
+                    actor_id=aid,
+                    width=1366,
+                    height=900,
+                )
+            state = str((result or {}).get("state") or "").strip()
+            record_chatgpt_browser_state(
+                gid,
+                aid,
+                {
+                    "browser_warmup_at": utc_now_iso(),
+                    "browser_warmup_reason": str(reason or ""),
+                    "browser_warmup_state": state,
+                    "browser_warmup_error": "",
+                },
+            )
+        except Exception as exc:
+            record_chatgpt_browser_state(
+                gid,
+                aid,
+                {
+                    "browser_warmup_at": utc_now_iso(),
+                    "browser_warmup_reason": str(reason or ""),
+                    "browser_warmup_state": "failed",
+                    "browser_warmup_error": str(exc)[:1200],
+                },
+            )
+        finally:
+            with _WARMUP_LOCK:
+                _WARMUP_IN_FLIGHT.discard(key)
+
+    threading.Thread(
+        target=_worker,
+        name=f"cccc-chatgpt-browser-warmup-{gid}-{aid}",
+        daemon=True,
+    ).start()
+    return True
 
 
 def submit_prompt_via_web_model_chatgpt_browser_session(

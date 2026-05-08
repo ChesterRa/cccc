@@ -341,6 +341,23 @@ def start_actor_activity_thread(
                             if runtime == "web_model" and effective_runner == "headless":
                                 headless_state = read_headless_state(gid, aid)
                                 running = bool(headless_state_running(gid, aid))
+                                if running:
+                                    try:
+                                        from .actors.web_model_browser_delivery import (
+                                            web_model_browser_delivery_enabled,
+                                        )
+                                        from .actors.web_model_browser_session import (
+                                            schedule_web_model_chatgpt_browser_session_warmup,
+                                        )
+
+                                        if web_model_browser_delivery_enabled(gid, actor):
+                                            schedule_web_model_chatgpt_browser_session_warmup(
+                                                group_id=gid,
+                                                actor_id=aid,
+                                                reason="actor_activity_running",
+                                            )
+                                    except Exception:
+                                        pass
                             elif runtime == "codex" and effective_runner == "headless":
                                 headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))

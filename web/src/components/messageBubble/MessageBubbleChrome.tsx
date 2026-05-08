@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
+import type { WebModelDeliveryStatus } from "../../utils/webModelDeliveryStatus";
 import { ActorAvatar } from "../ActorAvatar";
 
 export function MessageMetadataHeader({
@@ -94,6 +95,7 @@ export function MessageFooter({
   obligationSummary,
   ackSummary,
   visibleReadStatusEntries,
+  webModelDeliveryStatus,
   readPreviewEntries,
   readPreviewOverflow,
   displayNameMap,
@@ -114,6 +116,7 @@ export function MessageFooter({
   obligationSummary: { kind: "reply" | "ack"; done: number; total: number } | null;
   ackSummary: { done: number; total: number; needsUserAck: boolean } | null;
   visibleReadStatusEntries: readonly (readonly [string, boolean])[];
+  webModelDeliveryStatus?: WebModelDeliveryStatus;
   readPreviewEntries: readonly (readonly [string, boolean])[];
   readPreviewOverflow: number;
   displayNameMap: Map<string, string>;
@@ -158,16 +161,38 @@ export function MessageFooter({
     </div>
   );
 
+  const deliveryLabel = webModelDeliveryStatus ? t(`webModelDelivery.${webModelDeliveryStatus.state}`) : "";
+  const deliveryDetail = String(webModelDeliveryStatus?.detail || "").trim();
+  const deliveryToneClass = webModelDeliveryStatus?.state === "failed"
+    ? "border-rose-500/20 bg-rose-500/8 text-rose-700 dark:text-rose-300"
+    : webModelDeliveryStatus?.state === "submitted"
+      ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
+      : "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
+
   return (
     <div
       className={classNames(
         "mt-2 flex flex-wrap items-center gap-2 px-1 text-[10px] transition-opacity",
-        (obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
+        (webModelDeliveryStatus || obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
         "opacity-80 group-hover:opacity-100",
         "text-[var(--color-text-tertiary)]",
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {webModelDeliveryStatus ? (
+          <span
+            className={classNames(
+              "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-tight",
+              deliveryToneClass,
+            )}
+            title={deliveryDetail || undefined}
+          >
+            {webModelDeliveryStatus.state === "submitting" ? (
+              <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current" aria-hidden="true" />
+            ) : null}
+            <span className="truncate">{deliveryLabel}</span>
+          </span>
+        ) : null}
         {obligationSummary ? (
           readOnly ? (
             <div className="flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]">

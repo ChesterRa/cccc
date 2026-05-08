@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -270,6 +269,28 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "details": {"group_id": gid, "actor_id": aid},
                 },
             )
+
+    def _daemon_http_status_for_error(code: str, default: int = 500) -> int:
+        normalized = str(code or "").strip()
+        if normalized in {"missing_group_id", "missing_actor_id", "invalid_actor_runtime", "chatgpt_tab_not_found"}:
+            return 400
+        if normalized in {"group_not_found", "actor_not_found"}:
+            return 404
+        return int(default)
+
+    async def _call_web_model_browser_daemon(op: str, args: Dict[str, Any], *, default_status: int = 500) -> Dict[str, Any]:
+        resp = await ctx.daemon({"op": str(op or "").strip(), "args": dict(args or {})})
+        if not isinstance(resp, dict) or not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp, dict) and isinstance(resp.get("error"), dict) else {}
+            code = str(err.get("code") or "daemon_error")
+            message = str(err.get("message") or "daemon request failed")
+            details = err.get("details") if isinstance(err.get("details"), dict) else {}
+            raise HTTPException(
+                status_code=_daemon_http_status_for_error(code, default_status),
+                detail={"code": code, "message": message, "details": details},
+            )
+        result = resp.get("result")
+        return dict(result) if isinstance(result, dict) else {}
 
     def _extract_bearer_or_query_token(request: Request) -> str:
         auth = str(request.headers.get("authorization") or "").strip()
@@ -543,18 +564,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {"ok": True, "result": {"revoked": True, "connector_id": str(connector_id or "").strip()}}
 
     async def _web_model_browser_payload(group_id: str, actor_id: str, browser_surface: Dict[str, Any], *, inspect: bool = False) -> Dict[str, Any]:
-        from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
         from ...web_model_browser_sidecar import (
             build_chatgpt_web_model_health_snapshot,
             chatgpt_browser_session_cached_status,
             chatgpt_browser_session_status,
         )
 
-        surface = browser_surface or await run_in_threadpool(
-            get_web_model_chatgpt_browser_session_state,
-            group_id=group_id,
-            actor_id=actor_id,
-        )
+        surface = browser_surface
+        if not isinstance(surface, dict) or not surface:
+            info = await _call_web_model_browser_daemon(
+                "web_model_browser_info",
+                {"group_id": group_id, "actor_id": actor_id},
+                default_status=500,
+            )
+            surface = info.get("browser_surface") if isinstance(info.get("browser_surface"), dict) else {}
         status_fn = chatgpt_browser_session_status if inspect else chatgpt_browser_session_cached_status
         browser = await run_in_threadpool(status_fn, group_id, actor_id)
         if isinstance(surface, dict) and surface.get("active") and not browser.get("active"):
@@ -579,28 +602,30 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @global_router.get("/api/v1/web-model/browser-session", dependencies=[Depends(require_admin)])
     async def web_model_browser_session_status(group_id: str, actor_id: str, inspect: bool = False) -> Dict[str, Any]:
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
-        return await _web_model_browser_payload(group_id, actor_id, {}, inspect=bool(inspect))
+        info = await _call_web_model_browser_daemon(
+            "web_model_browser_info",
+            {"group_id": group_id, "actor_id": actor_id},
+            default_status=500,
+        )
+        surface = info.get("browser_surface") if isinstance(info.get("browser_surface"), dict) else {}
+        return await _web_model_browser_payload(group_id, actor_id, surface, inspect=bool(inspect))
 
     @global_router.post("/api/v1/web-model/browser-session/open", dependencies=[Depends(require_admin)])
     async def web_model_browser_session_open(req: WebModelBrowserSessionRequest, inspect: bool = False) -> Dict[str, Any]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
-        from ....daemon.actors.web_model_browser_session import open_web_model_chatgpt_browser_session
-
-        try:
-            surface = await run_in_threadpool(
-                open_web_model_chatgpt_browser_session,
-                group_id=group_id,
-                actor_id=actor_id,
-                width=int(req.width or 1366),
-                height=int(req.height or 900),
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail={"code": "web_model_browser_open_failed", "message": str(exc), "details": {}},
-            ) from exc
+        info = await _call_web_model_browser_daemon(
+            "web_model_browser_open",
+            {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "width": int(req.width or 1366),
+                "height": int(req.height or 900),
+            },
+            default_status=500,
+        )
+        surface = info.get("browser_surface") if isinstance(info.get("browser_surface"), dict) else {}
         return await _web_model_browser_payload(group_id, actor_id, surface, inspect=bool(inspect))
 
     @global_router.post("/api/v1/web-model/browser-session/close", dependencies=[Depends(require_admin)])
@@ -608,14 +633,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id, allow_global_setup=True)
-        from ....daemon.actors.web_model_browser_session import close_web_model_chatgpt_browser_session
-
-        result = await run_in_threadpool(
-            close_web_model_chatgpt_browser_session,
-            group_id=group_id,
-            actor_id=actor_id,
+        result = await _call_web_model_browser_daemon(
+            "web_model_browser_close",
+            {"group_id": group_id, "actor_id": actor_id},
+            default_status=500,
         )
-        surface = result.get("browser_surface") if isinstance(result, dict) else {}
+        surface = result.get("browser_surface") if isinstance(result.get("browser_surface"), dict) else {}
         return await _web_model_browser_payload(group_id, actor_id, surface if isinstance(surface, dict) else {})
 
     @global_router.post("/api/v1/web-model/browser-session/bind-current", dependencies=[Depends(require_admin)])
@@ -623,7 +646,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group_id = str(req.group_id or "").strip()
         actor_id = str(req.actor_id or "").strip()
         _require_web_model_browser_actor(group_id, actor_id)
-        from ....daemon.actors.web_model_browser_session import get_web_model_chatgpt_browser_session_state
         from ...web_model_browser_sidecar import (
             CHATGPT_URL,
             _conversation_url_from_tab,
@@ -659,7 +681,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             )
             return await _web_model_browser_payload(group_id, actor_id, {})
 
-        surface = await run_in_threadpool(get_web_model_chatgpt_browser_session_state, group_id=group_id, actor_id=actor_id)
+        info = await _call_web_model_browser_daemon(
+            "web_model_browser_info",
+            {"group_id": group_id, "actor_id": actor_id},
+            default_status=500,
+        )
+        surface = info.get("browser_surface") if isinstance(info.get("browser_surface"), dict) else {}
         browser = await run_in_threadpool(chatgpt_browser_session_cached_status, group_id, actor_id)
         browser_has_url = bool(str(browser.get("tab_url") or browser.get("last_tab_url") or "").strip())
         if not req.conversation_url and not bool(req.new_chat) and not browser_has_url:
@@ -760,42 +787,38 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             await websocket.close(code=1000)
             return
 
-        from ....daemon.actors.web_model_browser_session import (
-            attach_web_model_chatgpt_browser_socket,
-            can_attach_web_model_chatgpt_browser_socket,
-        )
-
-        ok, info = can_attach_web_model_chatgpt_browser_socket(group_id=group_id, actor_id=actor_id)
-        if not ok:
-            try:
-                await websocket.send_json({"ok": False, "error": info})
-            except Exception:
-                pass
-            await websocket.close(code=1008)
-            return
-
         try:
-            manager_sock, web_sock = socket.socketpair()
+            from ....daemon.server import get_daemon_endpoint
+
+            ep = get_daemon_endpoint()
+            transport = str(ep.get("transport") or "").strip().lower()
+            if transport == "tcp":
+                host = str(ep.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+                port = int(ep.get("port") or 0)
+                reader, writer = await asyncio.open_connection(host, port, limit=_WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES)
+            else:
+                sock_path = ctx.home / "daemon" / "ccccd.sock"
+                path = str(ep.get("path") or sock_path)
+                reader, writer = await asyncio.open_unix_connection(path, limit=_WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES)
         except Exception:
-            await websocket.send_json({"ok": False, "error": {"code": "browser_surface_attach_failed", "message": "socketpair unavailable"}})
+            await websocket.send_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
             await websocket.close(code=1011)
             return
 
-        attached = False
-        web_sock_attached_to_asyncio = False
         try:
-            attached = attach_web_model_chatgpt_browser_socket(group_id=group_id, actor_id=actor_id, sock=manager_sock)
-            if not attached:
-                try:
-                    manager_sock.close()
-                except Exception:
-                    pass
-                await websocket.send_json({"ok": False, "error": {"code": "browser_surface_attach_failed", "message": "browser surface attach failed"}})
+            req = {"op": "web_model_browser_attach", "args": {"group_id": group_id, "actor_id": actor_id}}
+            writer.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
+            await writer.drain()
+            line = await reader.readline()
+            try:
+                resp = json.loads(line.decode("utf-8", errors="replace"))
+            except Exception:
+                resp = {}
+            if not isinstance(resp, dict) or not resp.get("ok"):
+                err = resp.get("error") if isinstance(resp.get("error"), dict) else {"code": "browser_surface_attach_failed", "message": "browser surface attach failed"}
+                await websocket.send_json({"ok": False, "error": err})
                 await websocket.close(code=1008)
                 return
-
-            reader, writer = await asyncio.open_connection(sock=web_sock, limit=_WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES)
-            web_sock_attached_to_asyncio = True
 
             async def _pump_out() -> None:
                 while True:
@@ -835,16 +858,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 except Exception:
                     pass
         finally:
-            if not web_sock_attached_to_asyncio:
-                try:
-                    web_sock.close()
-                except Exception:
-                    pass
-            if not attached:
-                try:
-                    manager_sock.close()
-                except Exception:
-                    pass
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
     @global_router.post("/mcp/web-model/{connector_id}")
     async def web_model_mcp_jsonrpc(connector_id: str, request: Request) -> Response:

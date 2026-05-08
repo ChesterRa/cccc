@@ -44,6 +44,12 @@
   "sendMessage": "Send message",
   "sendMessageWithShortcut": "Send message ({{shortcut}})",
   "sendFailed": "Failed to send message.",
+  "webModelDelivery": {
+    "submitting": "Delivering to ChatGPT",
+    "submitted": "Delivered to ChatGPT",
+    "pending": "Delivered; binding ChatGPT chat",
+    "failed": "ChatGPT delivery failed"
+  },
   "sendBlockedGroupStopped": "This group is not running. Start the group before sending a message to agents.",
   "sendBlockedGroupPaused": "This group is paused. Resume the group before sending a message to agents.",
   "taskRefStatePlanned": "Planned",

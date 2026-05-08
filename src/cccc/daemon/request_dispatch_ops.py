@@ -38,6 +38,7 @@ from .ops.capability_ops import try_handle_capability_op
 from .im.im_ops import try_handle_im_op
 from .actors.runner_ops import try_handle_headless_op
 from .actors.web_model_runtime_ops import try_handle_web_model_runtime_op
+from .actors.web_model_browser_ops import try_handle_web_model_browser_op
 from .memory.memory_ops import try_handle_memory_op
 
 
@@ -209,6 +210,10 @@ def dispatch_request(
     presentation_browser_resp = try_handle_presentation_browser_op(op, args)
     if presentation_browser_resp is not None:
         return presentation_browser_resp, False
+
+    web_model_browser_resp = try_handle_web_model_browser_op(op, args)
+    if web_model_browser_resp is not None:
+        return web_model_browser_resp, False
 
     group_space_resp = try_handle_group_space_op(
         op,

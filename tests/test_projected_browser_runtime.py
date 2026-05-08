@@ -162,6 +162,50 @@ class _FakeSubmitRuntime:
         return self.page.url
 
 
+class _FailingCaptureRuntime:
+    strategy = "test"
+    metadata = {}
+
+    def __init__(self) -> None:
+        self.url = "https://chatgpt.com/"
+        self.capture_calls = 0
+        self.closed = False
+
+    def current_url(self) -> str:
+        return self.url
+
+    def capture_frame(self) -> bytes:
+        self.capture_calls += 1
+        raise RuntimeError("renderer is busy")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _CountingCaptureRuntime:
+    strategy = "test"
+    metadata = {}
+
+    def __init__(self) -> None:
+        self.url = "https://chatgpt.com/"
+        self.capture_calls = 0
+        self.command_urls: list[str] = []
+
+    def current_url(self) -> str:
+        return self.url
+
+    def capture_frame(self) -> bytes:
+        self.capture_calls += 1
+        return b"frame"
+
+    def navigate(self, url: str) -> None:
+        self.command_urls.append(url)
+        self.url = url
+
+    def close(self) -> None:
+        return None
+
+
 def _recv_socket_line(sock: socket.socket, *, timeout: float = 1.0) -> str:
     sock.settimeout(timeout)
     data = b""
@@ -219,6 +263,106 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                         pass
             finally:
                 manager.close(key="test-capture-session")
+
+    def test_projected_browser_capture_failures_do_not_fail_session_or_block_commands(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_runtime = _FailingCaptureRuntime()
+        with patch.object(runtime, "launch_projected_browser_runtime", return_value=fake_runtime):
+            manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
+            try:
+                state = manager.open(
+                    key="test-capture-failure-session",
+                    profile_dir=runtime.Path("/tmp/projected-browser-capture-failure-test"),
+                    url="https://chatgpt.com/",
+                    width=1280,
+                    height=800,
+                    headless=False,
+                    channel_candidates=("chrome",),
+                )
+                self.assertEqual(state["state"], "ready")
+
+                runtime_sock, viewer_sock = socket.socketpair()
+                try:
+                    self.assertTrue(manager.attach_socket(key="test-capture-failure-session", sock=runtime_sock))
+                    deadline = time.time() + 1.0
+                    while fake_runtime.capture_calls <= 0 and time.time() < deadline:
+                        time.sleep(0.05)
+                    self.assertGreater(fake_runtime.capture_calls, 0)
+                    self.assertEqual(manager.info(key="test-capture-failure-session")["state"], "ready")
+                    self.assertEqual(manager.info(key="test-capture-failure-session")["last_frame_seq"], 0)
+                    self.assertEqual(
+                        manager.execute(key="test-capture-failure-session", kind="ping", payload={}, timeout=1.0),
+                        {"ok": True},
+                    )
+                finally:
+                    try:
+                        viewer_sock.sendall(b'{"t":"disconnect"}\n')
+                    except Exception:
+                        pass
+                    try:
+                        viewer_sock.close()
+                    except Exception:
+                        pass
+            finally:
+                manager.close(key="test-capture-failure-session")
+
+    def test_projected_browser_drains_commands_before_next_capture(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_runtime = _CountingCaptureRuntime()
+        with patch.object(runtime, "launch_projected_browser_runtime", return_value=fake_runtime):
+            manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
+            try:
+                state = manager.open(
+                    key="test-command-priority-session",
+                    profile_dir=runtime.Path("/tmp/projected-browser-command-priority-test"),
+                    url="https://chatgpt.com/",
+                    width=1280,
+                    height=800,
+                    headless=False,
+                    channel_candidates=("chrome",),
+                )
+                self.assertEqual(state["state"], "ready")
+
+                runtime_sock, viewer_sock = socket.socketpair()
+                try:
+                    self.assertTrue(manager.attach_socket(key="test-command-priority-session", sock=runtime_sock))
+                    deadline = time.time() + 1.0
+                    while fake_runtime.capture_calls <= 0 and time.time() < deadline:
+                        time.sleep(0.05)
+                    first_capture_count = fake_runtime.capture_calls
+                    self.assertGreater(first_capture_count, 0)
+
+                    for idx in range(3):
+                        result = manager.execute(
+                            key="test-command-priority-session",
+                            kind="navigate",
+                            payload={"url": f"https://chatgpt.com/c/test-{idx}"},
+                            timeout=1.0,
+                        )
+                        self.assertTrue(result.get("ok"))
+
+                    self.assertEqual(
+                        fake_runtime.command_urls,
+                        [
+                            "https://chatgpt.com/c/test-0",
+                            "https://chatgpt.com/c/test-1",
+                            "https://chatgpt.com/c/test-2",
+                        ],
+                    )
+                    self.assertEqual(fake_runtime.capture_calls, first_capture_count)
+                finally:
+                    try:
+                        viewer_sock.sendall(b'{"t":"disconnect"}\n')
+                    except Exception:
+                        pass
+                    try:
+                        viewer_sock.close()
+                    except Exception:
+                        pass
+            finally:
+                manager.close(key="test-command-priority-session")
 
     def test_chatgpt_submit_prompt_command_uses_projected_session_page(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime

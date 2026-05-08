@@ -29,9 +29,13 @@ from ...util.process import terminate_pid
 from ...util.node_env import suppress_node_deprecation_warnings_in_process, with_node_deprecation_warnings_suppressed
 from ...util.time import utc_now_iso
 
-_VIEWER_FRAME_INTERVAL_SECONDS = 0.5
+_VIEWER_ACTIVE_FRAME_INTERVAL_SECONDS = 0.25
+_VIEWER_IDLE_FRAME_INTERVAL_SECONDS = 0.5
+_VIEWER_ACTIVITY_WINDOW_SECONDS = 3.0
 _IDLE_FRAME_POLL_SECONDS = 2.0
-_FRAME_CAPTURE_TIMEOUT_MS = 5000
+_FRAME_CAPTURE_TIMEOUT_MS = 1800
+_FRAME_CAPTURE_BACKOFF_SECONDS = 3.0
+_FRAME_CAPTURE_MAX_BACKOFF_SECONDS = 10.0
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
 
@@ -876,6 +880,7 @@ class ProjectedBrowserSession:
         self._last_frame_seq = 0
         self._last_frame_at = ""
         self._last_frame_bytes = b""
+        self._viewer_active_until = 0.0
         self._seed_storage_state: dict[str, Any] | None = None
         self._metadata: dict[str, Any] = {}
 
@@ -945,6 +950,8 @@ class ProjectedBrowserSession:
                 "updated_at": self._updated_at,
                 "last_frame_seq": self._last_frame_seq,
                 "last_frame_at": self._last_frame_at,
+                "viewer_active": bool(time.time() < self._viewer_active_until),
+                "frame_interval_seconds": self._viewer_frame_interval_locked(),
                 "controller_attached": bool(self._controller_sockets),
                 "metadata": dict(self._metadata),
             }
@@ -967,6 +974,7 @@ class ProjectedBrowserSession:
             self._controller_generation += 1
             generation = self._controller_generation
             self._controller_sockets[generation] = sock
+            self._viewer_active_until = max(self._viewer_active_until, time.time() + _VIEWER_ACTIVITY_WINDOW_SECONDS)
             self._updated_at = utc_now_iso()
         threading.Thread(
             target=self._serve_socket,
@@ -1029,6 +1037,20 @@ class ProjectedBrowserSession:
             self._last_frame_at = utc_now_iso()
             self._updated_at = self._last_frame_at
             self._frame_cond.notify_all()
+
+    def _mark_viewer_active(self) -> None:
+        with self._lock:
+            self._viewer_active_until = max(self._viewer_active_until, time.time() + _VIEWER_ACTIVITY_WINDOW_SECONDS)
+            self._frame_cond.notify_all()
+
+    def _viewer_frame_interval_locked(self) -> float:
+        if time.time() < self._viewer_active_until:
+            return _VIEWER_ACTIVE_FRAME_INTERVAL_SECONDS
+        return _VIEWER_IDLE_FRAME_INTERVAL_SECONDS
+
+    def _viewer_frame_interval(self) -> float:
+        with self._lock:
+            return self._viewer_frame_interval_locked()
 
     def _apply_command(self, runtime: PlaywrightProjectedRuntime, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         if kind == "ping":
@@ -1225,10 +1247,12 @@ class ProjectedBrowserSession:
             next_frame_at = 0.0
             had_viewers = False
             consecutive_capture_failures = 0
+            capture_backoff_until = 0.0
             while not self._stop_event.is_set():
                 has_viewers = self._has_viewers()
                 if has_viewers and not had_viewers:
                     next_frame_at = 0.0
+                    capture_backoff_until = 0.0
                 had_viewers = has_viewers
                 if has_viewers:
                     timeout = max(0.05, min(0.20, next_frame_at - time.time())) if next_frame_at else 0.05
@@ -1240,6 +1264,8 @@ class ProjectedBrowserSession:
                     kind, payload, reply = "", {}, None
 
                 if kind:
+                    if kind not in {"ping", "inspect_page_urls", "inspect_storage_state", "inspect_cookies", "close"}:
+                        self._mark_viewer_active()
                     try:
                         result = self._apply_command(runtime, kind, payload)
                     except Exception as exc:
@@ -1251,6 +1277,11 @@ class ProjectedBrowserSession:
                             pass
                     if kind == "close":
                         break
+                    # Controller and delivery commands are more important than
+                    # visual projection. Let queued commands drain before the
+                    # next screenshot attempt so a slow ChatGPT renderer cannot
+                    # turn the viewer into command latency.
+                    continue
 
                 now = time.time()
                 if not self._has_viewers():
@@ -1262,20 +1293,30 @@ class ProjectedBrowserSession:
                     continue
                 if next_frame_at and now < next_frame_at:
                     continue
+                if not self._commands.empty():
+                    continue
+                if capture_backoff_until and now < capture_backoff_until:
+                    next_frame_at = capture_backoff_until
+                    continue
                 with self._lock:
                     self._url = str(runtime.current_url() or self._url)
                 try:
                     frame = runtime.capture_frame()
                 except Exception:
                     consecutive_capture_failures += 1
-                    if consecutive_capture_failures >= 5:
-                        raise
-                    frame = None
+                    backoff = min(
+                        _FRAME_CAPTURE_BACKOFF_SECONDS * consecutive_capture_failures,
+                        _FRAME_CAPTURE_MAX_BACKOFF_SECONDS,
+                    )
+                    capture_backoff_until = time.time() + backoff
+                    next_frame_at = capture_backoff_until
+                    continue
                 else:
                     consecutive_capture_failures = 0
+                    capture_backoff_until = 0.0
                 if frame:
                     self._record_frame(frame)
-                next_frame_at = time.time() + _VIEWER_FRAME_INTERVAL_SECONDS
+                next_frame_at = time.time() + self._viewer_frame_interval()
         except Exception as exc:
             self._set_state(
                 "failed",

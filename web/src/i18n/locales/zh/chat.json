@@ -44,6 +44,12 @@
   "sendMessage": "发送消息",
   "sendMessageWithShortcut": "发送消息（{{shortcut}}）",
   "sendFailed": "发送消息失败。",
+  "webModelDelivery": {
+    "submitting": "正在投递到 ChatGPT",
+    "submitted": "已投递到 ChatGPT",
+    "pending": "已投递，正在绑定 ChatGPT 会话",
+    "failed": "ChatGPT 投递失败"
+  },
   "sendBlockedGroupStopped": "工作组未启动，无法发送给智能体。请先启动工作组后再发送。",
   "sendBlockedGroupPaused": "工作组已暂停，消息不会投递给智能体。请先恢复工作组后再发送。",
   "taskRefStatePlanned": "待开始",

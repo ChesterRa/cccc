@@ -13,6 +13,7 @@ import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
+import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
 import {
     buildToLabel,
     buildVisibleReadStatusEntries,
@@ -533,6 +534,7 @@ export interface MessageBubbleProps {
     readOnly?: boolean;
     groupId: string;
     groupLabelById: Record<string, string>;
+    webModelDeliveryStatus?: WebModelDeliveryStatus;
     isHighlighted?: boolean;
     collapseHeader?: boolean;
     onReply: () => void;
@@ -557,6 +559,7 @@ export const MessageBubble = memo(function MessageBubble({
     readOnly,
     groupId,
     groupLabelById,
+    webModelDeliveryStatus,
     isHighlighted,
     collapseHeader,
     onReply,
@@ -947,6 +950,7 @@ export const MessageBubble = memo(function MessageBubble({
                     obligationSummary={obligationSummary}
                     ackSummary={ackSummary}
                     visibleReadStatusEntries={visibleReadStatusEntries}
+                    webModelDeliveryStatus={webModelDeliveryStatus}
                     readPreviewEntries={readPreviewEntries}
                     readPreviewOverflow={readPreviewOverflow}
                     displayNameMap={displayNameMap}
@@ -976,6 +980,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.isDark === nextProps.isDark &&
         prevProps.groupId === nextProps.groupId &&
         prevProps.groupLabelById === nextProps.groupLabelById &&
+        prevProps.webModelDeliveryStatus === nextProps.webModelDeliveryStatus &&
         prevProps.isHighlighted === nextProps.isHighlighted &&
         prevProps.collapseHeader === nextProps.collapseHeader &&
         prevProps.onRelay === nextProps.onRelay &&

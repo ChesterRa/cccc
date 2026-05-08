@@ -1,7 +1,10 @@
+import asyncio
 import json
 import os
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -1054,6 +1057,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
                     side_effect=AssertionError("deep inspection should not run for browser-session status"),
                 ),
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
                 patch(
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_cached_status",
                     return_value={"active": False, "tab_url": "https://chatgpt.com/c/test-chat"},
@@ -1146,6 +1150,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
                     side_effect=AssertionError("deep inspection should not run"),
                 ) as deep_status,
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
                 patch(
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_cached_status",
                     return_value={
@@ -1191,6 +1196,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
                     return_value={"active": True, "tab_url": "https://chatgpt.com/", "ready": False},
                 ),
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
                 patch(
                     "cccc.daemon.actors.web_model_browser_session.open_web_model_chatgpt_browser_session",
                     return_value={"active": True, "state": "ready", "metadata": {"cdp_port": 9222}},
@@ -1224,6 +1230,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
                     return_value={"active": True, "tab_url": "https://chatgpt.com/"},
                 ),
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
                 patch("cccc.ports.web_model_browser_sidecar.record_chatgpt_browser_state") as record_browser_state,
                 patch("cccc.daemon.actors.web_model_browser_session.get_web_model_chatgpt_browser_session_state", return_value={"active": True, "state": "ready"}),
             ):
@@ -1261,6 +1268,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                     "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_status",
                     return_value={"active": True, "tab_url": "https://chatgpt.com/c/old-chat"},
                 ),
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
                 patch("cccc.ports.web_model_browser_sidecar.record_chatgpt_browser_state") as record_browser_state,
                 patch("cccc.daemon.actors.web_model_browser_session.get_web_model_chatgpt_browser_session_state", return_value={"active": True, "state": "ready"}),
             ):
@@ -1293,6 +1301,76 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             )
             self.assertEqual(resp.status_code, 400)
             self.assertIn("invalid_actor_runtime", resp.text)
+        finally:
+            cleanup()
+
+    def test_web_model_browser_session_websocket_bridges_daemon_socket(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        class _FakeReader:
+            def __init__(self) -> None:
+                self._queue: asyncio.Queue[bytes] = asyncio.Queue()
+                self._queue.put_nowait(b'{"ok":true,"result":{"attached":true}}\n')
+                self._queue.put_nowait(b'{"t":"state","state":"ready","url":"https://chatgpt.com/"}\n')
+
+            async def readline(self) -> bytes:
+                return await self._queue.get()
+
+        class _FakeWriter:
+            def __init__(self) -> None:
+                self.writes: list[str] = []
+                self.write_event = threading.Event()
+                self.closed = False
+
+            def write(self, data: bytes) -> None:
+                self.writes.append(data.decode("utf-8", errors="replace").strip())
+                self.write_event.set()
+
+            async def drain(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+            async def wait_closed(self) -> None:
+                return None
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            admin = str(create_access_token("admin", is_admin=True).get("token") or "")
+            reader = _FakeReader()
+            writer = _FakeWriter()
+            captured: dict[str, object] = {}
+
+            async def fake_open_unix_connection(path: str, *, limit: int | None = None):
+                captured["path"] = path
+                captured["limit"] = limit
+                return reader, writer
+
+            client = self._client()
+            with (
+                patch("cccc.daemon.server.get_daemon_endpoint", return_value={"transport": "unix", "path": "/tmp/ccccd.sock"}),
+                patch("cccc.ports.web.routes.base.asyncio.open_unix_connection", side_effect=fake_open_unix_connection),
+            ):
+                with client.websocket_connect(
+                    f"/api/v1/web-model/browser-session/ws?group_id={group.group_id}&actor_id=peer1&token={admin}"
+                ) as ws:
+                    state_line = ws.receive_text()
+                    ws.send_text('{"t":"click","x":12,"y":34}')
+                    deadline = time.time() + 1.0
+                    while len(writer.writes) < 2 and time.time() < deadline:
+                        time.sleep(0.02)
+
+            self.assertEqual(captured.get("limit"), 16 * 1024 * 1024)
+            self.assertEqual(json.loads(state_line), {"t": "state", "state": "ready", "url": "https://chatgpt.com/"})
+            self.assertGreaterEqual(len(writer.writes), 2)
+            attach = json.loads(writer.writes[0])
+            self.assertEqual(attach.get("op"), "web_model_browser_attach")
+            self.assertEqual((attach.get("args") or {}).get("group_id"), group.group_id)
+            self.assertEqual((attach.get("args") or {}).get("actor_id"), "peer1")
+            self.assertEqual(json.loads(writer.writes[1]), {"t": "click", "x": 12, "y": 34})
+            self.assertTrue(writer.closed)
         finally:
             cleanup()
 

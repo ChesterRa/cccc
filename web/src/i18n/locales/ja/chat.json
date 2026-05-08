@@ -44,6 +44,12 @@
   "sendMessage": "メッセージを送信",
   "sendMessageWithShortcut": "メッセージを送信（{{shortcut}}）",
   "sendFailed": "メッセージの送信に失敗しました。",
+  "webModelDelivery": {
+    "submitting": "ChatGPT に配信中",
+    "submitted": "ChatGPT に配信済み",
+    "pending": "配信済み、ChatGPT 会話を紐付け中",
+    "failed": "ChatGPT 配信に失敗"
+  },
   "sendBlockedGroupStopped": "このグループは起動していません。エージェントに送信する前にグループを開始してください。",
   "sendBlockedGroupPaused": "このグループは一時停止中です。エージェントに送信する前にグループを再開してください。",
   "taskRefStatePlanned": "未着手",

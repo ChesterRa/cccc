@@ -20,6 +20,7 @@ import {
   getMobileMessageTopInsetPx,
   MOBILE_FLOATING_CONTROLS_TOP_INSET_PX,
 } from "../../utils/responsiveLayout";
+import { buildWebModelDeliveryStatusByEventId } from "../../utils/webModelDeliveryStatus";
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
 import { buildLiveWorkCards } from "./liveWorkCards";
 
@@ -230,6 +231,10 @@ export function ChatTab({
   const latestActorTextByActorId = liveWorkBucket?.latestActorTextByActorId || EMPTY_LIVE_WORK_TEXT;
   const latestActorActivitiesByActorId = liveWorkBucket?.latestActorActivitiesByActorId || EMPTY_LIVE_WORK_ACTIVITIES;
   const replySessionsByPendingEventId = liveWorkBucket?.replySessionsByPendingEventId || EMPTY_LIVE_WORK_SESSIONS;
+  const webModelDeliveryStatusByEventId = useMemo(
+    () => buildWebModelDeliveryStatusByEventId(liveWorkBucket?.events),
+    [liveWorkBucket?.events],
+  );
 
   const isHydratingEmptyState = chatMessages.length === 0 && chatEmptyState === "hydrating";
   const isBusinessEmptyState = chatMessages.length === 0 && chatEmptyState === "business_empty";
@@ -699,6 +704,7 @@ export function ChatTab({
                   readOnly={readOnly}
                   groupId={selectedGroupId}
                   groupLabelById={groupLabelById}
+                  webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
                   viewKey={chatViewKey}
                   initialScrollTargetId={chatInitialScrollTargetId}
                   initialScrollAnchorId={chatInitialScrollAnchorId}

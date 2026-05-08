@@ -730,13 +730,85 @@ def _prompt_inserted(page: Any, selector: str, prompt: str) -> bool:
     return bool(prefix and prefix in actual) and (len(expected) <= 200 or bool(suffix and suffix in actual))
 
 
+def _prompt_present_in_any_composer(page: Any, prompt: str, selector: str = "") -> bool:
+    expected = _normalize_composer_text(prompt)
+    if not expected:
+        return False
+    if selector:
+        try:
+            if _prompt_inserted(page, selector, prompt):
+                return True
+        except Exception:
+            pass
+    prefix = expected[: min(160, len(expected))]
+    suffix = expected[-min(120, len(expected)) :]
+    try:
+        texts = page.evaluate(
+            """selector => {
+                const isVisible = (node) => {
+                    if (!node) return false;
+                    const rect = node.getBoundingClientRect();
+                    const style = window.getComputedStyle(node);
+                    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+                };
+                const isEditable = (node) => {
+                    if (!node || !isVisible(node)) return false;
+                    if (node.matches("textarea")) return !node.disabled && !node.readOnly;
+                    if (node.matches("input")) {
+                        const type = String(node.type || "text").toLowerCase();
+                        return !node.disabled && !node.readOnly && !/password|search|email|url|number|tel|file|hidden|checkbox|radio|submit|button|reset/.test(type);
+                    }
+                    return node.isContentEditable || node.getAttribute("contenteditable") === "true" || node.getAttribute("role") === "textbox";
+                };
+                const readText = (node) => {
+                    if (!node) return "";
+                    const value = "value" in node ? String(node.value || "") : "";
+                    if (value.trim()) return value;
+                    return String(node.innerText || node.textContent || "");
+                };
+                const nodes = [];
+                const seen = new Set();
+                const addNode = (node) => {
+                    if (!node || seen.has(node)) return;
+                    seen.add(node);
+                    nodes.push(node);
+                };
+                if (selector) {
+                    try {
+                        document.querySelectorAll(selector).forEach(addNode);
+                    } catch (_error) {}
+                }
+                [
+                    ...document.querySelectorAll("[data-cccc-chatgpt-input-candidate]"),
+                    ...document.querySelectorAll("main textarea, main [role='textbox'], main [contenteditable='true']"),
+                    ...document.querySelectorAll("textarea, [role='textbox'], [contenteditable='true']"),
+                ].forEach(addNode);
+                return nodes.filter(isEditable).map(readText).filter((text) => String(text || "").trim()).slice(0, 12);
+            }""",
+            selector,
+        )
+    except Exception:
+        return False
+    if not isinstance(texts, list):
+        return False
+    for raw in texts:
+        actual = _normalize_composer_text(str(raw or ""))
+        if not actual:
+            continue
+        if expected in actual:
+            return True
+        if prefix and prefix in actual and (len(expected) <= 200 or bool(suffix and suffix in actual)):
+            return True
+    return False
+
+
 def _wait_for_prompt_inserted(page: Any, selector: str, prompt: str, *, timeout_seconds: float = 3.0) -> bool:
     deadline = time.time() + max(0.5, float(timeout_seconds))
     while time.time() < deadline:
-        if _prompt_inserted(page, selector, prompt):
+        if _prompt_present_in_any_composer(page, prompt, selector):
             return True
         time.sleep(0.1)
-    return _prompt_inserted(page, selector, prompt)
+    return _prompt_present_in_any_composer(page, prompt, selector)
 
 
 def _click_send(page: Any, *, timeout_seconds: float = 5.0) -> str:
@@ -923,7 +995,35 @@ def _submission_diagnostics(page: Any, selector: str) -> dict[str, Any]:
                     if (/stop|cancel|retry|signin|sign in|log in|login|google|microsoft|apple/.test(label)) return false;
                     return button.getAttribute("type") === "submit" || /send|submit|run|go|ask|reply|发送|送信/.test(label);
                 });
-                const stopVisible = Array.from(document.querySelectorAll('[data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="停止"]')).some(isVisible);
+                const stopSelectors = [
+                    '[data-testid="stop-button"]',
+                    '[data-testid*="stop" i]',
+                    'button[aria-label*="Stop" i]',
+                    'button[aria-label*="停止"]',
+                    'button[aria-label*="中止"]',
+                    'button[title*="Stop" i]',
+                    'button[title*="停止"]',
+                    '[role="button"][aria-label*="Stop" i]',
+                    '[role="button"][aria-label*="停止"]',
+                    '[role="button"][aria-label*="中止"]',
+                ];
+                const stopVisible = stopSelectors.some((stopSelector) => {
+                    try {
+                        return Array.from(document.querySelectorAll(stopSelector)).some(isVisible);
+                    } catch (_error) {
+                        return false;
+                    }
+                }) || Array.from(document.querySelectorAll("button, [role='button']")).some((button) => {
+                    if (!isVisible(button)) return false;
+                    const label = [
+                        button.getAttribute("aria-label") || "",
+                        button.getAttribute("title") || "",
+                        button.getAttribute("data-testid") || "",
+                        button.id || "",
+                        button.innerText || button.textContent || "",
+                    ].join(" ").replace(/\\s+/g, " ").trim().toLowerCase();
+                    return /\\bstop\\b|停止|中止/.test(label);
+                });
                 const loginLike = /log in|sign in|continue with|登录|登入/i.test(text);
                 const challengeLike = /verify you are human|human verification|captcha|turnstile|arkose|access denied|unusual traffic/i.test(text);
                 return {
@@ -1055,6 +1155,57 @@ def _submission_echo_needles(prompt: str) -> list[str]:
     return deduped
 
 
+def _chatgpt_running_visible(page: Any) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                    const isVisible = (node) => {
+                        if (!node) return false;
+                        const rect = node.getBoundingClientRect();
+                        const style = window.getComputedStyle(node);
+                        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+                    };
+                    const labelOf = (node) => [
+                        node.getAttribute("aria-label") || "",
+                        node.getAttribute("title") || "",
+                        node.getAttribute("data-testid") || "",
+                        node.id || "",
+                        node.innerText || node.textContent || "",
+                    ].join(" ").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const selectors = [
+                        '[data-testid="stop-button"]',
+                        '[data-testid*="stop" i]',
+                        'button[aria-label*="Stop" i]',
+                        'button[aria-label*="停止"]',
+                        'button[aria-label*="中止"]',
+                        'button[title*="Stop" i]',
+                        'button[title*="停止"]',
+                        '[role="button"][aria-label*="Stop" i]',
+                        '[role="button"][aria-label*="停止"]',
+                        '[role="button"][aria-label*="中止"]',
+                    ];
+                    for (const selector of selectors) {
+                        try {
+                            if (Array.from(document.querySelectorAll(selector)).some(isVisible)) return true;
+                        } catch (_error) {}
+                    }
+                    for (const button of Array.from(document.querySelectorAll("button, [role='button']"))) {
+                        if (!isVisible(button)) continue;
+                        if (/\\bstop\\b|停止|中止/.test(labelOf(button))) return true;
+                    }
+                    return false;
+                }"""
+            )
+        )
+    except Exception:
+        pass
+    try:
+        return bool(page.locator('[data-testid="stop-button"]').first.is_visible(timeout=150))
+    except Exception:
+        return False
+
+
 def _wait_for_submission(
     page: Any,
     selector: str,
@@ -1067,14 +1218,45 @@ def _wait_for_submission(
     while time.time() < deadline:
         if _submission_echo_found(page, prompt):
             return "message_echo"
-        try:
-            stop_visible = page.locator('[data-testid="stop-button"]').first.is_visible(timeout=150)
-            if stop_visible:
-                stop_seen = True
-        except Exception:
-            pass
+        if _chatgpt_running_visible(page):
+            stop_seen = True
         time.sleep(0.15)
     return "stop_without_echo" if stop_seen else ""
+
+
+def _raise_submission_unverified(page: Any, selector: str, *, attempted_action: str) -> None:
+    diagnostics = _submission_diagnostics(page, selector)
+    raise RuntimeError(
+        "ChatGPT submit action was attempted but submission could not be verified; "
+        f"attempted_action={attempted_action}; "
+        f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
+    )
+
+
+def _can_try_secondary_submit(page: Any, selector: str, prompt: str) -> bool:
+    if _chatgpt_running_visible(page):
+        return False
+    return _prompt_present_in_any_composer(page, prompt, selector)
+
+
+def _wait_after_submit_action(
+    page: Any,
+    selector: str,
+    prompt: str,
+    action: str,
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=timeout_seconds)
+    if evidence == "message_echo":
+        return {"input_selector": selector, "send_selector": action, "submission_evidence": evidence}
+    if evidence == "stop_without_echo":
+        diagnostics = _submission_diagnostics(page, selector)
+        raise RuntimeError(
+            "ChatGPT showed a running state but the submitted message did not appear in the conversation; "
+            f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
+        )
+    return None
 
 
 def _submit_prompt(page: Any, prompt: str, *, input_timeout_seconds: float) -> dict[str, Any]:
@@ -1099,52 +1281,24 @@ def _submit_prompt(page: Any, prompt: str, *, input_timeout_seconds: float) -> d
         send_selector = _click_send(page)
     except Exception:
         send_selector = ""
-    evidence = _wait_for_submission(page, selector, prompt=prompt)
-    if evidence == "message_echo":
-        return {"input_selector": selector, "send_selector": send_selector or "keyboard", "submission_evidence": evidence}
-    if evidence == "stop_without_echo":
-        diagnostics = _submission_diagnostics(page, selector)
-        raise RuntimeError(
-            "ChatGPT showed a running state but the submitted message did not appear in the conversation; "
-            f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
-        )
+    if send_selector:
+        result = _wait_after_submit_action(page, selector, prompt, send_selector, timeout_seconds=8.0)
+        if result is not None:
+            return result
+        if not _can_try_secondary_submit(page, selector, prompt):
+            _raise_submission_unverified(page, selector, attempted_action=send_selector)
     request_submit = _request_submit_composer(page)
     if request_submit:
-        evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=4.0)
-        if evidence == "message_echo":
-            return {"input_selector": selector, "send_selector": request_submit, "submission_evidence": evidence}
-        if evidence == "stop_without_echo":
-            diagnostics = _submission_diagnostics(page, selector)
-            raise RuntimeError(
-                "ChatGPT showed a running state but the submitted message did not appear in the conversation; "
-                f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
-            )
+        result = _wait_after_submit_action(page, selector, prompt, request_submit, timeout_seconds=4.0)
+        if result is not None:
+            return result
+        if not _can_try_secondary_submit(page, selector, prompt):
+            _raise_submission_unverified(page, selector, attempted_action=request_submit)
     page.keyboard.press("Enter")
-    evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=4.0)
-    if evidence == "message_echo":
-        return {"input_selector": selector, "send_selector": send_selector or "keyboard:Enter", "submission_evidence": evidence}
-    if evidence == "stop_without_echo":
-        diagnostics = _submission_diagnostics(page, selector)
-        raise RuntimeError(
-            "ChatGPT showed a running state but the submitted message did not appear in the conversation; "
-            f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
-        )
-    modifier = "Meta" if sys.platform == "darwin" else "Control"
-    page.keyboard.press(f"{modifier}+Enter")
-    evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=4.0)
-    if evidence == "message_echo":
-        return {"input_selector": selector, "send_selector": send_selector or f"keyboard:{modifier}+Enter", "submission_evidence": evidence}
-    if evidence == "stop_without_echo":
-        diagnostics = _submission_diagnostics(page, selector)
-        raise RuntimeError(
-            "ChatGPT showed a running state but the submitted message did not appear in the conversation; "
-            f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
-        )
-    diagnostics = _submission_diagnostics(page, selector)
-    raise RuntimeError(
-        "ChatGPT prompt was inserted but did not submit; "
-        f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
-    )
+    result = _wait_after_submit_action(page, selector, prompt, "keyboard:Enter", timeout_seconds=4.0)
+    if result is not None:
+        return result
+    _raise_submission_unverified(page, selector, attempted_action="keyboard:Enter")
 
 
 def _inspect_chatgpt_browser(

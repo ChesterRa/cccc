@@ -127,6 +127,7 @@ from .space.group_space_sync import process_due_space_syncs, sync_group_space_fi
 from .space.group_space_store import get_space_provider_state
 from .group.presentation_browser_runtime import close_all_browser_surface_sessions
 from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
+from .actors.web_model_browser_session import close_all_web_model_chatgpt_browser_sessions
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -1217,6 +1218,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         pass
     try:
         close_all_notebooklm_auth_browser_sessions()
+    except Exception:
+        pass
+    try:
+        close_all_web_model_chatgpt_browser_sessions()
     except Exception:
         pass
     _SPACE_SYNC_RUN_QUEUE = None
