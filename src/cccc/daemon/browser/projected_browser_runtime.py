@@ -4,7 +4,7 @@ This module owns the daemon-local Chromium session model:
 
 1. one Playwright runtime per session
 2. one active controller socket at a time
-3. JPEG frame projection over JSON-lines sockets
+3. CDP screencast frame projection over JSON-lines sockets
 4. input relay and lightweight inspection commands on the same runtime thread
 """
 
@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import queue
+import select
 import selectors
 import shutil
 import socket
@@ -29,13 +30,13 @@ from ...util.process import terminate_pid
 from ...util.node_env import suppress_node_deprecation_warnings_in_process, with_node_deprecation_warnings_suppressed
 from ...util.time import utc_now_iso
 
-_VIEWER_ACTIVE_FRAME_INTERVAL_SECONDS = 0.25
+_VIEWER_ACTIVE_FRAME_INTERVAL_SECONDS = 0.1
 _VIEWER_IDLE_FRAME_INTERVAL_SECONDS = 0.5
 _VIEWER_ACTIVITY_WINDOW_SECONDS = 3.0
 _IDLE_FRAME_POLL_SECONDS = 2.0
-_FRAME_CAPTURE_TIMEOUT_MS = 1800
-_FRAME_CAPTURE_BACKOFF_SECONDS = 3.0
-_FRAME_CAPTURE_MAX_BACKOFF_SECONDS = 10.0
+_FRAME_CAPTURE_BACKOFF_SECONDS = 0.5
+_FRAME_CAPTURE_MAX_BACKOFF_SECONDS = 2.0
+_SCREENCAST_EVENT_PUMP_TIMEOUT_MS = 80
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
 
@@ -372,6 +373,11 @@ class PlaywrightProjectedRuntime:
         self._close_context_on_close = bool(close_context_on_close)
         self._page_history: list[Any] = []
         self._known_page_ids: set[int] = set()
+        self._screencast_active = False
+        self._screencast_seq = 0
+        self._screencast_consumed_seq = 0
+        self._screencast_last_frame = b""
+        self._install_screencast_handler()
         self._register_page(page)
         try:
             self._context.on("page", self._handle_new_page)
@@ -416,10 +422,83 @@ class PlaywrightProjectedRuntime:
         except Exception:
             pass
 
+    def _install_screencast_handler(self) -> None:
+        cdp = self._cdp
+        if cdp is None:
+            return
+
+        def _on_frame(event: dict[str, Any]) -> None:
+            data = str((event or {}).get("data") or "")
+            if data:
+                try:
+                    frame = base64.b64decode(data)
+                except Exception:
+                    frame = b""
+                if frame:
+                    with self._lock:
+                        self._screencast_seq += 1
+                        self._screencast_last_frame = bytes(frame)
+            session_id = (event or {}).get("sessionId")
+            if session_id is not None:
+                try:
+                    cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
+                except Exception:
+                    pass
+
+        try:
+            cdp.on("Page.screencastFrame", _on_frame)
+        except Exception:
+            pass
+
+    def _stop_screencast_session(self, cdp: Any | None = None) -> None:
+        target = cdp or self._cdp
+        if target is None:
+            return
+        try:
+            target.send("Page.stopScreencast")
+        except Exception:
+            pass
+
+    def _ensure_screencast(self) -> None:
+        with self._lock:
+            if self._screencast_active:
+                return
+            cdp = self._cdp
+            width = self.width
+            height = self.height
+        if cdp is None:
+            raise RuntimeError("CDP session is not available for browser screencast")
+        cdp.send(
+            "Page.startScreencast",
+            {
+                "format": "jpeg",
+                "quality": 70,
+                "maxWidth": int(width),
+                "maxHeight": int(height),
+                "everyNthFrame": 1,
+            },
+        )
+        with self._lock:
+            if cdp is self._cdp:
+                self._screencast_active = True
+
+    def stop_screencast(self) -> None:
+        with self._lock:
+            if not self._screencast_active:
+                return
+            cdp = self._cdp
+            self._screencast_active = False
+        self._stop_screencast_session(cdp)
+
     def _bind_cdp(self, page: Any) -> None:
         old_cdp = self._cdp
+        old_screencast_active = self._screencast_active
+        if old_screencast_active:
+            self._stop_screencast_session(old_cdp)
+            self._screencast_active = False
         self._page = page
         self._cdp = self._context.new_cdp_session(page)
+        self._install_screencast_handler()
         try:
             self._cdp.send("Page.enable")
         except Exception:
@@ -428,6 +507,11 @@ class PlaywrightProjectedRuntime:
             page.set_viewport_size({"width": self.width, "height": self.height})
         except Exception:
             pass
+        if old_screencast_active:
+            try:
+                self._ensure_screencast()
+            except Exception:
+                pass
         if old_cdp is not None and old_cdp is not self._cdp:
             try:
                 old_cdp.detach()
@@ -488,15 +572,17 @@ class PlaywrightProjectedRuntime:
             return get_cookies_for_urls(self._context, urls)
 
     def capture_frame(self) -> bytes:
+        self._ensure_screencast()
+        page = self.page
+        try:
+            page.wait_for_timeout(_SCREENCAST_EVENT_PUMP_TIMEOUT_MS)
+        except Exception as exc:
+            raise RuntimeError(f"CDP screencast event pump failed: {exc}") from exc
         with self._lock:
-            page = self._page
-        payload = page.screenshot(
-            type="jpeg",
-            quality=60,
-            full_page=False,
-            timeout=_FRAME_CAPTURE_TIMEOUT_MS,
-        )
-        return bytes(payload or b"")
+            if self._screencast_seq <= self._screencast_consumed_seq:
+                return b""
+            self._screencast_consumed_seq = self._screencast_seq
+            return bytes(self._screencast_last_frame or b"")
 
     def click(self, *, x: float, y: float, button: str = "left") -> None:
         self.page.mouse.click(float(x), float(y), button=str(button or "left"))
@@ -514,6 +600,11 @@ class PlaywrightProjectedRuntime:
         self.width = int(width)
         self.height = int(height)
         self.page.set_viewport_size({"width": self.width, "height": self.height})
+        with self._lock:
+            was_active = bool(self._screencast_active)
+        if was_active:
+            self.stop_screencast()
+            self._ensure_screencast()
 
     def navigate(self, *, url: str) -> None:
         self.page.goto(str(url or ""), wait_until="domcontentloaded", timeout=30000)
@@ -535,6 +626,7 @@ class PlaywrightProjectedRuntime:
             self._activate_page(fallback, remember_previous=False)
 
     def close(self) -> None:
+        self.stop_screencast()
         try:
             if self._cdp is not None:
                 self._cdp.detach()
@@ -1285,6 +1377,10 @@ class ProjectedBrowserSession:
 
                 now = time.time()
                 if not self._has_viewers():
+                    try:
+                        runtime.stop_screencast()
+                    except Exception:
+                        pass
                     if next_frame_at and now < next_frame_at:
                         continue
                     with self._lock:
@@ -1340,20 +1436,61 @@ class ProjectedBrowserSession:
         buffer = b""
         last_seq = 0
         sent_state_marker = ""
+
+        def _queue_controller_command(incoming: dict[str, Any]) -> bool:
+            kind = str(incoming.get("t") or "").strip().lower()
+            if kind in {"disconnect", "close"}:
+                return False
+            try:
+                # Controller input is best-effort. During login flows the page can
+                # briefly block Playwright commands while navigation or frame
+                # projection is in progress; waiting synchronously here turns that
+                # transient congestion into a user-visible error.
+                self._commands.put((kind, incoming, None))
+            except Exception as exc:
+                if not _send_json_line(
+                    sock,
+                    {
+                        "t": "error",
+                        "code": "browser_surface_command_failed",
+                        "message": str(exc),
+                    },
+                ):
+                    return False
+            return True
+
+        def _drain_controller_commands(max_messages: int = 64) -> bool:
+            nonlocal buffer
+            for _ in range(max(1, max_messages)):
+                incoming, buffer, disconnected = _recv_json_line_nonblocking(sock, buffer)
+                if disconnected:
+                    return False
+                if incoming is None:
+                    return True
+                if not _queue_controller_command(incoming):
+                    return False
+            return True
+
         try:
             sock.settimeout(_SOCKET_READ_TIMEOUT_SECONDS)
         except Exception:
             pass
         try:
             while not self._stop_event.is_set():
+                if not _drain_controller_commands():
+                    break
+
                 snapshot = self.snapshot()
                 state_marker = json.dumps(
                     {
                         "state": snapshot["state"],
                         "message": snapshot["message"],
+                        "error": snapshot["error"],
+                        "strategy": snapshot["strategy"],
                         "url": snapshot["url"],
-                        "seq": snapshot["last_frame_seq"],
-                        "updated_at": snapshot["updated_at"],
+                        "width": snapshot["width"],
+                        "height": snapshot["height"],
+                        "controller_attached": snapshot["controller_attached"],
                     },
                     sort_keys=True,
                 )
@@ -1370,7 +1507,17 @@ class ProjectedBrowserSession:
                     if snapshot["state"] == "failed":
                         break
 
-                frame = self.wait_for_frame(after_seq=last_seq, timeout=0.25)
+                if not _drain_controller_commands():
+                    break
+                if not self._commands.empty():
+                    time.sleep(0.01)
+                    continue
+
+                frame = self.wait_for_frame(after_seq=last_seq, timeout=0.08)
+                if not _drain_controller_commands():
+                    break
+                if not self._commands.empty():
+                    continue
                 if frame is not None:
                     if not _send_json_line(
                         sock,
@@ -1387,30 +1534,6 @@ class ProjectedBrowserSession:
                     ):
                         break
                     last_seq = int(frame["seq"])
-
-                incoming, buffer, disconnected = _recv_json_line_nonblocking(sock, buffer)
-                if disconnected:
-                    break
-                if incoming is not None:
-                    kind = str(incoming.get("t") or "").strip().lower()
-                    if kind in {"disconnect", "close"}:
-                        break
-                    try:
-                        # Controller input is best-effort. During login flows the page can
-                        # briefly block Playwright commands while navigation or screenshot
-                        # capture is in progress; waiting synchronously here turns that
-                        # transient congestion into a user-visible error.
-                        self._commands.put((kind, incoming, None))
-                    except Exception as exc:
-                        if not _send_json_line(
-                            sock,
-                            {
-                                "t": "error",
-                                "code": "browser_surface_command_failed",
-                                "message": str(exc),
-                            },
-                        ):
-                            break
         finally:
             with self._lock:
                 if self._controller_sockets.get(generation) is sock:
@@ -1443,8 +1566,15 @@ def _recv_json_line_nonblocking(
             return None, remainder, False
 
     try:
+        readable, _, _ = select.select([sock], [], [], 0.0)
+    except Exception:
+        return None, buffer, True
+    if not readable:
+        return None, buffer, False
+
+    try:
         chunk = sock.recv(65536)
-    except socket.timeout:
+    except (BlockingIOError, InterruptedError, socket.timeout):
         return None, buffer, False
     except Exception:
         return None, buffer, True

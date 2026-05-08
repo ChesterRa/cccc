@@ -1,3 +1,4 @@
+import base64
 import socket
 import time
 import unittest
@@ -57,11 +58,29 @@ class _FakeSelector:
 
 
 class _FakeCdpSession:
-    def send(self, _method: str, _params=None):
+    def __init__(self) -> None:
+        self.handlers = {}
+        self.send_calls = []
+        self.detached = False
+
+    def on(self, event: str, handler) -> None:
+        self.handlers[str(event)] = handler
+
+    def send(self, method: str, params=None):
+        self.send_calls.append((str(method), dict(params or {})))
+        if method == "Page.startScreencast":
+            handler = self.handlers.get("Page.screencastFrame")
+            if handler is not None:
+                handler(
+                    {
+                        "data": base64.b64encode(b"frame").decode("ascii"),
+                        "sessionId": 1,
+                    }
+                )
         return {"data": ""}
 
     def detach(self) -> None:
-        return None
+        self.detached = True
 
 
 class _FakePage:
@@ -84,6 +103,9 @@ class _FakePage:
     def screenshot(self, **kwargs):
         self.screenshot_calls.append(dict(kwargs))
         return b"frame"
+
+    def wait_for_timeout(self, _timeout_ms: int) -> None:
+        return None
 
 
 class _FakeContext:
@@ -363,6 +385,72 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                         pass
             finally:
                 manager.close(key="test-command-priority-session")
+
+    def test_socket_command_read_does_not_wait_for_timeout(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        runtime_sock, viewer_sock = socket.socketpair()
+        try:
+            runtime_sock.settimeout(1.0)
+            started = time.time()
+            incoming, buffer, disconnected = runtime._recv_json_line_nonblocking(runtime_sock, b"")
+            elapsed = time.time() - started
+            self.assertIsNone(incoming)
+            self.assertEqual(buffer, b"")
+            self.assertFalse(disconnected)
+            self.assertLess(elapsed, 0.1)
+        finally:
+            runtime_sock.close()
+            viewer_sock.close()
+
+    def test_frame_stream_does_not_emit_state_for_every_frame(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_runtime = _CountingCaptureRuntime()
+        with patch.object(runtime, "launch_projected_browser_runtime", return_value=fake_runtime):
+            manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
+            try:
+                state = manager.open(
+                    key="test-state-frame-decoupling-session",
+                    profile_dir=runtime.Path("/tmp/projected-browser-state-frame-test"),
+                    url="https://chatgpt.com/",
+                    width=1280,
+                    height=800,
+                    headless=False,
+                    channel_candidates=("chrome",),
+                )
+                self.assertEqual(state["state"], "ready")
+
+                runtime_sock, viewer_sock = socket.socketpair()
+                lines: list[str] = []
+                buffer = b""
+                try:
+                    viewer_sock.settimeout(0.05)
+                    self.assertTrue(manager.attach_socket(key="test-state-frame-decoupling-session", sock=runtime_sock))
+                    deadline = time.time() + 0.8
+                    while time.time() < deadline and len(lines) < 8:
+                        try:
+                            chunk = viewer_sock.recv(65536)
+                        except socket.timeout:
+                            continue
+                        if not chunk:
+                            break
+                        buffer += chunk
+                        while b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+                            lines.append(line.decode("utf-8", errors="replace"))
+                    state_lines = [line for line in lines if '"t": "state"' in line]
+                    frame_lines = [line for line in lines if '"t": "frame"' in line]
+                    self.assertGreaterEqual(len(frame_lines), 2)
+                    self.assertEqual(len(state_lines), 1)
+                finally:
+                    try:
+                        viewer_sock.sendall(b'{"t":"disconnect"}\n')
+                    except Exception:
+                        pass
+                    viewer_sock.close()
+            finally:
+                manager.close(key="test-state-frame-decoupling-session")
 
     def test_chatgpt_submit_prompt_command_uses_projected_session_page(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
@@ -772,26 +860,40 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertEqual(browser.contexts[0].pages[0].url, "https://chatgpt.com/c/adopted-chat")
         launched.close()
 
-    def test_capture_frame_uses_playwright_timeout(self) -> None:
+    def test_capture_frame_uses_cdp_screencast(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
         page = _FakePage()
         context = _FakeContext()
+        cdp = _FakeCdpSession()
         projected = runtime.PlaywrightProjectedRuntime(
             playwright_cm=_FakePlaywrightCM(),
             context=context,
             page=page,
-            cdp_session=_FakeCdpSession(),
+            cdp_session=cdp,
             width=1280,
             height=800,
             strategy="test",
         )
 
         self.assertEqual(projected.capture_frame(), b"frame")
-        self.assertEqual(page.screenshot_calls[0].get("type"), "jpeg")
-        self.assertEqual(page.screenshot_calls[0].get("quality"), 60)
-        self.assertEqual(page.screenshot_calls[0].get("full_page"), False)
-        self.assertEqual(page.screenshot_calls[0].get("timeout"), runtime._FRAME_CAPTURE_TIMEOUT_MS)
+        self.assertEqual(page.screenshot_calls, [])
+        self.assertIn(
+            (
+                "Page.startScreencast",
+                {
+                    "format": "jpeg",
+                    "quality": 70,
+                    "maxWidth": 1280,
+                    "maxHeight": 800,
+                    "everyNthFrame": 1,
+                },
+            ),
+            cdp.send_calls,
+        )
+        self.assertIn(("Page.screencastFrameAck", {"sessionId": 1}), cdp.send_calls)
+        projected.close()
+        self.assertIn(("Page.stopScreencast", {}), cdp.send_calls)
 
 
 if __name__ == "__main__":

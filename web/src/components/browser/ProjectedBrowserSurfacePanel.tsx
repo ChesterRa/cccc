@@ -123,6 +123,9 @@ export function ProjectedBrowserSurfacePanel({
   const { t } = useTranslation("chat");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const frameRef = useRef<ProjectedBrowserFrame | null>(null);
+  const renderedFrameRef = useRef<ProjectedBrowserFrame | null>(null);
+  const lastFrameCallbackAtRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const loadSessionRef = useRef(loadSession);
   const startSessionRef = useRef(startSession);
@@ -155,7 +158,7 @@ export function ProjectedBrowserSurfacePanel({
       message: texts.starting,
     }),
   );
-  const [frame, setFrame] = useState<ProjectedBrowserFrame | null>(null);
+  const [renderedFrame, setRenderedFrame] = useState<ProjectedBrowserFrame | null>(null);
   const [panelError, setPanelError] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -170,6 +173,8 @@ export function ProjectedBrowserSurfacePanel({
   useEffect(() => {
     return () => {
       onFrameUpdate?.(null);
+      frameRef.current = null;
+      renderedFrameRef.current = null;
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -254,8 +259,23 @@ export function ProjectedBrowserSurfacePanel({
               capturedAt: String(payload.captured_at || "").trim(),
               url: String(payload.url || "").trim(),
             };
-            setFrame(nextFrame);
-            onFrameUpdate?.(nextFrame);
+            frameRef.current = nextFrame;
+            if (imageRef.current) {
+              // High-frequency browser frames bypass React state so input handling stays responsive.
+              imageRef.current.src = nextFrame.dataUrl;
+            }
+            const rendered = renderedFrameRef.current;
+            if (!rendered || rendered.width !== nextFrame.width || rendered.height !== nextFrame.height) {
+              renderedFrameRef.current = nextFrame;
+              setRenderedFrame(nextFrame);
+            }
+            if (onFrameUpdate) {
+              const now = window.performance?.now?.() ?? Date.now();
+              if (!lastFrameCallbackAtRef.current || now - lastFrameCallbackAtRef.current >= 250) {
+                lastFrameCallbackAtRef.current = now;
+                onFrameUpdate(nextFrame);
+              }
+            }
             return;
           }
           if (payload.t === "error") {
@@ -323,7 +343,10 @@ export function ProjectedBrowserSurfacePanel({
     const open = async () => {
       reconnectAttemptsRef.current = 0;
       setPanelError("");
-      setFrame(null);
+      frameRef.current = null;
+      renderedFrameRef.current = null;
+      lastFrameCallbackAtRef.current = 0;
+      setRenderedFrame(null);
       onFrameUpdate?.(null);
       const container = containerRef.current;
       const width = Math.max(960, Math.round(container?.clientWidth || 1280));
@@ -430,7 +453,10 @@ export function ProjectedBrowserSurfacePanel({
   };
 
   const handleReconnect = () => {
-    setFrame(null);
+    frameRef.current = null;
+    renderedFrameRef.current = null;
+    lastFrameCallbackAtRef.current = 0;
+    setRenderedFrame(null);
     setPanelError("");
     reconnectAttemptsRef.current = 0;
     setSessionState(
@@ -448,7 +474,10 @@ export function ProjectedBrowserSurfacePanel({
     lastRefreshNonceRef.current = refreshNonce;
     if (sessionState.state === "failed" || sessionState.state === "closed") {
       const timer = window.setTimeout(() => {
-        setFrame(null);
+        frameRef.current = null;
+        renderedFrameRef.current = null;
+        lastFrameCallbackAtRef.current = 0;
+        setRenderedFrame(null);
         setPanelError("");
         reconnectAttemptsRef.current = 0;
         setSessionState(
@@ -470,6 +499,7 @@ export function ProjectedBrowserSurfacePanel({
   }, [refreshNonce, sessionState.state, texts.starting]);
 
   const handleMouseDown = (event: MouseEvent<HTMLImageElement>) => {
+    const frame = frameRef.current || renderedFrame;
     if (!frame || !imageRef.current) return;
     const rect = imageRef.current.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0 || frame.width <= 0 || frame.height <= 0) return;
@@ -598,10 +628,10 @@ export function ProjectedBrowserSurfacePanel({
       </div>
 
       <div className={classNames("relative flex min-h-0 flex-1 items-center justify-center overflow-hidden", chromeMode === "embedded" ? "" : "p-4")}>
-        {frame ? (
+        {renderedFrame ? (
           <img
             ref={imageRef}
-            src={frame.dataUrl}
+            src={renderedFrame.dataUrl}
             alt={texts.frameAlt}
             onMouseDown={handleMouseDown}
             onContextMenu={(event) => event.preventDefault()}
