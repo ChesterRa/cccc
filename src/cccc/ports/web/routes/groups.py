@@ -20,6 +20,11 @@ from ....contracts.v1.automation import AutomationRuleSet
 from ....daemon.codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ....daemon.server import get_daemon_endpoint
 from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
+from ....daemon.ops.group_copy_ops import (
+    group_copy_export as run_group_copy_export,
+    group_copy_import as run_group_copy_import,
+    group_copy_preview_import as run_group_copy_preview_import,
+)
 from ....daemon.assistants.sherpa_streaming_asr import (
     SherpaStreamingAsrError,
     open_sherpa_streaming_session,
@@ -50,7 +55,6 @@ from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
 from ....kernel.query_projections import get_groups_projection
 from ....daemon.runner_state_ops import headless_state_path, pty_state_path, web_model_actor_running
-from ....kernel.group_template import parse_group_template
 from ....kernel.ledger import append_event, read_last_lines
 from ....kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
@@ -101,13 +105,11 @@ from ..schemas import (
     GroupPresentationPublishRequest,
     GroupPresentationPublishWorkspaceRequest,
     GroupSettingsRequest,
-    GroupTemplatePreviewRequest,
     GroupUpdateRequest,
     PetDecisionOutcomeRequest,
     ProjectMdUpdateRequest,
     RepoPromptUpdateRequest,
     RouteContext,
-    WEB_MAX_TEMPLATE_BYTES,
     WEB_MAX_FILE_BYTES,
     _safe_int,
     check_group,
@@ -123,6 +125,21 @@ _VOICE_DIARIZATION_INTERVAL_MS = 8_000
 _VOICE_DIARIZATION_MIN_AUDIO_MS = 10_000
 _VOICE_DIARIZATION_ENABLE_PROVISIONAL = True
 _VOICE_PCM16_BYTES_PER_SAMPLE = 2
+WEB_MAX_GROUP_COPY_PACKAGE_BYTES = 100 * 1024 * 1024
+
+
+def _response_to_dict(resp: Any) -> Dict[str, Any]:
+    if isinstance(resp, dict):
+        return resp
+    try:
+        model_dump = getattr(resp, "model_dump", None)
+        if callable(model_dump):
+            out = model_dump()
+            if isinstance(out, dict):
+                return out
+    except Exception:
+        pass
+    return {"ok": False, "error": {"code": "internal_error", "message": f"invalid response type: {type(resp).__name__}"}}
 
 
 def _safe_voice_session_id(value: Any) -> str:
@@ -834,6 +851,14 @@ def _collect_ledger_event_statuses(
             except Exception:
                 logger.debug("ledger_status_cache_store_failed group_id=%s", str(getattr(group, "group_id", "") or ""), exc_info=True)
 
+    delivery_statuses = _collect_web_model_delivery_statuses(
+        group,
+        [str(event.get("id") or "").strip() for event in chat_events],
+    )
+    for event_id, delivery_status in delivery_statuses.items():
+        if delivery_status:
+            status_by_event_id.setdefault(str(event_id), {})["web_model_delivery_status"] = delivery_status
+
     logger.debug(
         "ledger_statuses group_id=%s total=%d chat=%d cache_hit=%d cache_miss=%d elapsed_ms=%.1f",
         str(getattr(group, "group_id", "") or ""),
@@ -845,6 +870,97 @@ def _collect_ledger_event_statuses(
     )
 
     return status_by_event_id
+
+
+_WEB_MODEL_DELIVERY_KIND_TO_STATE = {
+    "web_model.browser_delivery.submitting": "submitting",
+    "web_model.browser_delivery.submitted": "submitted",
+    "web_model.browser_delivery.pending": "pending",
+    "web_model.browser_delivery.failed": "failed",
+}
+_WEB_MODEL_DELIVERY_STATUS_LOOKBACK = 2000
+
+
+def _web_model_delivery_event_ids(data: dict[str, Any]) -> list[str]:
+    ids = [
+        str(item or "").strip()
+        for item in (data.get("event_ids") if isinstance(data.get("event_ids"), list) else [])
+        if str(item or "").strip()
+    ]
+    if ids:
+        return ids
+    trigger_id = str(data.get("trigger_event_id") or "").strip()
+    return [trigger_id] if trigger_id else []
+
+
+def _web_model_delivery_detail(data: dict[str, Any]) -> str:
+    browser = data.get("browser") if isinstance(data.get("browser"), dict) else {}
+    evidence = str((browser or {}).get("submission_evidence") or data.get("submission_evidence") or "").strip()
+    if evidence:
+        return evidence
+    return str(data.get("error") or data.get("commit_error") or "").strip()
+
+
+def _web_model_delivery_status_payload(event: dict[str, Any]) -> dict[str, Any] | None:
+    kind = str(event.get("kind") or "").strip()
+    state = _WEB_MODEL_DELIVERY_KIND_TO_STATE.get(kind)
+    if not state:
+        return None
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    return {
+        "state": state,
+        "actor_id": str(data.get("actor_id") or "").strip(),
+        "delivery_id": str(data.get("delivery_id") or "").strip(),
+        "updated_at": str(event.get("ts") or "").strip(),
+        "detail": _web_model_delivery_detail(data),
+    }
+
+
+def _collect_web_model_delivery_statuses(group: Any, event_ids: list[str]) -> dict[str, dict[str, Any]]:
+    normalized_ids = [str(event_id or "").strip() for event_id in event_ids if str(event_id or "").strip()]
+    if not normalized_ids:
+        return {}
+    wanted = set(normalized_ids)
+    try:
+        from ....kernel.ledger_index import lookup_events_by_ids, search_event_ids_indexed
+    except Exception:
+        return {}
+
+    try:
+        candidate_ids, _has_more = search_event_ids_indexed(
+            group.ledger_path,
+            allowed_kinds=set(_WEB_MODEL_DELIVERY_KIND_TO_STATE.keys()),
+            query="",
+            limit=_WEB_MODEL_DELIVERY_STATUS_LOOKBACK,
+        )
+    except Exception:
+        return {}
+
+    if not candidate_ids:
+        return {}
+
+    candidates = [
+        event
+        for event in lookup_events_by_ids(group.ledger_path, candidate_ids)
+        if isinstance(event, dict)
+    ]
+    statuses: dict[str, dict[str, Any]] = {}
+    for event in candidates:
+        kind = str(event.get("kind") or "").strip()
+        if kind not in _WEB_MODEL_DELIVERY_KIND_TO_STATE:
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        target_ids = [event_id for event_id in _web_model_delivery_event_ids(data) if event_id in wanted]
+        if not target_ids:
+            continue
+        payload = _web_model_delivery_status_payload(event)
+        if not payload:
+            continue
+        for event_id in target_ids:
+            statuses.setdefault(event_id, payload)
+        if len(statuses) >= len(wanted):
+            break
+    return statuses
 
 
 def _apply_ledger_event_statuses(events: list[dict[str, Any]], status_by_event_id: dict[str, dict[str, Any]]) -> None:
@@ -863,6 +979,8 @@ def _apply_ledger_event_statuses(events: list[dict[str, Any]], status_by_event_i
             ev["_ack_status"] = payload["ack_status"]
         if "obligation_status" in payload:
             ev["_obligation_status"] = payload["obligation_status"]
+        if "web_model_delivery_status" in payload:
+            ev["_web_model_delivery_status"] = payload["web_model_delivery_status"]
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -1022,82 +1140,36 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
         return await ctx.daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
 
-    @global_router.post("/groups/from_template", dependencies=[Depends(require_admin)])
-    async def group_create_from_template(
-        path: str = Form(...),
-        title: str = Form("working-group"),
-        topic: str = Form(""),
+    @global_router.post("/groups/copy/preview_import", dependencies=[Depends(require_admin)])
+    async def group_copy_preview_import(file: UploadFile = File(...)) -> Dict[str, Any]:
+        raw = await file.read()
+        if len(raw) > WEB_MAX_GROUP_COPY_PACKAGE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "copy_package_too_large", "message": "group copy too large"})
+        package_b64 = base64.b64encode(raw).decode("ascii")
+        resp = await run_in_threadpool(run_group_copy_preview_import, {"package_b64": package_b64})
+        return _response_to_dict(resp)
+
+    @global_router.post("/groups/copy/import", dependencies=[Depends(require_admin)])
+    async def group_copy_import(
+        workspace_root: str = Form(""),
+        title: str = Form(""),
         by: str = Form("user"),
         file: UploadFile = File(...),
     ) -> Dict[str, Any]:
         raw = await file.read()
-        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
-            raise HTTPException(status_code=413, detail={"code": "template_too_large", "message": "template too large"})
-        template_text = raw.decode("utf-8", errors="replace")
-        return await ctx.daemon(
+        if len(raw) > WEB_MAX_GROUP_COPY_PACKAGE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "copy_package_too_large", "message": "group copy too large"})
+        package_b64 = base64.b64encode(raw).decode("ascii")
+        resp = await run_in_threadpool(
+            run_group_copy_import,
             {
-                "op": "group_create_from_template",
-                "args": {"path": path, "title": title, "topic": topic, "by": by, "template": template_text},
+                "package_b64": package_b64,
+                "workspace_root": workspace_root,
+                "title": title,
+                "by": by,
             }
         )
-
-    @global_router.post("/templates/preview", dependencies=[Depends(require_admin)])
-    async def template_preview(file: UploadFile = File(...)) -> Dict[str, Any]:
-        raw = await file.read()
-        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
-            return {"ok": False, "error": {"code": "template_too_large", "message": "template too large"}}
-        template_text = raw.decode("utf-8", errors="replace")
-        try:
-            tpl = parse_group_template(template_text)
-        except Exception as e:
-            return {"ok": False, "error": {"code": "invalid_template", "message": str(e)}}
-
-        def _prompt_preview(value: Any, limit: int = 2000) -> Dict[str, Any]:
-            if value is None:
-                return {"source": "builtin"}
-            raw_text = str(value)
-            if not raw_text.strip():
-                return {"source": "builtin"}
-            out = raw_text.strip()
-            if len(out) > limit:
-                out = out[:limit] + "\n…"
-            # Templates now map prompt overrides to CCCC_HOME/group prompts.
-            return {"source": "home", "chars": len(raw_text), "preview": out}
-
-        return {
-            "ok": True,
-            "result": {
-                "template": {
-                    "kind": tpl.kind,
-                    "v": tpl.v,
-                    "title": tpl.title,
-                    "topic": tpl.topic,
-                    "exported_at": tpl.exported_at,
-                    "cccc_version": tpl.cccc_version,
-                    "actors": [
-                        {
-                            "id": a.actor_id,
-                            "title": a.title,
-                            "runtime": a.runtime,
-                            "runner": a.runner,
-                            "command": a.command,
-                            "submit": a.submit,
-                            "enabled": bool(a.enabled),
-                        }
-                        for a in tpl.actors
-                    ],
-                    "settings": tpl.settings.model_dump(),
-                    "automation": {
-                        "rules": len(tpl.automation.rules),
-                        "snippets": len(tpl.automation.snippets),
-                    },
-                    "prompts": {
-                        "preamble": _prompt_preview(tpl.prompts.preamble),
-                        "help": _prompt_preview(tpl.prompts.help),
-                    },
-                }
-            },
-        }
+        return _response_to_dict(resp)
 
     @global_router.get("/events/stream", dependencies=[Depends(require_user)])
     async def global_events_stream() -> StreamingResponse:
@@ -1172,44 +1244,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return await run_in_threadpool(_read_context_summary_local, gid)
         return await _deduped_context_get(gid, detail_mode, _fetch)
 
-    @group_router.get("/template/export")
-    async def group_template_export(group_id: str) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "group_template_export", "args": {"group_id": group_id}})
-
-    @group_router.post("/template/preview")
-    async def group_template_preview(group_id: str, req: GroupTemplatePreviewRequest) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "group_template_preview", "args": {"group_id": group_id, "template": req.template, "by": req.by}})
-
-    @group_router.post("/template/preview_upload")
-    async def group_template_preview_upload(
-        group_id: str,
-        by: str = Form("user"),
-        file: UploadFile = File(...),
-    ) -> Dict[str, Any]:
-        raw = await file.read()
-        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
-            raise HTTPException(status_code=413, detail={"code": "template_too_large", "message": "template too large"})
-        template_text = raw.decode("utf-8", errors="replace")
-        return await ctx.daemon({"op": "group_template_preview", "args": {"group_id": group_id, "template": template_text, "by": by}})
-
-    @group_router.post("/template/import_replace")
-    async def group_template_import_replace(
-        group_id: str,
-        confirm: str = Form(""),
-        by: str = Form("user"),
-        file: UploadFile = File(...),
-    ) -> Dict[str, Any]:
-        raw = await file.read()
-        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
-            raise HTTPException(status_code=413, detail={"code": "template_too_large", "message": "template too large"})
-        template_text = raw.decode("utf-8", errors="replace")
-        await invalidate_context_read(group_id)
-        return await ctx.daemon(
-            {
-                "op": "group_template_import_replace",
-                "args": {"group_id": group_id, "confirm": confirm, "by": by, "template": template_text},
-            }
-        )
+    @group_router.get("/copy/export", response_model=None)
+    async def group_copy_export(group_id: str, request: Request) -> Any:
+        require_admin(request)
+        resp_obj = await run_in_threadpool(run_group_copy_export, {"group_id": group_id, "by": "user"})
+        resp = _response_to_dict(resp_obj)
+        if not bool(resp.get("ok")):
+            return resp
+        result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+        package_b64 = str((result or {}).get("package_b64") or "")
+        try:
+            package_bytes = base64.b64decode(package_b64.encode("ascii"), validate=True)
+        except Exception:
+            return {"ok": False, "error": {"code": "copy_export_invalid", "message": "daemon returned invalid copy package"}}
+        filename = str((result or {}).get("filename") or f"cccc-group--{group_id}.zip")
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        return StreamingResponse(iter([package_bytes]), media_type="application/zip", headers=headers)
 
     @group_router.get("/tasks")
     async def group_tasks(group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:

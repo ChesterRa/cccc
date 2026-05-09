@@ -28,7 +28,7 @@ const TranscriptTab = lazy(() => import("./modals/settings/TranscriptTab").then(
 const GuidanceTab = lazy(() => import("./modals/settings/GuidanceTab").then((module) => ({ default: module.GuidanceTab })));
 const AssistantsTab = lazy(() => import("./modals/settings/AssistantsTab").then((module) => ({ default: module.AssistantsTab })));
 const GroupSpaceTab = lazy(() => import("./modals/settings/GroupSpaceTab").then((module) => ({ default: module.GroupSpaceTab })));
-const BlueprintTab = lazy(() => import("./modals/settings/BlueprintTab").then((module) => ({ default: module.BlueprintTab })));
+const CopyGroupsTab = lazy(() => import("./modals/settings/CopyGroupsTab").then((module) => ({ default: module.CopyGroupsTab })));
 const CapabilitiesTab = lazy(() => import("./modals/settings/CapabilitiesTab").then((module) => ({ default: module.CapabilitiesTab })));
 const ActorProfilesTab = lazy(() => import("./modals/settings/ActorProfilesTab").then((module) => ({ default: module.ActorProfilesTab })));
 const BrandingTab = lazy(() => import("./modals/settings/BrandingTab").then((module) => ({ default: module.BrandingTab })));
@@ -978,7 +978,7 @@ export function SettingsModal({
     { id: "messaging", label: t("tabs.messaging") },
     { id: "im", label: t("tabs.im") },
     { id: "transcript", label: t("tabs.transcript") },
-    { id: "blueprint", label: t("tabs.blueprint") },
+    { id: "copyGroups", label: t("tabs.copyGroups") },
   ];
   const tabs = scope === "group" ? groupTabs : (globalScopeEnabled ? globalTabs : []);
   const activeTab = scope === "group" ? groupTab : globalTab;
@@ -1239,7 +1239,7 @@ export function SettingsModal({
                 />
               )}
 
-              {activeTab === "blueprint" && <BlueprintTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
+              {activeTab === "copyGroups" && <CopyGroupsTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
 
               {activeTab === "capabilities" && (
                 <CapabilitiesTab

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.group import attach_scope_to_group, create_group, ensure_group_for_scope, load_group
@@ -66,65 +66,12 @@ def handle_group_create(args: Dict[str, Any]) -> DaemonResponse:
     )
 
 
-def handle_group_template_import_replace(
-    args: Dict[str, Any],
-    *,
-    group_template_import_replace: Callable[[Dict[str, Any]], DaemonResponse],
-    foreman_id: Callable[[Any], str],
-    maybe_reset_automation_on_foreman_change: Callable[[Any, str], None],
-) -> DaemonResponse:
-    group_id = str(args.get("group_id") or "").strip()
-    before_foreman_id = ""
-    if group_id:
-        before_group = load_group(group_id)
-        if before_group is not None:
-            before_foreman_id = foreman_id(before_group)
-    resp = group_template_import_replace(args)
-    if resp.ok and group_id:
-        after_group = load_group(group_id)
-        if after_group is not None:
-            maybe_reset_automation_on_foreman_change(after_group, before_foreman_id)
-    return resp
-
-
 def try_handle_group_bootstrap_op(
     op: str,
     args: Dict[str, Any],
-    *,
-    group_create_from_template: Optional[Callable[[Dict[str, Any]], DaemonResponse]] = None,
-    group_template_export: Optional[Callable[[Dict[str, Any]], DaemonResponse]] = None,
-    group_template_preview: Optional[Callable[[Dict[str, Any]], DaemonResponse]] = None,
-    group_template_import_replace: Optional[Callable[[Dict[str, Any]], DaemonResponse]] = None,
-    foreman_id: Optional[Callable[[Any], str]] = None,
-    maybe_reset_automation_on_foreman_change: Optional[Callable[[Any, str], None]] = None,
 ) -> Optional[DaemonResponse]:
     if op == "attach":
         return handle_attach(args)
     if op == "group_create":
         return handle_group_create(args)
-    if op == "group_create_from_template":
-        if group_create_from_template is None:
-            return _error("internal_error", "group_create_from_template callback not configured")
-        return group_create_from_template(args)
-    if op == "group_template_export":
-        if group_template_export is None:
-            return _error("internal_error", "group_template_export callback not configured")
-        return group_template_export(args)
-    if op == "group_template_preview":
-        if group_template_preview is None:
-            return _error("internal_error", "group_template_preview callback not configured")
-        return group_template_preview(args)
-    if op == "group_template_import_replace":
-        if (
-            group_template_import_replace is None
-            or foreman_id is None
-            or maybe_reset_automation_on_foreman_change is None
-        ):
-            return _error("internal_error", "group_template_import_replace callbacks not configured")
-        return handle_group_template_import_replace(
-            args,
-            group_template_import_replace=group_template_import_replace,
-            foreman_id=foreman_id,
-            maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
-        )
     return None

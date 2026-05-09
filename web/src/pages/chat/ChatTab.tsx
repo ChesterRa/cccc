@@ -232,8 +232,11 @@ export function ChatTab({
   const latestActorActivitiesByActorId = liveWorkBucket?.latestActorActivitiesByActorId || EMPTY_LIVE_WORK_ACTIVITIES;
   const replySessionsByPendingEventId = liveWorkBucket?.replySessionsByPendingEventId || EMPTY_LIVE_WORK_SESSIONS;
   const webModelDeliveryStatusByEventId = useMemo(
-    () => buildWebModelDeliveryStatusByEventId(liveWorkBucket?.events),
-    [liveWorkBucket?.events],
+    () => buildWebModelDeliveryStatusByEventId([
+      ...(liveWorkBucket?.events || []),
+      ...(liveWorkBucket?.chatWindow?.events || []),
+    ]),
+    [liveWorkBucket?.chatWindow?.events, liveWorkBucket?.events],
   );
 
   const isHydratingEmptyState = chatMessages.length === 0 && chatEmptyState === "hydrating";

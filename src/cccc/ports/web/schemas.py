@@ -87,14 +87,8 @@ class DebugClearLogsRequest(BaseModel):
     by: str = Field(default="user")
 
 
-class GroupTemplatePreviewRequest(BaseModel):
-    template: str = Field(default="")
-    by: str = Field(default="user")
-
-
 WEB_MAX_FILE_MB = 20
 WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
-WEB_MAX_TEMPLATE_BYTES = 2 * 1024 * 1024  # safety bound for template uploads
 
 
 class ActorCreateRequest(BaseModel):

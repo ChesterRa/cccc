@@ -10,11 +10,7 @@
     "groupNamePlaceholder": "Auto-filled from directory name",
     "pathPlaceholder": "/path/to/your/project",
     "pathAutoCreateHint": "If the folder doesn't exist yet, it will be created automatically.",
-    "blueprintLabel": "Create Group From Blueprint (optional)",
-    "loadingBlueprint": "Loading blueprint…",
-    "blueprintHint": "Applies actors, settings, automation rules/snippets, and group guidance overrides under CCCC_HOME (CCCC_PREAMBLE.md / CCCC_HELP.md).",
     "creating": "Creating...",
-    "createFromBlueprint": "Create Group From Blueprint",
     "createGroup": "Create Group"
   },
   "groupEdit": {

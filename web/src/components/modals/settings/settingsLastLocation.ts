@@ -11,7 +11,7 @@ const groupTabIds = new Set<GroupTabId>([
   "messaging",
   "im",
   "transcript",
-  "blueprint",
+  "copyGroups",
 ]);
 
 const globalTabIds = new Set<GlobalTabId>([

@@ -128,12 +128,12 @@ Run comparable multi-agent sessions with stable logging and replayability.
 ### Minimal Setup
 
 1. Define fixed task prompts and evaluation criteria.
-2. Use same group template and runtime setup per run.
+2. Use the same Copy Groups package and runtime setup per run.
 3. Keep automation policies deterministic.
 
 ### Execution Flow
 
-1. Create baseline group/template.
+1. Create a baseline group and export a Copy Groups package.
 2. Run multiple sessions with different runtime combinations.
 3. Collect ledger and terminal evidence.
 4. Evaluate outcome quality and operational stability.

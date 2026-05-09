@@ -37,6 +37,9 @@ _IDLE_FRAME_POLL_SECONDS = 2.0
 _FRAME_CAPTURE_BACKOFF_SECONDS = 0.5
 _FRAME_CAPTURE_MAX_BACKOFF_SECONDS = 2.0
 _SCREENCAST_EVENT_PUMP_TIMEOUT_MS = 80
+# Keep the CDP producer unthrottled so a newly attached viewer gets a reliable
+# first frame; consumer-side cadence controls how often frames are sent to UI.
+_SCREENCAST_EVERY_NTH_FRAME = 1
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
 
@@ -377,7 +380,9 @@ class PlaywrightProjectedRuntime:
         self._screencast_seq = 0
         self._screencast_consumed_seq = 0
         self._screencast_last_frame = b""
+        self._page_domain_enabled = False
         self._install_screencast_handler()
+        self._enable_page_domain()
         self._register_page(page)
         try:
             self._context.on("page", self._handle_new_page)
@@ -450,6 +455,21 @@ class PlaywrightProjectedRuntime:
         except Exception:
             pass
 
+    def _enable_page_domain(self) -> None:
+        with self._lock:
+            if self._page_domain_enabled:
+                return
+            cdp = self._cdp
+        if cdp is None:
+            return
+        try:
+            cdp.send("Page.enable")
+        except Exception:
+            return
+        with self._lock:
+            if cdp is self._cdp:
+                self._page_domain_enabled = True
+
     def _stop_screencast_session(self, cdp: Any | None = None) -> None:
         target = cdp or self._cdp
         if target is None:
@@ -468,6 +488,7 @@ class PlaywrightProjectedRuntime:
             height = self.height
         if cdp is None:
             raise RuntimeError("CDP session is not available for browser screencast")
+        self._enable_page_domain()
         cdp.send(
             "Page.startScreencast",
             {
@@ -475,7 +496,7 @@ class PlaywrightProjectedRuntime:
                 "quality": 70,
                 "maxWidth": int(width),
                 "maxHeight": int(height),
-                "everyNthFrame": 1,
+                "everyNthFrame": _SCREENCAST_EVERY_NTH_FRAME,
             },
         )
         with self._lock:
@@ -498,11 +519,9 @@ class PlaywrightProjectedRuntime:
             self._screencast_active = False
         self._page = page
         self._cdp = self._context.new_cdp_session(page)
+        self._page_domain_enabled = False
         self._install_screencast_handler()
-        try:
-            self._cdp.send("Page.enable")
-        except Exception:
-            pass
+        self._enable_page_domain()
         try:
             page.set_viewport_size({"width": self.width, "height": self.height})
         except Exception:

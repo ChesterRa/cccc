@@ -1810,7 +1810,7 @@ class AutomationManager:
 
         # For one-time rules, a successful execution should invalidate the rule itself
         # (persisted in group.yaml), not only runtime state. This prevents re-sending
-        # after blueprint export/import where state files are not carried over.
+        # after Copy Groups export/import where runtime state files are not carried over.
         one_time_completed = [
             rid
             for rid, (sent_any, _last_error, trigger_kind, _slot_key) in results.items()

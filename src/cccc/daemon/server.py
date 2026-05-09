@@ -128,12 +128,6 @@ from .space.group_space_store import get_space_provider_state
 from .group.presentation_browser_runtime import close_all_browser_surface_sessions
 from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
 from .actors.web_model_browser_session import close_all_web_model_chatgpt_browser_sessions
-from .ops.template_ops import (
-    group_create_from_template,
-    group_template_export,
-    group_template_import_replace,
-    group_template_preview,
-)
 
 _OBS_LOCK = threading.Lock()
 _OBSERVABILITY: Dict[str, Any] = {}
@@ -775,10 +769,6 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             target_actor_id=actor_id,
         ),
         pty_backlog_bytes=_pty_backlog_bytes,
-        group_create_from_template=group_create_from_template,
-        group_template_export=group_template_export,
-        group_template_preview=group_template_preview,
-        group_template_import_replace=group_template_import_replace,
         foreman_id=_foreman_id,
         maybe_reset_automation_on_foreman_change=lambda group, before_foreman_id: _maybe_reset_automation_on_foreman_change(
             group,

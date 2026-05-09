@@ -35,6 +35,7 @@ from .group.group_ops import try_handle_group_core_op
 from .group.group_bootstrap_ops import try_handle_group_bootstrap_op
 from .ops.registry_ops import try_handle_registry_op
 from .ops.capability_ops import try_handle_capability_op
+from .ops.group_copy_ops import try_handle_group_copy_op
 from .im.im_ops import try_handle_im_op
 from .actors.runner_ops import try_handle_headless_op
 from .actors.web_model_runtime_ops import try_handle_web_model_runtime_op
@@ -57,10 +58,6 @@ class RequestDispatchDeps:
     throttle_debug_summary: Callable[[], dict[str, Any]]
     can_read_terminal_transcript: Callable[..., bool]
     pty_backlog_bytes: Callable[[], int]
-    group_create_from_template: Callable[..., DaemonResponse]
-    group_template_export: Callable[..., DaemonResponse]
-    group_template_preview: Callable[..., DaemonResponse]
-    group_template_import_replace: Callable[..., DaemonResponse]
     foreman_id: Callable[[Any], str]
     maybe_reset_automation_on_foreman_change: Callable[..., None]
     stop_im_bridges_for_group: Callable[[str], None]
@@ -145,18 +142,13 @@ def dispatch_request(
     if diagnostics_resp is not None:
         return diagnostics_resp, False
 
-    group_bootstrap_resp = try_handle_group_bootstrap_op(
-        op,
-        args,
-        group_create_from_template=deps.group_create_from_template,
-        group_template_export=deps.group_template_export,
-        group_template_preview=deps.group_template_preview,
-        group_template_import_replace=deps.group_template_import_replace,
-        foreman_id=deps.foreman_id,
-        maybe_reset_automation_on_foreman_change=deps.maybe_reset_automation_on_foreman_change,
-    )
+    group_bootstrap_resp = try_handle_group_bootstrap_op(op, args)
     if group_bootstrap_resp is not None:
         return group_bootstrap_resp, False
+
+    group_copy_resp = try_handle_group_copy_op(op, args)
+    if group_copy_resp is not None:
+        return group_copy_resp, False
 
     group_core_resp = try_handle_group_core_op(
         op,

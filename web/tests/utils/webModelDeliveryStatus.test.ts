@@ -76,4 +76,30 @@ describe("buildWebModelDeliveryStatusByEventId", () => {
     expect(status["batch-1"]?.state).toBe("submitted");
     expect(status["legacy-trigger"]).toBeUndefined();
   });
+
+  it("uses persisted delivery status attached to chat messages", () => {
+    const status = buildWebModelDeliveryStatusByEventId([
+      {
+        id: "evt-persisted",
+        kind: "chat.message",
+        ts: "2026-05-08T00:03:00Z",
+        data: { text: "hello" },
+        _web_model_delivery_status: {
+          state: "failed",
+          actor_id: "web-1",
+          delivery_id: "del-4",
+          updated_at: "2026-05-08T00:03:04Z",
+          detail: "prompt inserted but not submitted",
+        },
+      },
+    ]);
+
+    expect(status["evt-persisted"]).toMatchObject({
+      state: "failed",
+      actorId: "web-1",
+      deliveryId: "del-4",
+      updatedAt: "2026-05-08T00:03:04Z",
+      detail: "prompt inserted but not submitted",
+    });
+  });
 });

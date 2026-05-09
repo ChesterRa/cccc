@@ -110,6 +110,15 @@ Multi-level task tree. Root tasks = phases/stages. Child tasks = execution units
 
 Access via the gear icon:
 
+### Copy Groups
+
+Use **Copy Groups** when you need to duplicate, migrate, or back up a working group.
+
+- **Export group copy** downloads a zip containing durable CCCC group state: ledger history, actors, memory, attachments, automation, and group settings.
+- The copy package does **not** include the workspace repository/project files. Copy or clone the workspace separately, then choose the workspace root during import.
+- System credentials, browser sessions, provider auth, and live runtime state are excluded. The package still contains user content such as ledger history, memory, and attachments; treat it as sensitive. Imported actors are stopped and the imported group starts idle.
+- If a group id already exists, import creates a new copy instead of replacing the existing group.
+
 ### Automation
 
 - **Built-in Automation**: Configure system-managed follow-ups and collaboration health loops such as unread / reply-required / ACK follow-ups, actor idle alerts, keepalive, silence checks, and help nudges.

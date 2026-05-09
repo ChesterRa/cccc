@@ -2,7 +2,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SearchModal } from "./SearchModal";
-import type { TemplatePreviewDetailsProps } from "./TemplatePreviewDetails";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
 import { AddActorModal } from "./modals/AddActorModal";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
@@ -231,7 +230,6 @@ export function AppModals({
     resetAddActorForm,
     createGroupPath,
     createGroupName,
-    createGroupTemplateFile,
     dirItems,
     dirSuggestions,
     currentDir,
@@ -239,7 +237,6 @@ export function AppModals({
     showDirBrowser,
     setCreateGroupPath,
     setCreateGroupName,
-    setCreateGroupTemplateFile,
     setDirItems,
     setCurrentDir,
     setParentDir,
@@ -247,9 +244,6 @@ export function AppModals({
     resetCreateGroupForm,
   } = useFormStore();
 
-  const [createTemplatePreview, setCreateTemplatePreview] = useState<TemplatePreviewDetailsProps["template"] | null>(null);
-  const [createTemplateError, setCreateTemplateError] = useState("");
-  const [createTemplateBusy, setCreateTemplateBusy] = useState(false);
   const [dirBrowseError, setDirBrowseError] = useState("");
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
   const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
@@ -932,27 +926,6 @@ export function AppModals({
     }
   };
 
-  const handleSelectCreateGroupTemplate = async (file: File | null) => {
-    setCreateGroupTemplateFile(file);
-    setCreateTemplatePreview(null);
-    setCreateTemplateError("");
-    if (!file) return;
-
-    setCreateTemplateBusy(true);
-    try {
-      const resp = await api.previewTemplate(file);
-      if (!resp.ok) {
-        setCreateTemplateError(resp.error?.message || t('invalidTemplate'));
-        return;
-      }
-      setCreateTemplatePreview(resp.result?.template || null);
-    } catch {
-      setCreateTemplateError(t('failedToLoadTemplate'));
-    } finally {
-      setCreateTemplateBusy(false);
-    }
-  };
-
   const handleCreateGroup = async () => {
     const path = createGroupPath.trim();
     if (!path) return;
@@ -960,46 +933,29 @@ export function AppModals({
     const title = createGroupName.trim() || dirName;
     setBusy("create");
     try {
-      let groupId = "";
-
-      if (createGroupTemplateFile) {
-        const resp = await api.createGroupFromTemplate(path, title, "", createGroupTemplateFile);
-        if (!resp.ok) {
-          if (resp.error?.code === "scope_already_attached") {
-            const existing = getErrorDetailGroupId(resp.error);
-            if (existing) {
-              showError(t('scopeAlreadyAttached'));
-              closeModal("createGroup");
-              resetCreateGroupForm();
-              setCreateTemplatePreview(null);
-              setCreateTemplateError("");
-              setCreateTemplateBusy(false);
-              await refreshGroups();
-              setSelectedGroupId(existing);
-              return;
-            }
+      const resp = await api.createGroup(title);
+      if (!resp.ok) {
+        if (resp.error?.code === "scope_already_attached") {
+          const existing = getErrorDetailGroupId(resp.error);
+          if (existing) {
+            showError(t('scopeAlreadyAttached'));
+            closeModal("createGroup");
+            resetCreateGroupForm();
+            await refreshGroups();
+            setSelectedGroupId(existing);
+            return;
           }
-          showError(`${resp.error.code}: ${resp.error.message}`);
-          return;
         }
-        groupId = resp.result.group_id;
-      } else {
-        const resp = await api.createGroup(title);
-        if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
-          return;
-        }
-        groupId = resp.result.group_id;
-        const attachResp = await api.attachScope(groupId, path);
-        if (!attachResp.ok) {
-          showError(t('createdButFailedAttach', { message: attachResp.error.message }));
-        }
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      const groupId = resp.result.group_id;
+      const attachResp = await api.attachScope(groupId, path);
+      if (!attachResp.ok) {
+        showError(t('createdButFailedAttach', { message: attachResp.error.message }));
       }
 
       resetCreateGroupForm();
-      setCreateTemplatePreview(null);
-      setCreateTemplateError("");
-      setCreateTemplateBusy(false);
       closeModal("createGroup");
       await refreshGroups();
       setSelectedGroupId(groupId);
@@ -1704,11 +1660,6 @@ export function AppModals({
         setCreateGroupPath={setCreateGroupPath}
         createGroupName={createGroupName}
         setCreateGroupName={setCreateGroupName}
-        createGroupTemplateFile={createGroupTemplateFile}
-        templatePreview={createTemplatePreview}
-        templateError={createTemplateError}
-        templateBusy={createTemplateBusy}
-        onSelectTemplate={handleSelectCreateGroupTemplate}
         dirBrowseError={dirBrowseError}
         onFetchDirContents={handleFetchDirContents}
         onCreateGroup={handleCreateGroup}
@@ -1716,9 +1667,6 @@ export function AppModals({
         onCancelAndReset={() => {
           closeModal("createGroup");
           resetCreateGroupForm();
-          setCreateTemplatePreview(null);
-          setCreateTemplateError("");
-          setCreateTemplateBusy(false);
           setDirBrowseError("");
         }}
       />

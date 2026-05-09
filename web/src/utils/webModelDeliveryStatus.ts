@@ -1,4 +1,4 @@
-import type { LedgerEvent } from "../types";
+import type { LedgerEvent, WebModelDeliveryStatusPayload } from "../types";
 
 export type WebModelDeliveryState = "submitting" | "submitted" | "pending" | "failed";
 
@@ -38,9 +38,30 @@ function browserDetail(data: Record<string, unknown>): string {
   return error;
 }
 
+function statusFromMessageEvent(event: LedgerEvent): WebModelDeliveryStatus | null {
+  const eventId = String(event.id || "").trim();
+  if (!eventId) return null;
+  const payload = event._web_model_delivery_status as WebModelDeliveryStatusPayload | undefined;
+  if (!payload || typeof payload !== "object") return null;
+  const state = String(payload.state || "").trim() as WebModelDeliveryState;
+  if (!state || !["submitting", "submitted", "pending", "failed"].includes(state)) return null;
+  return {
+    state,
+    actorId: String(payload.actor_id || "").trim(),
+    deliveryId: String(payload.delivery_id || "").trim(),
+    updatedAt: String(payload.updated_at || "").trim(),
+    detail: String(payload.detail || "").trim(),
+  };
+}
+
 export function buildWebModelDeliveryStatusByEventId(events: LedgerEvent[] | undefined): Record<string, WebModelDeliveryStatus> {
   const statuses: Record<string, WebModelDeliveryStatus> = {};
   for (const event of Array.isArray(events) ? events : []) {
+    const messageStatus = statusFromMessageEvent(event);
+    if (messageStatus && event.id) {
+      statuses[String(event.id)] = messageStatus;
+      continue;
+    }
     const kind = String(event.kind || "").trim();
     const state = DELIVERY_KIND_TO_STATE[kind];
     if (!state) continue;

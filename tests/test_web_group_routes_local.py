@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -39,6 +40,14 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
         reg = load_registry()
         return create_group(reg, title="group-local-read", topic="local topic").group_id
 
+    def _local_call_daemon(self, req: dict):
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        request = DaemonRequest.model_validate(req)
+        resp, _ = handle_request(request)
+        return resp.model_dump(exclude_none=True)
+
     def test_group_show_reads_local_projection_without_daemon(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -70,6 +79,61 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                 snapshot_body = snapshot_resp.json()
                 self.assertTrue(bool(snapshot_body.get("ok")), snapshot_body)
                 self.assertEqual(str((snapshot_body.get("result") or {}).get("group_id") or ""), group_id)
+        finally:
+            cleanup()
+
+    def test_group_copy_export_preview_import_routes(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id = self._create_group()
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.doc["scopes"] = [
+                    {
+                        "scope_key": "s_test",
+                        "url": str(Path(workspace_raw).resolve()),
+                        "label": "workspace",
+                        "git_remote": "",
+                    }
+                ]
+                group.doc["active_scope_key"] = "s_test"
+                group.save()
+
+                with patch("cccc.ports.web.app.call_daemon", side_effect=AssertionError("copy routes should not call daemon IPC")):
+                    with self._client() as client:
+                        export_resp = client.get(f"/api/v1/groups/{group_id}/copy/export")
+                        self.assertEqual(export_resp.status_code, 200)
+                        self.assertEqual(export_resp.headers.get("content-type"), "application/zip")
+                        package_bytes = export_resp.content
+                        self.assertGreater(len(package_bytes), 0)
+
+                        preview_resp = client.post(
+                            "/api/v1/groups/copy/preview_import",
+                            files={"file": ("group.zip", package_bytes, "application/zip")},
+                        )
+                        self.assertEqual(preview_resp.status_code, 200)
+                        preview_body = preview_resp.json()
+                        self.assertTrue(bool(preview_body.get("ok")), preview_body)
+                        preview = ((preview_body.get("result") or {}).get("preview") or {})
+                        self.assertEqual(str(preview.get("source_group_id") or ""), group_id)
+                        self.assertFalse(bool(preview.get("workspace_included")))
+                        self.assertFalse(bool(preview.get("contains_secrets")))
+
+                        import_resp = client.post(
+                            "/api/v1/groups/copy/import",
+                            data={"workspace_root": str(Path(workspace_raw).resolve()), "title": "Imported copy", "by": "user"},
+                            files={"file": ("group.zip", package_bytes, "application/zip")},
+                        )
+                        self.assertEqual(import_resp.status_code, 200)
+                        import_body = import_resp.json()
+                        self.assertTrue(bool(import_body.get("ok")), import_body)
+                        imported_id = str(((import_body.get("result") or {}).get("group_id")) or "")
+                        self.assertTrue(imported_id)
+                        self.assertNotEqual(imported_id, group_id)
         finally:
             cleanup()
 

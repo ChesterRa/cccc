@@ -1328,21 +1328,89 @@ export async function createGroup(title: string, topic: string = "") {
   });
 }
 
-export async function createGroupFromTemplate(path: string, title: string, topic: string, file: File) {
-  clearGroupsReadRequest();
-  const form = new FormData();
-  form.append("path", path);
-  form.append("title", title);
-  form.append("topic", topic || "");
-  form.append("by", "user");
-  form.append("file", file);
-  return apiForm<{ group_id: string }>("/api/v1/groups/from_template", form);
+export type GroupCopyPreviewActor = {
+  id?: string;
+  title?: string;
+  runtime?: string;
+  runner?: string;
+  enabled?: boolean;
+};
+
+export type GroupCopyPreview = {
+  manifest?: Record<string, unknown>;
+  source_group_id?: string;
+  source_title?: string;
+  actor_count?: number;
+  actors?: GroupCopyPreviewActor[];
+  source_workspace_root?: string;
+  workspace_root_exists?: boolean;
+  group_id_conflict?: boolean;
+  target_default_scope_conflict?: boolean;
+  requires_reconnect?: {
+    chatgpt_web_model?: boolean;
+    notebooklm_group_space?: boolean;
+  };
+  workspace_included?: boolean;
+  contains_secrets?: boolean;
+  runtime_reset?: {
+    actors_stopped?: boolean;
+    group_running?: boolean;
+    group_state?: string;
+    browser_sessions_cleared?: boolean;
+    runtime_sessions_cleared?: boolean;
+  };
+};
+
+export type GroupCopyImportResult = {
+  group_id: string;
+  source_group_id?: string;
+  group_id_conflict?: boolean;
+  workspace_root?: string;
+  active_scope_key?: string;
+};
+
+export async function exportGroupCopy(groupId: string): Promise<ApiResponse<{ blob: Blob; filename: string }>> {
+  try {
+    const resp = await fetch(withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/copy/export`));
+    if (!resp.ok) {
+      let message = `Server returned ${resp.status}`;
+      try {
+        const data = await resp.json();
+        message = String(data?.error?.message || data?.detail?.message || message);
+      } catch {
+        void 0;
+      }
+      return { ok: false, error: { code: "COPY_EXPORT_FAILED", message } };
+    }
+    const header = resp.headers.get("content-disposition") || "";
+    const match = /filename="?([^";]+)"?/i.exec(header);
+    const filename = match?.[1] || `cccc-group-${groupId}.zip`;
+    return { ok: true, result: { blob: await resp.blob(), filename } };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: "NETWORK_ERROR",
+        message: error instanceof Error ? error.message : "Network request failed",
+      },
+    };
+  }
 }
 
-export async function previewTemplate(file: File) {
+export async function previewGroupCopy(file: File) {
   const form = new FormData();
   form.append("file", file);
-  return apiForm<{ template: unknown }>("/api/v1/templates/preview", form);
+  return apiForm<{ preview: GroupCopyPreview }>("/api/v1/groups/copy/preview_import", form);
+}
+
+export async function importGroupCopy(file: File, workspaceRoot: string, title: string) {
+  clearGroupsReadRequest();
+  const form = new FormData();
+  form.append("workspace_root", workspaceRoot);
+  form.append("title", title || "");
+  form.append("by", "user");
+  form.append("file", file);
+  return apiForm<GroupCopyImportResult>("/api/v1/groups/copy/import", form);
 }
 
 export async function updateGroup(groupId: string, title: string, topic: string) {
@@ -1390,33 +1458,6 @@ export async function setGroupState(groupId: string, state: "active" | "idle" | 
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/state?state=${encodeURIComponent(state)}&by=user`,
     { method: "POST" },
-  );
-}
-
-export async function exportGroupTemplate(groupId: string) {
-  return apiJson<{ template: string; filename: string }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/template/export`,
-  );
-}
-
-export async function previewGroupTemplate(groupId: string, file: File) {
-  const form = new FormData();
-  form.append("by", "user");
-  form.append("file", file);
-  return apiForm<{ template: unknown; diff: unknown }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/template/preview_upload`,
-    form,
-  );
-}
-
-export async function importGroupTemplateReplace(groupId: string, file: File) {
-  const form = new FormData();
-  form.append("confirm", groupId);
-  form.append("by", "user");
-  form.append("file", file);
-  return apiForm<{ applied: boolean }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/template/import_replace`,
-    form,
   );
 }
 

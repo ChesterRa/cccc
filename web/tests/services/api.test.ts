@@ -977,7 +977,7 @@ describe("api.message refs", () => {
   });
 });
 
-describe("blueprint api entrypoints", () => {
+describe("copy groups api entrypoints", () => {
   beforeEach(() => {
     vi.resetModules();
     fetchMock.mockReset();
@@ -989,28 +989,25 @@ describe("blueprint api entrypoints", () => {
     api.clearAuthToken();
   });
 
-  it("keeps create-group blueprint import on the form endpoint", async () => {
+  it("exports group copies from the group-scoped zip endpoint", async () => {
+    const blob = new Blob(["zip"], { type: "application/zip" });
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({ ok: true, result: { group_id: "g-new" } }),
+      headers: { get: (name: string) => (name.toLowerCase() === "content-disposition" ? 'attachment; filename="copy.zip"' : null) },
+      blob: async () => blob,
     });
 
     const api = await import("../../src/services/api");
-    const file = new File(["title: demo"], "group-template.yaml", { type: "text/yaml" });
-    const resp = await api.createGroupFromTemplate("/tmp/demo", "Demo", "", file);
+    const resp = await api.exportGroupCopy("g-demo");
 
     expect(resp.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/groups/from_template",
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
+      "/api/v1/groups/g-demo/copy/export",
     );
   });
 
-  it("keeps settings blueprint preview/import endpoints wired", async () => {
+  it("keeps copy preview/import endpoints wired", async () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
@@ -1018,30 +1015,22 @@ describe("blueprint api entrypoints", () => {
     });
 
     const api = await import("../../src/services/api");
-    const file = new File(["title: demo"], "group-template.yaml", { type: "text/yaml" });
+    const file = new File(["zip"], "copy.zip", { type: "application/zip" });
 
-    await api.exportGroupTemplate("g-demo");
-    await api.previewGroupTemplate("g-demo", file);
-    await api.importGroupTemplateReplace("g-demo", file);
+    await api.previewGroupCopy(file);
+    await api.importGroupCopy(file, "/tmp/demo", "Demo");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/groups/g-demo/template/export",
-      expect.objectContaining({
-        headers: expect.objectContaining({ "content-type": "application/json" }),
-      }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/v1/groups/g-demo/template/preview_upload",
+      "/api/v1/groups/copy/preview_import",
       expect.objectContaining({
         method: "POST",
         body: expect.any(FormData),
       }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
-      "/api/v1/groups/g-demo/template/import_replace",
+      2,
+      "/api/v1/groups/copy/import",
       expect.objectContaining({
         method: "POST",
         body: expect.any(FormData),

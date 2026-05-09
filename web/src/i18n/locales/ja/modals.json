@@ -10,11 +10,7 @@
     "groupNamePlaceholder": "ディレクトリ名から自動入力",
     "pathPlaceholder": "/あなたの/プロジェクト/パス",
     "pathAutoCreateHint": "フォルダが存在しない場合は自動的に作成されます。",
-    "blueprintLabel": "ブループリントからグループを作成（任意）",
-    "loadingBlueprint": "ブループリントを読み込み中…",
-    "blueprintHint": "Actor、設定、自動化ルール/スニペット、および CCCC_HOME 配下のグループガイダンス上書き（CCCC_PREAMBLE.md / CCCC_HELP.md）を適用します。",
     "creating": "作成…",
-    "createFromBlueprint": "ブループリントからグループを作成",
     "createGroup": "グループの作成"
   },
   "groupEdit": {

@@ -37,7 +37,6 @@ from .group_space import (
     SpaceProviderState,
     SpaceQueueSummary,
 )
-from .group_template import GroupTemplate, GroupTemplateActor, GroupTemplatePrompts, GroupTemplateSettings
 from .ipc import DaemonError, DaemonRequest, DaemonResponse
 from .message import Attachment, ChatMessageData, ChatReactionData, ChatStreamData, Reference
 from .notify import NotifyAckData, NotifyKind, NotifyPriority, SystemNotifyData
@@ -83,10 +82,6 @@ __all__ = [
     "DaemonResponse",
     "DEFAULT_ASYNC_COMPLETION_SIGNAL",
     "Event",
-    "GroupTemplate",
-    "GroupTemplateActor",
-    "GroupTemplatePrompts",
-    "GroupTemplateSettings",
     "SpaceBinding",
     "SpaceBindingStatus",
     "SpaceLane",

@@ -62,13 +62,16 @@ class _FakeCdpSession:
         self.handlers = {}
         self.send_calls = []
         self.detached = False
+        self.page_enabled = False
 
     def on(self, event: str, handler) -> None:
         self.handlers[str(event)] = handler
 
     def send(self, method: str, params=None):
         self.send_calls.append((str(method), dict(params or {})))
-        if method == "Page.startScreencast":
+        if method == "Page.enable":
+            self.page_enabled = True
+        if method == "Page.startScreencast" and self.page_enabled:
             handler = self.handlers.get("Page.screencastFrame")
             if handler is not None:
                 handler(
@@ -878,6 +881,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
 
         self.assertEqual(projected.capture_frame(), b"frame")
         self.assertEqual(page.screenshot_calls, [])
+        self.assertIn(("Page.enable", {}), cdp.send_calls)
         self.assertIn(
             (
                 "Page.startScreencast",
@@ -890,6 +894,21 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                 },
             ),
             cdp.send_calls,
+        )
+        self.assertLess(
+            cdp.send_calls.index(("Page.enable", {})),
+            cdp.send_calls.index(
+                (
+                    "Page.startScreencast",
+                    {
+                        "format": "jpeg",
+                        "quality": 70,
+                        "maxWidth": 1280,
+                        "maxHeight": 800,
+                        "everyNthFrame": 1,
+                    },
+                )
+            ),
         )
         self.assertIn(("Page.screencastFrameAck", {"sessionId": 1}), cdp.send_calls)
         projected.close()

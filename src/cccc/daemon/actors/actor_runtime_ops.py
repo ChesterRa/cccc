@@ -270,6 +270,19 @@ def start_actor_process(
                 write_headless_state(group.group_id, actor_id)
             except Exception:
                 pass
+            try:
+                from .web_model_browser_delivery import web_model_browser_delivery_enabled
+                from .web_model_browser_session import schedule_web_model_chatgpt_browser_session_warmup
+
+                if web_model_browser_delivery_enabled(group.group_id, actor):
+                    schedule_web_model_chatgpt_browser_session_warmup(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        reason="actor_start",
+                        retry_seconds=0.0,
+                    )
+            except Exception:
+                pass
         elif runtime == "codex" and effective_runner == "headless":
             codex_app_supervisor.start_actor(
                 group_id=group.group_id,

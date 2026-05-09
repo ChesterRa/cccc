@@ -167,6 +167,7 @@ Rules:
 ### 4.6 Streaming Upgrade: `presentation_browser_attach` (Optional)
 
 `presentation_browser_attach` upgrades the connection into a daemon-local **browser-surface control stream** for a slot-scoped Presentation browser session.
+The same stream envelope is reused by other projected browser attach operations, including provider-auth and Web Model browser surfaces.
 
 1) Client sends a normal request line with `op="presentation_browser_attach"`.
 2) Daemon sends a normal response line.
@@ -2988,65 +2989,6 @@ Args:
 
 Result: implementation-defined compaction report.
 
-### 8.13 Group Templates
-
-Templates use the portable schema in `src/cccc/contracts/v1/group_template.py`.
-
-#### `group_template_export`
-
-Args:
-```ts
-{ group_id: string }
-```
-
-Result:
-```ts
-{ template: string; filename: string } // YAML text
-```
-
-#### `group_template_preview`
-
-Args:
-```ts
-{ group_id: string; by?: string; template: string }
-```
-
-Result:
-```ts
-{ template: Record<string, unknown>; diff: Record<string, unknown> }
-```
-
-#### `group_template_import_replace`
-
-Destructive replace of actors/settings/group prompt overrides (does not delete ledger history).
-
-Args:
-```ts
-{ group_id: string; by?: string; confirm: string; template: string }
-```
-
-Rules:
-- `confirm` MUST equal `group_id` (prevents accidental destructive import).
-
-Result:
-```ts
-{ group_id: string; applied: true; removed: string[]; added: string[]; updated: string[]; settings_patch: Record<string, unknown>; prompt_paths: string[] }
-```
-
-#### `group_create_from_template`
-
-Create a new group attached to `path`, then apply a template (no confirmation).
-
-Args:
-```ts
-{ path: string; by?: string; title?: string; topic?: string; template: string }
-```
-
-Result:
-```ts
-{ group_id: string; applied: true }
-```
-
 ### 8.14 Presentation Browser Surface (Optional)
 
 #### `presentation_browser_attach`
@@ -3922,6 +3864,147 @@ Streaming mode:
 - At most one active controller MAY be attached at a time; a second attach attempt SHOULD fail with a busy-style error.
 - If no active projected auth browser exists, attach SHOULD fail with `browser_surface_not_found`.
 - If the underlying browser runtime is no longer active, attach SHOULD fail with `browser_surface_not_active`.
+
+### 8.19 ChatGPT Web Model Browser Surface (Optional)
+
+#### `web_model_browser_attach`
+
+Attach to the currently active daemon-owned ChatGPT Web Model browser surface over a dedicated bidirectional NDJSON stream.
+
+Args:
+```ts
+{
+  group_id?: string
+  actor_id?: string
+  by?: string
+}
+```
+
+Handshake result:
+```ts
+{ group_id: string; actor_id: string }
+```
+
+Streaming mode:
+- After a successful handshake, the connection upgrades into the browser-surface stream described in §4.6.
+- The daemon emits `state` items when runtime/session status changes and `frame` items for captured browser frames.
+- The client MAY send browser-control commands (`navigate`, `back`, `refresh`, `click`, `scroll`, `key`, `text`, `resize`, `close`, `disconnect`).
+- The daemon owns the browser runtime; Web clients are surface proxies and MUST NOT create a separate ChatGPT browser runtime for the same actor.
+- When `group_id` or `actor_id` is supplied, the actor MUST exist and use `runtime=web_model`.
+- If no active Web Model browser surface exists, attach SHOULD fail with `browser_surface_not_found`.
+- If the underlying browser runtime is no longer active, attach SHOULD fail with `browser_surface_not_active`.
+
+### 8.20 Copy Groups
+
+Copy Groups operations export/import durable CCCC group state as a zip package. Copy packages contain CCCC group state only; workspace repository files are not included.
+
+#### `group_copy_export`
+
+Export one group as a base64-encoded zip package.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  package_b64: string
+  filename: string
+  manifest: {
+    kind: "cccc.group_copy"
+    version: number
+    source_group_id: string
+    source_title?: string
+    exported_at: string
+    cccc_version?: string
+    source_platform?: string
+    export_mode: "group_state_only"
+    workspace_included: false
+    contains_secrets: false
+    content_digest?: string
+    content?: Record<string, unknown>
+  }
+}
+```
+
+Notes:
+- Export MUST exclude live runtime state, browser profiles, credentials, connector secrets, lock files, and rebuildable caches.
+- Export MUST scrub actor environment secrets from packaged `group.yaml`.
+- `contains_secrets: false` means CCCC-managed live credentials and auth sessions are excluded. The package can still contain user-provided sensitive content such as ledger history, memory, blobs, and attachments.
+
+#### `group_copy_preview_import`
+
+Validate a copy package and return an import preview without writing group state.
+
+Args:
+```ts
+{
+  package_b64: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  preview: {
+    manifest: Record<string, unknown>
+    source_group_id: string
+    source_title: string
+    actor_count: number
+    actors: Array<Record<string, unknown>>
+    source_workspace_root: string
+    workspace_root_exists: boolean
+    group_id_conflict: boolean
+    target_default_scope_conflict?: boolean
+    requires_reconnect?: Record<string, boolean>
+    workspace_included: false
+    contains_secrets: false
+    runtime_reset?: Record<string, unknown>
+  }
+}
+```
+
+Errors:
+- `invalid_group_copy` when the payload is not a valid supported CCCC group copy.
+- `contains_secrets: false` in the preview has the same meaning as export: system credentials are excluded, but user content in ledger history, memory, blobs, and attachments can still be sensitive.
+
+#### `group_copy_import`
+
+Import a group copy into the current `CCCC_HOME`.
+
+Args:
+```ts
+{
+  package_b64: string
+  workspace_root?: string
+  title?: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  source_group_id: string
+  group_id_conflict: boolean
+  workspace_root: string
+  active_scope_key: string
+}
+```
+
+Notes:
+- Import MUST stage and validate copy package contents before moving them into `groups/<group_id>`.
+- If the source `group_id` conflicts in the target home, import MUST allocate a new group id.
+- Imported groups MUST start stopped: `running=false`, `state="idle"`.
+- `workspace_root`, when supplied, remaps the active workspace root during import.
+- Import MUST reject unsupported copy package schema versions, workspace-including copy packages, secret-containing copy packages, path traversal, symlinks, duplicate entries, and unsafe package paths.
 
 ## 9. Appendix: Example Lines
 

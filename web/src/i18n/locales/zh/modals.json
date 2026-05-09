@@ -10,11 +10,7 @@
     "groupNamePlaceholder": "根据目录名自动填充",
     "pathPlaceholder": "/项目/路径",
     "pathAutoCreateHint": "如果文件夹还不存在，将自动创建。",
-    "blueprintLabel": "从蓝图创建工作组（可选）",
-    "loadingBlueprint": "加载蓝图中…",
-    "blueprintHint": "应用 actor、设置、自动化规则/模板，以及 CCCC_HOME 下的工作组引导覆盖（CCCC_PREAMBLE.md / CCCC_HELP.md）。",
     "creating": "创建中…",
-    "createFromBlueprint": "从蓝图创建工作组",
     "createGroup": "创建工作组"
   },
   "groupEdit": {

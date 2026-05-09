@@ -226,7 +226,7 @@ CCCC supports per-actor private environment variables for runtime customization 
 
 - Stored in runtime state under `CCCC_HOME/state/secrets/actors/`
 - Not written into the group ledger
-- Not included in group templates/blueprints
+- Not included in Copy Groups packages
 - Visible as key metadata only (values are never returned by read APIs)
 
 CLI surface:
@@ -237,14 +237,15 @@ cccc actor secrets <actor_id> --unset KEY
 cccc actor secrets <actor_id> --keys
 ```
 
-## Blueprint / Group Template
+## Copy Groups
 
-CCCC Web supports blueprint export/import for portable group setup.
+CCCC Web supports Copy Groups export/import for durable group copy, migration, and backup.
 
-- Export captures actors, actor startup autoload baselines, group settings/feature toggles, automation rules/snippets, and guidance overrides.
-- Import uses replace semantics (applies the incoming configuration as the new group setup).
-- Ledger history is preserved (import does not rewrite historical events).
-- Environment secrets are intentionally excluded.
+- Export creates a zip package with durable CCCC group state: ledger history, actors, context, blobs, memory, assistants, automation, and settings.
+- Workspace repository/project files are not included. Users provide or remap the workspace root during import.
+- System credentials, browser profiles, provider auth, live runtime state, locks, and rebuildable caches are excluded. Copy packages still contain user content such as ledger history, memory, and attachments, so they should be handled as sensitive data.
+- Imported groups start idle with actors stopped. If the packaged group id already exists, import creates a new copy and does not steal the existing workspace default mapping.
+- Copy Groups replaces the former group-template Web path; durable group features should be carried by Copy Groups unless explicitly blacklisted as unsafe or runtime-only.
 
 ### MCP Management Surface
 

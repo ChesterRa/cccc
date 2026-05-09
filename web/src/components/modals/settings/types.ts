@@ -10,7 +10,7 @@ export type GroupTabId =
   | "messaging"
   | "im"
   | "transcript"
-  | "blueprint";
+  | "copyGroups";
 export type GlobalTabId =
   | "capabilities"
   | "actorProfiles"
