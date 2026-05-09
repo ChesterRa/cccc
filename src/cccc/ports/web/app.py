@@ -14,7 +14,7 @@ from typing import Any, Dict, Literal, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
@@ -386,6 +386,10 @@ def create_app() -> FastAPI:
             except Exception:
                 dist_dir = None
     if dist_dir is not None:
+        @app.get("/ui/capabilities", include_in_schema=False)
+        async def _capability_center_page() -> FileResponse:
+            return FileResponse(str(dist_dir / "index.html"))
+
         app.router.routes.append(
             HttpOnlyMount("/ui", app=StaticFiles(directory=str(dist_dir), html=True), name="ui")
         )

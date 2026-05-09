@@ -29,15 +29,17 @@ import {
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
+  mergeVisibleChatMessages,
+  sortChatMessages,
+  shouldRestoreDetachedScrollSnapshot,
+} from "../../src/hooks/useChatTab";
+import {
   formatSendMessageError,
   getGroupSendBlockedMessage,
   getGroupSendBlockedReason,
   isFormalChatMessageEvent,
-  mergeVisibleChatMessages,
-  sortChatMessages,
-  shouldRestoreDetachedScrollSnapshot,
   supportsChatStreamingPlaceholder,
-} from "../../src/hooks/useChatTab";
+} from "../../src/utils/chatSend";
 import type { LedgerEvent } from "../../src/types";
 
 void localStorageMock;

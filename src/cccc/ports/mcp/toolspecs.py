@@ -706,12 +706,47 @@ MCP_TOOLS = [
         "inputSchema": _obj({**_COMMON_GROUP, **_COMMON_ACTOR}),
     },
     {
+        "name": "cccc_capability_install",
+        "description": (
+            "Install a target through the CCCC capability lifecycle: resolve the target to capability record(s), "
+            "import into the registry, enable for the selected actor by default, and return use-ready capability ids. "
+            "This is the preferred /install path; future use should go through cccc_capability_use/capability_state."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_BY,
+                "actor_id": {"type": "string"},
+                "target": {
+                    "type": "string",
+                    "description": "Capability id, GitHub repository URL, or owner/repo slug to install.",
+                },
+                "scope": {"type": "string", "enum": ["session", "actor", "group"], "default": "actor"},
+                "ttl_seconds": {"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400},
+                "reason": {"type": "string", "default": ""},
+            },
+            required=["target"],
+        ),
+    },
+    {
         "name": "cccc_capability_import",
         "description": (
             "Foreman/admin governance tool to import an agent-prepared normalized capability record (mcp_toolpack or skill). "
+            "Alternatively pass source_uri for a GitHub skill repository; repositories containing multiple skills/*/SKILL.md files "
+            "are expanded into one CCCC skill capability per SKILL.md and may be enabled together. "
             "Use source_id=agent_self_proposed and capability_id=skill:agent_self_proposed:<stable-slug> for low-risk autonomous capsule skill proposals. "
             "Self-proposed skills must include When to use, Avoid when, Procedure, Pitfalls, and Verification sections; reuse the same capability_id for updates instead of duplicating. "
-            "Use dry_run before unclear-risk records or immediate enablement; import results report import_action, active_after_import, and readiness_preview."
+            "record.source_id is optional; empty/unknown values are normalized to manual_import. "
+            "Use dry_run before unclear-risk records or immediate enablement; "
+            "reuse the same capability_id to update stale/incomplete/wrong self-proposed skills instead of duplicating; "
+            "import results report scope/import_action/record_changed/already_active/active_after_import; "
+            "import_action is the primary create/update/unchanged signal, while record_changed only compares an existing record; "
+            "already_active is the pre-import binding and active_after_import is the post-import runnable binding; "
+            "when active/readiness_preview.active, do not enable again; "
+            "verify full active capsule updates via capability_state.active_capsule_skills[].capsule_text; "
+            "use scope=session for a temporary trial, scope=actor for cross-session reusable self-proposed skills, "
+            "and scope=group only for shared team-wide behavior. "
+            "Dry runs return readiness_preview; external capability actionability follows external capability safety mode."
         ),
         "inputSchema": _obj(
             {
@@ -792,6 +827,13 @@ MCP_TOOLS = [
                     },
                     required=["capability_id", "kind"],
                 ),
+                "source_uri": {
+                    "type": "string",
+                    "description": (
+                        "Optional GitHub repository URL or owner/repo slug. If it contains multiple skills/*/SKILL.md files, "
+                        "each SKILL.md is imported as an independent skill capability."
+                    ),
+                },
                 "dry_run": {"type": "boolean", "default": False},
                 "probe": {"type": "boolean", "default": True},
                 "enable_after_import": {"type": "boolean", "default": False},
@@ -799,7 +841,7 @@ MCP_TOOLS = [
                 "ttl_seconds": {"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400},
                 "reason": {"type": "string", "default": ""},
             },
-            required=["record"],
+            required=[],
         ),
     },
     {

@@ -1,23 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
-import { BodyPortal } from "../../ui/BodyPortal";
-import { SelectCombobox } from "../../SelectCombobox";
+import { buildCapabilityCenterUrl } from "../../capabilities/capabilityCenterRoute";
+import { publishCapabilityChanged } from "../../../utils/capabilityEvents";
+import { SlashCommandVisibilityButton } from "./SlashCommandVisibilityButton";
+import { SkillAssignmentManagerModal } from "./SkillAssignmentManagerModal";
 import {
   Actor,
   CapabilityImportRecord,
-  CapabilityBlockEntry,
   CapabilityOverviewItem,
-  CapabilityReadinessPreview,
-  CapabilitySourceState,
   CapabilityUsageActorEntry,
   CapabilityUsageSummary,
   GroupMeta,
 } from "../../../types";
-import { useModalA11y } from "../../../hooks/useModalA11y";
 import {
-  inputClass,
-  primaryButtonClass,
+  canEditSkillRecord,
+  canManageSkillAssignments,
+  canManageSlashCommandVisibility,
+  isCapabilityHiddenFromSlashCommands,
+  nextSlashCommandHiddenCapabilities,
+} from "./capabilityManagementModel";
+import {
   secondaryButtonClass,
   settingsWorkspaceBodyClass,
   settingsWorkspaceHeaderClass,
@@ -33,53 +36,11 @@ interface CapabilitiesTabProps {
   surface?: "global" | "selfEvolving";
 }
 
-type SourceVisibility = "all" | "enabled" | "disabled";
-type RegistryKindFilter = "all" | "pack" | "mcp" | "skill";
-type RegistryPolicyFilter = "all" | "actionable" | "blocked" | "indexed";
-type ExternalCapabilitySafetyMode = "normal" | "conservative";
 type ManageQualificationStatus = "qualified" | "blocked";
 
-const SOURCE_PREVIEW_LIMIT = 8;
-const REGISTRY_PAGE_SIZE_OPTIONS = [20, 40, 80];
-const CAPABILITY_OVERVIEW_INITIAL_LIMIT = 40;
-const CAPABILITY_OVERVIEW_QUERY_DEBOUNCE_MS = 250;
+const SELF_PROPOSED_OVERVIEW_LIMIT = 200;
 const SELF_PROPOSED_SOURCE_ID = "agent_self_proposed";
 const SELF_PROPOSED_CAPSULE_TEXT_MAX = 2400;
-const SOURCE_PRIORITY: Record<string, number> = {
-  cccc_builtin: 0,
-  mcp_registry_official: 1,
-  anthropic_skills: 2,
-  github_skills_curated: 3,
-  agent_self_proposed: 4,
-  openclaw_skills_remote: 5,
-  clawskills_remote: 6,
-  clawhub_remote: 7,
-  skillsmp_remote: 8,
-  manual_import: 9,
-};
-// Do not include agent_self_proposed here: source-level mounting would make proposed MCP toolpacks actionable.
-const EXTERNAL_SOURCE_IDS = [
-  "manual_import",
-  "mcp_registry_official",
-  "anthropic_skills",
-  "github_skills_curated",
-  "skillsmp_remote",
-  "clawhub_remote",
-  "openclaw_skills_remote",
-  "clawskills_remote",
-] as const;
-
-function normalizeExternalCapabilitySafetyMode(value: unknown): ExternalCapabilitySafetyMode {
-  return String(value || "").trim().toLowerCase() === "conservative" ? "conservative" : "normal";
-}
-
-function normalizeReadinessPreview(value: unknown): CapabilityReadinessPreview | null {
-  return value && typeof value === "object" ? (value as CapabilityReadinessPreview) : null;
-}
-
-function firstRecommendationLine(value?: string[]) {
-  return Array.isArray(value) ? String(value[0] || "").trim() : "";
-}
 
 function selfProposedFallbackCapsule(row: CapabilityOverviewItem) {
   const name = String(row.name || row.capability_id || "Self-Proposed Skill").trim();
@@ -162,6 +123,28 @@ function deriveManagedAssignedActorIds(
   return actorIds.filter((actorId) => assigned.has(actorId));
 }
 
+function deriveManagedHiddenActorIds(
+  actors: Actor[],
+  capabilityId: string,
+  usage: CapabilityUsageSummary | null,
+) {
+  const capId = String(capabilityId || "").trim();
+  if (!capId) return [];
+  const hidden = new Set<string>();
+  const actorIds = actors.map((actor) => String(actor.id || "").trim()).filter(Boolean);
+  for (const actor of actors) {
+    const actorId = String(actor.id || "").trim();
+    if (actorId && normalizeCapabilityIdList(actor.capability_hidden).includes(capId)) {
+      hidden.add(actorId);
+    }
+  }
+  for (const row of usage?.actor_hidden || []) {
+    const actorId = String(row.actor_id || "").trim();
+    if (actorId) hidden.add(actorId);
+  }
+  return actorIds.filter((actorId) => hidden.has(actorId));
+}
+
 function formatCapabilityProvenanceTimestamp(value: unknown) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -178,23 +161,8 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [err, setErr] = useState("");
   const [manageErr, setManageErr] = useState("");
   const [manageNotice, setManageNotice] = useState("");
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [sourceQuery, setSourceQuery] = useState("");
-  const [sourceVisibility, setSourceVisibility] = useState<SourceVisibility>("all");
-  const [showAllSources, setShowAllSources] = useState(false);
-  const [registryKind, setRegistryKind] = useState<RegistryKindFilter>("all");
-  const [registryPolicy, setRegistryPolicy] = useState<RegistryPolicyFilter>("all");
-  const [registrySource, setRegistrySource] = useState("all");
-  const [registryPageSize, setRegistryPageSize] = useState(40);
   const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
-  const [registryTotalCount, setRegistryTotalCount] = useState(0);
-  const [registryHasMore, setRegistryHasMore] = useState(false);
   const [groups, setGroups] = useState<GroupMeta[]>([]);
-  const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
-  const [blocked, setBlocked] = useState<CapabilityBlockEntry[]>([]);
-  const [allowlistSources, setAllowlistSources] = useState<Array<{ source_id: string; enabled: boolean; rationale?: string }>>([]);
-  const [externalSafetyMode, setExternalSafetyMode] = useState<ExternalCapabilitySafetyMode>("normal");
   const [manageCapabilityId, setManageCapabilityId] = useState("");
   const [manageName, setManageName] = useState("");
   const [manageDescription, setManageDescription] = useState("");
@@ -203,195 +171,81 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [manageQualificationReason, setManageQualificationReason] = useState("");
   const [manageActors, setManageActors] = useState<Actor[]>([]);
   const [manageAssignedActorIds, setManageAssignedActorIds] = useState<string[]>([]);
+  const [manageHiddenActorIds, setManageHiddenActorIds] = useState<string[]>([]);
+  const [slashHiddenCapabilityIds, setSlashHiddenCapabilityIds] = useState<string[]>([]);
   const [manageUsage, setManageUsage] = useState<CapabilityUsageSummary | null>(null);
   const [manageUsageLoading, setManageUsageLoading] = useState(false);
   const overviewRequestSeqRef = useRef(0);
-  const overviewItemCountRef = useRef(0);
-  const registryListRef = useRef<HTMLDivElement | null>(null);
-  const registryLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const failedLoadTextRef = useRef("");
+
+  failedLoadTextRef.current = t("capabilities.failedLoad");
 
   const closeSelfProposedManager = useCallback(() => {
     setManageCapabilityId("");
     setManageAssignedActorIds([]);
+    setManageHiddenActorIds([]);
     setManageUsage(null);
     setManageUsageLoading(false);
     setManageErr("");
     setManageNotice("");
   }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setDebouncedQuery(String(query || "").trim());
-    }, CAPABILITY_OVERVIEW_QUERY_DEBOUNCE_MS);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [query]);
-
-  const load = useCallback(async (opts?: { append?: boolean }) => {
+  const load = useCallback(async () => {
     if (!isActive) return;
-    const append = opts?.append === true;
     const requestSeq = overviewRequestSeqRef.current + 1;
     overviewRequestSeqRef.current = requestSeq;
     setLoading(true);
     setErr("");
     try {
-      const overviewQuery = String(debouncedQuery || "").trim();
-      const nextOffset = append ? overviewItemCountRef.current : 0;
-      const [overviewResp, allowlistResp, groupsResp] = await Promise.all([
+      const [overviewResp, groupsResp, stateResp] = await Promise.all([
         api.fetchCapabilityOverview({
           includeIndexed: true,
-          limit: registryPageSize || CAPABILITY_OVERVIEW_INITIAL_LIMIT,
-          offset: nextOffset,
-          query: overviewQuery || undefined,
-          kind: registryKind,
-          policy: registryPolicy,
-          sourceId: registrySource,
+          limit: SELF_PROPOSED_OVERVIEW_LIMIT,
+          offset: 0,
+          kind: "skill",
+          policy: "all",
+          sourceId: SELF_PROPOSED_SOURCE_ID,
         }),
-        append || selfEvolvingSurface ? Promise.resolve(null) : api.fetchCapabilityAllowlist(),
-        append || selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
+        selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
+        selfEvolvingSurface || !String(groupId || "").trim()
+          ? Promise.resolve(null)
+          : api.fetchGroupCapabilityState(String(groupId || "").trim(), "user", { noCache: true }),
       ]);
       if (overviewRequestSeqRef.current != requestSeq) return;
       if (!overviewResp.ok) {
-        setErr(overviewResp.error?.message || t("capabilities.failedLoad"));
+        setErr(overviewResp.error?.message || failedLoadTextRef.current);
         setItems([]);
-        overviewItemCountRef.current = 0;
-        setRegistryTotalCount(0);
-        setRegistryHasMore(false);
         setGroups([]);
-        setSources({});
-        setBlocked([]);
       } else {
         const nextItems = Array.isArray(overviewResp.result?.items) ? overviewResp.result.items : [];
-        setItems((current) => {
-          const merged = append ? [...current, ...nextItems] : nextItems;
-          overviewItemCountRef.current = merged.length;
-          return merged;
-        });
-        setRegistryTotalCount(Math.max(0, Number(overviewResp.result?.total_count || 0)));
-        setRegistryHasMore(Boolean(overviewResp.result?.has_more));
-        if (!append) {
-          setSources(
-            overviewResp.result?.sources && typeof overviewResp.result.sources === "object"
-              ? overviewResp.result.sources
-              : {}
-          );
-          setBlocked(
-            Array.isArray(overviewResp.result?.blocked_capabilities)
-              ? overviewResp.result.blocked_capabilities
-              : []
-          );
-        }
+        setItems(nextItems);
       }
-      if (!append && groupsResp?.ok) {
+      if (groupsResp?.ok) {
         setGroups(Array.isArray(groupsResp.result?.groups) ? groupsResp.result.groups : []);
-      } else if (!append && !selfEvolvingSurface) {
+      } else if (!selfEvolvingSurface) {
         setGroups([]);
       }
-      if (!append && allowlistResp?.ok) {
-        const effective = allowlistResp.result?.effective && typeof allowlistResp.result.effective === "object"
-          ? allowlistResp.result.effective
-          : {};
-        const effectiveSources = Array.isArray((effective as { sources?: unknown[] }).sources)
-          ? (effective as { sources: unknown[] }).sources
-          : [];
-        const nextSources = effectiveSources
-          .filter((row) => row && typeof row === "object")
-          .map((row) => {
-            const obj = row as Record<string, unknown>;
-            return {
-              source_id: String(obj.source_id || "").trim(),
-              enabled: Boolean(obj.enabled),
-              rationale: String(obj.rationale || ""),
-            };
-          })
-          .filter((row) => row.source_id.length > 0);
-        setAllowlistSources(nextSources);
-        setExternalSafetyMode(
-          normalizeExternalCapabilitySafetyMode(allowlistResp.result?.external_capability_safety_mode)
-        );
+      if (stateResp?.ok) {
+        setSlashHiddenCapabilityIds(normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities));
+      } else if (!selfEvolvingSurface) {
+        setSlashHiddenCapabilityIds([]);
       }
     } catch (e) {
       if (overviewRequestSeqRef.current != requestSeq) return;
-      setErr(e instanceof Error ? e.message : t("capabilities.failedLoad"));
-      if (!append) {
-        setItems([]);
-        overviewItemCountRef.current = 0;
-        setRegistryTotalCount(0);
-        setRegistryHasMore(false);
-        setGroups([]);
-        setSources({});
-        setBlocked([]);
-      }
+      setErr(e instanceof Error ? e.message : failedLoadTextRef.current);
+      setItems([]);
+      setGroups([]);
     } finally {
       if (overviewRequestSeqRef.current === requestSeq) {
         setLoading(false);
       }
     }
-  }, [debouncedQuery, isActive, registryKind, registryPageSize, registryPolicy, registrySource, selfEvolvingSurface, t]);
+  }, [groupId, isActive, selfEvolvingSurface]);
 
   useEffect(() => {
     if (!isActive) return;
     void load();
   }, [isActive, load]);
-
-  useEffect(() => {
-    const root = registryListRef.current;
-    const target = registryLoadMoreRef.current;
-    if (!root || !target || typeof IntersectionObserver === "undefined") return;
-    if (!isActive || selfEvolvingSurface || !registryHasMore || loading) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (!entry?.isIntersecting) return;
-        void load({ append: true });
-      },
-      {
-        root,
-        rootMargin: "0px 0px 160px 0px",
-        threshold: 0,
-      },
-    );
-
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [isActive, load, loading, registryHasMore, selfEvolvingSurface]);
-
-  const sourceRationaleMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of allowlistSources) {
-      const sid = String(row.source_id || "").trim();
-      if (!sid) continue;
-      map.set(sid, String(row.rationale || "").trim());
-    }
-    return map;
-  }, [allowlistSources]);
-
-  const sourceRows = useMemo(() => {
-    return Object.values(sources || {}).sort((a, b) => {
-      const aEnabled = a.enabled ? 0 : 1;
-      const bEnabled = b.enabled ? 0 : 1;
-      if (aEnabled !== bEnabled) return aEnabled - bEnabled;
-      const aPriority = SOURCE_PRIORITY[String(a.source_id || "").trim()] ?? 99;
-      const bPriority = SOURCE_PRIORITY[String(b.source_id || "").trim()] ?? 99;
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      const aCount = Number(a.record_count || 0);
-      const bCount = Number(b.record_count || 0);
-      if (aCount !== bCount) return bCount - aCount;
-      return String(a.source_id || "").localeCompare(String(b.source_id || ""));
-    });
-  }, [sources]);
-
-  const sourceSummary = useMemo(() => {
-    const total = sourceRows.length;
-    const enabled = sourceRows.filter((row) => Boolean(row.enabled)).length;
-    return {
-      total,
-      enabled,
-      disabled: Math.max(0, total - enabled),
-    };
-  }, [sourceRows]);
 
   const selfProposedCandidates = useMemo(() => {
     const gid = String(groupId || "").trim();
@@ -401,6 +255,16 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       && (!selfEvolvingSurface || !gid || String(row.origin_group_id || "").trim() === gid)
     ));
   }, [groupId, items, selfEvolvingSurface]);
+
+  const manageableSkillCandidates = useMemo(() => {
+    const byId = new Map<string, CapabilityOverviewItem>();
+    for (const row of items) {
+      const capId = String(row.capability_id || "").trim();
+      if (!capId || !canManageSkillAssignments(row)) continue;
+      byId.set(capId, row);
+    }
+    return Array.from(byId.values());
+  }, [items]);
 
   const selfProposedGroupSections = useMemo(() => {
     const groupById = new Map<string, GroupMeta>();
@@ -433,11 +297,15 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
 
   const managingCandidate = useMemo(() => {
     if (!manageCapabilityId) return null;
-    return selfProposedCandidates.find((row) => String(row.capability_id || "").trim() === manageCapabilityId) || null;
-  }, [manageCapabilityId, selfProposedCandidates]);
+    return manageableSkillCandidates.find((row) => String(row.capability_id || "").trim() === manageCapabilityId) || null;
+  }, [manageCapabilityId, manageableSkillCandidates]);
+
+  const managingCandidateEditable = useMemo(() => {
+    return managingCandidate ? canEditSkillRecord(managingCandidate) : false;
+  }, [managingCandidate]);
 
   const manageDuplicateCandidates = useMemo(() => {
-    if (!managingCandidate) return [];
+    if (!managingCandidate || !managingCandidateEditable) return [];
     const targetName = String(managingCandidate.name || "").trim().toLowerCase();
     const targetSlug = capabilitySlugTail(managingCandidate);
     return selfProposedCandidates
@@ -448,9 +316,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         return Boolean((targetName && name === targetName) || (targetSlug && slug === targetSlug));
       })
       .slice(0, 3);
-  }, [manageCapabilityId, managingCandidate, selfProposedCandidates]);
-
-  const { modalRef: manageDialogRef } = useModalA11y(Boolean(managingCandidate), closeSelfProposedManager);
+  }, [manageCapabilityId, managingCandidate, managingCandidateEditable, selfProposedCandidates]);
 
   const manageUsageTtlLabel = useCallback((seconds?: number) => {
     const safeSeconds = Number.isFinite(Number(seconds)) ? Math.max(0, Math.trunc(Number(seconds))) : 0;
@@ -460,6 +326,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   }, [t]);
 
   const manageAssignedActorIdSet = useMemo(() => new Set(manageAssignedActorIds), [manageAssignedActorIds]);
+  const manageHiddenActorIdSet = useMemo(() => new Set(manageHiddenActorIds), [manageHiddenActorIds]);
 
   const manageProfileActorIdSet = useMemo(() => {
     return new Set((manageUsage?.profile_autoload || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
@@ -535,215 +402,51 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     return rows;
   }, [manageCapabilityId, manageQualificationReason, manageQualificationStatus, managingCandidate, t]);
 
-  const levelDistribution = useMemo(() => {
-    const counts: Record<string, number> = { indexed: 0, mounted: 0, pinned: 0 };
-    for (const row of sourceRows) {
-      const level = String(row.source_level || "indexed").toLowerCase();
-      if (level in counts) counts[level]++;
-      else counts.indexed++;
-    }
-    return counts;
-  }, [sourceRows]);
-
-  const filteredSources = useMemo(() => {
-    const q = String(sourceQuery || "").trim().toLowerCase();
-    return sourceRows.filter((row) => {
-      const enabled = Boolean(row.enabled);
-      if (sourceVisibility === "enabled" && !enabled) return false;
-      if (sourceVisibility === "disabled" && enabled) return false;
-      if (!q) return true;
-      const text = [
-        String(row.source_id || ""),
-        String(row.source_level || ""),
-        String(row.sync_state || ""),
-        String(sourceRationaleMap.get(String(row.source_id || "").trim()) || ""),
-        String(row.rationale || ""),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return text.includes(q);
-    });
-  }, [sourceRows, sourceQuery, sourceVisibility, sourceRationaleMap]);
-
-  const sourceRowsVisible = useMemo(() => {
-    if (showAllSources) return filteredSources;
-    return filteredSources.slice(0, SOURCE_PREVIEW_LIMIT);
-  }, [filteredSources, showAllSources]);
-
-  const registrySourceOptions = useMemo(() => {
-    const out = new Set<string>();
-    out.add(SELF_PROPOSED_SOURCE_ID);
-    for (const row of sourceRows) {
-      const sid = String(row.source_id || "").trim();
-      if (sid) out.add(sid);
-    }
-    return Array.from(out).sort((a, b) => {
-      const aPriority = SOURCE_PRIORITY[a] ?? 99;
-      const bPriority = SOURCE_PRIORITY[b] ?? 99;
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      return a.localeCompare(b);
-    });
-  }, [sourceRows]);
-
-  const readinessBadgeClass = (status: string) => {
-    if (status === "blocked") {
-      return "bg-rose-500/15 text-rose-600 dark:text-rose-400";
-    }
-    if (status === "enableable") {
-      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
-    }
-    return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
-  };
-
-  const renderReadinessPreview = (preview: CapabilityReadinessPreview | null) => {
-    if (!preview) return null;
-    const status = String(preview.preview_status || "").trim().toLowerCase() || "needs_inspect";
-    const nextStep = String(preview.next_step || "").trim();
-    const missingEnv = Array.isArray(preview.missing_env)
-      ? preview.missing_env.map((x) => String(x || "").trim()).filter(Boolean)
-      : [];
-    const blockedBySafetyMode =
-      String(preview.policy_source || "").trim() === "external_capability_safety_mode" &&
-      String(preview.policy_mode || "").trim() === "conservative";
-    const blockReason = String(preview.enable_block_reason || "").trim();
-    const statusLabel = t(`capabilities.readiness.status.${status}`, {
-      defaultValue: status.replace(/_/g, " "),
-    });
-    const nextLabel = nextStep
-      ? t(`capabilities.readiness.next.${nextStep}`, { defaultValue: nextStep.replace(/_/g, " ") })
-      : "";
-    const reasonLabel = blockedBySafetyMode
-      ? t("capabilities.readiness.blockedBySafetyMode")
-      : blockReason
-        ? t(`capabilities.readiness.reason.${blockReason}`, { defaultValue: blockReason.replace(/_/g, " ") })
-        : "";
-
-    return (
-      <div className="mt-2 rounded-md border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2 py-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`px-1.5 py-0.5 rounded text-[10px] ${readinessBadgeClass(status)}`}>{statusLabel}</span>
-          {reasonLabel ? (
-            <span className="text-[11px] text-[var(--color-text-secondary)]">{reasonLabel}</span>
-          ) : null}
-        </div>
-        {nextLabel ? (
-          <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">
-            {t("capabilities.readiness.nextLabel")}: {nextLabel}
-          </div>
-        ) : null}
-        {missingEnv.length ? (
-          <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">
-            {t("capabilities.readiness.missingEnv", { names: missingEnv.join(", ") })}
-          </div>
-        ) : null}
-      </div>
-    );
-  };
-
-  const registryRange = useMemo(() => {
-    if (!items.length) return { from: 0, to: 0 };
-    const from = 1;
-    const to = items.length;
-    return { from, to };
-  }, [items.length]);
-
-  const toggleSource = async (sourceId: string, nextEnabled: boolean) => {
-    const sid = String(sourceId || "").trim();
-    if (!sid) return;
-    setBusyKey(`source:${sid}`);
-    setErr("");
-    try {
-      const baseline = allowlistSources.length > 0
-        ? allowlistSources
-        : sourceRows.map((row) => ({
-            source_id: String(row.source_id || "").trim(),
-            enabled: Boolean(row.enabled),
-            rationale: "",
-          }));
-      const mergedById = new Map<string, { source_id: string; enabled: boolean; rationale?: string }>();
-      for (const row of baseline) {
-        const id = String(row.source_id || "").trim();
-        if (!id) continue;
-        mergedById.set(id, { source_id: id, enabled: Boolean(row.enabled), rationale: String(row.rationale || "") });
-      }
-      for (const row of sourceRows) {
-        const id = String(row.source_id || "").trim();
-        if (!id || mergedById.has(id)) continue;
-        mergedById.set(id, { source_id: id, enabled: Boolean(row.enabled), rationale: "" });
-      }
-      const current = Array.from(mergedById.values());
-      const idx = current.findIndex((row) => String(row.source_id || "").trim() === sid);
-      if (idx >= 0) current[idx] = { ...current[idx], enabled: nextEnabled };
-      else current.push({ source_id: sid, enabled: nextEnabled, rationale: "" });
-      const patchSources = current.map((row) => ({
-        source_id: String(row.source_id || "").trim(),
-        enabled: Boolean(row.enabled),
-        rationale: String(row.rationale || ""),
-      }));
-      const resp = await api.updateCapabilityAllowlist({ patch: { sources: patchSources } });
-      if (!resp.ok) {
-        setErr(resp.error?.message || t("capabilities.failedSourceToggle"));
-        return;
-      }
-      await load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : t("capabilities.failedSourceToggle"));
-    } finally {
-      setBusyKey("");
-    }
-  };
-
-  const updateExternalCapabilitySafetyMode = async (nextMode: ExternalCapabilitySafetyMode) => {
-    if (nextMode === externalSafetyMode) return;
-    setBusyKey("policy");
-    setErr("");
-    try {
-      const nextLevel = nextMode === "conservative" ? "indexed" : "mounted";
-      const sourceLevelPatch = Object.fromEntries(EXTERNAL_SOURCE_IDS.map((sourceId) => [sourceId, nextLevel]));
-      const resp = await api.updateCapabilityAllowlist({
-        patch: {
-          defaults: {
-            source_level: sourceLevelPatch,
-          },
-        },
-      });
-      if (!resp.ok) {
-        setErr(resp.error?.message || t("capabilities.failedSafetyMode"));
-        return;
-      }
-      setExternalSafetyMode(normalizeExternalCapabilitySafetyMode(resp.result?.external_capability_safety_mode));
-      await load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : t("capabilities.failedSafetyMode"));
-    } finally {
-      setBusyKey("");
-    }
-  };
-
-  const toggleBlock = async (row: CapabilityOverviewItem | CapabilityBlockEntry, nextBlocked: boolean) => {
-    const capabilityId = String(row.capability_id || "").trim();
-    if (!capabilityId) return;
-    if (!String(groupId || "").trim()) {
+  const toggleSlashCommandVisibility = async (row: CapabilityOverviewItem, nextVisible: boolean) => {
+    const gid = String(groupId || "").trim();
+    const capId = String(row.capability_id || "").trim();
+    if (!gid) {
       setErr(t("capabilities.requireGroup"));
       return;
     }
-    let reason = "";
-    if (nextBlocked) {
-      reason = String(window.prompt(t("capabilities.blockReasonPrompt"), (row as CapabilityOverviewItem).blocked_reason || (row as CapabilityBlockEntry).reason || "") || "").trim();
-    }
-    setBusyKey(`block:${capabilityId}`);
+    if (!capId || !canManageSkillAssignments(row)) return;
+    const nextHidden = nextSlashCommandHiddenCapabilities(slashHiddenCapabilityIds, capId, nextVisible);
+    setBusyKey(`slash-visible:${capId}`);
     setErr("");
+    setSlashHiddenCapabilityIds(nextHidden);
     try {
-      const resp = await api.blockCapabilityGlobal(capabilityId, nextBlocked, reason, String(groupId || "").trim());
+      const resp = await api.updateGroupCapabilityVisibility(gid, capId, {
+        actorId: "user",
+        hidden: !nextVisible,
+        reason: "web_capabilities_slash_visibility",
+      });
       if (!resp.ok) {
-        setErr(resp.error?.message || t("capabilities.failedBlock"));
+        setErr(resp.error?.message || t("capabilities.failedSlashVisibility"));
+        await refreshSlashHiddenState();
         return;
       }
-      await load();
+      const stateResp = await api.fetchGroupCapabilityState(gid, "user", { noCache: true });
+      if (stateResp.ok) {
+        setSlashHiddenCapabilityIds(normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities));
+      }
+      publishCapabilityChanged(gid);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("capabilities.failedBlock"));
+      setErr(e instanceof Error ? e.message : t("capabilities.failedSlashVisibility"));
+      await refreshSlashHiddenState();
     } finally {
       setBusyKey("");
+    }
+  };
+
+  const refreshSlashHiddenState = async () => {
+    const gid = String(groupId || "").trim();
+    if (!gid) {
+      setSlashHiddenCapabilityIds([]);
+      return;
+    }
+    const resp = await api.fetchGroupCapabilityState(gid, "user", { noCache: true });
+    if (resp.ok) {
+      setSlashHiddenCapabilityIds(normalizeCapabilityIdList(resp.result?.actor_hidden_capabilities));
     }
   };
 
@@ -753,6 +456,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     if (!gid) {
       setManageActors([]);
       setManageAssignedActorIds([]);
+      setManageHiddenActorIds([]);
       setManageUsage(null);
       setManageUsageLoading(false);
       return;
@@ -773,6 +477,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       setManageActors(actors);
       setManageUsage(usage);
       setManageAssignedActorIds(deriveManagedAssignedActorIds(actors, capId, usage));
+      setManageHiddenActorIds(deriveManagedHiddenActorIds(actors, capId, usage));
       if (!actorsResp.ok) {
         setManageErr(actorsResp.error?.message || t("capabilities.manageActorLoadFailed"));
       } else if (usageResp && !usageResp.ok) {
@@ -781,6 +486,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     } catch (e) {
       setManageActors([]);
       setManageAssignedActorIds([]);
+      setManageHiddenActorIds([]);
       setManageUsage(null);
       setManageErr(e instanceof Error ? e.message : t("capabilities.manageUsageLoadFailed"));
     } finally {
@@ -816,13 +522,15 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     }
   };
 
-  const openSelfProposedManager = (row: CapabilityOverviewItem) => {
+  const openSkillAssignmentManager = (row: CapabilityOverviewItem) => {
     const capId = String(row.capability_id || "").trim();
     if (!capId) return;
     setManageCapabilityId(capId);
     setManageName(String(row.name || capId));
     setManageDescription(String(row.description_short || ""));
-    setManageCapsuleText(String(row.capsule_text || "").trim() || selfProposedFallbackCapsule(row));
+    setManageCapsuleText(canEditSkillRecord(row)
+      ? String(row.capsule_text || "").trim() || selfProposedFallbackCapsule(row)
+      : "");
     setManageQualificationStatus(String(row.qualification_status || "").trim().toLowerCase() === "blocked" ? "blocked" : "qualified");
     const reasons = Array.isArray(row.qualification_reasons) ? row.qualification_reasons : [];
     setManageQualificationReason(String(row.blocked_reason || reasons[0] || ""));
@@ -922,6 +630,15 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     });
   };
 
+  const toggleManagedActorVisibility = (actorId: string) => {
+    const aid = String(actorId || "").trim();
+    if (!aid) return;
+    setManageHiddenActorIds((current) => {
+      if (current.includes(aid)) return current.filter((item) => item !== aid);
+      return [...current, aid];
+    });
+  };
+
   const saveManagedActorAssignments = async () => {
     const gid = String(groupId || "").trim();
     const capId = String(manageCapabilityId || "").trim();
@@ -941,6 +658,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       }
       const actors = Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
       const desired = new Set(manageAssignedActorIds.map((item) => String(item || "").trim()).filter(Boolean));
+      const hiddenDesired = new Set(manageHiddenActorIds.map((item) => String(item || "").trim()).filter(Boolean));
       const userSessionResp = await api.enableGroupCapability(gid, capId, {
         enabled: false,
         scope: "session",
@@ -955,8 +673,14 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         const aid = String(actor.id || "").trim();
         if (!aid) continue;
         const currentAutoload = normalizeCapabilityIdList(actor.capability_autoload);
+        const currentHidden = normalizeCapabilityIdList(actor.capability_hidden);
         const hasAutoload = currentAutoload.includes(capId);
+        const hasHidden = currentHidden.includes(capId);
         const shouldAutoload = desired.has(aid);
+        const shouldHide = hiddenDesired.has(aid);
+        const nextHidden = shouldHide
+          ? (hasHidden ? currentHidden : [...currentHidden, capId])
+          : currentHidden.filter((item) => item !== capId);
         if (shouldAutoload) {
           const actorResp = await api.enableGroupCapability(gid, capId, {
             enabled: true,
@@ -980,6 +704,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           if (!hasAutoload) {
             const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
               capabilityAutoload: [...currentAutoload, capId],
+              capabilityHidden: nextHidden,
             });
             if (!resp.ok) {
               await api.enableGroupCapability(gid, capId, {
@@ -991,11 +716,28 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
+          } else if (hasHidden !== shouldHide) {
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
+              capabilityHidden: nextHidden,
+            });
+            if (!resp.ok) {
+              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              return;
+            }
           }
         } else {
           if (hasAutoload) {
             const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
               capabilityAutoload: currentAutoload.filter((item) => item !== capId),
+              capabilityHidden: nextHidden,
+            });
+            if (!resp.ok) {
+              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              return;
+            }
+          } else if (hasHidden !== shouldHide) {
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
+              capabilityHidden: nextHidden,
             });
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
@@ -1076,6 +818,24 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     }
   };
 
+  const renderSlashVisibilityControl = (row: CapabilityOverviewItem) => {
+    if (!canManageSlashCommandVisibility(row)) return null;
+    const capId = String(row.capability_id || "").trim();
+    if (!capId) return null;
+    const hidden = isCapabilityHiddenFromSlashCommands(capId, slashHiddenCapabilityIds);
+    return (
+      <SlashCommandVisibilityButton
+        hidden={hidden}
+        busy={busyKey === `slash-visible:${capId}`}
+        visibleLabel={t("capabilities.slashCommandVisible")}
+        hiddenLabel={t("capabilities.slashCommandHidden")}
+        showActionLabel={t("capabilities.showInSlashCommands")}
+        hideActionLabel={t("capabilities.hideFromSlashCommands")}
+        onToggle={(nextVisible) => void toggleSlashCommandVisibility(row, nextVisible)}
+      />
+    );
+  };
+
   return (
     <div className="space-y-5">
       {!selfEvolvingSurface ? (
@@ -1085,14 +845,25 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.title")}</div>
               <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.subtitle")}</div>
             </div>
-            <button
-              type="button"
-              className={secondaryButtonClass("sm")}
-              onClick={() => void load()}
-              disabled={loading}
-            >
-              {loading ? t("common:loading") : t("capabilities.refresh")}
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                className={secondaryButtonClass("sm")}
+                onClick={() => {
+                  window.open(buildCapabilityCenterUrl(groupId), "_blank", "noopener,noreferrer");
+                }}
+              >
+                {t("capabilities.openCenter")}
+              </button>
+              <button
+                type="button"
+                className={secondaryButtonClass("sm")}
+                onClick={() => void load()}
+                disabled={loading}
+              >
+                {loading ? t("common:loading") : t("capabilities.refresh")}
+              </button>
+            </div>
           </div>
           <div className={settingsWorkspaceBodyClass}>
             <div className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageGuide")}</div>
@@ -1164,11 +935,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                   {String(row.description_short || "").trim() ? (
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
                   ) : null}
-                  <div className="mt-3">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {renderSlashVisibilityControl(row)}
                     <button
                       type="button"
                       className={secondaryButtonClass("sm")}
-                      onClick={() => openSelfProposedManager(row)}
+                      onClick={() => openSkillAssignmentManager(row)}
                     >
                       {t("capabilities.selfProposedManage")}
                     </button>
@@ -1213,11 +985,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                         {String(row.description_short || "").trim() ? (
                           <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
                         ) : null}
-                        <div className="mt-3">
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {renderSlashVisibilityControl(row)}
                           <button
                             type="button"
                             className={secondaryButtonClass("sm")}
-                            onClick={() => openSelfProposedManager(row)}
+                            onClick={() => openSkillAssignmentManager(row)}
                           >
                             {t("capabilities.selfProposedManage")}
                           </button>
@@ -1238,610 +1011,97 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         </div>
       </section>
 
-      {!selfEvolvingSurface ? (
-      <section className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.safetyModeTitle")}</div>
-            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.safetyModeHint")}</div>
-          </div>
-          <div className="text-[11px] text-[var(--color-text-tertiary)]">
-            {t("capabilities.safetyModeCurrent", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
-          </div>
-        </div>
-        <div className={settingsWorkspaceBodyClass}>
-        <div className="grid gap-2 md:grid-cols-2">
-          {(["normal", "conservative"] as ExternalCapabilitySafetyMode[]).map((mode) => {
-            const selected = externalSafetyMode === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                className={`rounded-lg border px-3 py-3 text-left ${selected
-                  ? "border-emerald-500/30 bg-emerald-500/15"
-                  : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]"} ${busyKey === "policy" ? "opacity-60 cursor-not-allowed" : ""}`}
-                disabled={busyKey === "policy" || selected}
-                onClick={() => void updateExternalCapabilitySafetyMode(mode)}
-              >
-                <div className="text-sm font-medium text-[var(--color-text-primary)]">{t(`capabilities.safetyMode.${mode}.label`)}</div>
-                <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">{t(`capabilities.safetyMode.${mode}.hint`)}</div>
-              </button>
-            );
-          })}
-        </div>
-        <div className="text-[11px] mt-2 text-[var(--color-text-muted)]">
-          {t("capabilities.safetyModeCurrentRule", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
-        </div>
-        </div>
-      </section>
-      ) : null}
-
-      {!selfEvolvingSurface ? (
-      <section className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.sourcesTitle")}</div>
-            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.sourcesHint")}</div>
-          </div>
-        </div>
-        <div className={settingsWorkspaceBodyClass}>
-        <div className="text-[11px] text-[var(--color-text-muted)]">
-          {t("capabilities.sourcesSummary", sourceSummary)}
-        </div>
-        <div className="text-[11px] text-[var(--color-text-muted)]">
-          {t("capabilities.levelDistribution", levelDistribution)}
-        </div>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-          <input
-            value={sourceQuery}
-            onChange={(e) => setSourceQuery(e.target.value)}
-            placeholder={t("capabilities.sourceSearchPlaceholder")}
-            className={inputClass()}
-          />
-          <div className="inline-flex rounded-lg border border-[var(--glass-border-subtle)] overflow-hidden">
-            <button type="button" onClick={() => setSourceVisibility("all")} className={`px-2.5 py-2 text-xs min-h-[40px] ${sourceVisibility === "all" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityAll")}</button>
-            <button type="button" onClick={() => setSourceVisibility("enabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l border-[var(--glass-border-subtle)] ${sourceVisibility === "enabled" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityEnabled")}</button>
-            <button type="button" onClick={() => setSourceVisibility("disabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l border-[var(--glass-border-subtle)] ${sourceVisibility === "disabled" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityDisabled")}</button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          {sourceRowsVisible.map((row) => {
-            const sid = String(row.source_id || "");
-            const enabled = Boolean(row.enabled);
-            const rationale = String(sourceRationaleMap.get(sid) || row.rationale || "");
-            const syncState = String(row.sync_state || "never");
-            const count = Number(row.record_count || 0);
-            return (
-              <div key={sid} className={settingsWorkspacePanelClass(_isDark)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{sid}</div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${enabled ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"}`}>{enabled ? t("capabilities.sourceEnabled") : t("capabilities.sourceDisabled")}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{t("capabilities.sourceMeta", { level: String(row.source_level || "indexed"), sync: syncState, count })}</span>
-                    </div>
-                    {rationale ? <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">{t("capabilities.sourceRationale", { text: rationale })}</div> : null}
-                  </div>
-                  <button
-                    type="button"
-                    className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${enabled ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"} ${busyKey === `source:${sid}` ? "opacity-60 cursor-not-allowed" : ""}`}
-                    disabled={busyKey === `source:${sid}`}
-                    onClick={() => void toggleSource(sid, !enabled)}
-                  >
-                    {enabled ? t("capabilities.sourceDisableAction") : t("capabilities.sourceEnableAction")}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          {filteredSources.length > SOURCE_PREVIEW_LIMIT ? (
-            <button type="button" className="text-xs text-emerald-600 dark:text-emerald-400" onClick={() => setShowAllSources((v) => !v)}>
-              {showAllSources ? t("capabilities.showLessSources") : t("capabilities.showMoreSources", { count: filteredSources.length - SOURCE_PREVIEW_LIMIT })}
-            </button>
-          ) : null}
-        </div>
-        </div>
-      </section>
-      ) : null}
-
-      {!selfEvolvingSurface ? (
-      <section className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.libraryTitle")}</div>
-            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.libraryHint")}</div>
-          </div>
-        </div>
-        <div className={settingsWorkspaceBodyClass}>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t("capabilities.searchPlaceholder")}
-          className={inputClass()}
-        />
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-          <SelectCombobox
-            items={[
-              { value: "all", label: t("capabilities.filterKindAll") },
-              { value: "pack", label: t("capabilities.filterKindPack") },
-              { value: "mcp", label: t("capabilities.filterKindMcp") },
-              { value: "skill", label: t("capabilities.filterKindSkill") },
-            ]}
-            value={registryKind}
-            onChange={(value) => setRegistryKind(value as RegistryKindFilter)}
-            ariaLabel={t("capabilities.filterKindAll")}
-            className={inputClass()}
-          />
-          <SelectCombobox
-            items={[
-              { value: "all", label: t("capabilities.filterPolicyAll") },
-              { value: "actionable", label: t("capabilities.filterPolicyActionable") },
-              { value: "blocked", label: t("capabilities.filterPolicyBlocked") },
-              { value: "indexed", label: t("capabilities.filterPolicyIndexed") },
-            ]}
-            value={registryPolicy}
-            onChange={(value) => setRegistryPolicy(value as RegistryPolicyFilter)}
-            ariaLabel={t("capabilities.filterPolicyAll")}
-            className={inputClass()}
-          />
-          <SelectCombobox
-            items={[
-              { value: "all", label: t("capabilities.filterSourceAll") },
-              ...registrySourceOptions.map((sid) => ({ value: sid, label: sid })),
-            ]}
-            value={registrySource}
-            onChange={setRegistrySource}
-            ariaLabel={t("capabilities.filterSourceAll")}
-            className={inputClass()}
-            searchable
-          />
-          <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
-            <label className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageSize")}</label>
-            <SelectCombobox
-              items={REGISTRY_PAGE_SIZE_OPTIONS.map((size) => ({ value: String(size), label: String(size) }))}
-              value={String(registryPageSize)}
-              onChange={(value) => setRegistryPageSize(Number(value) || 40)}
-              ariaLabel={t("capabilities.pageSize")}
-              className={inputClass()}
-            />
-          </div>
-        </div>
-        <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-          {t("capabilities.resultsSummary", { count: registryTotalCount })} · {t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })}
-        </div>
-        <div ref={registryListRef} className="max-h-[420px] overflow-auto space-y-2">
-          {items.map((row) => {
-            const capId = String(row.capability_id || "");
-            const blockedNow = Boolean(row.blocked_global);
-            const isSelfProposed = (
-              String(row.source_id || "").trim() === SELF_PROPOSED_SOURCE_ID
-              && String(row.kind || "").trim().toLowerCase() === "skill"
-            );
-            const readinessPreview = normalizeReadinessPreview(row.readiness_preview);
-            const recommendationMeta = [
-              { label: t("capabilities.useWhen"), value: firstRecommendationLine(row.use_when) },
-              { label: t("capabilities.verifyWith"), value: String(row.evidence_kind || "").trim() },
-              { label: t("capabilities.gotcha"), value: firstRecommendationLine(row.gotchas) },
-              { label: t("capabilities.avoidWhen"), value: firstRecommendationLine(row.avoid_when) },
-            ].filter((entry) => entry.value);
-            return (
-              <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{String(row.name || capId)}</div>
-                    <div className="text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
-                    {String(row.description_short || "").trim() ? (
-                      <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">{String(row.description_short || "")}</div>
-                    ) : null}
-                    {recommendationMeta.length ? (
-                      <div className="mt-1.5 space-y-0.5">
-                        {recommendationMeta.map((entry) => (
-                          <div key={`${capId}:${entry.label}`} className="text-[10px] leading-4 text-[var(--color-text-muted)]">
-                            <span className="font-medium text-[var(--color-text-tertiary)]">{entry.label}: </span>
-                            <span>{entry.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {row.kind ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{row.kind}</span> : null}
-                      {row.source_id ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{row.source_id}</span> : null}
-                      {row.policy_level ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{row.policy_level}</span> : null}
-                      {row.recent_success?.success_count ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">{t("capabilities.recentCount", { count: Number(row.recent_success?.success_count || 0) })}</span> : null}
-                      {blockedNow ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/15 text-rose-600 dark:text-rose-400">{t("capabilities.blocked")}</span> : null}
-                    </div>
-                    {renderReadinessPreview(readinessPreview)}
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {isSelfProposed ? (
-                      <button
-                        type="button"
-                        className={secondaryButtonClass("sm")}
-                        onClick={() => openSelfProposedManager(row)}
-                      >
-                        {t("capabilities.selfProposedManage")}
-                      </button>
-                    ) : null}
-                    {!isSelfProposed ? (
-                      <button
-                        type="button"
-                        className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${blockedNow ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30" : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"} ${busyKey === `block:${capId}` ? "opacity-60 cursor-not-allowed" : ""}`}
-                        disabled={busyKey === `block:${capId}`}
-                        onClick={() => void toggleBlock(row, !blockedNow)}
-                      >
-                        {blockedNow ? t("capabilities.unblock") : t("capabilities.block")}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {items.length === 0 ? <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noLibraryMatches")}</div> : null}
-          {registryHasMore ? <div ref={registryLoadMoreRef} className="h-1 w-full" aria-hidden="true" /> : null}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <div className="text-xs text-[var(--color-text-tertiary)]">
-            {loading
-              ? t("capabilities.loading")
-              : registryHasMore
-                ? t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })
-                : t("capabilities.resultsSummary", { count: registryTotalCount })}
-          </div>
-          {registryHasMore ? (
-            <button
-              type="button"
-              className={secondaryButtonClass("sm")}
-              disabled={loading}
-              onClick={() => void load({ append: true })}
-            >
-              {t("capabilities.pageNext")}
-            </button>
-          ) : null}
-        </div>
-        </div>
-      </section>
-      ) : null}
-
-      {!selfEvolvingSurface ? (
-      <section className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.blockedListTitle")}</div>
-            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.blockedListHint")}</div>
-          </div>
-        </div>
-        <div className={settingsWorkspaceBodyClass}>
-        <div className="space-y-2">
-          {blocked.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noBlocked")}</div>
-          ) : (
-            blocked.map((row) => {
-              const capId = String(row.capability_id || "");
-              return (
-                <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
-                  <div className="flex items-center justify-between gap-2">
-                    <code className="text-xs">{capId}</code>
-                    <button
-                      type="button"
-                      className="px-2.5 py-1 rounded text-xs min-h-[30px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
-                      disabled={busyKey === `block:${capId}`}
-                      onClick={() => void toggleBlock(row, false)}
-                    >
-                      {t("capabilities.unblock")}
-                    </button>
-                  </div>
-                  {String(row.reason || "").trim() ? <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">{String(row.reason || "")}</div> : null}
-                </div>
-              );
-            })
-          )}
-        </div>
-        </div>
-      </section>
-      ) : null}
-
       {managingCandidate ? (
-        <BodyPortal>
-        <div
-          key={manageCapabilityId}
-          ref={manageDialogRef}
-          className="fixed inset-0 z-[1000] flex items-end justify-center bg-black/35 px-3 py-4 sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="self-proposed-skill-manager-title"
-          onPointerDown={closeSelfProposedManager}
-        >
-          <div
-            className="w-full max-w-4xl max-h-[88vh] overflow-hidden rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] shadow-2xl"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3">
-              <div className="min-w-0">
-                <div id="self-proposed-skill-manager-title" className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {t("capabilities.manageTitle")}
-                </div>
-                <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageSubtitle")}</div>
-              </div>
-              <button
-                type="button"
-                className={secondaryButtonClass("sm")}
-                onClick={closeSelfProposedManager}
-              >
-                {t("capabilities.manageClose")}
-              </button>
-            </div>
-
-            <div className="max-h-[calc(88vh-62px)] overflow-auto px-4 py-4">
-              <div className="flex flex-wrap gap-1.5">
-                <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)]">
-                  {manageCapabilityId}
-                </span>
-                <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
-                  {SELF_PROPOSED_SOURCE_ID}
-                </span>
-                {manageQualificationStatus === "blocked" ? (
-                  <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
-                    {t("capabilities.manageStatusBlocked")}
-                  </span>
-                ) : null}
-              </div>
-
-              {!String(groupId || "").trim() ? (
-                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                  {t("capabilities.manageNoGroupHint")}
-                </div>
-              ) : null}
-
-              {manageErr ? (
-                <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-                  {manageErr}
-                </div>
-              ) : null}
-              {manageNotice ? (
-                <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300" role="status">
-                  {manageNotice}
-                </div>
-              ) : null}
-
-              {manageDuplicateCandidates.length ? (
-                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                  <div className="text-xs font-medium text-amber-800 dark:text-amber-200">{t("capabilities.manageDuplicateTitle")}</div>
-                  <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{t("capabilities.manageDuplicateHint")}</div>
-                  <div className="mt-2 space-y-1">
-                    {manageDuplicateCandidates.map((row) => (
-                      <div key={String(row.capability_id || "")} className="truncate font-mono text-[11px] text-amber-800 dark:text-amber-200">
-                        {String(row.capability_id || "")}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <div className={`mt-4 ${settingsWorkspacePanelClass(_isDark)}`}>
-                <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageProvenanceTitle")}</div>
-                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageProvenanceHint")}</div>
-                <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {manageProvenanceRows.map((row) => (
-                    <div key={row.label} className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                      <dt className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{row.label}</dt>
-                      <dd className="mt-1 break-words font-mono text-[11px] text-[var(--color-text-secondary)]">{row.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <label className="block">
-                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">{t("capabilities.manageName")}</span>
-                  <input
-                    value={manageName}
-                    onChange={(e) => setManageName(e.target.value)}
-                    className={`mt-1 ${inputClass()}`}
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">{t("capabilities.manageDescription")}</span>
-                  <input
-                    value={manageDescription}
-                    onChange={(e) => setManageDescription(e.target.value)}
-                    className={`mt-1 ${inputClass()}`}
-                  />
-                </label>
-              </div>
-
-              <div className="mt-3">
-                <label className="block">
-                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">{t("capabilities.manageCapsule")}</span>
-                  <textarea
-                    value={manageCapsuleText}
-                    onChange={(e) => setManageCapsuleText(e.target.value)}
-                    maxLength={SELF_PROPOSED_CAPSULE_TEXT_MAX}
-                    rows={16}
-                    className={`mt-1 ${inputClass()} resize-y font-mono text-xs leading-5`}
-                  />
-                  <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
-                    {t("capabilities.manageCapsuleLimit", { count: manageCapsuleText.length, max: SELF_PROPOSED_CAPSULE_TEXT_MAX })}
-                  </span>
-                </label>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className={primaryButtonClass(false)}
-                  disabled={busyKey === `manage:${manageCapabilityId}`}
-                  onClick={() => void saveManagedSelfProposed()}
-                >
-                  {busyKey === `manage:${manageCapabilityId}` ? t("common:saving") : t("capabilities.manageSave")}
-                </button>
-              </div>
-
-              {manageQualificationStatus === "blocked" ? (
-                <div className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-                  {t("capabilities.manageBlockedBanner")}
-                </div>
-              ) : null}
-
-              <div className="mt-4">
-                <div className={settingsWorkspacePanelClass(_isDark)}>
-                  <div className="text-sm font-medium text-[var(--color-text-primary)]">{t("capabilities.manageRuntimeTitle")}</div>
-                  <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageAutoloadHint")}</div>
-                  <div className={`mt-3 ${settingsWorkspaceSoftPanelClass(_isDark)}`}>
-                    <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageCurrentUseTitle")}</div>
-                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageCurrentUseHint")}</div>
-                    {manageUsageLoading ? (
-                      <div className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">{t("capabilities.manageUsageLoading")}</div>
-                    ) : manageUsage?.used ? (
-                      <div className="mt-2 space-y-1.5">
-                        <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                          {t("capabilities.manageUsageSummary", {
-                            active: Number(manageUsage.active_actor_count || 0),
-                            startup: Number(manageUsage.startup_autoload_actor_count || 0),
-                          })}
-                        </div>
-                        {manageUsage.group_enabled ? (
-                          <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                            {t("capabilities.manageUsageGroup", { count: Number(manageUsage.group_actor_count || 0) })}
-                          </div>
-                        ) : null}
-                        {(manageUsage.session_enabled || []).map((row) => (
-                          <div key={`session:${row.actor_id}:${row.expires_at || ""}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                            {t("capabilities.manageUsageSession", { actor: capabilityUsageActorLabel(row), ttl: manageUsageTtlLabel(row.ttl_seconds) })}
-                          </div>
-                        ))}
-                        {(manageUsage.actor_enabled || []).map((row) => (
-                          <div key={`actor:${row.actor_id}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                            {t("capabilities.manageUsageActor", { actor: capabilityUsageActorLabel(row) })}
-                          </div>
-                        ))}
-                        {(manageUsage.actor_autoload || []).map((row) => (
-                          <div key={`autoload:${row.actor_id}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                            {t("capabilities.manageUsageActorAutoload", { actor: capabilityUsageActorLabel(row) })}
-                          </div>
-                        ))}
-                        {(manageUsage.profile_autoload || []).map((row) => (
-                          <div key={`profile:${row.actor_id}:${row.profile_id || ""}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                            {t("capabilities.manageUsageProfileAutoload", {
-                              actor: capabilityUsageActorLabel(row),
-                              profile: String(row.profile_name || row.profile_id || "").trim() || t("capabilities.manageUsageUnknownProfile"),
-                            })}
-                          </div>
-                        ))}
-                        {manageUsage.blocked ? (
-                          <div className="rounded-md bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-600 dark:text-rose-300">
-                            {t("capabilities.manageUsageBlocked")}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className={`mt-2 ${settingsWorkspaceSoftPanelClass(_isDark)} text-[11px] text-[var(--color-text-tertiary)]`}>
-                        {t("capabilities.manageNoCurrentUse")}
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-4 border-t border-[var(--glass-border-subtle)] pt-3">
-                    <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageActorAssignmentsTitle")}</div>
-                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageActorAssignmentsHint")}</div>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {manageActors
-                      .filter((actor) => String(actor.id || "").trim())
-                      .map((actor) => {
-                        const actorId = String(actor.id || "").trim();
-                        const checked = manageAssignedActorIdSet.has(actorId);
-                        const profileInherited = manageProfileActorIdSet.has(actorId);
-                        const temporaryActive = manageSessionActorIdSet.has(actorId);
-                        const actorScopeActive = manageActorScopeIdSet.has(actorId);
-                        const runtimeLabel = [actor.runtime, actor.runner_effective || actor.runner].filter(Boolean).join(" / ");
-                        return (
-                          <label key={actorId} className={`flex items-start gap-2 ${settingsWorkspaceSoftPanelClass(_isDark)}`}>
-                            <input
-                              type="checkbox"
-                              className="mt-0.5"
-                              checked={checked}
-                              onChange={() => toggleManagedActorAssignment(actorId)}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-xs font-medium text-[var(--color-text-primary)]">
-                                {actor.title ? `${actor.title} (${actorId})` : actorId}
-                              </span>
-                              {runtimeLabel ? (
-                                <span className="mt-0.5 block text-[11px] text-[var(--color-text-tertiary)]">{runtimeLabel}</span>
-                              ) : null}
-                              <span className="mt-1 flex flex-wrap gap-1">
-                                {profileInherited ? (
-                                  <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
-                                    {t("capabilities.manageActorAssignmentProfileBadge")}
-                                  </span>
-                                ) : null}
-                                {temporaryActive ? (
-                                  <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[10px] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
-                                    {t("capabilities.manageActorAssignmentTemporaryBadge")}
-                                  </span>
-                                ) : null}
-                                {actorScopeActive ? (
-                                  <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[10px] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
-                                    {t("capabilities.manageActorAssignmentActorScopeBadge")}
-                                  </span>
-                                ) : null}
-                              </span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    {manageActors.length === 0 ? (
-                      <div className={`${settingsWorkspaceSoftPanelClass(_isDark)} text-[11px] text-[var(--color-text-tertiary)]`}>
-                        {t("capabilities.manageNoActors")}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      className={secondaryButtonClass()}
-                      disabled={busyKey === `manage-use:${manageCapabilityId}`}
-                      onClick={() => void saveManagedActorAssignments()}
-                    >
-                      {t("capabilities.manageSaveActorAssignments")}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className={`mt-4 ${settingsWorkspacePanelClass(_isDark)}`}>
-                <div className="text-sm font-medium text-[var(--color-text-primary)]">{t("capabilities.manageOtherActionsTitle")}</div>
-                <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageOtherActionsHint")}</div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    className={`rounded-lg border px-3 py-2 text-xs min-h-[38px] disabled:opacity-60 ${
-                      manageQualificationStatus === "blocked"
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                        : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300"
-                    }`}
-                    disabled={busyKey === `manage:${manageCapabilityId}`}
-                    onClick={() => void saveManagedSelfProposed(
-                      manageQualificationStatus === "blocked" ? "qualified" : "blocked",
-                      manageQualificationStatus === "blocked" ? "capabilities.manageUnblockedSaved" : "capabilities.manageBlockedSaved",
-                    )}
-                  >
-                    {manageQualificationStatus === "blocked" ? t("capabilities.manageUnblockSkill") : t("capabilities.manageBlockSkill")}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs min-h-[38px] text-rose-600 dark:text-rose-300 disabled:opacity-60"
-                    disabled={busyKey === `manage-remove:${manageCapabilityId}`}
-                    onClick={() => void uninstallManagedSelfProposed()}
-                  >
-                    {t("capabilities.manageRemove")}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        </BodyPortal>
+        <SkillAssignmentManagerModal
+          isDark={_isDark}
+          candidate={managingCandidate}
+          editable={managingCandidateEditable}
+          capabilityId={manageCapabilityId}
+          groupId={groupId}
+          name={manageName}
+          description={manageDescription}
+          capsuleText={manageCapsuleText}
+          capsuleTextMax={SELF_PROPOSED_CAPSULE_TEXT_MAX}
+          qualificationStatus={manageQualificationStatus}
+          error={manageErr}
+          notice={manageNotice}
+          duplicateCandidates={manageDuplicateCandidates}
+          provenanceRows={manageProvenanceRows}
+          usage={manageUsage}
+          usageLoading={manageUsageLoading}
+          actors={manageActors}
+          assignedActorIds={manageAssignedActorIdSet}
+          hiddenActorIds={manageHiddenActorIdSet}
+          profileActorIds={manageProfileActorIdSet}
+          sessionActorIds={manageSessionActorIdSet}
+          actorScopeIds={manageActorScopeIdSet}
+          busyKey={busyKey}
+          labels={{
+            title: t(managingCandidateEditable ? "capabilities.manageTitle" : "capabilities.manageAssignmentsTitle"),
+            subtitle: t(managingCandidateEditable ? "capabilities.manageSubtitle" : "capabilities.manageAssignmentsSubtitle"),
+            close: t("capabilities.manageClose"),
+            statusBlocked: t("capabilities.manageStatusBlocked"),
+            noGroupHint: t("capabilities.manageNoGroupHint"),
+            duplicateTitle: t("capabilities.manageDuplicateTitle"),
+            duplicateHint: t("capabilities.manageDuplicateHint"),
+            provenanceTitle: t("capabilities.manageProvenanceTitle"),
+            provenanceHint: t("capabilities.manageProvenanceHint"),
+            name: t("capabilities.manageName"),
+            description: t("capabilities.manageDescription"),
+            capsule: t("capabilities.manageCapsule"),
+            capsuleLimit: t("capabilities.manageCapsuleLimit", { count: manageCapsuleText.length, max: SELF_PROPOSED_CAPSULE_TEXT_MAX }),
+            save: t("capabilities.manageSave"),
+            saving: t("common:saving"),
+            blockedBanner: t("capabilities.manageBlockedBanner"),
+            runtimeTitle: t("capabilities.manageRuntimeTitle"),
+            autoloadHint: t("capabilities.manageAutoloadHint"),
+            currentUseTitle: t("capabilities.manageCurrentUseTitle"),
+            currentUseHint: t("capabilities.manageCurrentUseHint"),
+            usageLoading: t("capabilities.manageUsageLoading"),
+            usageSummary: t("capabilities.manageUsageSummary", {
+              active: Number(manageUsage?.active_actor_count || 0),
+              startup: Number(manageUsage?.startup_autoload_actor_count || 0),
+            }),
+            usageGroup: t("capabilities.manageUsageGroup", { count: Number(manageUsage?.group_actor_count || 0) }),
+            usageSession: (row) => t("capabilities.manageUsageSession", { actor: capabilityUsageActorLabel(row), ttl: manageUsageTtlLabel(row.ttl_seconds) }),
+            usageActor: (row) => t("capabilities.manageUsageActor", { actor: capabilityUsageActorLabel(row) }),
+            usageActorAutoload: (row) => t("capabilities.manageUsageActorAutoload", { actor: capabilityUsageActorLabel(row) }),
+            usageProfileAutoload: (row) => t("capabilities.manageUsageProfileAutoload", {
+              actor: capabilityUsageActorLabel(row),
+              profile: String(row.profile_name || row.profile_id || "").trim() || t("capabilities.manageUsageUnknownProfile"),
+            }),
+            usageActorHidden: (row) => t("capabilities.manageUsageActorHidden", { actor: capabilityUsageActorLabel(row) }),
+            usageBlocked: t("capabilities.manageUsageBlocked"),
+            noCurrentUse: t("capabilities.manageNoCurrentUse"),
+            actorAssignmentsTitle: t("capabilities.manageActorAssignmentsTitle"),
+            actorAssignmentsHint: t("capabilities.manageActorAssignmentsHint"),
+            profileBadge: t("capabilities.manageActorAssignmentProfileBadge"),
+            temporaryBadge: t("capabilities.manageActorAssignmentTemporaryBadge"),
+            actorScopeBadge: t("capabilities.manageActorAssignmentActorScopeBadge"),
+            hiddenBadge: t("capabilities.manageActorAssignmentHiddenBadge"),
+            noActors: t("capabilities.manageNoActors"),
+            hideInMenus: t("capabilities.manageHideInMenus"),
+            saveActorAssignments: t("capabilities.manageSaveActorAssignments"),
+            otherActionsTitle: t("capabilities.manageOtherActionsTitle"),
+            otherActionsHint: t("capabilities.manageOtherActionsHint"),
+            unblockSkill: t("capabilities.manageUnblockSkill"),
+            blockSkill: t("capabilities.manageBlockSkill"),
+            remove: t("capabilities.manageRemove"),
+          }}
+          onClose={closeSelfProposedManager}
+          onNameChange={setManageName}
+          onDescriptionChange={setManageDescription}
+          onCapsuleTextChange={setManageCapsuleText}
+          onSaveRecord={() => void saveManagedSelfProposed()}
+          onToggleRecordBlock={() => void saveManagedSelfProposed(
+            manageQualificationStatus === "blocked" ? "qualified" : "blocked",
+            manageQualificationStatus === "blocked" ? "capabilities.manageUnblockedSaved" : "capabilities.manageBlockedSaved",
+          )}
+          onRemoveRecord={() => void uninstallManagedSelfProposed()}
+          onToggleActor={toggleManagedActorAssignment}
+          onToggleActorVisibility={toggleManagedActorVisibility}
+          onSaveActorAssignments={() => void saveManagedActorAssignments()}
+        />
       ) : null}
     </div>
   );

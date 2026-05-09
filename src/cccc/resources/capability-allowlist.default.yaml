@@ -16,6 +16,9 @@ defaults:
     cccc_builtin: mounted
     manual_import: mounted
     agent_self_proposed: indexed
+    github_import: mounted
+    url_import: mounted
+    local_import: mounted
     anthropic_skills: mounted
     github_skills_curated: mounted
     skillsmp_remote: indexed
@@ -52,6 +55,15 @@ sources:
   - source_id: agent_self_proposed
     enabled: true
     rationale: "Agent-proposed procedural skill candidates; MCP toolpacks stay indexed unless policy explicitly promotes them."
+  - source_id: github_import
+    enabled: true
+    rationale: "User-installed GitHub skill repositories imported through the CCCC capability lifecycle."
+  - source_id: url_import
+    enabled: true
+    rationale: "User-installed remote SKILL.md URLs imported through the CCCC capability lifecycle."
+  - source_id: local_import
+    enabled: true
+    rationale: "User-installed local SKILL.md files or directories imported through the CCCC capability lifecycle."
   - source_id: anthropic_skills
     enabled: true
     rationale: "Official Anthropic skill source."

@@ -716,7 +716,7 @@ Result:
 
 Quota notes:
 
-1. `CCCC_CAPABILITY_MAX_ENABLED_PER_ACTOR` (default `12`) limits actor/session enabled capability count.
+1. `CCCC_CAPABILITY_MAX_ENABLED_PER_ACTOR` (default `20`) limits actor/session enabled non-skill capability count.
 2. `CCCC_CAPABILITY_MAX_ENABLED_PER_GROUP` (default `24`) limits group-scope enabled capability count.
 3. `CCCC_CAPABILITY_MAX_INSTALLATIONS_TOTAL` (default `128`) limits total cached external artifacts.
 4. Quota failures return `ok=true` with `state="failed"` and deterministic `reason` code.
@@ -830,6 +830,7 @@ Result:
   autoload_capabilities?: string[]
   actor_autoload_capabilities?: string[]
   profile_autoload_capabilities?: string[]
+  actor_hidden_capabilities?: string[] // actor-level UI/menu hide preferences, including Web user slash menu; does not disable the capability
   hidden_capabilities: Array<{
     capability_id: string
     reason: string
@@ -922,6 +923,36 @@ Operational notes:
    - packaged default: `cccc.resources/capability-allowlist.default.yaml`
    - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
    - effective policy: deterministic merge (`default <- overlay`).
+
+#### `capability_visibility`
+
+Hide or show a capability for one actor's UI/menu surfaces without changing enabled bindings.
+The Web UI uses `actor_id="user"` to control whether an enabled capsule skill appears in the `/` command menu.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  actor_id?: string // default: by or "user"
+  capability_id: string
+  hidden: boolean
+  reason?: string
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  capability_id: string
+  hidden: boolean
+  actor_hidden_capabilities: string[]
+  state: "hidden" | "visible"
+}
+```
 
 #### `capability_import`
 
@@ -1980,6 +2011,7 @@ Args:
   command?: string[]
   env?: Record<string, string>
   capability_autoload?: string[] // actor startup autoload capability ids
+  capability_hidden?: string[] // actor-level skill menu hide preferences; does not disable capabilities
   env_private?: Record<string, string> // write-only secrets (stored under CCCC_HOME/state; never persisted into ledger)
   profile_id?: string            // optional Actor Profile link (runtime/runner/command/submit/env + secrets)
   default_scope_key?: string

@@ -142,6 +142,317 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_install_target_github_repo_imports_enables_and_uses_owned_source(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: github_import\n"
+                    "      level: mounted\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            def _fake_github_json(url: str, *, headers=None, timeout=10.0):
+                if url == "https://api.github.com/repos/obra/superpowers/git/trees/main?recursive=1":
+                    return {
+                        "tree": [
+                            {"path": "skills/brainstorming/SKILL.md", "type": "blob", "sha": "brainstorming-sha"},
+                            {"path": "skills/using-superpowers/SKILL.md", "type": "blob", "sha": "using-superpowers-sha"},
+                        ],
+                    }
+                raise AssertionError(f"unexpected GitHub tree URL: {url}")
+
+            def _fake_github_text(url: str, *, headers=None, timeout=10.0):
+                if url == "https://raw.githubusercontent.com/obra/superpowers/main/skills/brainstorming/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: brainstorming\n"
+                        "description: Explore requirements before building.\n"
+                        "---\n"
+                        "# Brainstorming"
+                    )
+                if url == "https://raw.githubusercontent.com/obra/superpowers/main/skills/using-superpowers/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: using-superpowers\n"
+                        "description: Load applicable skills before acting.\n"
+                        "---\n"
+                        "# Using Superpowers"
+                    )
+                raise AssertionError(f"unexpected GitHub raw URL: {url}")
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_json_obj", side_effect=_fake_github_json), patch(
+                "cccc.daemon.ops.capability_ops._http_get_text",
+                side_effect=_fake_github_text,
+            ):
+                resp, _ = self._call(
+                    "capability_install_target",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "target": "https://github.com/obra/superpowers",
+                        "scope": "actor",
+                        "reason": "install superpowers",
+                    },
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            expected_ids = {"skill:github:obra:brainstorming", "skill:github:obra:using-superpowers"}
+            self.assertEqual(str(result.get("target_kind") or ""), "github")
+            self.assertEqual(set(result.get("installed_capability_ids") or []), expected_ids)
+            self.assertEqual(set(result.get("enabled_capability_ids") or []), expected_ids)
+            self.assertEqual(set(result.get("use_ready_capability_ids") or []), expected_ids)
+
+            _, catalog_doc = ops._load_catalog_doc()
+            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            for cap_id in expected_ids:
+                record = rows.get(cap_id) if isinstance(rows.get(cap_id), dict) else {}
+                self.assertEqual(str(record.get("source_id") or ""), "github_import")
+
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            active = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active if isinstance(item, dict)}
+            self.assertTrue(expected_ids.issubset(active_ids))
+        finally:
+            cleanup()
+
+    def test_capability_install_target_url_skill_imports_enables_and_uses_owned_source(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: url_import\n"
+                    "      level: mounted\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            skill_md = (
+                "---\n"
+                "name: url-skill\n"
+                "description: Install from a remote SKILL.md URL.\n"
+                "---\n"
+                "# URL Skill\n"
+                "Use this remote skill through CCCC capability runtime."
+            )
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_text", return_value=skill_md):
+                resp, _ = self._call(
+                    "capability_install_target",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "target": "https://example.test/skills/url-skill/SKILL.md",
+                        "scope": "actor",
+                    },
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            cap_id = "skill:url:url-skill"
+            self.assertEqual(str(result.get("target_kind") or ""), "url")
+            self.assertEqual(result.get("installed_capability_ids"), [cap_id])
+            self.assertEqual(result.get("enabled_capability_ids"), [cap_id])
+
+            _, catalog_doc = ops._load_catalog_doc()
+            record = (catalog_doc.get("records") or {}).get(cap_id)
+            self.assertIsInstance(record, dict)
+            self.assertEqual(str(record.get("source_id") or ""), "url_import")
+            self.assertEqual(str(record.get("source_uri") or ""), "https://example.test/skills/url-skill/SKILL.md")
+        finally:
+            cleanup()
+
+    def test_capability_install_target_local_skill_imports_enables_and_uses_owned_source(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        home, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: local_import\n"
+                    "      level: mounted\n"
+                )
+            )
+            skill_dir = Path(home) / "local-skills" / "local-skill"
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\n"
+                "name: local-skill\n"
+                "description: Install from a local SKILL.md directory.\n"
+                "---\n"
+                "# Local Skill\n"
+                "Use this local skill through CCCC capability runtime.",
+                encoding="utf-8",
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            resp, _ = self._call(
+                "capability_install_target",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "target": str(skill_dir),
+                    "scope": "actor",
+                },
+            )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            cap_id = "skill:local:local-skill"
+            self.assertEqual(str(result.get("target_kind") or ""), "local_path")
+            self.assertEqual(result.get("installed_capability_ids"), [cap_id])
+            self.assertEqual(result.get("enabled_capability_ids"), [cap_id])
+
+            _, catalog_doc = ops._load_catalog_doc()
+            record = (catalog_doc.get("records") or {}).get(cap_id)
+            self.assertIsInstance(record, dict)
+            self.assertEqual(str(record.get("source_id") or ""), "local_import")
+            self.assertEqual(str(record.get("source_uri") or ""), str(skill_dir / "SKILL.md"))
+        finally:
+            cleanup()
+
+    def test_capability_source_delete_removes_github_import_records(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            catalog_doc["records"]["skill:github:demo:demo"] = {
+                "capability_id": "skill:github:demo:demo",
+                "kind": "skill",
+                "name": "demo",
+                "description_short": "Demo",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/skills",
+                "capsule_text": "Demo skill",
+                "enable_supported": True,
+                "qualification_status": "qualified",
+            }
+            ops._refresh_source_record_counts(catalog_doc)
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": "skill:github:demo:demo",
+                    "scope": "actor",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            delete_resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "source_id": "github_import",
+                },
+            )
+
+            self.assertTrue(delete_resp.ok, getattr(delete_resp, "error", None))
+            result = delete_resp.result if isinstance(delete_resp.result, dict) else {}
+            self.assertEqual(int(result.get("removed_records") or 0), 1)
+            _, after_catalog = ops._load_catalog_doc()
+            self.assertNotIn("skill:github:demo:demo", after_catalog.get("records") or {})
+
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertNotIn("skill:github:demo:demo", set(state.get("enabled_capabilities") or []))
+        finally:
+            cleanup()
+
+    def test_capability_source_delete_removes_user_owned_source_records(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.ops import capability_ops as ops
+
+            gid = self._create_group()
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            records["skill:manual:one"] = {
+                "capability_id": "skill:manual:one",
+                "kind": "skill",
+                "name": "Manual one",
+                "source_id": "manual_import",
+            }
+            records["mcp:official"] = {
+                "capability_id": "mcp:official",
+                "kind": "mcp_toolpack",
+                "name": "Official",
+                "source_id": "mcp_registry_official",
+            }
+            catalog_doc["records"] = records
+            ops._refresh_source_record_counts(catalog_doc)
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "source_id": "manual_import",
+                    "reason": "test cleanup",
+                },
+            )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(result.get("removed_records"), 1)
+            _, next_catalog = ops._load_catalog_doc()
+            next_records = next_catalog.get("records") if isinstance(next_catalog.get("records"), dict) else {}
+            self.assertNotIn("skill:manual:one", next_records)
+            self.assertIn("mcp:official", next_records)
+        finally:
+            cleanup()
+
+    def test_capability_source_delete_rejects_protected_sources(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+
+            resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "source_id": "mcp_registry_official",
+                },
+            )
+
+            self.assertFalse(resp.ok)
+            self.assertEqual(getattr(resp.error, "code", ""), "protected_capability_source")
+        finally:
+            cleanup()
+
     def test_pet_capability_state_uses_minimal_core_surface(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1331,6 +1642,41 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_enable_publishes_capability_changed_event(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": "skill:cccc:install",
+                    "scope": "session",
+                    "enabled": True,
+                    "reason": "slash command setup",
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+
+            events_path = Path(str(os.environ["CCCC_HOME"])) / "daemon" / "ccccd.events.jsonl"
+            self.assertTrue(events_path.exists())
+            events = [
+                json.loads(line)
+                for line in events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            changed = [ev for ev in events if ev.get("kind") == "capability.changed"]
+            self.assertTrue(changed)
+            data = changed[-1].get("data") if isinstance(changed[-1].get("data"), dict) else {}
+            self.assertEqual(data.get("group_id"), gid)
+            self.assertEqual(data.get("actor_id"), "peer-1")
+            self.assertEqual(data.get("capability_id"), "skill:cccc:install")
+        finally:
+            cleanup()
+
     def test_capability_search_supports_source_trust_and_qualification_filters(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -1517,6 +1863,7 @@ class TestCapabilityOps(unittest.TestCase):
                 ("standup blockers today plan", "skill:cccc:standup-summary"),
                 ("briefing synthesis facts gaps next actions", "skill:cccc:briefing-synthesis"),
                 ("vet mcp skill before install", "skill:cccc:capability-vet"),
+                ("install github repository mcp capability local skill path", "skill:cccc:install"),
                 ("release notes changelog breaking changes", "skill:cccc:release-notes"),
                 ("readme i18n translate markdown links", "skill:cccc:readme-i18n"),
                 ("app i18n localization hardcoded strings", "skill:cccc:app-i18n-localization"),
@@ -1593,6 +1940,20 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertIn("Action items", str((active or {}).get("capsule_text") or ""))
         finally:
             cleanup()
+
+    def test_builtin_cccc_skills_have_actionable_capsule_sections(self) -> None:
+        from cccc.kernel.capabilities import BUILTIN_CAPSULE_SKILLS
+
+        missing: list[str] = []
+        for capability_id, record in BUILTIN_CAPSULE_SKILLS.items():
+            if not str(capability_id or "").startswith("skill:cccc:"):
+                continue
+            capsule_text = str(record.get("capsule_text") or "")
+            for section in ("Procedure:", "Pitfalls:", "Verification:"):
+                if section not in capsule_text:
+                    missing.append(f"{capability_id}:{section}")
+
+        self.assertEqual(missing, [])
 
     def test_default_search_surfaces_high_roi_curated_skill_records(self) -> None:
         _, cleanup = self._with_home()
@@ -2028,6 +2389,258 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_enable_default_actor_quota_is_twenty(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            state_path, state_doc = ops._load_state_doc()
+            for idx in range(20):
+                ops._set_enabled_capability(
+                    state_doc,
+                    group_id=gid,
+                    actor_id="peer-1",
+                    scope="actor",
+                    capability_id=f"mcp:seed-{idx}",
+                    enabled=True,
+                    ttl_seconds=600,
+                )
+            ops._save_state_doc(state_path, state_doc)
+
+            resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": "mcp:overflow",
+                    "scope": "actor",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("state") or ""), "blocked")
+            self.assertEqual(str(result.get("reason") or ""), "quota_enabled_actor_exceeded:20")
+        finally:
+            cleanup()
+
+    def test_capability_enable_actor_quota_does_not_block_skill_capsules(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            with patch.dict(os.environ, {"CCCC_CAPABILITY_MAX_ENABLED_PER_ACTOR": "1"}, clear=False):
+                first, _ = self._call(
+                    "capability_enable",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "capability_id": "pack:space",
+                        "scope": "session",
+                        "enabled": True,
+                    },
+                )
+                self.assertTrue(first.ok, getattr(first, "error", None))
+
+                skill, _ = self._call(
+                    "capability_enable",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "capability_id": "skill:cccc:meeting-notes",
+                        "scope": "session",
+                        "enabled": True,
+                    },
+                )
+            self.assertTrue(skill.ok, getattr(skill, "error", None))
+            skill_result = skill.result if isinstance(skill.result, dict) else {}
+            self.assertEqual(str(skill_result.get("state") or ""), "runnable")
+            self.assertTrue(skill_result.get("enabled"))
+
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertIn("skill:cccc:meeting-notes", state.get("enabled_capabilities") or [])
+            active_capsule_skills = (
+                state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            )
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
+            self.assertIn("skill:cccc:meeting-notes", active_ids)
+        finally:
+            cleanup()
+
+    def test_capability_state_soft_limits_active_capsule_skills_without_disabling_them(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            for capability_id in ("skill:cccc:meeting-notes", "skill:cccc:install"):
+                enable_resp, _ = self._call(
+                    "capability_enable",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "capability_id": capability_id,
+                        "scope": "session",
+                        "enabled": True,
+                    },
+                )
+                self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            with patch.dict(os.environ, {"CCCC_CAPABILITY_MAX_ACTIVE_CAPSULE_SKILLS": "1"}, clear=False):
+                state_resp, _ = self._call(
+                    "capability_state",
+                    {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+                )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            enabled = set(state.get("enabled_capabilities") or [])
+            self.assertIn("skill:cccc:meeting-notes", enabled)
+            self.assertIn("skill:cccc:install", enabled)
+            active_capsule_skills = (
+                state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            )
+            self.assertEqual(len(active_capsule_skills), 1)
+            self.assertEqual(int(state.get("active_capsule_skills_dropped") or 0), 1)
+            dropped_ids = set(state.get("active_capsule_skill_dropped_ids") or [])
+            self.assertEqual(dropped_ids, {"skill:cccc:install"})
+        finally:
+            cleanup()
+
+    def test_actor_hidden_skill_is_omitted_from_active_capsules_without_disabling(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            capability_id = "skill:cccc:meeting-notes"
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": capability_id,
+                    "scope": "actor",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            update_resp, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "user",
+                    "patch": {"capability_hidden": [capability_id]},
+                },
+            )
+            self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertIn(capability_id, state.get("enabled_capabilities") or [])
+            self.assertIn(capability_id, state.get("actor_hidden_capabilities") or [])
+            active_ids = {
+                str(item.get("capability_id") or "")
+                for item in (state.get("active_capsule_skills") or [])
+                if isinstance(item, dict)
+            }
+            self.assertNotIn(capability_id, active_ids)
+            hidden = next(
+                (
+                    item
+                    for item in (state.get("hidden_capabilities") or [])
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == capability_id
+                ),
+                {},
+            )
+            self.assertEqual(str(hidden.get("reason") or ""), "actor_hidden")
+        finally:
+            cleanup()
+
+    def test_user_hidden_skill_is_omitted_from_slash_capsules_without_disabling(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            capability_id = "skill:cccc:meeting-notes"
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "capability_id": capability_id,
+                    "scope": "session",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            hide_resp, _ = self._call(
+                "capability_visibility",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "capability_id": capability_id,
+                    "hidden": True,
+                },
+            )
+            self.assertTrue(hide_resp.ok, getattr(hide_resp, "error", None))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "user", "by": "user"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertIn(capability_id, state.get("enabled_capabilities") or [])
+            self.assertIn(capability_id, state.get("actor_hidden_capabilities") or [])
+            active_ids = {
+                str(item.get("capability_id") or "")
+                for item in (state.get("active_capsule_skills") or [])
+                if isinstance(item, dict)
+            }
+            self.assertNotIn(capability_id, active_ids)
+
+            show_resp, _ = self._call(
+                "capability_visibility",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "capability_id": capability_id,
+                    "hidden": False,
+                },
+            )
+            self.assertTrue(show_resp.ok, getattr(show_resp, "error", None))
+            visible_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "user", "by": "user"},
+            )
+            self.assertTrue(visible_resp.ok, getattr(visible_resp, "error", None))
+            visible_state = visible_resp.result if isinstance(visible_resp.result, dict) else {}
+            self.assertNotIn(capability_id, visible_state.get("actor_hidden_capabilities") or [])
+            visible_active_ids = {
+                str(item.get("capability_id") or "")
+                for item in (visible_state.get("active_capsule_skills") or [])
+                if isinstance(item, dict)
+            }
+            self.assertIn(capability_id, visible_active_ids)
+        finally:
+            cleanup()
+
     def test_capability_uninstall_revokes_binding_and_removes_installation(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -2432,8 +3045,68 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(items)
             ids = {str(item.get("capability_id") or "") for item in items if isinstance(item, dict)}
             self.assertIn("pack:group-runtime", ids)
+            self.assertIn("skill:cccc:install", ids)
+            install_row = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "skill:cccc:install"
+                ),
+                {},
+            )
+            self.assertEqual(str(install_row.get("source_id") or ""), "cccc_builtin")
             sources = result.get("sources") if isinstance(result.get("sources"), dict) else {}
             self.assertIn("mcp_registry_official", sources)
+            builtin_source = sources.get("cccc_builtin") if isinstance(sources.get("cccc_builtin"), dict) else {}
+            self.assertGreater(int(builtin_source.get("record_count") or 0), 0)
+        finally:
+            cleanup()
+
+    def test_install_skill_capsule_prefers_cccc_capability_install_path(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "scope": "session",
+                    "capability_id": "skill:cccc:install",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            install_row = next(
+                (
+                    item
+                    for item in active_capsule_skills
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "skill:cccc:install"
+                ),
+                {},
+            )
+            capsule_text = str(install_row.get("capsule_text") or "")
+            self.assertIn("Default /install behavior is CCCC capability installation", capsule_text)
+            self.assertIn("Default action: call cccc_capability_install for the target", capsule_text)
+            self.assertIn("enables actor scope, and returns use-ready capability ids", capsule_text)
+            self.assertIn("Activate, assign, autoload, or use only after the CCCC capability record exists", capsule_text)
+            self.assertIn("Do not bypass the registry by installing into Codex's local skills directory", capsule_text)
+            self.assertIn("Do not install into Codex's local skills directory or use the Codex skill-installer workflow", capsule_text)
+            self.assertIn("Generic URLs and local paths must go through cccc_capability_install", capsule_text)
+            self.assertIn("Verify the result with capability_state", capsule_text)
+            self.assertIn("dynamic_tools", capsule_text)
+            self.assertIn("external_binding_states", capsule_text)
         finally:
             cleanup()
 
@@ -5404,6 +6077,9 @@ class TestCapabilityOps(unittest.TestCase):
                     "patch": {
                         "defaults": {"source_level": {
                             "manual_import": "indexed",
+                            "github_import": "indexed",
+                            "url_import": "indexed",
+                            "local_import": "indexed",
                             "mcp_registry_official": "indexed",
                             "anthropic_skills": "indexed",
                             "github_skills_curated": "indexed",
@@ -5640,6 +6316,349 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertEqual(str(record.get("evidence_kind") or ""), "error log plus minimal repro note")
         finally:
             cleanup()
+
+    def test_capability_import_github_multi_skill_repo_expands_and_enables_each_skill(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: github_skills_curated\n"
+                    "      level: mounted\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            def _fake_github_json(url: str, *, headers=None, timeout=10.0):
+                if url == "https://api.github.com/repos/obra/superpowers/git/trees/main?recursive=1":
+                    return {
+                        "sha": "tree-sha-main",
+                        "tree": [
+                            {
+                                "path": "skills/brainstorming/SKILL.md",
+                                "type": "blob",
+                                "sha": "brainstorming-sha",
+                            },
+                            {
+                                "path": "skills/using-superpowers/SKILL.md",
+                                "type": "blob",
+                                "sha": "using-superpowers-sha",
+                            },
+                            {"path": "README.md", "type": "blob", "sha": "readme-sha"},
+                        ],
+                    }
+                raise AssertionError(f"unexpected GitHub tree URL: {url}")
+
+            def _fake_github_text(url: str, *, headers=None, timeout=10.0):
+                if url == "https://raw.githubusercontent.com/obra/superpowers/main/skills/brainstorming/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: brainstorming\n"
+                        "description: Explore requirements and designs before implementing.\n"
+                        "---\n"
+                        "# Brainstorming\n\n"
+                        "Use this before creative implementation work."
+                    )
+                if url == "https://raw.githubusercontent.com/obra/superpowers/main/skills/using-superpowers/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: using-superpowers\n"
+                        "description: Load applicable skills before responding.\n"
+                        "---\n"
+                        "# Using Superpowers\n\n"
+                        "Check available skills before taking action."
+                    )
+                raise AssertionError(f"unexpected GitHub raw URL: {url}")
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_json_obj", side_effect=_fake_github_json), patch(
+                "cccc.daemon.ops.capability_ops._http_get_text",
+                side_effect=_fake_github_text,
+            ):
+                resp, _ = self._call(
+                    "capability_import",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "record": {},
+                        "source_uri": "https://github.com/obra/superpowers",
+                        "enable_after_import": True,
+                        "scope": "actor",
+                        "reason": "install superpowers skill repository",
+                    },
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("kind") or ""), "skill_repository")
+            imported = result.get("imported_capabilities") if isinstance(result.get("imported_capabilities"), list) else []
+            imported_ids = {str(item.get("capability_id") or "") for item in imported if isinstance(item, dict)}
+            expected_ids = {
+                "skill:github:obra:brainstorming",
+                "skill:github:obra:using-superpowers",
+            }
+            self.assertEqual(imported_ids, expected_ids)
+            self.assertTrue(all(bool(item.get("active_after_import")) for item in imported if isinstance(item, dict)))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
+            self.assertTrue(expected_ids.issubset(active_ids))
+            active_names = {
+                str(item.get("name") or "")
+                for item in active_capsule_skills
+                if isinstance(item, dict) and str(item.get("capability_id") or "") in expected_ids
+            }
+            self.assertEqual(active_names, {"brainstorming", "using-superpowers"})
+
+            _, catalog_doc = ops._load_catalog_doc()
+            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            self.assertTrue(expected_ids.issubset(set(rows.keys())))
+            self.assertNotIn("skill:github:obra:superpowers", set(rows.keys()))
+        finally:
+            cleanup()
+
+    def test_capability_import_github_nested_skill_repo_expands_deep_skill_paths(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: github_skills_curated\n"
+                    "      level: mounted\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            def _fake_github_json(url: str, *, headers=None, timeout=10.0):
+                if url == "https://api.github.com/repos/mattpocock/skills/git/trees/main?recursive=1":
+                    return {
+                        "tree": [
+                            {"path": "skills/engineering/tdd/SKILL.md", "type": "blob", "sha": "tdd-sha"},
+                            {"path": "skills/productivity/tdd/SKILL.md", "type": "blob", "sha": "productivity-tdd-sha"},
+                            {"path": "skills/productivity/grill-me/SKILL.md", "type": "blob", "sha": "grill-me-sha"},
+                            {"path": "README.md", "type": "blob", "sha": "readme-sha"},
+                        ],
+                    }
+                raise AssertionError(f"unexpected GitHub tree URL: {url}")
+
+            def _fake_github_text(url: str, *, headers=None, timeout=10.0):
+                if url == "https://raw.githubusercontent.com/mattpocock/skills/main/skills/engineering/tdd/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: tdd\n"
+                        "description: Engineering TDD workflow.\n"
+                        "---\n"
+                        "# TDD"
+                    )
+                if url == "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/tdd/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: tdd\n"
+                        "description: Productivity TDD workflow.\n"
+                        "---\n"
+                        "# TDD"
+                    )
+                if url == "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/grill-me/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: grill-me\n"
+                        "description: Stress-test a plan through questions.\n"
+                        "---\n"
+                        "# Grill Me"
+                    )
+                raise AssertionError(f"unexpected GitHub raw URL: {url}")
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_json_obj", side_effect=_fake_github_json), patch(
+                "cccc.daemon.ops.capability_ops._http_get_text",
+                side_effect=_fake_github_text,
+            ):
+                resp, _ = self._call(
+                    "capability_import",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "record": {},
+                        "source_uri": "https://github.com/mattpocock/skills",
+                        "enable_after_import": True,
+                        "scope": "actor",
+                        "reason": "install nested mattpocock skill repository",
+                    },
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            imported = result.get("imported_capabilities") if isinstance(result.get("imported_capabilities"), list) else []
+            imported_ids = {str(item.get("capability_id") or "") for item in imported if isinstance(item, dict)}
+            expected_ids = {
+                "skill:github:mattpocock:engineering-tdd",
+                "skill:github:mattpocock:productivity-tdd",
+                "skill:github:mattpocock:productivity-grill-me",
+            }
+            self.assertEqual(imported_ids, expected_ids)
+            self.assertTrue(all(bool(item.get("active_after_import")) for item in imported if isinstance(item, dict)))
+
+            _, catalog_doc = ops._load_catalog_doc()
+            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            self.assertTrue(expected_ids.issubset(set(rows.keys())))
+        finally:
+            cleanup()
+
+    def test_capability_import_github_multi_skill_repo_rejects_agent_aggregate_record(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: github_skills_curated\n"
+                    "      level: mounted\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            def _fake_github_json(url: str, *, headers=None, timeout=10.0):
+                if url == "https://api.github.com/repos/obra/superpowers/git/trees/main?recursive=1":
+                    return {
+                        "tree": [
+                            {"path": "skills/brainstorming/SKILL.md", "type": "blob", "sha": "brainstorming-sha"},
+                            {"path": "skills/using-superpowers/SKILL.md", "type": "blob", "sha": "using-superpowers-sha"},
+                        ],
+                    }
+                raise AssertionError(f"unexpected GitHub tree URL: {url}")
+
+            def _fake_github_text(url: str, *, headers=None, timeout=10.0):
+                if url == "https://raw.githubusercontent.com/obra/superpowers/main/skills/brainstorming/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: brainstorming\n"
+                        "description: Explore requirements and designs before implementing.\n"
+                        "---\n"
+                        "# Brainstorming"
+                    )
+                if url == "https://raw.githubusercontent.com/obra/superpowers/main/skills/using-superpowers/SKILL.md":
+                    return (
+                        "---\n"
+                        "name: using-superpowers\n"
+                        "description: Load applicable skills before responding.\n"
+                        "---\n"
+                        "# Using Superpowers"
+                    )
+                raise AssertionError(f"unexpected GitHub raw URL: {url}")
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_json_obj", side_effect=_fake_github_json), patch(
+                "cccc.daemon.ops.capability_ops._http_get_text",
+                side_effect=_fake_github_text,
+            ):
+                resp, _ = self._call(
+                    "capability_import",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "enable_after_import": True,
+                        "scope": "actor",
+                        "record": {
+                            "capability_id": "skill:github:obra:superpowers",
+                            "kind": "skill",
+                            "name": "superpowers",
+                            "description_short": "Aggregate Superpowers workflow pack.",
+                            "source_id": "manual_import",
+                            "source_uri": "https://github.com/obra/superpowers",
+                            "capsule_text": "One aggregate capsule that should not be imported.",
+                        },
+                    },
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("kind") or ""), "skill_repository")
+            imported = result.get("imported_capabilities") if isinstance(result.get("imported_capabilities"), list) else []
+            imported_ids = {str(item.get("capability_id") or "") for item in imported if isinstance(item, dict)}
+            expected_ids = {"skill:github:obra:brainstorming", "skill:github:obra:using-superpowers"}
+            self.assertEqual(imported_ids, expected_ids)
+
+            _, catalog_doc = ops._load_catalog_doc()
+            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            self.assertTrue(expected_ids.issubset(set(rows.keys())))
+            self.assertNotIn("skill:github:obra:superpowers", set(rows.keys()))
+        finally:
+            cleanup()
+
+    def test_capability_source_uri_import_returns_error_for_partial_failure(self) -> None:
+        from cccc.contracts.v1 import DaemonError, DaemonResponse
+        from cccc.daemon.ops.capability_ops._import_sources import _handle_capability_source_uri_import
+
+        records = [
+            {"capability_id": "skill:github:demo:ok", "kind": "skill"},
+            {"capability_id": "skill:github:demo:bad", "kind": "skill"},
+        ]
+
+        def _import_record(args: dict) -> DaemonResponse:
+            record = args.get("record") if isinstance(args.get("record"), dict) else {}
+            cap_id = str(record.get("capability_id") or "")
+            if cap_id.endswith(":bad"):
+                return DaemonResponse(
+                    ok=False,
+                    error=DaemonError(
+                        code="capability_import_invalid",
+                        message="bad skill record",
+                        details={"capability_id": cap_id},
+                    ),
+                )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "capability_id": cap_id,
+                    "state": "runnable",
+                    "import_action": "created",
+                    "active_after_import": True,
+                    "record": record,
+                },
+            )
+
+        with patch(
+            "cccc.daemon.ops.capability_ops._import_sources._discover_github_skill_repository_records",
+            return_value=records,
+        ):
+            resp = _handle_capability_source_uri_import(
+                {"group_id": "g1"},
+                action_id="act-1",
+                group_id="g1",
+                actor_id="peer-1",
+                source_uri="https://github.com/demo/skills",
+                dry_run=False,
+                enable_after_import=True,
+                scope="actor",
+                import_record=_import_record,
+            )
+
+        self.assertFalse(resp.ok)
+        self.assertIsNotNone(resp.error)
+        self.assertEqual(resp.error.code, "capability_import_failed")
+        self.assertIn("1 of 2", resp.error.message)
+        self.assertEqual(resp.error.details.get("failed_count"), 1)
+        self.assertEqual(resp.result.get("capability_count"), 2)
+        imported = resp.result.get("imported_capabilities")
+        self.assertIsInstance(imported, list)
+        self.assertTrue(any(not item.get("ok") for item in imported if isinstance(item, dict)))
 
     def test_capability_overview_search_matches_recommendation_fields(self) -> None:
         _, cleanup = self._with_home()

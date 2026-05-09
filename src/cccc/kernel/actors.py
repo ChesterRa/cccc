@@ -194,6 +194,7 @@ def add_actor(
     default_scope_key: str = "",
     submit: ActorSubmit = "enter",
     capability_autoload: Optional[List[str]] = None,
+    capability_hidden: Optional[List[str]] = None,
     enabled: bool = True,
     runner: RunnerKind = "pty",
     runtime: AgentRuntime = "codex",
@@ -232,6 +233,7 @@ def add_actor(
         default_scope_key=default_scope_key.strip(),
         submit=submit,
         capability_autoload=_normalize_capability_id_list(capability_autoload or []),
+        capability_hidden=_normalize_capability_id_list(capability_hidden or []),
         enabled=coerce_bool(enabled, default=True),
         runner=runner_kind,  # type: ignore[arg-type]
         runtime=runtime_name,  # type: ignore[arg-type]
@@ -369,6 +371,9 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
 
     if "capability_autoload" in patch:
         item["capability_autoload"] = _normalize_capability_id_list(patch.get("capability_autoload"))
+
+    if "capability_hidden" in patch:
+        item["capability_hidden"] = _normalize_capability_id_list(patch.get("capability_hidden"))
 
     if "enabled" in patch:
         item["enabled"] = coerce_bool(patch.get("enabled"), default=False)

@@ -45,6 +45,7 @@ class Actor(BaseModel):
     default_scope_key: str = ""
     submit: ActorSubmit = "enter"
     capability_autoload: List[str] = Field(default_factory=list)
+    capability_hidden: List[str] = Field(default_factory=list)
     enabled: bool = True
     runner: RunnerKind = "pty"  # "pty" for interactive, "headless" for MCP-driven
     runtime: AgentRuntime = "codex"  # Agent CLI runtime

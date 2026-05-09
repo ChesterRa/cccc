@@ -31,6 +31,7 @@ import {
 } from "./stores";
 import { useChatOutboxStore } from "./stores/chatOutboxStore";
 import type { ChatMessageData, LedgerEvent } from "./types";
+import { publishCapabilityChanged } from "./utils/capabilityEvents";
 import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 
 // ============ Main App Component ============
@@ -265,6 +266,9 @@ export default function App() {
     refreshGroups,
     refreshActors,
     selectedGroupId,
+    refreshCapabilities: (groupId) => {
+      publishCapabilityChanged(groupId);
+    },
   });
 
   const { canManageGroups, ccccHome, fetchDirSuggestions } = useAppChrome({

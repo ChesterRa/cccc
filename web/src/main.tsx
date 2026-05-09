@@ -2,6 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { AuthGate } from "./components/AuthGate";
 import App from "./App";
+import { CapabilityCenterStandaloneApp } from "./components/capabilities/CapabilityCenterStandaloneApp";
+import { isCapabilityCenterPath } from "./components/capabilities/capabilityCenterRoute";
 import "./i18n";
 import "./index.css";
 import { useBrandingStore } from "./stores";
@@ -32,11 +34,12 @@ if ("serviceWorker" in navigator && typeof navigator.serviceWorker.getRegistrati
 applyBrandingToDocument(DEFAULT_WEB_BRANDING);
 applyTextScale(getStoredTextScale());
 void useBrandingStore.getState().refreshBranding();
+const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthGate>
-      <App />
+      {isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}
     </AuthGate>
   </React.StrictMode>,
 );

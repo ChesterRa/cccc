@@ -62,13 +62,13 @@ export const cardClass = (_isDark?: boolean) =>
 export const settingsWorkspaceShellClass = (_isDark?: boolean) =>
   `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
     _isDark
-      ? "border-white/10 bg-[linear-gradient(180deg,rgba(19,20,24,0.88),rgba(10,11,14,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.36)]"
+      ? "border-white/8 bg-[linear-gradient(180deg,rgba(15,16,20,0.96),rgba(7,8,11,0.99))] shadow-[0_28px_100px_rgba(0,0,0,0.42)]"
       : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
   }`;
 
 export const settingsWorkspaceHeaderClass = (_isDark?: boolean) =>
   `flex items-start justify-between gap-4 px-4 py-4 sm:px-5 sm:py-4 ${
-    _isDark ? "border-b border-white/8 bg-white/[0.03]" : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
+    _isDark ? "border-b border-white/8 bg-black/[0.16]" : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
   }`;
 
 export const settingsWorkspaceBodyClass =
@@ -77,7 +77,7 @@ export const settingsWorkspaceBodyClass =
 export const settingsWorkspacePanelClass = (_isDark?: boolean) =>
   `rounded-[18px] border p-3.5 sm:p-4 ${
     _isDark
-      ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
+      ? "border-white/8 bg-[linear-gradient(180deg,rgba(18,19,24,0.92),rgba(8,9,12,0.98))]"
       : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
   }`;
 

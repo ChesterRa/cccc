@@ -205,6 +205,44 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_restart_after_runner_change_stops_stale_codex_headless_session(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "runner-change-restart", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            update, _ = self._call(
+                "actor_update",
+                {"group_id": group_id, "actor_id": "peer1", "patch": {"runner": "pty"}, "by": "user"},
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            with patch("cccc.daemon.actors.actor_lifecycle_ops.codex_app_supervisor.stop_actor") as stop_codex:
+                restart, _ = self._call("actor_restart", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
+
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+            stop_codex.assert_called_once_with(group_id=group_id, actor_id="peer1")
+        finally:
+            cleanup()
+
     def test_actor_start_clears_stale_execution_state(self) -> None:
         _, cleanup = self._with_home()
         try:

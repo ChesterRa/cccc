@@ -168,6 +168,7 @@ export function ChatTab({
     destGroupId,
     setDestGroupId,
     mentionSuggestions,
+    slashCommands,
 
     // Agent state
     agentStates,
@@ -895,6 +896,7 @@ export function ChatTab({
             setMentionSelectedIndex={setMentionSelectedIndex}
             setMentionFilter={setMentionFilter}
             onAppendRecipientToken={appendRecipientToken}
+            slashCommands={slashCommands}
           />
         </footer>
       )}

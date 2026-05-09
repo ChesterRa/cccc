@@ -200,7 +200,7 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
                     refresh_required = True
             if (
                 tool_name
-                in {"cccc_capability_enable", "cccc_capability_import", "cccc_capability_uninstall", "cccc_capability_use"}
+                in {"cccc_capability_enable", "cccc_capability_import", "cccc_capability_install", "cccc_capability_uninstall", "cccc_capability_use"}
                 and refresh_required
                 and _SESSION_SUPPORTS_TOOLS_LIST_CHANGED
             ):

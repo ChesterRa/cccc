@@ -5,6 +5,34 @@ from unittest.mock import patch
 
 
 class TestMcpCapabilityImport(unittest.TestCase):
+    def test_capability_install_wrapper_calls_daemon(self) -> None:
+        from cccc.ports.mcp.server import capability_install
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability._call_daemon_or_raise",
+            return_value={"state": "ready", "use_ready_capability_ids": ["skill:github:demo:triage"]},
+        ) as daemon_mock:
+            result = capability_install(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                target="demo/triage",
+                scope="actor",
+                ttl_seconds=600,
+                reason="install target",
+            )
+
+        self.assertEqual(str(result.get("state") or ""), "ready")
+        daemon_mock.assert_called_once()
+        req = daemon_mock.call_args.args[0] if daemon_mock.call_args and daemon_mock.call_args.args else {}
+        self.assertEqual(str(req.get("op") or ""), "capability_install_target")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(str(args.get("group_id") or ""), "g1")
+        self.assertEqual(str(args.get("by") or ""), "peer-1")
+        self.assertEqual(str(args.get("actor_id") or ""), "peer-1")
+        self.assertEqual(str(args.get("target") or ""), "demo/triage")
+        self.assertEqual(str(args.get("scope") or ""), "actor")
+
     def test_capability_import_wrapper_calls_daemon(self) -> None:
         from cccc.ports.mcp.server import capability_import
 

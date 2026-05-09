@@ -232,6 +232,7 @@ export type Actor = {
   command?: string[];
   env?: Record<string, string>;
   capability_autoload?: string[];
+  capability_hidden?: string[];
   runner?: string;
   runner_effective?: string;
   runtime?: string;
@@ -379,7 +380,13 @@ export type CapabilityStateResult = {
   actor_id: string;
   enabled: CapabilityEnabledEntry[];
   enabled_capabilities?: string[];
-  dynamic_tools?: Array<{ name: string; capability_id: string; description?: string }>;
+  dynamic_tools?: Array<{
+    name: string;
+    capability_id: string;
+    description?: string;
+    real_tool_name?: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
   active_capsule_skills?: Array<{
     capability_id: string;
     name?: string;
@@ -390,6 +397,7 @@ export type CapabilityStateResult = {
     source_uri?: string;
     policy_level?: string;
   }>;
+  actor_hidden_capabilities?: string[];
   capability_usage?: CapabilityUsageSummary;
 };
 
@@ -414,6 +422,7 @@ export type CapabilityUsageSummary = {
   session_enabled?: CapabilityUsageActorEntry[];
   actor_autoload?: CapabilityUsageActorEntry[];
   profile_autoload?: CapabilityUsageActorEntry[];
+  actor_hidden?: CapabilityUsageActorEntry[];
   blocked?: boolean;
   blocked_scope?: string;
   blocked_reason?: string;

@@ -34,7 +34,9 @@ from ..branding import (
     resolve_branding_asset_path,
     store_branding_asset,
 )
-from ...mcp.common import runtime_context_override
+from ...mcp.common import MCPError, runtime_context_override
+from ...mcp.handlers.cccc_capability import capability_install as mcp_capability_install
+from ...mcp.handlers.cccc_capability import capability_use as mcp_capability_use
 from ..schemas import (
     BrandingUpdateRequest,
     DebugClearLogsRequest,
@@ -1637,6 +1639,138 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
+    @group_router.post("/capabilities/visibility")
+    async def capability_visibility(group_id: str, request: Request) -> Dict[str, Any]:
+        """Hide/show a capability for one actor's UI/menu surfaces without disabling it."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability visibility endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        capability_id = str(payload.get("capability_id") or "").strip()
+        if not capability_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_capability_id", "message": "missing capability_id"})
+        return await ctx.daemon(
+            {
+                "op": "capability_visibility",
+                "args": {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
+                    "capability_id": capability_id,
+                    "hidden": bool(payload.get("hidden", True)),
+                    "reason": str(payload.get("reason") or "").strip(),
+                },
+            }
+        )
+
+    @group_router.post("/capabilities/use")
+    async def capability_use(group_id: str, request: Request) -> Dict[str, Any]:
+        """Enable a capability and optionally call one of its tools."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability use endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        raw_tool_args = payload.get("tool_arguments")
+        if raw_tool_args is not None and not isinstance(raw_tool_args, dict):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_tool_arguments", "message": "tool_arguments must be an object"},
+            )
+        actor_id = str(payload.get("actor_id") or "user").strip() or "user"
+        tool_args = dict(raw_tool_args) if isinstance(raw_tool_args, dict) else {}
+        try:
+            def _call_capability_use() -> Dict[str, Any]:
+                with runtime_context_override(
+                    home=str(ctx.home),
+                    group_id=group_id,
+                    actor_id=actor_id,
+                ):
+                    return mcp_capability_use(
+                        group_id=group_id,
+                        by="user",
+                        actor_id=actor_id,
+                        capability_id=str(payload.get("capability_id") or ""),
+                        tool_name=str(payload.get("tool_name") or ""),
+                        tool_arguments=tool_args,
+                        scope=str(payload.get("scope") or "session").strip().lower() or "session",
+                        ttl_seconds=int(payload.get("ttl_seconds") or 3600),
+                        reason=str(payload.get("reason") or "").strip(),
+                    )
+
+            result = await run_in_threadpool(_call_capability_use)
+        except MCPError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": exc.code, "message": exc.message, "details": exc.details},
+            ) from exc
+        return {"ok": True, "result": result}
+
+    @group_router.post("/capabilities/install")
+    async def capability_install(group_id: str, request: Request) -> Dict[str, Any]:
+        """Install a target through the CCCC capability lifecycle."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability install endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        target = str(payload.get("target") or payload.get("source_uri") or payload.get("capability_id") or "").strip()
+        if not target:
+            raise HTTPException(status_code=400, detail={"code": "missing_install_target", "message": "missing install target"})
+        actor_id = str(payload.get("actor_id") or "user").strip() or "user"
+        try:
+            def _call_capability_install() -> Dict[str, Any]:
+                with runtime_context_override(
+                    home=str(ctx.home),
+                    group_id=group_id,
+                    actor_id=actor_id,
+                ):
+                    return mcp_capability_install(
+                        group_id=group_id,
+                        by="user",
+                        actor_id=actor_id,
+                        target=target,
+                        scope=str(payload.get("scope") or "actor").strip().lower() or "actor",
+                        ttl_seconds=int(payload.get("ttl_seconds") or 3600),
+                        reason=str(payload.get("reason") or "").strip(),
+                    )
+
+            result = await run_in_threadpool(_call_capability_install)
+        except MCPError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": exc.code, "message": exc.message, "details": exc.details},
+            ) from exc
+        return {"ok": True, "result": result}
+
     @group_router.post("/capabilities/import")
     async def capability_import(group_id: str, request: Request) -> Dict[str, Any]:
         """Import (install) a capability into a group."""
@@ -1667,6 +1801,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         }
         if "record" in payload:
             args["record"] = payload["record"]
+        if "source_uri" in payload:
+            args["source_uri"] = str(payload.get("source_uri") or "").strip()
         return await ctx.daemon({"op": "capability_import", "args": args})
 
     @group_router.post("/capabilities/uninstall")
@@ -1694,6 +1830,36 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "by": "user",
                     "actor_id": str(payload.get("actor_id") or "user").strip() or "user",
                     "capability_id": str(payload.get("capability_id") or "").strip(),
+                    "reason": str(payload.get("reason") or "").strip(),
+                },
+            }
+        )
+
+    @group_router.post("/capabilities/sources/delete")
+    async def capability_source_delete(group_id: str, request: Request) -> Dict[str, Any]:
+        """Delete records and bindings owned by a removable capability source."""
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Capability source delete endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        return await ctx.daemon(
+            {
+                "op": "capability_source_delete",
+                "args": {
+                    "group_id": group_id,
+                    "by": str(payload.get("by") or "user").strip() or "user",
+                    "actor_id": str(payload.get("actor_id") or payload.get("by") or "user").strip() or "user",
+                    "source_id": str(payload.get("source_id") or "").strip(),
                     "reason": str(payload.get("reason") or "").strip(),
                 },
             }

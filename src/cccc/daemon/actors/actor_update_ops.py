@@ -35,6 +35,16 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
 
+def _normalize_capability_id_list(raw: Any) -> list[str]:
+    out: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            value = str(item or "").strip()
+            if value and value not in out:
+                out.append(value)
+    return out[:128]
+
+
 def handle_actor_update(
     args: Dict[str, Any],
     *,
@@ -84,6 +94,7 @@ def handle_actor_update(
         "default_scope_key",
         "submit",
         "capability_autoload",
+        "capability_hidden",
         "enabled",
         "runner",
         "runtime",
@@ -125,6 +136,10 @@ def handle_actor_update(
     applied_profile_id = ""
     applied_profile_ref: Any = None
     profile_converted = False
+    if "capability_autoload" in patch:
+        patch["capability_autoload"] = _normalize_capability_id_list(patch.get("capability_autoload"))
+    if "capability_hidden" in patch:
+        patch["capability_hidden"] = _normalize_capability_id_list(patch.get("capability_hidden"))
     actor: Dict[str, Any]
     try:
         require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)

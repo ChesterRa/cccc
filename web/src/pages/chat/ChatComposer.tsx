@@ -8,9 +8,13 @@ import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
 import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
+import { SlashCommandMenu } from "./SlashCommandMenu";
 import { GroupCombobox } from "../../components/GroupCombobox";
 import { updateSettings } from "../../services/api";
 import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
+import { filterSlashCommands, getVisibleSlashCommandPage, type SlashCommandItem } from "../../utils/slashCommands";
+
+const SLASH_COMMAND_PAGE_SIZE = 8;
 
 function cleanVoicePromptContextText(value: unknown, maxLen = 240): string {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -82,6 +86,7 @@ export interface ChatComposerProps {
   setMentionSelectedIndex: Dispatch<SetStateAction<number>>;
   setMentionFilter: Dispatch<SetStateAction<string>>;
   onAppendRecipientToken: (token: string) => void;
+  slashCommands: SlashCommandItem[];
 }
 
 
@@ -124,10 +129,14 @@ export function ChatComposer({
   setMentionSelectedIndex,
   setMentionFilter,
   onAppendRecipientToken,
+  slashCommands,
 }: ChatComposerProps) {
   const composerHeightRef = useRef(0);
   const isUserInputRef = useRef(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashVisibleCount, setSlashVisibleCount] = useState(SLASH_COMMAND_PAGE_SIZE);
   const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("prompt");
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
@@ -313,6 +322,12 @@ export function ChatComposer({
   const renderRecipientChipContent = useCallback((label: string) => (
     <span className="truncate">{label}</span>
   ), []);
+  const slashSuggestions = useMemo(() => filterSlashCommands(slashCommands, composerText), [composerText, slashCommands]);
+  const visibleSlashSuggestions = useMemo(
+    () => getVisibleSlashCommandPage(slashSuggestions, slashVisibleCount),
+    [slashSuggestions, slashVisibleCount],
+  );
+  const hasMoreSlashSuggestions = visibleSlashSuggestions.length < slashSuggestions.length;
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -367,6 +382,18 @@ export function ChatComposer({
       resizeComposer(target);
     });
 
+    const slashModeActive = val === val.trimStart() && val.startsWith("/") && !val.slice(1).includes(" ");
+    if (slashModeActive) {
+      const nextSuggestions = filterSlashCommands(slashCommands, val);
+      setShowSlashMenu(nextSuggestions.length > 0 || val === "/");
+      setSlashSelectedIndex(0);
+      setSlashVisibleCount(SLASH_COMMAND_PAGE_SIZE);
+      setShowMentionMenu(false);
+      return;
+    }
+    setShowSlashMenu(false);
+    setSlashVisibleCount(SLASH_COMMAND_PAGE_SIZE);
+
     // Detect @ mentions for the recipient helper menu.
     const lastAt = val.lastIndexOf("@");
     if (lastAt >= 0) {
@@ -389,6 +416,36 @@ export function ChatComposer({
 
   // Handle keyboard shortcuts and mention navigation.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && visibleSlashSuggestions.length > 0) {
+      const maxIndex = visibleSlashSuggestions.length - 1;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashSelectedIndex((prev) => {
+          const next = prev >= maxIndex ? 0 : prev + 1;
+          if (hasMoreSlashSuggestions && next === maxIndex) {
+            setSlashVisibleCount((count) => Math.min(count + SLASH_COMMAND_PAGE_SIZE, slashSuggestions.length));
+          }
+          return next;
+        });
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashSelectedIndex((prev) => (prev <= 0 ? maxIndex : prev - 1));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectSlashCommand(visibleSlashSuggestions[slashSelectedIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSlashMenu(false);
+        setSlashSelectedIndex(0);
+        return;
+      }
+    }
     if (showMentionMenu && mentionSuggestions.length > 0) {
       const maxIndex = Math.min(mentionSuggestions.length, 8) - 1;
       if (e.key === "ArrowDown") {
@@ -414,12 +471,14 @@ export function ChatComposer({
       }
     }
     if (e.key === "Enter" && !showMentionMenu) {
+      if (showSlashMenu) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         onSendMessage();
       }
     } else if (e.key === "Escape") {
       setShowMentionMenu(false);
+      setShowSlashMenu(false);
       setShowModeMenu(false);
       onCancelReply();
     }
@@ -438,6 +497,14 @@ export function ChatComposer({
     }
     setShowMentionMenu(false);
     setMentionSelectedIndex(0);
+  };
+
+  const selectSlashCommand = (selected: SlashCommandItem | undefined) => {
+    if (!selected) return;
+    setComposerText(`/${selected.name} `);
+    setShowSlashMenu(false);
+    setSlashSelectedIndex(0);
+    requestAnimationFrame(() => composerRef.current?.focus());
   };
 
   const canSend = composerText.trim() || composerFiles.length > 0;
@@ -900,6 +967,21 @@ export function ChatComposer({
                     })()
                   ))}
                 </div>
+              )}
+
+              {showSlashMenu && visibleSlashSuggestions.length > 0 && (
+                <SlashCommandMenu
+                  isDark={isDark}
+                  suggestions={visibleSlashSuggestions}
+                  selectedIndex={Math.min(slashSelectedIndex, visibleSlashSuggestions.length - 1)}
+                  hasMore={hasMoreSlashSuggestions}
+                  loadMoreLabel={t("slashCommandLoadMore", { defaultValue: "Scroll for more" })}
+                  onSelect={selectSlashCommand}
+                  onHover={setSlashSelectedIndex}
+                  onLoadMore={() => {
+                    setSlashVisibleCount((count) => Math.min(count + SLASH_COMMAND_PAGE_SIZE, slashSuggestions.length));
+                  }}
+                />
               )}
             </div>
 

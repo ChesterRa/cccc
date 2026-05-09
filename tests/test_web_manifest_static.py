@@ -47,6 +47,17 @@ class TestWebManifestStatic(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_center_path_serves_spa_index(self) -> None:
+        client, cleanup = self._with_static_client()
+        try:
+            resp = client.get("/ui/capabilities")
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(str(resp.headers.get("content-type") or "").startswith("text/html"))
+            self.assertEqual(resp.text, "<html><body>ok</body></html>")
+        finally:
+            cleanup()
+
     def test_ui_websocket_path_closes_without_staticfiles_assertion(self) -> None:
         client, cleanup = self._with_static_client()
         try:

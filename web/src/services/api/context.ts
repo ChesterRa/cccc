@@ -291,6 +291,53 @@ export async function enableGroupCapability(
   });
 }
 
+export async function updateGroupCapabilityVisibility(
+  groupId: string,
+  capabilityId: string,
+  opts?: {
+    hidden?: boolean;
+    actorId?: string;
+    reason?: string;
+  },
+) {
+  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/visibility`, {
+    method: "POST",
+    body: JSON.stringify({
+      capability_id: capabilityId,
+      hidden: opts?.hidden ?? true,
+      actor_id: opts?.actorId || "user",
+      reason: opts?.reason || "",
+    }),
+  });
+}
+
+export async function useGroupCapability(
+  groupId: string,
+  args: {
+    capabilityId: string;
+    actorId?: string;
+    toolName?: string;
+    toolArguments?: Record<string, unknown>;
+    scope?: "session" | "actor" | "group";
+    ttlSeconds?: number;
+    reason?: string;
+  },
+) {
+  const body: Record<string, unknown> = {
+    capability_id: args.capabilityId,
+    actor_id: args.actorId || "user",
+    scope: args.scope || "session",
+    ttl_seconds: args.ttlSeconds || 3600,
+    reason: args.reason || "",
+  };
+  if (String(args.toolName || "").trim()) body.tool_name = String(args.toolName || "").trim();
+  if (args.toolArguments) body.tool_arguments = args.toolArguments;
+  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/use`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function importCapability(
   groupId: string,
   record: CapabilityImportRecord,
@@ -317,11 +364,44 @@ export async function importCapability(
   });
 }
 
+export async function installCapabilityTarget(
+  groupId: string,
+  target: string,
+  opts?: {
+    scope?: "session" | "actor" | "group";
+    actorId?: string;
+    ttlSeconds?: number;
+    reason?: string;
+  },
+) {
+  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/install`, {
+    method: "POST",
+    body: JSON.stringify({
+      target,
+      scope: opts?.scope || "actor",
+      actor_id: opts?.actorId || "user",
+      ttl_seconds: opts?.ttlSeconds || 3600,
+      reason: opts?.reason || "",
+    }),
+  });
+}
+
 export async function uninstallCapability(groupId: string, capabilityId: string, opts?: { actorId?: string; reason?: string }) {
   return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/uninstall`, {
     method: "POST",
     body: JSON.stringify({
       capability_id: capabilityId,
+      actor_id: opts?.actorId || "user",
+      reason: opts?.reason || "",
+    }),
+  });
+}
+
+export async function deleteCapabilitySource(groupId: string, sourceId: string, opts?: { actorId?: string; reason?: string }) {
+  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/sources/delete`, {
+    method: "POST",
+    body: JSON.stringify({
+      source_id: sourceId,
       actor_id: opts?.actorId || "user",
       reason: opts?.reason || "",
     }),

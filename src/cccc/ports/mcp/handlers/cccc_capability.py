@@ -25,9 +25,8 @@ def _skill_runtime_contract_fields(capability_id: str) -> Dict[str, Any]:
         "runtime_activation_evidence": "state:runnable_or_verified + capability_state.active_capsule_skills",
         "next_step_hint": (
             "capsule-runtime skill activation is visible in capability_state.active_capsule_skills. "
-            "Do not expect new dynamic_tools for skill capsules. If the task needs full local skill scripts/assets, "
-            "install a full skill package into Codex's skills directory "
-            "($CODEX_HOME/skills if CODEX_HOME is explicitly set)."
+            "Do not expect new dynamic_tools for skill capsules. Install or update skill sources through "
+            "CCCC capability runtime so URL, repository, and local SKILL.md targets stay visible in Capability Center."
         ),
     }
 
@@ -302,6 +301,7 @@ def capability_import(
     by: str,
     actor_id: Optional[str] = None,
     record: Optional[Dict[str, Any]] = None,
+    source_uri: str = "",
     dry_run: bool = False,
     probe: bool = True,
     enable_after_import: bool = False,
@@ -319,10 +319,39 @@ def capability_import(
                 "by": str(by or ""),
                 "actor_id": target_actor,
                 "record": dict(record) if isinstance(record, dict) else {},
+                "source_uri": str(source_uri or ""),
                 "dry_run": bool(dry_run),
                 "probe": bool(probe),
                 "enable_after_import": bool(enable_after_import),
                 "scope": str(scope or "session"),
+                "ttl_seconds": int(ttl_seconds or 3600),
+                "reason": str(reason or ""),
+            },
+        }
+    )
+
+
+def capability_install(
+    *,
+    group_id: str,
+    by: str,
+    actor_id: Optional[str] = None,
+    target: str = "",
+    scope: str = "actor",
+    ttl_seconds: int = 3600,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Install a target into the CCCC capability lifecycle and enable it for use."""
+    target_actor = str(actor_id or by).strip()
+    return _call_daemon_or_raise(
+        {
+            "op": "capability_install_target",
+            "args": {
+                "group_id": str(group_id or ""),
+                "by": str(by or ""),
+                "actor_id": target_actor,
+                "target": str(target or ""),
+                "scope": str(scope or "actor"),
                 "ttl_seconds": int(ttl_seconds or 3600),
                 "reason": str(reason or ""),
             },

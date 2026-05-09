@@ -99,6 +99,77 @@ class TestWebMessagingClientId(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_replays_existing_event_for_duplicate_client_id(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="client-id-replay", topic="")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                payload = {
+                    "text": "hello once",
+                    "by": "user",
+                    "to": ["user"],
+                    "client_id": "local-send-replay-1",
+                }
+
+                first_resp = client.post(f"/api/v1/groups/{group.group_id}/send", json=payload)
+                second_resp = client.post(f"/api/v1/groups/{group.group_id}/send", json=payload)
+
+                self.assertEqual(first_resp.status_code, 200)
+                self.assertEqual(second_resp.status_code, 200)
+                first_result = first_resp.json().get("result") or {}
+                second_result = second_resp.json().get("result") or {}
+                first_event = first_result.get("event") or {}
+                self.assertEqual(first_event.get("id"), second_result.get("event_id"))
+                self.assertTrue(bool(second_result.get("replayed")))
+        finally:
+            cleanup()
+
+    def test_send_duplicate_client_id_is_scoped_to_sender(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="client-id-sender-scope", topic="")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                first_resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send",
+                    json={
+                        "text": "from user",
+                        "by": "user",
+                        "to": ["user"],
+                        "client_id": "same-client-id",
+                    },
+                )
+                second_resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send",
+                    json={
+                        "text": "from peer",
+                        "by": "peer-1",
+                        "to": ["user"],
+                        "client_id": "same-client-id",
+                    },
+                )
+
+                self.assertEqual(first_resp.status_code, 200)
+                self.assertEqual(second_resp.status_code, 200)
+                first_result = first_resp.json().get("result") or {}
+                second_result = second_resp.json().get("result") or {}
+                first_event = first_result.get("event") or {}
+                second_event = second_result.get("event") or {}
+                self.assertNotEqual(first_event.get("id"), second_event.get("id"))
+                self.assertFalse(bool(second_result.get("replayed")))
+                self.assertEqual(str(second_event.get("by") or ""), "peer-1")
+        finally:
+            cleanup()
+
     def test_upload_routes_preserve_client_id(self) -> None:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry

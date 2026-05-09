@@ -248,8 +248,9 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertIn("active_capsule_skills", runtime_visible_in)
         self.assertIn("active_capsule_skills", str(result.get("runtime_activation_evidence") or ""))
         self.assertIn("dynamic_tools", str(result.get("next_step_hint") or ""))
-        self.assertIn("Codex's skills directory", str(result.get("next_step_hint") or ""))
-        self.assertIn("CODEX_HOME", str(result.get("next_step_hint") or ""))
+        self.assertIn("CCCC capability runtime", str(result.get("next_step_hint") or ""))
+        self.assertNotIn("Codex's skills directory", str(result.get("next_step_hint") or ""))
+        self.assertNotIn("CODEX_HOME", str(result.get("next_step_hint") or ""))
         enable_mock.assert_called_once()
         self.assertEqual(str(enable_mock.call_args.kwargs.get("scope") or ""), "actor")
         call_mock.assert_not_called()
@@ -283,8 +284,9 @@ class TestMcpCapabilityUse(unittest.TestCase):
         runtime_visible_in = result.get("runtime_visible_in") if isinstance(result.get("runtime_visible_in"), list) else []
         self.assertIn("active_capsule_skills", runtime_visible_in)
         self.assertIn("active_capsule_skills", str(result.get("runtime_activation_evidence") or ""))
-        self.assertIn("Codex's skills directory", str(result.get("next_step_hint") or ""))
-        self.assertIn("CODEX_HOME", str(result.get("next_step_hint") or ""))
+        self.assertIn("CCCC capability runtime", str(result.get("next_step_hint") or ""))
+        self.assertNotIn("Codex's skills directory", str(result.get("next_step_hint") or ""))
+        self.assertNotIn("CODEX_HOME", str(result.get("next_step_hint") or ""))
 
     def test_capability_use_legacy_self_proposed_skill_points_to_migration_path(self) -> None:
         from cccc.ports.mcp.server import capability_use

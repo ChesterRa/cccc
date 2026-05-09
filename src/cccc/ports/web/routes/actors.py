@@ -593,6 +593,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "command": command,
                     "env": dict(req.env),
                     "capability_autoload": list(req.capability_autoload or []),
+                    "capability_hidden": list(req.capability_hidden or []),
                     "env_private": env_private,
                     "profile_id": profile_id,
                     **_profile_ref_args(scope=req.profile_scope, owner_id=req.profile_owner),
@@ -631,6 +632,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch["env"] = dict(req.env)
         if req.capability_autoload is not None:
             patch["capability_autoload"] = list(req.capability_autoload)
+        if req.capability_hidden is not None:
+            patch["capability_hidden"] = list(req.capability_hidden)
         if req.default_scope_key is not None:
             patch["default_scope_key"] = req.default_scope_key
         if req.submit is not None:

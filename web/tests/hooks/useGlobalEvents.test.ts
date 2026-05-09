@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getGlobalEventGroupId,
+  shouldRefreshCapabilitiesAfterGlobalEvent,
   shouldKeepGlobalEventsConnected,
   shouldRefreshActorsAfterGlobalEvent,
   shouldRefreshGroupsAfterGlobalEventsOpen,
@@ -59,6 +60,24 @@ describe("useGlobalEvents open refresh policy", () => {
     expect(
       shouldRefreshActorsAfterGlobalEvent(
         { kind: "group.updated", group_id: "g-demo" },
+        "g-demo",
+      ),
+    ).toBe(false);
+  });
+
+  it("refreshes selected capability state after capability changes", () => {
+    expect(
+      shouldRefreshCapabilitiesAfterGlobalEvent(
+        { kind: "capability.changed", data: { group_id: "g-demo", capability_id: "skill:demo" } },
+        "g-demo",
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores capability changes for other groups", () => {
+    expect(
+      shouldRefreshCapabilitiesAfterGlobalEvent(
+        { kind: "capability.changed", data: { group_id: "g-other", capability_id: "skill:demo" } },
         "g-demo",
       ),
     ).toBe(false);

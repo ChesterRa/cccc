@@ -6,7 +6,7 @@ Static MCP surface (role and capability-pack visibility may hide some tools):
 - cccc_inbox_list / cccc_inbox_mark_read
 - cccc_message_send / cccc_message_reply
 - cccc_file / cccc_repo / cccc_repo_edit / cccc_apply_patch / cccc_shell / cccc_exec_command / cccc_write_stdin / cccc_git / cccc_voice_secretary_document / cccc_voice_secretary_request / cccc_group / cccc_actor / cccc_runtime_list
-- cccc_capability_search / cccc_capability_enable / cccc_capability_state / cccc_capability_use
+- cccc_capability_search / cccc_capability_enable / cccc_capability_state / cccc_capability_install / cccc_capability_use
 - cccc_space / cccc_automation
 - cccc_context_get / cccc_coordination / cccc_task / cccc_agent_state
 - cccc_context_sync (advanced batch op)
@@ -115,6 +115,7 @@ from .handlers.cccc_capability import (  # noqa: F401
     capability_block,
     capability_enable,
     capability_import,
+    capability_install,
     capability_search,
     capability_state,
     capability_uninstall,
@@ -1051,10 +1052,25 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             by=by,
             actor_id=actor_id,
             record=record,
+            source_uri=str(arguments.get("source_uri") or arguments.get("url") or ""),
             dry_run=coerce_bool(arguments.get("dry_run"), default=False),
             probe=coerce_bool(arguments.get("probe"), default=True),
             enable_after_import=coerce_bool(arguments.get("enable_after_import"), default=False),
             scope=str(arguments.get("scope") or "session"),
+            ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
+            reason=str(arguments.get("reason") or ""),
+        )
+
+    if name == "cccc_capability_install":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_actor_id(arguments)
+        actor_id = str(arguments.get("actor_id") or by).strip()
+        return capability_install(
+            group_id=gid,
+            by=by,
+            actor_id=actor_id,
+            target=str(arguments.get("target") or arguments.get("source_uri") or arguments.get("capability_id") or ""),
+            scope=str(arguments.get("scope") or "actor"),
             ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
             reason=str(arguments.get("reason") or ""),
         )

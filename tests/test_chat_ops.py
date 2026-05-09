@@ -573,6 +573,23 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_tracked_send_accepts_explicit_reply_required(self) -> None:
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("tracked_send", {
+                "group_id": group_id,
+                "by": "user",
+                "to": ["peer1"],
+                "title": "Explicit reply required",
+                "text": "Please reply with evidence.",
+                "reply_required": True,
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            event = (resp.result or {}).get("event") or {}
+            self.assertEqual(event.get("data", {}).get("reply_required"), True)
+        finally:
+            cleanup()
+
     def test_tracked_send_replay_does_not_duplicate_successful_request(self) -> None:
         group_id, cleanup = self._setup_group_with_actors()
         try:

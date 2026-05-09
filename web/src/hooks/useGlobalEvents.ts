@@ -3,6 +3,7 @@
 
 import { useEffect, useRef } from "react";
 import * as api from "../services/api";
+import { publishCapabilityChanged } from "../utils/capabilityEvents";
 
 const GLOBAL_REFRESH_EVENT_KINDS = new Set([
   "group.created",
@@ -21,6 +22,10 @@ const ACTOR_REFRESH_EVENT_KINDS = new Set([
   "actor.stop",
   "actor.restart",
   "group.state_changed",
+]);
+
+const CAPABILITY_REFRESH_EVENT_KINDS = new Set([
+  "capability.changed",
 ]);
 
 export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: boolean): boolean {
@@ -49,6 +54,15 @@ export function shouldRefreshActorsAfterGlobalEvent(ev: unknown, selectedGroupId
   return getGlobalEventGroupId(ev) === selected;
 }
 
+export function shouldRefreshCapabilitiesAfterGlobalEvent(ev: unknown, selectedGroupId: string): boolean {
+  if (!ev || typeof ev !== "object") return false;
+  const kind = String((ev as { kind?: unknown }).kind || "").trim();
+  if (!CAPABILITY_REFRESH_EVENT_KINDS.has(kind)) return false;
+  const selected = String(selectedGroupId || "").trim();
+  if (!selected) return false;
+  return getGlobalEventGroupId(ev) === selected;
+}
+
 interface UseGlobalEventsOptions {
   /** Callback to refresh groups when events are received */
   refreshGroups: () => void;
@@ -56,16 +70,19 @@ interface UseGlobalEventsOptions {
   refreshActors?: (groupId: string, opts?: { includeUnread?: boolean }) => Promise<void> | void;
   /** Currently selected group id */
   selectedGroupId?: string;
+  /** Callback when effective capability state for the selected group changed */
+  refreshCapabilities?: (groupId: string) => void;
 }
 
 /**
  * Subscribes to the global events stream to keep sidebar status in sync.
  * Falls back to polling after 3 consecutive SSE errors.
  */
-export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId }: UseGlobalEventsOptions): void {
+export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId, refreshCapabilities }: UseGlobalEventsOptions): void {
   // Use ref to avoid recreating SSE connection when refreshGroups reference changes
   const refreshGroupsRef = useRef(refreshGroups);
   const refreshActorsRef = useRef(refreshActors);
+  const refreshCapabilitiesRef = useRef(refreshCapabilities);
   const selectedGroupIdRef = useRef(selectedGroupId);
   const hasConnectedOnceRef = useRef(false);
   useEffect(() => {
@@ -74,6 +91,9 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId 
   useEffect(() => {
     refreshActorsRef.current = refreshActors;
   }, [refreshActors]);
+  useEffect(() => {
+    refreshCapabilitiesRef.current = refreshCapabilities;
+  }, [refreshCapabilities]);
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
@@ -110,6 +130,16 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId 
       void refreshActorsRef.current(gid, { includeUnread: false });
     }
 
+    function refreshSelectedCapabilities() {
+      const gid = String(selectedGroupIdRef.current || "").trim();
+      if (!gid) return;
+      if (refreshCapabilitiesRef.current) {
+        refreshCapabilitiesRef.current(gid);
+        return;
+      }
+      publishCapabilityChanged(gid);
+    }
+
     function scheduleFallbackPoll() {
       if (fallbackTimer) return;
       fallbackTimer = window.setTimeout(() => {
@@ -144,6 +174,9 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId 
           }
           if (shouldRefreshActorsAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
             refreshSelectedActors();
+          }
+          if (shouldRefreshCapabilitiesAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
+            refreshSelectedCapabilities();
           }
         } catch {
           /* ignore parse errors */

@@ -57,6 +57,7 @@ from .actor_turn_rendering import (
 from ..pet.review_scheduler import request_pet_review
 from ..pet.profile_refresh import record_user_chat_message
 from ..context.context_ops import handle_context_sync
+from .install_slash_command import INSTALL_CAPABILITY_ID, parse_install_slash_command, render_install_command_task
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -132,9 +133,10 @@ def _tracked_send_client_id(*, group_id: str, by: str, idempotency_key: str) -> 
     return f"tracked-send:{digest}"
 
 
-def _tracked_send_existing_result(group: Any, *, client_id: str) -> Optional[Dict[str, Any]]:
+def _tracked_send_existing_result(group: Any, *, client_id: str, by: str = "") -> Optional[Dict[str, Any]]:
     if not client_id:
         return None
+    sender = str(by or "").strip()
     try:
         lines = read_last_lines(group.ledger_path, 800)
     except Exception:
@@ -145,6 +147,8 @@ def _tracked_send_existing_result(group: Any, *, client_id: str) -> Optional[Dic
         except Exception:
             continue
         if not isinstance(event, dict) or str(event.get("kind") or "") != "chat.message":
+            continue
+        if sender and str(event.get("by") or "").strip() != sender:
             continue
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         if str(data.get("client_id") or "").strip() != client_id:
@@ -356,6 +360,7 @@ def handle_send(
         if token:
             to_tokens = [token]
     to_explicitly_set = len(to_tokens) > 0
+    install_slash_command = parse_install_slash_command(text)
 
     if priority not in ("normal", "attention"):
         return _error("invalid_priority", "priority must be 'normal' or 'attention'")
@@ -370,6 +375,10 @@ def handle_send(
             "pet_visible_chat_forbidden",
             "Pet cannot send or reply visible chat directly; use pet decisions instead.",
         )
+    if client_id:
+        existing = _tracked_send_existing_result(group, client_id=client_id, by=by)
+        if existing is not None:
+            return DaemonResponse(ok=True, result=existing)
 
     group = _wake_group_on_human_message(
         group,
@@ -444,6 +453,21 @@ def handle_send(
     except Exception as e:
         return _error("invalid_attachments", str(e))
     refs = _normalize_refs(args.get("refs"))
+    delivery_body_text = text
+    if install_slash_command is not None:
+        delivery_body_text = render_install_command_task(install_slash_command)
+        refs = [
+            *refs,
+            {
+                "kind": "text",
+                "title": "slash_command",
+                "command": "/install",
+                "capability_id": INSTALL_CAPABILITY_ID,
+                "args_text": install_slash_command.get("args_text", ""),
+                "target": install_slash_command.get("target", ""),
+                "target_kind": install_slash_command.get("target_kind", ""),
+            },
+        ]
 
     if not text.strip() and not attachments:
         return _error("empty_message", "message text cannot be empty")
@@ -479,7 +503,7 @@ def handle_send(
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
     delivery_text = _build_delivery_text(
-        text=text,
+        text=delivery_body_text,
         priority=priority,
         reply_required=reply_required,
         event_id=event_id,
@@ -671,6 +695,7 @@ def handle_tracked_send(
     blocked_by = args.get("blocked_by")
     handoff_to = str(args.get("handoff_to") or "").strip()
     base_refs = _normalize_refs(args.get("refs"))
+    reply_required = coerce_bool(args.get("reply_required")) if "reply_required" in args else True
     message_args = {
         "group_id": group_id,
         "text": text,
@@ -678,7 +703,7 @@ def handle_tracked_send(
         "to": _normalize_to_tokens(args.get("to")),
         "path": str(args.get("path") or ""),
         "priority": message_priority,
-        "reply_required": coerce_bool(args.get("reply_required"), default=True) if "reply_required" in args else True,
+        "reply_required": reply_required,
         "refs": base_refs,
     }
     if client_id:

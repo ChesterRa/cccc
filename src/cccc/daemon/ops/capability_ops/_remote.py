@@ -49,6 +49,7 @@ from ._install import (
     _extract_required_env_from_runtime_arguments,
     _normalize_registry_type_token,
 )
+from ._skillsmp import _normalize_skillsmp_source_uri, _skillsmp_record_key, _skillsmp_skill_name_from_slug
 
 
 def _pkg():
@@ -220,7 +221,7 @@ def _parse_skillsmp_proxy_search_markdown(markdown: str, *, limit: int) -> List[
     seen_uri: set[str] = set()
     now_iso = utc_now_iso()
     for m in _SKILLSMP_SKILL_URL_RE.finditer(text):
-        source_uri = str(m.group(0) or "").strip().rstrip(").,")
+        source_uri = _normalize_skillsmp_source_uri(str(m.group(0) or ""))
         if not source_uri:
             continue
         if source_uri in seen_uri:
@@ -238,11 +239,7 @@ def _parse_skillsmp_proxy_search_markdown(markdown: str, *, limit: int) -> List[
         if export_match:
             skill_name = _sanitize_skill_id_token(str(export_match.group(1) or ""), default="skill")
         if not skill_name:
-            slug_parts = [p for p in slug_token.split("-") if p]
-            if len(slug_parts) >= 2:
-                skill_name = _sanitize_skill_id_token("-".join(slug_parts[-2:]), default="skill")
-            else:
-                skill_name = _sanitize_skill_id_token(slug_token, default="skill")
+            skill_name = _skillsmp_skill_name_from_slug(slug_token)
         repo_match = re.search(r'from\s+"([^"]+)"', context)
         description = one_line
         if repo_match:
@@ -332,7 +329,7 @@ def _parse_skillsmp_api_payload(data: Dict[str, Any], *, limit: int) -> List[Dic
         ).strip()
         if not summary:
             summary = f"SkillsMP skill candidate ({name})"
-        source_uri = f"https://skillsmp.com/skills/{slug}"
+        source_uri = _normalize_skillsmp_source_uri(f"https://skillsmp.com/skills/{slug}")
         source_record_id = source_uri
         rec_hash = hashlib.sha1(source_record_id.encode("utf-8")).hexdigest()[:8]
         rows.append(
@@ -811,9 +808,17 @@ def _remote_search_skill_records(*, query: str, limit: int, source_filter: str =
             if not isinstance(rec, dict):
                 continue
             cap_id = str(rec.get("capability_id") or "").strip()
-            if not cap_id or cap_id in seen:
+            if not cap_id:
                 continue
-            seen.add(cap_id)
+            source_id = str(rec.get("source_id") or "").strip()
+            dedupe_key = f"capability:{cap_id}"
+            if source_id == "skillsmp_remote":
+                source_key = _skillsmp_record_key(rec)
+                if source_key:
+                    dedupe_key = f"skillsmp:{source_key}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
             out.append(rec)
 
     _parent = _pkg()

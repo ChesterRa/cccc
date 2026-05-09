@@ -211,6 +211,83 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_install_slash_command_delivers_general_install_task_to_agent(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-install-slash", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+            ):
+                resp = handle_send(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "/install https://github.com/obra/superpowers",
+                        "to": ["peer1"],
+                        "client_id": "install-1",
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
+            self.assertIn("[cccc] Slash command: /install", submitted_text)
+            self.assertIn("[cccc] Capability: skill:cccc:install", submitted_text)
+            self.assertIn("Route this request through skill:cccc:install", submitted_text)
+            self.assertIn("The skill definition is the source of truth", submitted_text)
+            self.assertNotIn("Expected procedure:", submitted_text)
+            self.assertNotIn("use the skill-installer workflow", submitted_text)
+            self.assertIn("https://github.com/obra/superpowers", submitted_text)
+            self.assertIn("Parser target hint: github", submitted_text)
+            self.assertIn("Treat the parser target hint as non-authoritative", submitted_text)
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            event = (resp.result or {}).get("event") if isinstance(resp.result, dict) else {}
+            data = event.get("data") if isinstance(event, dict) and isinstance(event.get("data"), dict) else {}
+            self.assertEqual(str(data.get("text") or ""), "/install https://github.com/obra/superpowers")
+            refs = data.get("refs") if isinstance(data.get("refs"), list) else []
+            slash_refs = [item for item in refs if isinstance(item, dict) and item.get("command") == "/install"]
+            self.assertEqual(len(slash_refs), 1)
+            self.assertEqual(str(slash_refs[0].get("capability_id") or ""), "skill:cccc:install")
+            self.assertEqual(str(slash_refs[0].get("target_kind") or ""), "github")
+        finally:
+            cleanup()
+
     def test_send_headless_codex_auto_mark_waits_for_runtime_acceptance(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
         from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE

@@ -123,11 +123,17 @@
   },
   "capabilities": {
     "title": "能力ガバナンス",
-    "subtitle": "組み込み capability と外部 capability のグローバルルール、source、registry を管理します。",
-    "pageGuide": "ここはグローバルガバナンス専用です。外部 capability ポリシー、source、registry を管理します。下の Self-Evolving Skills カードは各グループで生成された skill レコードを横断管理します。",
+    "subtitle": "自己進化 skill を管理し、完全な registry は Capability Center に集約します。",
+    "pageGuide": "Source と完全な registry の閲覧と管理は Capability Center を使います。このタブは各グループで生成された自己進化 skill レコードだけを横断管理します。",
     "refresh": "更新",
+    "openCenter": "Capability Center を開く",
     "revision": "リビジョン",
     "failedLoad": "Capabilities overview の読み込みに失敗しました。",
+    "failedSlashVisibility": "スラッシュコマンドの表示状態を更新できませんでした。",
+    "slashCommandVisible": "/ 表示",
+    "slashCommandHidden": "/ 非表示",
+    "showInSlashCommands": "スラッシュコマンドに表示",
+    "hideFromSlashCommands": "スラッシュコマンドから非表示",
     "selfProposedTitle": "Self-Evolving Skills ライブラリ",
     "selfProposedHint": "各グループで agent が生成した手順型 skill レコードを横断管理します。ここで編集、削除、または現在のグループで使用する actor を選べます。",
     "selfEvolvingGroupTitle": "Self-Evolving Skills",
@@ -158,6 +164,9 @@
     "manageRequiresGroup": "自己生成 skill を保存または有効化するには、グループ内でこのパネルを開いてください。",
     "manageMissingCandidate": "選択した自己生成 skill はもう利用できません。",
     "manageInvalidNamespace": "自己生成 skill id は skill:agent_self_proposed: で始まる必要があります。",
+    "manageSkillAssignments": "Skill 割り当てを管理",
+    "manageAssignmentsTitle": "Skill 割り当ての管理",
+    "manageAssignmentsSubtitle": "出所を確認し、この skill を自動使用する actor を選びます。",
     "manageCapsuleRequired": "Capsule 本文は必須です。",
     "manageActorLoadFailed": "このグループの actor 読み込みに失敗しました。",
     "manageStatusAvailable": "利用可能",
@@ -182,6 +191,7 @@
     "manageUsageSession": "{{actor}} · session · 残り {{ttl}}",
     "manageUsageActorAutoload": "{{actor}} · 直接 actor 割り当て",
     "manageUsageProfileAutoload": "{{actor}} · profile {{profile}} 経由",
+    "manageUsageActorHidden": "{{actor}} · メニューで非表示",
     "manageUsageUnknownProfile": "不明な profile",
     "manageUsageBlocked": "Blocked skill は解除するまで agents が使用できません。",
     "manageUsageTtlSeconds": "1分未満",
@@ -192,7 +202,9 @@
     "manageActorAssignmentProfileBadge": "profile 経由",
     "manageActorAssignmentTemporaryBadge": "一時適用",
     "manageActorAssignmentActorScopeBadge": "runtime scope",
+    "manageActorAssignmentHiddenBadge": "非表示",
     "manageNoActors": "このグループには actor がありません。",
+    "manageHideInMenus": "非表示",
     "manageSaveActorAssignments": "Actor 割り当てを保存",
     "manageActorAssignmentsSaved": "Actor 割り当てを保存しました。",
     "manageActorAssignmentsFailed": "Actor 割り当ての保存に失敗しました。",
@@ -216,58 +228,15 @@
     "manageDuplicateTitle": "重複の可能性",
     "manageDuplicateHint": "同じ名前または slug の自己生成 skill が他にもあります。近似重複を作らず、既存レコードの更新を優先してください。",
     "manageNoGroupHint": "ここでは閲覧できますが、保存・有効化・autoload 操作には具体的なグループが必要です。",
-    "sourcesTitle": "ソース",
-    "sourcesHint": "外部 capability source を管理し、同期状態を確認します。",
-    "sourcesSummary": "合計 {{total}} · 有効 {{enabled}} · 無効 {{disabled}}",
-    "levelDistribution": "レベル分布: indexed={{indexed}} · mounted={{mounted}} · pinned={{pinned}}",
-    "sourceEnabled": "有効",
-    "sourceDisabled": "無効",
-    "sourceEnableAction": "有効化",
-    "sourceDisableAction": "無効化",
-    "sourceMeta": "レベル={{level}}、同期={{sync}}、記録={{count}}",
-    "sourceRationale": "理由: {{text}}",
-    "sourceSearchPlaceholder": "source id / 同期状態 / 理由で絞り込み...",
-    "sourcesVisibilityAll": "すべて",
-    "sourcesVisibilityEnabled": "有効のみ",
-    "sourcesVisibilityDisabled": "無効のみ",
-    "showMoreSources": "さらに {{count}} 件表示",
-    "showLessSources": "折りたたむ",
-    "libraryTitle": "能力レジストリ",
-    "libraryHint": "既知 capability を確認し、readiness を点検し、global block ルールを管理します。",
-    "searchPlaceholder": "id/name/tag/source で検索...",
-    "filterKindAll": "すべての種類",
-    "filterKindPack": "パック",
-    "filterKindMcp": "MCP",
-    "filterKindSkill": "スキル",
-    "filterPolicyAll": "すべてのポリシー",
-    "filterPolicyActionable": "今すぐ使える",
-    "filterPolicyBlocked": "ブロック済み",
-    "filterPolicyIndexed": "Indexed のみ",
-    "filterSourceAll": "すべてのソース",
-    "resultsSummary": "{{count}} 件",
-    "showingRange": "{{from}}-{{to}} 件を表示",
-    "pageSize": "ページサイズ",
-    "pagePrev": "前へ",
-    "pageNext": "次へ",
-    "pageLabel": "{{page}} / {{total}} ページ",
     "recentCount": "最近 {{count}} 件",
     "useWhen": "使いどころ",
     "avoidWhen": "避ける場面",
     "gotcha": "注意点",
     "verifyWith": "検証",
     "blocked": "ブロック中",
-    "block": "ブロック",
-    "unblock": "ブロック解除",
     "requireGroup": "block/unblock を変更するにはグループ画面から開いてください。",
-    "blockReasonPrompt": "Block 理由（任意）",
-    "failedBlock": "Block 状態の更新に失敗しました。",
-    "failedSourceToggle": "ソース状態の更新に失敗しました。",
-    "blockedListTitle": "ブロック項目",
-    "blockedListHint": "グローバルレベルで block されている capability です。",
-    "noBlocked": "ブロック中の能力はありません。",
     "noneSelected": "選択された能力はありません。",
     "noCandidates": "Autoload 候補が見つかりません。",
-    "noLibraryMatches": "現在のフィルタに一致する能力はありません。",
     "loading": "Capabilities を読み込み中...",
     "removeFromAutoload": "Autoload から削除",
     "enable": "有効化",
@@ -291,32 +260,192 @@
         "hint": "外部 source は既定で利用可能ですが、source 単位・capability 単位の override は引き続き有効です。"
       },
       "conservative": {
-        "label": "保守的",
-        "hint": "外部 source は既定でより厳しい indexed 方針になり、明示的に緩和するまでそのままです。"
+        "label": "保守",
+        "hint": "外部 source は明示的に緩和されない限り、より厳しい indexed 方針になります。"
       }
     },
     "readiness": {
-      "nextLabel": "次の一手",
+      "nextLabel": "次の手順",
       "missingEnv": "不足している環境変数: {{names}}",
-      "blockedBySafetyMode": "保守的な外部インポート安全モードによりブロックされています。",
+      "blockedBySafetyMode": "保守的な外部 import safety mode によりブロックされています。",
       "status": {
-        "blocked": "ブロック中",
+        "blocked": "ブロック",
         "enableable": "有効化可能",
-        "needs_inspect": "要確認"
+        "needs_inspect": "確認が必要"
       },
       "next": {
         "enable": "有効化",
         "inspect": "確認",
-        "fix_known_blocker": "阻害要因を解消",
-        "switch_external_capability_safety_mode_or_adjust_allowlist": "安全モードを緩和するか allowlist を調整"
+        "fix_known_blocker": "ブロック要因を修正",
+        "switch_external_capability_safety_mode_or_adjust_allowlist": "safety mode を緩和するか allowlist を調整"
       },
       "reason": {
-        "policy_level_indexed": "ポリシーによりこの capability は indexed のままです。",
-        "qualification_blocked": "qualification により有効化できません。",
+        "policy_level_indexed": "policy がこの capability を indexed に保っています。",
+        "qualification_blocked": "qualification status が有効化をブロックしています。",
         "capability_unavailable": "この capability は現在利用できません。",
         "missing_required_env": "必要な環境変数が不足しています。"
       }
     }
+  },
+  "capabilityCenter": {
+    "title": "Capability Center",
+    "subtitle": "Skills、MCP、Packs",
+    "headerHint": "グローバル capability を一覧、絞り込み、管理するワークスペースです。",
+    "refresh": "更新",
+    "close": "閉じる",
+    "backToApp": "アプリに戻る",
+    "searchPlaceholder": "capability id、名前、source、tag、tool を検索...",
+    "typeFilter": "種類フィルター",
+    "stateFilter": "状態フィルター",
+    "failedLoad": "Capability Center の読み込みに失敗しました。",
+    "failedLoadState": "現在の capability 状態を読み込めませんでした。",
+    "failedSlashVisibility": "スラッシュコマンドの表示状態を更新できませんでした。",
+    "sectionNavigation": "Capability セクション",
+    "sections": {
+      "library": {
+        "label": "ライブラリ",
+        "hint": "すべての capability"
+      },
+      "skill": {
+        "label": "Skills",
+        "hint": "手順型 capability"
+      },
+      "mcp": {
+        "label": "MCP",
+        "hint": "Tool servers"
+      },
+      "sources": {
+        "label": "Sources",
+        "hint": "フィードと出所"
+      }
+    },
+    "typeOptions": {
+      "all": "すべて",
+      "skill": "Skills",
+      "mcp": "MCP",
+      "pack": "Packs"
+    },
+    "stateOptions": {
+      "all": "すべての状態",
+      "enabled": "有効",
+      "slash_visible": "/ 表示",
+      "slash_hidden": "/ 非表示",
+      "blocked": "ブロック",
+      "needs_setup": "設定が必要"
+    },
+    "stats": {
+      "skills": "Skills",
+      "mcp": "MCP",
+      "packs": "Packs",
+      "enabled": "有効"
+    },
+    "sidebarSummary": "{{capabilities}} 件の capability · {{sources}} 件の source",
+    "loading": "読み込み中...",
+    "emptyDash": "-",
+    "noCapabilities": "現在のフィルターに一致する capability はありません。",
+    "slashVisible": "/ 表示",
+    "slashHidden": "/ 非表示",
+    "showInSlashCommands": "/ コマンドに表示",
+    "hideFromSlashCommands": "/ コマンドから非表示",
+    "table": {
+      "capability": "Capability",
+      "type": "種類",
+      "state": "状態",
+      "source": "Source",
+      "actions": "操作"
+    },
+    "status": {
+      "enabled": "有効",
+      "disabled": "無効",
+      "blocked": "ブロック",
+      "setup": "設定が必要",
+      "needsSetup": "設定が必要",
+      "ready": "準備済み"
+    },
+    "pagination": {
+      "showing": "{{from}}-{{to}} / {{total}} を表示",
+      "noResults": "結果なし",
+      "moreAvailable": "さらにあります",
+      "rows": "行数",
+      "prev": "前へ",
+      "next": "次へ"
+    },
+    "sources": {
+      "records": "{{count}} 件",
+      "sync": "sync={{state}}",
+      "empty": "Source はまだ読み込まれていません。",
+      "total": "合計",
+      "enable": "有効化",
+      "disable": "無効化",
+      "delete": "削除",
+      "deleting": "削除中",
+      "toggleFailed": "Source の更新に失敗しました。",
+      "deleteFailed": "Source の削除に失敗しました。",
+      "deleteConfirm": "Source {{id}} を削除しますか？\n\nこの source の registry レコード {{count}} 件と関連 binding を削除します。"
+    },
+    "details": {
+      "selectCapability": "Capability を選択してください。",
+      "description": "説明",
+      "noDescription": "説明はありません。",
+      "source": "Source",
+      "policy": "Policy",
+      "readiness": "準備状態",
+      "tools": "Tools",
+      "useWhen": "使う場面",
+      "gotchas": "注意点",
+      "openGroupForSlash": "/ コマンド表示を変更するにはグループを開いてください。"
+    },
+    "controls": {
+      "title": "操作",
+      "skillHint": "現在のグループでの有効化、/ 表示、ブロック、除去を管理します。",
+      "mcpHint": "現在のグループでの有効化、ブロック、runtime install binding、アンインストールを管理します。",
+      "enabledMeta": "現在のグループで有効",
+      "disabledMeta": "現在のグループでは無効",
+      "slashVisibleMeta": "/ コマンドに表示",
+      "slashHiddenMeta": "/ コマンドから非表示",
+      "blockMeta": "Agent の使用を禁止",
+      "blockedMeta": "現在ブロック中",
+      "openGroup": "これらの操作にはグループを開いてください。"
+    },
+    "remove": {
+      "busy": "処理中",
+      "failed": "Capability の削除に失敗しました。",
+      "label": {
+        "delete": "削除",
+        "remove": "除去",
+        "uninstall": "アンインストール",
+        "disable": "無効化"
+      },
+      "title": {
+        "delete": "この Skill を削除",
+        "remove": "この Skill を現在のグループから除去",
+        "uninstall": "この MCP をアンインストール",
+        "disable": "この組み込み capability を無効化"
+      },
+      "confirm": {
+        "delete": "{{name}} を削除しますか？\n\n{{id}} の registry レコードと関連 binding を削除します。",
+        "remove": "{{name}} を除去しますか？\n\n{{id}} の現在のグループでの有効化と autoload 参照を消去します。",
+        "uninstall": "{{name}} をアンインストールしますか？\n\n{{id}} の現在のグループでの binding と runtime インストール参照を消去します。",
+        "disable": "{{name}} を無効化しますか？\n\n{{id}} の現在のグループでの有効化だけを消去します。組み込み capability 自体は削除されません。"
+      }
+    },
+    "block": {
+      "block": "ブロック",
+      "unblock": "ブロック解除",
+      "blockTitle": "この capability をブロック",
+      "unblockTitle": "この capability のブロックを解除",
+      "failed": "ブロック状態の更新に失敗しました。",
+      "confirmBlock": "{{name}} をブロックしますか？\n\n解除するまで agent は {{id}} を使用できません。",
+      "confirmUnblock": "{{name}} のブロックを解除しますか？\n\n{{id}} が有効で policy で許可されていれば、agent が再び使用できます。"
+    },
+    "enable": {
+      "enable": "有効化",
+      "disable": "無効化",
+      "enableTitle": "このグループで有効化",
+      "disableTitle": "このグループで無効化",
+      "failed": "有効化状態の更新に失敗しました。"
+    },
+    "showSystem": "システム"
   },
   "assistants": {
     "openFromGroup": "このタブはグループから開いてください。",

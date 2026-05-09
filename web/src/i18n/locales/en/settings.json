@@ -123,11 +123,17 @@
   },
   "capabilities": {
     "title": "Capability Governance",
-    "subtitle": "Global rules, sources, and registry for built-in and external capabilities.",
-    "pageGuide": "Global governance only. Configure external policy, manage sources, and inspect registry state. The Self-Evolving Skills card below manages generated skill records across groups.",
+    "subtitle": "Self-evolving skill governance with a dedicated Capability Center for the full registry.",
+    "pageGuide": "Use Capability Center for sources and full registry browsing. This tab only manages generated self-evolving skill records across groups.",
     "refresh": "Refresh",
+    "openCenter": "Open Capability Center",
     "revision": "Revision",
     "failedLoad": "Failed to load capabilities overview.",
+    "failedSlashVisibility": "Failed to update slash command visibility.",
+    "slashCommandVisible": "/ visible",
+    "slashCommandHidden": "/ hidden",
+    "showInSlashCommands": "Show in slash commands",
+    "hideFromSlashCommands": "Hide from slash commands",
     "selfProposedTitle": "Self-Evolving Skills Library",
     "selfProposedHint": "Manage agent-generated procedural skill records across groups. Use this view to edit them, remove them, or choose which actors use them in the current group.",
     "selfEvolvingGroupTitle": "Self-Evolving Skills",
@@ -147,6 +153,9 @@
     "selfProposedManage": "Manage",
     "manageTitle": "Manage Self-Proposed Skill",
     "manageSubtitle": "Edit the generated skill text and choose which actors use it automatically.",
+    "manageSkillAssignments": "Manage assignments",
+    "manageAssignmentsTitle": "Manage Skill Assignments",
+    "manageAssignmentsSubtitle": "Review provenance and choose which actors use this skill automatically.",
     "manageClose": "Close",
     "manageName": "Name",
     "manageDescription": "Description",
@@ -155,7 +164,7 @@
     "manageSave": "Save skill",
     "manageSaved": "Skill record saved.",
     "manageSaveFailed": "Failed to save skill record.",
-    "manageRequiresGroup": "Open this panel from a group before saving or enabling a self-proposed skill.",
+    "manageRequiresGroup": "Open this panel from a group before saving or enabling a skill.",
     "manageMissingCandidate": "The selected self-proposed skill is no longer available.",
     "manageInvalidNamespace": "Self-proposed skill ids must start with skill:agent_self_proposed:.",
     "manageCapsuleRequired": "Capsule text is required.",
@@ -182,6 +191,7 @@
     "manageUsageSession": "{{actor}} · session · {{ttl}} left",
     "manageUsageActorAutoload": "{{actor}} · direct actor assignment",
     "manageUsageProfileAutoload": "{{actor}} · via profile {{profile}}",
+    "manageUsageActorHidden": "{{actor}} · hidden from menus",
     "manageUsageUnknownProfile": "unknown profile",
     "manageUsageBlocked": "Blocked skills cannot be used by agents until unblocked.",
     "manageUsageTtlSeconds": "less than 1 minute",
@@ -192,7 +202,9 @@
     "manageActorAssignmentProfileBadge": "via profile",
     "manageActorAssignmentTemporaryBadge": "temporary",
     "manageActorAssignmentActorScopeBadge": "runtime scope",
+    "manageActorAssignmentHiddenBadge": "hidden",
     "manageNoActors": "No actors in this group.",
+    "manageHideInMenus": "Hide",
     "manageSaveActorAssignments": "Save actor assignments",
     "manageActorAssignmentsSaved": "Actor assignments saved.",
     "manageActorAssignmentsFailed": "Failed to save actor assignments.",
@@ -216,107 +228,178 @@
     "manageDuplicateTitle": "Possible duplicate",
     "manageDuplicateHint": "Another self-proposed skill has the same name or slug. Prefer updating the existing record instead of creating near-duplicates.",
     "manageNoGroupHint": "Viewing is available here, but save/enable/autoload actions require a concrete group.",
-    "sourcesTitle": "Sources",
-    "sourcesHint": "Manage external capability feeds and inspect their sync health.",
-    "sourcesSummary": "{{total}} total · {{enabled}} enabled · {{disabled}} disabled",
-    "levelDistribution": "Level: indexed={{indexed}} · mounted={{mounted}} · pinned={{pinned}}",
-    "sourceEnabled": "enabled",
-    "sourceDisabled": "disabled",
-    "sourceEnableAction": "Enable",
-    "sourceDisableAction": "Disable",
-    "sourceMeta": "level={{level}}, sync={{sync}}, records={{count}}",
-    "sourceRationale": "rationale: {{text}}",
-    "sourceSearchPlaceholder": "Filter sources by id/sync/rationale...",
-    "sourcesVisibilityAll": "All",
-    "sourcesVisibilityEnabled": "Enabled",
-    "sourcesVisibilityDisabled": "Disabled",
-    "showMoreSources": "Show {{count}} more",
-    "showLessSources": "Show less",
-    "libraryTitle": "Capability Registry",
-    "libraryHint": "Browse known capabilities, inspect readiness, and manage global block rules.",
-    "searchPlaceholder": "Search by id/name/tag/source...",
-    "filterKindAll": "All kinds",
-    "filterKindPack": "Packs",
-    "filterKindMcp": "MCP",
-    "filterKindSkill": "Skills",
-    "filterPolicyAll": "All policies",
-    "filterPolicyActionable": "Actionable",
-    "filterPolicyBlocked": "Blocked",
-    "filterPolicyIndexed": "Indexed only",
-    "filterSourceAll": "All sources",
-    "resultsSummary": "{{count}} results",
-    "showingRange": "showing {{from}}-{{to}}",
-    "pageSize": "Page size",
-    "pagePrev": "Prev",
-    "pageNext": "Next",
-    "pageLabel": "Page {{page}} / {{total}}",
     "recentCount": "recent {{count}}",
     "useWhen": "Use when",
     "avoidWhen": "Avoid when",
     "gotcha": "Gotcha",
     "verifyWith": "Verify",
     "blocked": "blocked",
-    "block": "Block",
-    "unblock": "Unblock",
     "requireGroup": "Open this tab from a group to update block/unblock.",
-    "blockReasonPrompt": "Optional block reason",
-    "failedBlock": "Failed to update block state.",
-    "failedSourceToggle": "Failed to update source state.",
-    "blockedListTitle": "Blocked Items",
-    "blockedListHint": "Capabilities blocked at the global level.",
-    "noBlocked": "No blocked capabilities.",
     "noneSelected": "No capabilities selected.",
     "noCandidates": "No autoload candidates found.",
-    "noLibraryMatches": "No capabilities match current filters.",
     "loading": "Loading capabilities...",
     "removeFromAutoload": "Remove from autoload",
-    "enable": "Enable",
-    "enableForGroup": "Enable",
-    "disableForGroup": "Disable",
-    "failedEnable": "Failed to enable capability.",
-    "operationFailedReason": "Operation did not apply ({{reason}}).",
-    "enableScope": {
-      "session": "Session",
-      "actor": "Actor",
-      "group": "Group"
-    },
-    "failedSafetyMode": "Failed to update external capability safety mode.",
-    "safetyModeTitle": "External Capability Policy",
-    "safetyModeHint": "Controls the default actionability of external capabilities. Built-in packs are unaffected.",
-    "safetyModeCurrent": "Current policy: {{mode}}",
-    "safetyModeCurrentRule": "External sources currently follow the {{mode}} posture.",
-    "safetyMode": {
-      "normal": {
-        "label": "Standard",
-        "hint": "External sources are usable by default, subject to per-source and per-capability overrides."
+    "enable": "Enable"
+  },
+  "capabilityCenter": {
+    "title": "Capability Center",
+    "subtitle": "Skills, MCP, and packs",
+    "headerHint": "Global workspace for browsing, filtering, and managing capabilities.",
+    "refresh": "Refresh",
+    "close": "Close",
+    "backToApp": "Back to app",
+    "searchPlaceholder": "Search capability id, name, source, tag, or tool...",
+    "typeFilter": "Type filter",
+    "stateFilter": "State filter",
+    "failedLoad": "Failed to load capability center.",
+    "failedLoadState": "Failed to load current capability state.",
+    "failedSlashVisibility": "Failed to update slash command visibility.",
+    "sectionNavigation": "Capability sections",
+    "sections": {
+      "library": {
+        "label": "Library",
+        "hint": "All capabilities"
       },
-      "conservative": {
-        "label": "Conservative",
-        "hint": "External sources default to a stricter indexed posture until explicitly relaxed."
+      "skill": {
+        "label": "Skills",
+        "hint": "Procedural skills"
+      },
+      "mcp": {
+        "label": "MCP",
+        "hint": "Tool servers"
+      },
+      "sources": {
+        "label": "Sources",
+        "hint": "Feeds and origins"
       }
     },
-    "readiness": {
-      "nextLabel": "Next",
-      "missingEnv": "Missing env: {{names}}",
-      "blockedBySafetyMode": "Blocked by conservative external import safety mode.",
-      "status": {
-        "blocked": "Blocked",
-        "enableable": "Enableable",
-        "needs_inspect": "Needs Inspect"
+    "typeOptions": {
+      "all": "All",
+      "skill": "Skills",
+      "mcp": "MCP",
+      "pack": "Packs"
+    },
+    "stateOptions": {
+      "all": "All states",
+      "enabled": "Enabled",
+      "slash_visible": "/ visible",
+      "slash_hidden": "/ hidden",
+      "blocked": "Blocked",
+      "needs_setup": "Needs setup"
+    },
+    "stats": {
+      "skills": "Skills",
+      "mcp": "MCP",
+      "packs": "Packs",
+      "enabled": "Enabled"
+    },
+    "sidebarSummary": "{{capabilities}} capabilities · {{sources}} sources",
+    "loading": "Loading...",
+    "emptyDash": "-",
+    "noCapabilities": "No capabilities match the current filters.",
+    "slashVisible": "/ visible",
+    "slashHidden": "/ hidden",
+    "showInSlashCommands": "Show in / commands",
+    "hideFromSlashCommands": "Hide from / commands",
+    "table": {
+      "capability": "Capability",
+      "type": "Type",
+      "state": "State",
+      "source": "Source",
+      "actions": "Actions"
+    },
+    "status": {
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "blocked": "Blocked",
+      "setup": "Setup",
+      "needsSetup": "Needs setup",
+      "ready": "Ready"
+    },
+    "pagination": {
+      "showing": "Showing {{from}}-{{to}} / {{total}}",
+      "noResults": "No results",
+      "moreAvailable": "More available",
+      "rows": "Rows",
+      "prev": "Prev",
+      "next": "Next"
+    },
+    "sources": {
+      "records": "{{count}} records",
+      "sync": "sync={{state}}",
+      "empty": "No sources loaded.",
+      "total": "Total",
+      "enable": "Enable",
+      "disable": "Disable",
+      "delete": "Delete",
+      "deleting": "Deleting",
+      "toggleFailed": "Failed to update source.",
+      "deleteFailed": "Failed to delete source.",
+      "deleteConfirm": "Delete source {{id}}?\n\nThis removes {{count}} registry records from this source and clears related bindings."
+    },
+    "details": {
+      "selectCapability": "Select a capability.",
+      "description": "Description",
+      "noDescription": "No description.",
+      "source": "Source",
+      "policy": "Policy",
+      "readiness": "Readiness",
+      "tools": "Tools",
+      "useWhen": "Use when",
+      "gotchas": "Gotchas",
+      "openGroupForSlash": "Open a group to change / command visibility."
+    },
+    "controls": {
+      "title": "Controls",
+      "skillHint": "Group use, slash visibility, block state, and removal.",
+      "mcpHint": "Group use, block state, runtime install binding, and removal.",
+      "enabledMeta": "Currently active in this group",
+      "disabledMeta": "Not active in this group",
+      "slashVisibleMeta": "Shown in / commands",
+      "slashHiddenMeta": "Hidden from / commands",
+      "blockMeta": "Prevent agents from using it",
+      "blockedMeta": "Currently blocked",
+      "openGroup": "Open a group to use these controls."
+    },
+    "remove": {
+      "busy": "Working",
+      "failed": "Failed to remove capability.",
+      "label": {
+        "delete": "Delete",
+        "remove": "Remove",
+        "uninstall": "Uninstall",
+        "disable": "Disable"
       },
-      "next": {
-        "enable": "Enable",
-        "inspect": "Inspect",
-        "fix_known_blocker": "Fix blocker",
-        "switch_external_capability_safety_mode_or_adjust_allowlist": "Relax safety mode or adjust allowlist"
+      "title": {
+        "delete": "Delete this skill",
+        "remove": "Remove this skill from the current group",
+        "uninstall": "Uninstall this MCP",
+        "disable": "Disable this built-in capability"
       },
-      "reason": {
-        "policy_level_indexed": "Policy keeps this capability indexed.",
-        "qualification_blocked": "Qualification blocks enablement.",
-        "capability_unavailable": "Capability is currently unavailable.",
-        "missing_required_env": "Required environment is missing."
+      "confirm": {
+        "delete": "Delete {{name}}?\n\nThis removes the registry record for {{id}} and related bindings.",
+        "remove": "Remove {{name}}?\n\nThis clears current-group enablement and autoload references for {{id}}.",
+        "uninstall": "Uninstall {{name}}?\n\nThis clears current-group bindings and runtime installation references for {{id}}.",
+        "disable": "Disable {{name}}?\n\nThis only clears current-group enablement for {{id}}. The built-in capability itself is not deleted."
       }
-    }
+    },
+    "block": {
+      "block": "Block",
+      "unblock": "Unblock",
+      "blockTitle": "Block this capability",
+      "unblockTitle": "Unblock this capability",
+      "failed": "Failed to update block state.",
+      "confirmBlock": "Block {{name}}?\n\nAgents cannot use {{id}} until it is unblocked.",
+      "confirmUnblock": "Unblock {{name}}?\n\nAgents can use {{id}} again if it is enabled and allowed by policy."
+    },
+    "enable": {
+      "enable": "Enable",
+      "disable": "Disable",
+      "enableTitle": "Enable for this group",
+      "disableTitle": "Disable for this group",
+      "failed": "Failed to update enablement."
+    },
+    "showSystem": "System"
   },
   "assistants": {
     "openFromGroup": "Open this tab from a group.",

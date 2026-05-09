@@ -150,6 +150,7 @@ class ActorUpdatePatch(BaseModel):
     default_scope_key: Optional[str] = None
     submit: Optional[ActorSubmit] = None
     capability_autoload: Optional[List[str]] = None
+    capability_hidden: Optional[List[str]] = None
     enabled: Optional[bool] = None
     runner: Optional[RunnerKind] = None
     runtime: Optional[AgentRuntime] = None

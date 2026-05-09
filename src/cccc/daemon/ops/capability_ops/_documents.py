@@ -75,6 +75,9 @@ def _new_catalog_doc() -> Dict[str, Any]:
         "sources": {
             "manual_import": _source_state_template("never"),
             "agent_self_proposed": _source_state_template("never"),
+            "github_import": _source_state_template("never"),
+            "url_import": _source_state_template("never"),
+            "local_import": _source_state_template("never"),
             "mcp_registry_official": _source_state_template("never"),
             "anthropic_skills": _source_state_template("never"),
             "github_skills_curated": _source_state_template("never"),

@@ -80,6 +80,7 @@ export async function addActor(
     profileOwner?: string;
     title?: string;
     capabilityAutoload?: string[];
+    capabilityHidden?: string[];
   },
 ) {
   clearActorsReadOnlyRequest(groupId);
@@ -98,6 +99,7 @@ export async function addActor(
       profile_scope: options?.profileScope || undefined,
       profile_owner: options?.profileOwner || undefined,
       capability_autoload: Array.isArray(options?.capabilityAutoload) ? options.capabilityAutoload : [],
+      capability_hidden: Array.isArray(options?.capabilityHidden) ? options.capabilityHidden : [],
       title: options?.title || "",
       default_scope_key: "",
       by: "user",
@@ -119,6 +121,7 @@ export async function updateActor(
     profileAction?: "convert_to_custom";
     enabled?: boolean;
     capabilityAutoload?: string[];
+    capabilityHidden?: string[];
   },
 ) {
   clearActorsReadOnlyRequest(groupId);
@@ -134,6 +137,7 @@ export async function updateActor(
   if (opts?.profileAction) body.profile_action = opts.profileAction;
   if (typeof opts?.enabled === "boolean") body.enabled = opts.enabled;
   if (Array.isArray(opts?.capabilityAutoload)) body.capability_autoload = opts.capabilityAutoload;
+  if (Array.isArray(opts?.capabilityHidden)) body.capability_hidden = opts.capabilityHidden;
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`, {
     method: "POST",
     body: JSON.stringify(body),

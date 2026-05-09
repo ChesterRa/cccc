@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Set, Tuple
 
+from .install_capability import INSTALL_CAPABILITY_ID, INSTALL_CAPABILITY_RECORD
+
 
 CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_help",
@@ -19,6 +21,7 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_capability_search",
     "cccc_capability_state",
     "cccc_capability_enable",
+    "cccc_capability_install",
     "cccc_capability_use",
     "cccc_inbox_list",
     "cccc_inbox_mark_read",
@@ -176,6 +179,7 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
 
 
 BUILTIN_CAPSULE_SKILLS: Dict[str, Dict[str, object]] = {
+    INSTALL_CAPABILITY_ID: INSTALL_CAPABILITY_RECORD,
     "skill:cccc:app-i18n-localization": {
         "name": "app-i18n-localization",
         "description_short": (
@@ -1061,14 +1065,20 @@ BUILTIN_CAPSULE_SKILLS: Dict[str, Dict[str, object]] = {
             "You are the runtime-bootstrap skill for CCCC runtime diagnosis.\n\n"
             "Use this skill when the task is about daemon or web startup failure, port bind or LAN "
             "reachability, actor launch/runtime state, MCP injection, or residue left after shutdown.\n\n"
-            "Protocol:\n"
+            "Procedure:\n"
             "1. Restate the exact symptom and isolate the failing layer before changing anything.\n"
             "2. Gather evidence first; prefer read-only inspection and existing diagnostics/runtime tools.\n"
             "3. Check one layer at a time: process start -> bind/port -> group/actor runtime -> MCP "
             "injection -> shutdown cleanup.\n"
             "4. Report findings as: Symptom, Evidence, Failed layer, Most likely root cause, Next safe action.\n"
-            "5. Do not kill, restart, or mutate runtime state unless the user explicitly asks after evidence is gathered.\n"
-            "6. Prefer the smallest reversible fix. If two hypotheses fail, stop stacking guards and surface evidence."
+            "5. Prefer the smallest reversible fix. If two hypotheses fail, stop stacking guards and surface evidence.\n\n"
+            "Pitfalls:\n"
+            "- Do not kill, restart, or mutate runtime state unless the user explicitly asks after evidence is gathered.\n"
+            "- Do not confuse configured binding values with the live listener state.\n"
+            "- Do not treat stale pid files or residue as proof of current health.\n\n"
+            "Verification:\n"
+            "- The final response includes terminal/log evidence for the failing layer.\n"
+            "- Any proposed fix names the expected observable state after applying it."
         ),
         "tags": ("runtime", "bootstrap", "diagnostics", "daemon", "web", "mcp"),
         "requires_capabilities": ("pack:diagnostics", "pack:group-runtime"),
