@@ -8,12 +8,12 @@ INSTALL_CAPABILITY_RECORD = {
     "name": "install",
     "description_short": (
         "Install skills, MCP toolpacks, CCCC capabilities, and GitHub repositories through the "
-        "CCCC capability registry, then enable them for the current actor."
+        "CCCC capability registry, then enable them for the group slash surface."
     ),
     "use_when": (
         "The user types /install followed by a skill name, capability id, repo slug, URL, or local path.",
-        "A requested capability needs to be imported into the CCCC capability registry and enabled for the current actor.",
-        "An installed skill should appear in the current actor's slash command menu after installation.",
+        "A requested capability needs to be imported into the CCCC capability registry and enabled for the group slash surface.",
+        "An installed skill should appear in the group's slash command menu after installation.",
     ),
     "avoid_when": (
         "The user is asking how installation works but does not want the environment changed.",
@@ -27,9 +27,9 @@ INSTALL_CAPABILITY_RECORD = {
     "capsule_text": (
         "You are the install skill for CCCC agents.\n\n"
         "Default /install behavior is CCCC capability installation, not Codex local skill-package installation.\n\n"
-        "Default action: call cccc_capability_install for the target. "
+        "Default action: call cccc_capability_install for the target with scope=group. "
         "The install operation resolves the target into CCCC capability records, imports them into the registry, "
-        "enables actor scope, and returns use-ready capability ids. "
+        "enables group scope, and returns use-ready capability ids. "
         "Activate, assign, autoload, or use only after the CCCC capability record exists.\n\n"
         "Use this skill when a chat message invokes /install or asks to install a capability, skill, "
         "MCP toolpack, or GitHub repository.\n\n"
@@ -50,7 +50,7 @@ INSTALL_CAPABILITY_RECORD = {
         "source layout requires it.\n"
         "8. Verify the result with capability_state and capability search/overview. "
         "active_capsule_skills, enabled_capabilities, dynamic_tools, or external_binding_states should show the enabled item.\n"
-        "9. Report the capability_id, source, actor scope, and verification evidence.\n\n"
+        "9. Report the capability_id, source, group scope, and verification evidence.\n\n"
         "Pitfalls:\n"
         "- Do not treat CCCC /install as a full local Codex skill package install.\n"
         "- Do not install into Codex's local skills directory or use the Codex skill-installer workflow for /install.\n"
@@ -59,7 +59,7 @@ INSTALL_CAPABILITY_RECORD = {
         "- Do not bypass capability policy, block state, or required secret checks.\n"
         "- Do not install untrusted executable code without a minimal safety review.\n\n"
         "Verification:\n"
-        "- The final response names exactly what CCCC capability was installed, enabled for the current actor, and how it was verified.\n"
+        "- The final response names exactly what CCCC capability was installed, enabled for group scope, and how it was verified.\n"
         "- If blocked, the response names the blocker and owner instead of pretending installation succeeded."
     ),
     "tags": ("install", "skill", "mcp", "capability", "github", "repository", "cccc-glue"),

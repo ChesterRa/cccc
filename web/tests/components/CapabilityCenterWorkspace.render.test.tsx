@@ -66,4 +66,13 @@ describe("CapabilityCenterWorkspace rendering", () => {
     expect(source).toContain("!fixed left-1/2 top-1/2 z-[1001]");
     expect(source).toContain("!fixed right-0 z-[1001]");
   });
+
+  it("uses overview kind counts instead of extra stats-only overview calls", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"), "utf8");
+
+    expect(source).toContain("overviewResp.result.kind_counts");
+    expect(source).not.toContain("skillStatsResp");
+    expect(source).not.toContain("mcpStatsResp");
+    expect(source).not.toContain("packStatsResp");
+  });
 });

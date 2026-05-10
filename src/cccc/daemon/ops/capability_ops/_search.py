@@ -539,6 +539,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
     limit = max(1, min(int(args.get("limit") or 400), 2000))
     offset = max(0, int(args.get("offset") or 0))
     include_indexed = bool(args.get("include_indexed", True))
+    include_source_instances = bool(args.get("include_source_instances", True))
     kind_filter = str(args.get("kind") or "").strip().lower()
     policy_filter = str(args.get("policy") or "").strip().lower()
     source_filter = str(args.get("source_id") or "").strip()
@@ -557,7 +558,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
             source_states = _render_source_states(catalog_doc)
             records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             external_rows = [dict(v) for v in records.values() if isinstance(v, dict)]
-            source_instances = _pkg().capability_source_instances(external_rows)
+            source_instances = _pkg().capability_source_instances(external_rows) if include_source_instances else []
 
         with _STATE_LOCK:
             state_path, state_doc = _load_state_doc()
@@ -760,6 +761,16 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
         if removed_caps:
             rows = [row for row in rows if str(row.get("capability_id") or "").strip() not in removed_caps]
 
+        kind_counts = {"skill": 0, "mcp": 0, "pack": 0}
+        for row in rows:
+            row_kind = str(row.get("kind") or "").strip().lower()
+            if row_kind == "skill":
+                kind_counts["skill"] += 1
+            elif row_kind == "mcp_toolpack":
+                kind_counts["mcp"] += 1
+            elif row_kind == "pack":
+                kind_counts["pack"] += 1
+
         if kind_filter == "pack":
             rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "pack"]
         elif kind_filter in {"mcp", "mcp_toolpack"}:
@@ -856,6 +867,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 "limit": limit,
                 "has_more": (offset + len(items)) < total_count,
                 "query": query,
+                "kind_counts": kind_counts,
                 "sources": sources,
                 "source_instances": source_instances,
                 "blocked_capabilities": blocked_list,

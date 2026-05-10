@@ -90,6 +90,15 @@ describe("useGroupStore selection and archive persistence", () => {
     expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-2");
   });
 
+  it("initializes composer ownership from persisted selected group before refresh succeeds", async () => {
+    localStorageMock.setItem(SELECTED_GROUP_ID_KEY, "g-2");
+    const mod = await importFreshStore();
+
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-2");
+    expect(useComposerStore.getState().activeGroupId).toBe("g-2");
+    expect(useComposerStore.getState().destGroupId).toBe("g-2");
+  });
+
   it("persists explicit group selection changes", async () => {
     const mod = await importFreshStore();
     mod.useGroupStore.getState().setSelectedGroupId("g-9");
@@ -170,7 +179,7 @@ describe("useGroupStore selection and archive persistence", () => {
 
     const mod = await importFreshStore();
     expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-2");
-    expect(useComposerStore.getState().activeGroupId).toBe("");
+    expect(useComposerStore.getState().activeGroupId).toBe("g-2");
 
     await mod.useGroupStore.getState().refreshGroups();
 

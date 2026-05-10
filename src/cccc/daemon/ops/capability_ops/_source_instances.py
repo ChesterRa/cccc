@@ -17,7 +17,7 @@ def _github_ref_from_record(source_uri: str, source_record_id: str) -> str:
     record_dir_parts = [part for part in record_path.split("/")[:-1] if part]
     if record_dir_parts and len(tail) > len(record_dir_parts) and tail[-len(record_dir_parts):] == record_dir_parts:
         return "/".join(tail[:-len(record_dir_parts)]) or "main"
-    return tail[0] if tail else "main"
+    return "/".join(tail) or "main"
 
 
 def _github_instance_from_record(rec: Dict[str, Any]) -> Dict[str, str]:

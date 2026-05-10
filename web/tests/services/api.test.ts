@@ -977,6 +977,39 @@ describe("api.message refs", () => {
   });
 });
 
+describe("api.capability overview", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  it("can request capability overview without source instance aggregation", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        result: { items: [], count: 0, total_count: 0, offset: 0, limit: 1, has_more: false },
+      }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchCapabilityOverview({
+      includeIndexed: true,
+      includeSourceInstances: false,
+      limit: 1,
+      kind: "skill",
+      groupId: "g-demo",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/capabilities/overview?limit=1&include_indexed=true&include_source_instances=false&kind=skill&group_id=g-demo",
+      expect.any(Object),
+    );
+  });
+});
+
 describe("copy groups api entrypoints", () => {
   beforeEach(() => {
     vi.resetModules();

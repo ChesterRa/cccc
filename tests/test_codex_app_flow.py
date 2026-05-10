@@ -264,6 +264,7 @@ class TestCodexAppFlow(unittest.TestCase):
             submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
             self.assertIn("[cccc] Slash command: /install", submitted_text)
             self.assertIn("[cccc] Capability: skill:cccc:install", submitted_text)
+            self.assertIn("scope=group", submitted_text)
             self.assertIn("Route this request through skill:cccc:install", submitted_text)
             self.assertIn("The skill definition is the source of truth", submitted_text)
             self.assertNotIn("Expected procedure:", submitted_text)

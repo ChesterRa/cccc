@@ -63,6 +63,7 @@ export function CapabilityPicker({
       try {
         const resp = await api.fetchCapabilityOverview({
           includeIndexed: true,
+          includeSourceInstances: false,
           limit: CAPABILITY_PICKER_FETCH_LIMIT,
           query: debouncedQuery || undefined,
         });
