@@ -58,4 +58,12 @@ describe("CapabilityCenterWorkspace rendering", () => {
     expect(source).toContain("min-h-[56px]");
     expect(source).not.toContain("grid grid-cols-2 gap-2 sm:grid-cols-4");
   });
+
+  it("keeps shadcn dialogs above glass overlays despite global glass-modal positioning", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/ui/dialog.tsx"), "utf8");
+
+    expect(source).toContain("z-[1000] glass-overlay");
+    expect(source).toContain("!fixed left-1/2 top-1/2 z-[1001]");
+    expect(source).toContain("!fixed right-0 z-[1001]");
+  });
 });

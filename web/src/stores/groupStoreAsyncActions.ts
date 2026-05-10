@@ -42,6 +42,7 @@ import {
   deriveRuntimeStatusFromActors,
 } from "./groupStoreCore";
 import type { GroupStoreAsyncActions, GroupStoreGet, GroupStoreSet, GroupState } from "./groupStoreTypes";
+import { useComposerStore } from "./useComposerStore";
 
 export function createGroupStoreAsyncActions(
   set: GroupStoreSet,
@@ -67,37 +68,19 @@ export function createGroupStoreAsyncActions(
               const persisted = loadSelectedGroupId();
               const persistedExists = !!persisted && next.some((g) => String(g.group_id || "") === persisted);
               const nextGroupId = persistedExists ? persisted : String(next[0].group_id || "");
-              saveSelectedGroupId(nextGroupId);
-              const nextChatByGroup = ensureGroupChatBucket(get().chatByGroup, nextGroupId);
-              set({
-                selectedGroupId: nextGroupId,
-                chatByGroup: nextChatByGroup,
-                selectedGroupActorsHydrating: !!nextGroupId,
-                ...buildPrimedGroupState(nextGroupId, next),
-              });
+              get().setSelectedGroupId(nextGroupId);
             } else {
               groupViewCache.clear();
-              saveSelectedGroupId("");
-              set({
-                selectedGroupId: "",
-                chatByGroup: {},
-                groupDoc: null,
-                events: [],
-                actors: [],
-                groupContext: null,
-                groupSettings: null,
-                groupPresentation: null,
-                selectedGroupActorsHydrating: false,
-                chatWindow: null,
-                hasMoreHistory: false,
-                isLoadingHistory: false,
-                isChatWindowLoading: false,
-              });
+              get().setSelectedGroupId("");
             }
             return;
           }
 
-          saveSelectedGroupId(cur);
+          if (String(useComposerStore.getState().activeGroupId || "").trim() !== cur) {
+            get().setSelectedGroupId(cur);
+          } else {
+            saveSelectedGroupId(cur);
+          }
 
           const selectedId = get().selectedGroupId;
           const doc = get().groupDoc;

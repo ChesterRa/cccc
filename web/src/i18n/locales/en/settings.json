@@ -333,9 +333,17 @@
       "disable": "Disable",
       "delete": "Delete",
       "deleting": "Deleting",
+      "instances": "Source instances",
+      "instanceMeta": "{{source}} · {{count}} records",
+      "deleteInstance": "Delete this source instance",
+      "deleteInstanceConfirm": "Delete source instance {{name}}?\n\nThis removes {{count}} capability records imported by this instance and clears related bindings.",
+      "deleteInstanceConfirmTitle": "Delete source instance {{name}}?",
+      "deleteInstanceConfirmDescription": "This removes {{count}} capability records imported by this instance and clears related bindings.",
       "toggleFailed": "Failed to update source.",
       "deleteFailed": "Failed to delete source.",
-      "deleteConfirm": "Delete source {{id}}?\n\nThis removes {{count}} registry records from this source and clears related bindings."
+      "deleteConfirm": "Delete source {{id}}?\n\nThis removes {{count}} registry records from this source and clears related bindings.",
+      "deleteConfirmTitle": "Delete source {{id}}?",
+      "deleteConfirmDescription": "This removes {{count}} registry records from this source and clears related bindings."
     },
     "details": {
       "selectCapability": "Select a capability.",
@@ -357,8 +365,8 @@
       "disabledMeta": "Not active in this group",
       "slashVisibleMeta": "Shown in / commands",
       "slashHiddenMeta": "Hidden from / commands",
-      "blockMeta": "Prevent agents from using it",
-      "blockedMeta": "Currently blocked",
+      "blockMeta": "Policy-block enablement and use",
+      "blockedMeta": "Policy-blocked until unblocked",
       "openGroup": "Open a group to use these controls."
     },
     "remove": {
@@ -381,23 +389,45 @@
         "remove": "Remove {{name}}?\n\nThis clears current-group enablement and autoload references for {{id}}.",
         "uninstall": "Uninstall {{name}}?\n\nThis clears current-group bindings and runtime installation references for {{id}}.",
         "disable": "Disable {{name}}?\n\nThis only clears current-group enablement for {{id}}. The built-in capability itself is not deleted."
+      },
+      "confirmTitle": {
+        "delete": "Delete {{name}}?",
+        "remove": "Remove {{name}}?",
+        "uninstall": "Uninstall {{name}}?",
+        "disable": "Disable {{name}} for this group?"
+      },
+      "confirmDescription": {
+        "delete": "This removes the registry record for {{id}} and related bindings.",
+        "remove": "This clears current-group enablement and autoload references for {{id}}.",
+        "uninstall": "This clears current-group bindings and runtime installation references for {{id}}.",
+        "disable": "This only turns off {{id}} for the current group. It can be enabled again later."
       }
     },
     "block": {
       "block": "Block",
       "unblock": "Unblock",
-      "blockTitle": "Block this capability",
-      "unblockTitle": "Unblock this capability",
+      "blockTitle": "Block this capability from being enabled",
+      "unblockTitle": "Allow this capability to be enabled again",
       "failed": "Failed to update block state.",
       "confirmBlock": "Block {{name}}?\n\nAgents cannot use {{id}} until it is unblocked.",
-      "confirmUnblock": "Unblock {{name}}?\n\nAgents can use {{id}} again if it is enabled and allowed by policy."
+      "confirmUnblock": "Unblock {{name}}?\n\nAgents can use {{id}} again if it is enabled and allowed by policy.",
+      "confirmBlockTitle": "Block {{name}}?",
+      "confirmBlockDescription": "This adds a policy block for {{id}}. It cannot be enabled or used until the block is removed.",
+      "confirmUnblockTitle": "Unblock {{name}}?",
+      "confirmUnblockDescription": "This removes the policy block for {{id}}. Agents can use it again if it is enabled and allowed by policy."
     },
     "enable": {
       "enable": "Enable",
       "disable": "Disable",
       "enableTitle": "Enable for this group",
-      "disableTitle": "Disable for this group",
-      "failed": "Failed to update enablement."
+      "disableTitle": "Disable in the current group only",
+      "failed": "Failed to update enablement.",
+      "confirmDisableTitle": "Disable {{name}} for this group?",
+      "confirmDisableDescription": "This turns off {{id}} only in the current group. It does not block future enablement."
+    },
+    "confirm": {
+      "cancel": "Cancel",
+      "confirm": "Confirm"
     },
     "showSystem": "System"
   },

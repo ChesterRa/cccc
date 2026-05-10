@@ -124,6 +124,7 @@ function ControlButton({
             : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)]",
       )}
       disabled={busy}
+      title={meta}
       onClick={onClick}
     >
       <span className="flex h-8 w-8 items-center justify-center rounded-md bg-black/5 dark:bg-white/8">

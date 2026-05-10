@@ -108,6 +108,14 @@ from ._state import (  # noqa: F401
     handle_capability_visibility,
     handle_capability_block,
 )
+from ._removed import (  # noqa: F401
+    _collect_removed_capabilities,
+    _set_removed_capability,
+)
+from ._source_instances import (  # noqa: F401
+    capability_record_matches_source_instance,
+    capability_source_instances,
+)
 
 from ._policy import (  # noqa: F401
     _normalize_policy_level,

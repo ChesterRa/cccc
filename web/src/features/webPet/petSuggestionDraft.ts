@@ -123,7 +123,6 @@ export function stagePetReminderDraft(reminder: PetReminder): boolean {
         quotedPresentationRef: null,
         priority: "normal" as const,
         replyRequired: false,
-        destGroupId: groupId,
       };
       return {
         ...currentDraft,
@@ -135,7 +134,6 @@ export function stagePetReminderDraft(reminder: PetReminder): boolean {
         quotedPresentationRef: shouldPreserveDraft ? currentDraft.quotedPresentationRef : null,
         priority: shouldPreserveDraft ? currentDraft.priority : "normal",
         replyRequired: shouldPreserveDraft ? currentDraft.replyRequired : false,
-        destGroupId: groupId,
       };
     });
   }

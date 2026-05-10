@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { getEffectiveComposerDestGroupId, useComposerStore } from "../../src/stores/useComposerStore";
+import {
+  getEffectiveComposerDestGroupId,
+  isComposerGroupSettled,
+  useComposerStore,
+} from "../../src/stores/useComposerStore";
 
 describe("getEffectiveComposerDestGroupId", () => {
   it("falls back to the selected group while composer state still belongs to the previous group", () => {
@@ -12,6 +16,13 @@ describe("getEffectiveComposerDestGroupId", () => {
 
   it("defaults to the selected group when there is no explicit destination", () => {
     expect(getEffectiveComposerDestGroupId("", "g-current", "g-current")).toBe("g-current");
+  });
+});
+
+describe("isComposerGroupSettled", () => {
+  it("requires composer ownership to match the selected group", () => {
+    expect(isComposerGroupSettled("g-current", "g-current")).toBe(true);
+    expect(isComposerGroupSettled("g-old", "g-current")).toBe(false);
   });
 });
 
@@ -86,7 +97,6 @@ describe("useComposerStore recipient memory", () => {
     expect(state.drafts["g-a"]).toMatchObject({
       composerText: "draft for a",
       toText: "@all",
-      destGroupId: "g-a",
     });
   });
 });

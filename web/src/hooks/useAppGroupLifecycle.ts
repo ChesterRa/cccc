@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect } from "react";
 
 type UseAppGroupLifecycleOptions = {
   selectedGroupId: string;
@@ -7,7 +7,6 @@ type UseAppGroupLifecycleOptions = {
   hasReplyTarget: boolean;
   hasComposerFiles: boolean;
   setDestGroupId: (groupId: string) => void;
-  switchGroup: (prevGroupId: string | null, nextGroupId: string | null) => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   resetDragDrop: () => void;
   resetMountedActorIds: () => void;
@@ -25,7 +24,6 @@ export function useAppGroupLifecycle({
   hasReplyTarget,
   hasComposerFiles,
   setDestGroupId,
-  switchGroup,
   fileInputRef,
   resetDragDrop,
   resetMountedActorIds,
@@ -35,8 +33,6 @@ export function useAppGroupLifecycle({
   connectStream,
   cleanupSSE,
 }: UseAppGroupLifecycleOptions) {
-  const prevGroupIdRef = useRef<string | null>(null);
-
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
@@ -54,13 +50,6 @@ export function useAppGroupLifecycle({
       }
     }
   }, [hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
-
-  // Move composer ownership before the group switch renders, avoiding a first-frame
-  // read from the previous group's draft.
-  useLayoutEffect(() => {
-    switchGroup(prevGroupIdRef.current, selectedGroupId || null);
-    prevGroupIdRef.current = selectedGroupId || null;
-  }, [selectedGroupId, switchGroup]);
 
   useEffect(() => {
     if (fileInputRef.current) fileInputRef.current.value = "";

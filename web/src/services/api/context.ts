@@ -3,6 +3,7 @@ import type {
   CapabilityBlockEntry,
   CapabilityImportRecord,
   CapabilityOverviewItem,
+  CapabilitySourceInstance,
   CapabilitySourceState,
   CapabilityStateResult,
   ContextDetailLevel,
@@ -156,6 +157,7 @@ export async function fetchCapabilityOverview(opts?: {
   kind?: "all" | "pack" | "mcp" | "skill";
   policy?: "all" | "actionable" | "blocked" | "indexed";
   sourceId?: string;
+  groupId?: string;
 }) {
   const params = new URLSearchParams();
   if (String(opts?.query || "").trim()) params.set("query", String(opts?.query || "").trim());
@@ -177,6 +179,9 @@ export async function fetchCapabilityOverview(opts?: {
   if (String(opts?.sourceId || "").trim() && String(opts?.sourceId || "").trim() !== "all") {
     params.set("source_id", String(opts?.sourceId || "").trim());
   }
+  if (String(opts?.groupId || "").trim()) {
+    params.set("group_id", String(opts?.groupId || "").trim());
+  }
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return apiJson<{
     items: CapabilityOverviewItem[];
@@ -187,6 +192,7 @@ export async function fetchCapabilityOverview(opts?: {
     has_more: boolean;
     query?: string;
     sources?: Record<string, CapabilitySourceState>;
+    source_instances?: CapabilitySourceInstance[];
     blocked_capabilities?: CapabilityBlockEntry[];
     allowlist_revision?: string;
   }>(`/api/v1/capabilities/overview${suffix}`);
@@ -397,11 +403,12 @@ export async function uninstallCapability(groupId: string, capabilityId: string,
   });
 }
 
-export async function deleteCapabilitySource(groupId: string, sourceId: string, opts?: { actorId?: string; reason?: string }) {
+export async function deleteCapabilitySource(groupId: string, sourceId: string, opts?: { actorId?: string; reason?: string; sourceInstanceKey?: string }) {
   return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/sources/delete`, {
     method: "POST",
     body: JSON.stringify({
       source_id: sourceId,
+      source_instance_key: opts?.sourceInstanceKey || "",
       actor_id: opts?.actorId || "user",
       reason: opts?.reason || "",
     }),

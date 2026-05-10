@@ -13,7 +13,7 @@ const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay ref={ref} className={cn("fixed inset-0 z-[60] glass-overlay", className)} {...props} />
+  <DialogPrimitive.Overlay ref={ref} className={cn("fixed inset-0 z-[1000] glass-overlay", className)} {...props} />
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
@@ -29,7 +29,7 @@ const DialogContent = React.forwardRef<
         ref={ref}
         aria-describedby={ariaDescribedBy}
         className={cn(
-          "fixed left-1/2 top-1/2 z-[61] flex w-[min(calc(100vw-1rem),40rem)] max-h-[calc(100dvh-1rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border shadow-2xl glass-modal",
+          "!fixed left-1/2 top-1/2 z-[1001] flex w-[min(calc(100vw-1rem),40rem)] max-h-[calc(100dvh-1rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border shadow-2xl glass-modal",
           className
         )}
         {...props}
@@ -52,12 +52,12 @@ const DialogSheetContent = React.forwardRef<
   const ariaDescribedBy = props["aria-describedby"];
   return (
     <DialogPortal>
-      <DialogOverlay className="z-[180]" />
+      <DialogOverlay className="z-[1000]" />
       <DialogPrimitive.Content
         ref={ref}
         aria-describedby={ariaDescribedBy}
         className={cn(
-          "fixed right-0 z-[181] flex w-[min(96vw,88rem)] max-w-none flex-col overflow-hidden rounded-none border-l p-3 pt-12 shadow-2xl glass-modal sm:w-[min(92vw,88rem)] sm:rounded-l-3xl sm:rounded-r-none",
+          "!fixed right-0 z-[1001] flex w-[min(96vw,88rem)] max-w-none flex-col overflow-hidden rounded-none border-l p-3 pt-12 shadow-2xl glass-modal sm:w-[min(92vw,88rem)] sm:rounded-l-3xl sm:rounded-r-none",
           className
         )}
         style={{

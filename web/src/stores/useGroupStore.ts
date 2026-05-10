@@ -171,8 +171,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   setSelectedGroupId: (id) => {
     const gid = String(id || "").trim();
     const prevGid = String(get().selectedGroupId || "").trim();
-    if (prevGid !== gid) {
-      useComposerStore.getState().switchGroup(prevGid || null, gid || null);
+    const composerActiveGid = String(useComposerStore.getState().activeGroupId || "").trim();
+    if (composerActiveGid !== gid) {
+      useComposerStore.getState().switchGroup(composerActiveGid || prevGid || null, gid || null);
     }
     saveSelectedGroupId(gid);
     set((state) => {
@@ -181,6 +182,24 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       // Cache the current view before switching groups so returning to it is instant.
       if (statePrevGid && statePrevGid !== gid) {
         saveCurrentViewSnapshot(statePrevGid, state);
+      }
+
+      if (!gid) {
+        return {
+          selectedGroupId: "",
+          chatByGroup: {},
+          groupDoc: null,
+          events: [],
+          actors: [],
+          groupContext: null,
+          groupSettings: null,
+          groupPresentation: null,
+          selectedGroupActorsHydrating: false,
+          chatWindow: null,
+          hasMoreHistory: false,
+          isLoadingHistory: false,
+          isChatWindowLoading: false,
+        };
       }
 
       const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);

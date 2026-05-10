@@ -1183,6 +1183,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         kind: str = "",
         policy: str = "",
         source_id: str = "",
+        group_id: str = "",
     ) -> Dict[str, Any]:
         """Get global capability overview (policy + blocked + recent-success + source states)."""
         args = {
@@ -1193,6 +1194,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "kind": str(kind or ""),
             "policy": str(policy or ""),
             "source_id": str(source_id or ""),
+            "group_id": str(group_id or ""),
         }
         return await ctx.daemon({"op": "capability_overview", "args": args})
 
@@ -1860,6 +1862,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "by": str(payload.get("by") or "user").strip() or "user",
                     "actor_id": str(payload.get("actor_id") or payload.get("by") or "user").strip() or "user",
                     "source_id": str(payload.get("source_id") or "").strip(),
+                    "source_instance_key": str(payload.get("source_instance_key") or "").strip(),
                     "reason": str(payload.get("reason") or "").strip(),
                 },
             }

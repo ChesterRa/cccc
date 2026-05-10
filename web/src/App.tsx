@@ -104,7 +104,6 @@ export default function App() {
     setDestGroupId,
     setReplyTarget,
     setReplyToText,
-    switchGroup,
   } = useComposerStore();
 
   const { setEditGroupTitle, setEditGroupTopic, setDirSuggestions } = useFormStore();
@@ -321,7 +320,6 @@ export default function App() {
     hasReplyTarget,
     hasComposerFiles,
     setDestGroupId,
-    switchGroup,
     fileInputRef,
     resetDragDrop,
     resetMountedActorIds,

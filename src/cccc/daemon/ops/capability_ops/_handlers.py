@@ -1798,6 +1798,7 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
     by = str(args.get("by") or args.get("actor_id") or "").strip()
     actor_id = str(args.get("actor_id") or by).strip()
     source_id = str(args.get("source_id") or "").strip()
+    source_instance_key = str(args.get("source_instance_key") or "").strip()
     reason = str(args.get("reason") or "").strip()
     if len(reason) > 280:
         reason = reason[:280]
@@ -1826,12 +1827,15 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
             catalog_path, catalog_doc = _pkg()._load_catalog_doc()
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             for capability_id, rec in list(rows.items()):
-                if isinstance(rec, dict) and str(rec.get("source_id") or "").strip() == source_id:
-                    rows.pop(str(capability_id), None)
-                    removed_capability_ids.append(str(capability_id))
+                if not (isinstance(rec, dict) and str(rec.get("source_id") or "").strip() == source_id):
+                    continue
+                if source_instance_key and not _pkg().capability_record_matches_source_instance(rec, source_instance_key):
+                    continue
+                rows.pop(str(capability_id), None)
+                removed_capability_ids.append(str(capability_id))
             catalog_doc["records"] = rows
             sources = catalog_doc.get("sources") if isinstance(catalog_doc.get("sources"), dict) else {}
-            if source_id in sources:
+            if source_id in sources and not source_instance_key:
                 sources[source_id] = _source_state_template("never")
                 catalog_doc["sources"] = sources
                 source_state_reset = True
@@ -1878,8 +1882,9 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
             removed_profile_autoload += _remove_profile_autoload_references(capability_id)
 
         allowlist_changed = False
-        with _POLICY_LOCK:
-            allowlist_changed = _remove_source_from_allowlist_overlay(source_id)
+        if not source_instance_key:
+            with _POLICY_LOCK:
+                allowlist_changed = _remove_source_from_allowlist_overlay(source_id)
 
         refresh_required = bool(
             removed_capability_ids
@@ -1897,6 +1902,7 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
             "group_id": group_id,
             "actor_id": actor_id,
             "source_id": source_id,
+            "source_instance_key": source_instance_key,
             "state": "ready",
             "removed_records": len(removed_capability_ids),
             "removed_capability_ids": removed_capability_ids,
@@ -1989,6 +1995,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
 
         removed_bindings = 0
         removed_blocked = 0
+        removed_group_marker = False
         has_remaining_binding = False
         with _STATE_LOCK:
             state_path, state_doc = _load_state_doc()
@@ -2007,8 +2014,14 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                     group_id=group_id,
                     capability_id=capability_id,
                 )
+                removed_group_marker = _pkg()._set_removed_capability(
+                    state_doc,
+                    group_id=group_id,
+                    capability_id=capability_id,
+                    removed=True,
+                )
             has_remaining_binding = _has_any_binding_for_capability(state_doc, capability_id=capability_id)
-            if removed_bindings > 0 or removed_blocked > 0:
+            if removed_bindings > 0 or removed_blocked > 0 or removed_group_marker:
                 _save_state_doc(state_path, state_doc)
 
         removed_installation = False
@@ -2066,6 +2079,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             removed_record
             or removed_bindings > 0
             or removed_blocked > 0
+            or removed_group_marker
             or removed_installation
             or removed_runtime_bindings > 0
             or removed_recent_success
@@ -2079,6 +2093,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                 "removed_record": bool(removed_record),
                 "removed_bindings": int(removed_bindings),
                 "removed_blocked": int(removed_blocked),
+                "removed_group_marker": bool(removed_group_marker),
                 "removed_installation": bool(removed_installation),
                 "removed_runtime_bindings": int(removed_runtime_bindings),
                 "removed_recent_success": bool(removed_recent_success),
@@ -2096,6 +2111,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             "removed_record": bool(removed_record),
             "removed_bindings": int(removed_bindings),
             "removed_blocked": int(removed_blocked),
+            "removed_group_marker": bool(removed_group_marker),
             "removed_installation": bool(removed_installation),
             "removed_runtime_bindings": int(removed_runtime_bindings),
             "removed_recent_success": bool(removed_recent_success),

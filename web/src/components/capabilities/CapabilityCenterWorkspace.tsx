@@ -7,9 +7,18 @@ import * as api from "../../services/api";
 import { publishCapabilityChanged } from "../../utils/capabilityEvents";
 import { HoverTooltip } from "../HoverTooltip";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
 import { cn } from "../../lib/utils";
-import type { CapabilityOverviewItem, CapabilitySourceState, CapabilityStateResult } from "../../types";
+import type { CapabilityOverviewItem, CapabilitySourceInstance, CapabilitySourceState, CapabilityStateResult } from "../../types";
 import { CapabilityControlsPanel } from "./CapabilityControlsPanel";
+import { SourcesSummary, SourcesView } from "./CapabilitySourcesView";
 import {
   capabilityCenterDisplayName,
   capabilityCenterEnabledIds,
@@ -24,7 +33,6 @@ import {
   capabilityCenterRootClass,
   capabilityCenterSectionTypeFilter,
   capabilityCenterSourceRemovalAction,
-  capabilityCenterSourcesGridClass,
   capabilityCenterType,
   capabilityCenterTypeLabel,
   CAPABILITY_CENTER_DEFAULT_PAGE_SIZE,
@@ -60,6 +68,14 @@ const stateFilters: Array<{ id: CapabilityCenterStateFilter; label: string }> = 
 
 const CAPABILITY_CENTER_CLIENT_FILTER_LIMIT = 2000;
 
+type CapabilityCenterConfirmDialogState = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  tone?: "default" | "destructive";
+  onConfirm: () => Promise<void> | void;
+};
+
 const sectionItems: Array<{
   id: CapabilityCenterSection;
   icon: typeof BookOpen;
@@ -86,15 +102,6 @@ function MiniBadge({ children, kind = "neutral" }: { children: React.ReactNode; 
   );
 }
 
-function SourceStatusBadge({ enabled }: { enabled: boolean }) {
-  const { t } = useTranslation("settings");
-  return (
-    <span className="inline-flex h-6 w-fit items-center rounded border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 text-[11px] font-medium text-[var(--color-text-secondary)]">
-      {enabled ? t("capabilityCenter.status.enabled") : t("capabilityCenter.status.disabled")}
-    </span>
-  );
-}
-
 function TooltipIconButton({
   label,
   children,
@@ -109,12 +116,6 @@ function TooltipIconButton({
   );
 }
 
-function sourceSummary(sources: Record<string, CapabilitySourceState>) {
-  const entries = Object.values(sources || {});
-  const enabled = entries.filter((item) => item.enabled).length;
-  return { total: entries.length, enabled, disabled: entries.length - enabled };
-}
-
 export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDark: _isDark, surface = "overlay" }: CapabilityCenterWorkspaceProps) {
   const { t } = useTranslation("settings");
   const [section, setSection] = useState<CapabilityCenterSection>("skill");
@@ -123,6 +124,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
   const [showSystem, setShowSystem] = useState(false);
   const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
   const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
+  const [sourceInstances, setSourceInstances] = useState<CapabilitySourceInstance[]>([]);
   const [state, setState] = useState<CapabilityStateResult | null>(null);
   const [summaryStats, setSummaryStats] = useState<CapabilityCenterStats | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -136,12 +138,12 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
   const [busyKey, setBusyKey] = useState("");
   const [err, setErr] = useState("");
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<CapabilityCenterConfirmDialogState | null>(null);
   const requestSeqRef = useRef(0);
 
   const hiddenIds = useMemo(() => capabilityCenterHiddenIds(state), [state]);
   const loadedStats = useMemo(() => summarizeCapabilityCenter(items, state), [items, state]);
   const stats = summaryStats || loadedStats;
-  const sourceStats = useMemo(() => sourceSummary(sources), [sources]);
   const localizedSections = useMemo(() => sectionItems.map((item) => ({
     ...item,
     label: t(`capabilityCenter.sections.${item.id}.label`),
@@ -232,11 +234,12 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
           query: overviewQuery || undefined,
           kind: scopedTypeFilter,
           policy: stateFilter === "blocked" ? "blocked" : "all",
+          groupId,
         }),
         groupId ? api.fetchGroupCapabilityState(groupId, "user", { noCache: true }) : Promise.resolve(null),
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "skill" }),
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "mcp" }),
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "pack" }),
+        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "skill", groupId }),
+        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "mcp", groupId }),
+        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "pack", groupId }),
       ]);
       if (seq !== requestSeqRef.current) return;
       if (!overviewResp.ok) {
@@ -253,6 +256,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
       setTotalCount(Number(overviewResp.result.total_count || nextItems.length) || 0);
       setHasMore(Boolean(overviewResp.result.has_more));
       setSources(overviewResp.result.sources || {});
+      setSourceInstances(overviewResp.result.source_instances || []);
       setState(nextState);
       const enabledCount = capabilityCenterEnabledIds(nextState).size;
       setSummaryStats({
@@ -318,11 +322,9 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
     }
   }, [groupId, hiddenIds, rememberStickyItem, t]);
 
-  const removeCapability = useCallback(async (row: CapabilityOverviewItem, action: ReturnType<typeof capabilityCenterRemovalAction>) => {
+  const executeRemoveCapability = useCallback(async (row: CapabilityOverviewItem, action: ReturnType<typeof capabilityCenterRemovalAction>) => {
     const capId = String(row.capability_id || "").trim();
     if (!groupId || !capId || action === "none") return;
-    const ok = window.confirm(t(`capabilityCenter.remove.confirm.${action}`, { name: capabilityCenterDisplayName(row), id: capId }));
-    if (!ok) return;
     setBusyKey(`remove:${capId}`);
     setErr("");
     try {
@@ -349,28 +351,34 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
     }
   }, [groupId, load, t]);
 
-  const toggleBlockCapability = useCallback(async (row: CapabilityOverviewItem) => {
+  const removeCapability = useCallback((row: CapabilityOverviewItem, action: ReturnType<typeof capabilityCenterRemovalAction>) => {
+    const capId = String(row.capability_id || "").trim();
+    if (!groupId || !capId || action === "none") return;
+    setConfirmDialog({
+      title: t(`capabilityCenter.remove.confirmTitle.${action}`, { name: capabilityCenterDisplayName(row), id: capId }),
+      description: t(`capabilityCenter.remove.confirmDescription.${action}`, { name: capabilityCenterDisplayName(row), id: capId }),
+      confirmLabel: t(`capabilityCenter.remove.label.${action}`),
+      tone: action === "disable" ? "default" : "destructive",
+      onConfirm: () => executeRemoveCapability(row, action),
+    });
+  }, [executeRemoveCapability, groupId, t]);
+
+  const executeBlockCapability = useCallback(async (row: CapabilityOverviewItem, nextBlocked: boolean) => {
     const capId = String(row.capability_id || "").trim();
     if (!groupId || !capId) return;
-    const blocked = capabilityCenterIsBlocked(row);
-    const ok = window.confirm(t(blocked ? "capabilityCenter.block.confirmUnblock" : "capabilityCenter.block.confirmBlock", {
-      name: capabilityCenterDisplayName(row),
-      id: capId,
-    }));
-    if (!ok) return;
     setBusyKey(`block:${capId}`);
     setErr("");
     try {
-      const resp = await api.blockCapabilityGlobal(capId, !blocked, "capability center policy update", groupId);
+      const resp = await api.blockCapabilityGlobal(capId, nextBlocked, "capability center policy update", groupId);
       if (!resp.ok) {
         setErr(resp.error?.message || t("capabilityCenter.block.failed"));
         return;
       }
       rememberStickyItem({
         ...row,
-        blocked_global: !blocked,
-        policy_level: !blocked ? "blocked" : "actionable",
-        qualification_status: !blocked
+        blocked_global: nextBlocked,
+        policy_level: nextBlocked ? "blocked" : "actionable",
+        qualification_status: nextBlocked
           ? "blocked"
           : String(row.qualification_status || "").toLowerCase() === "blocked" ? "ready" : row.qualification_status,
       });
@@ -381,19 +389,36 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
     }
   }, [groupId, load, rememberStickyItem, t]);
 
-  const toggleEnableCapability = useCallback(async (row: CapabilityOverviewItem) => {
+  const toggleBlockCapability = useCallback((row: CapabilityOverviewItem) => {
     const capId = String(row.capability_id || "").trim();
     if (!groupId || !capId) return;
-    const enabledIds = capabilityCenterEnabledIds(state);
-    const enabled = enabledIds.has(capId);
+    const blocked = capabilityCenterIsBlocked(row);
+    setConfirmDialog({
+      title: t(blocked ? "capabilityCenter.block.confirmUnblockTitle" : "capabilityCenter.block.confirmBlockTitle", {
+        name: capabilityCenterDisplayName(row),
+        id: capId,
+      }),
+      description: t(blocked ? "capabilityCenter.block.confirmUnblockDescription" : "capabilityCenter.block.confirmBlockDescription", {
+        name: capabilityCenterDisplayName(row),
+        id: capId,
+      }),
+      confirmLabel: t(blocked ? "capabilityCenter.block.unblock" : "capabilityCenter.block.block"),
+      tone: blocked ? "default" : "destructive",
+      onConfirm: () => executeBlockCapability(row, !blocked),
+    });
+  }, [executeBlockCapability, groupId, t]);
+
+  const executeEnableCapability = useCallback(async (row: CapabilityOverviewItem, nextEnabled: boolean) => {
+    const capId = String(row.capability_id || "").trim();
+    if (!groupId || !capId) return;
     setBusyKey(`enable:${capId}`);
     setErr("");
     try {
       const resp = await api.enableGroupCapability(groupId, capId, {
-        enabled: !enabled,
+        enabled: nextEnabled,
         scope: "group",
         actorId: "user",
-        reason: enabled ? "capability center disable" : "capability center enable",
+        reason: nextEnabled ? "capability center enable" : "capability center disable",
       });
       if (!resp.ok) {
         setErr(resp.error?.message || t("capabilityCenter.enable.failed"));
@@ -405,7 +430,24 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
     } finally {
       setBusyKey("");
     }
-  }, [groupId, load, rememberStickyItem, state, t]);
+  }, [groupId, load, rememberStickyItem, t]);
+
+  const toggleEnableCapability = useCallback((row: CapabilityOverviewItem) => {
+    const capId = String(row.capability_id || "").trim();
+    if (!groupId || !capId) return;
+    const enabledIds = capabilityCenterEnabledIds(state);
+    const enabled = enabledIds.has(capId);
+    if (!enabled) {
+      void executeEnableCapability(row, true);
+      return;
+    }
+    setConfirmDialog({
+      title: t("capabilityCenter.enable.confirmDisableTitle", { name: capabilityCenterDisplayName(row), id: capId }),
+      description: t("capabilityCenter.enable.confirmDisableDescription", { name: capabilityCenterDisplayName(row), id: capId }),
+      confirmLabel: t("capabilityCenter.enable.disable"),
+      onConfirm: () => executeEnableCapability(row, false),
+    });
+  }, [executeEnableCapability, groupId, state, t]);
 
   const toggleSource = useCallback(async (sourceId: string, nextEnabled: boolean) => {
     const sid = String(sourceId || "").trim();
@@ -438,11 +480,6 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
   const deleteSource = useCallback(async (source: CapabilitySourceState) => {
     const sourceId = String(source.source_id || "").trim();
     if (!groupId || !sourceId || capabilityCenterSourceRemovalAction(source) === "none") return;
-    const ok = window.confirm(t("capabilityCenter.sources.deleteConfirm", {
-      id: sourceId,
-      count: Number(source.record_count || 0),
-    }));
-    if (!ok) return;
     setBusyKey(`source-delete:${sourceId}`);
     setErr("");
     try {
@@ -460,6 +497,60 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
       setBusyKey("");
     }
   }, [groupId, load, t]);
+
+  const confirmDeleteSource = useCallback((source: CapabilitySourceState) => {
+    const sourceId = String(source.source_id || "").trim();
+    if (!groupId || !sourceId || capabilityCenterSourceRemovalAction(source) === "none") return;
+    setConfirmDialog({
+      title: t("capabilityCenter.sources.deleteConfirmTitle", { id: sourceId, count: Number(source.record_count || 0) }),
+      description: t("capabilityCenter.sources.deleteConfirmDescription", { id: sourceId, count: Number(source.record_count || 0) }),
+      confirmLabel: t("capabilityCenter.sources.delete"),
+      tone: "destructive",
+      onConfirm: () => deleteSource(source),
+    });
+  }, [deleteSource, groupId, t]);
+
+  const deleteSourceInstance = useCallback(async (instance: CapabilitySourceInstance) => {
+    const sourceId = String(instance.source_id || "").trim();
+    const sourceInstanceKey = String(instance.source_instance_key || "").trim();
+    if (!groupId || !sourceId || !sourceInstanceKey) return;
+    setBusyKey(`source-instance-delete:${sourceInstanceKey}`);
+    setErr("");
+    try {
+      const resp = await api.deleteCapabilitySource(groupId, sourceId, {
+        actorId: "user",
+        sourceInstanceKey,
+        reason: "capability center source instance delete",
+      });
+      if (!resp.ok) {
+        setErr(resp.error?.message || t("capabilityCenter.sources.deleteFailed"));
+        return;
+      }
+      await load();
+      publishCapabilityChanged(groupId);
+    } finally {
+      setBusyKey("");
+    }
+  }, [groupId, load, t]);
+
+  const confirmDeleteSourceInstance = useCallback((instance: CapabilitySourceInstance) => {
+    const sourceId = String(instance.source_id || "").trim();
+    const sourceInstanceKey = String(instance.source_instance_key || "").trim();
+    if (!groupId || !sourceId || !sourceInstanceKey) return;
+    setConfirmDialog({
+      title: t("capabilityCenter.sources.deleteInstanceConfirmTitle", {
+        name: instance.label || sourceInstanceKey,
+        count: Number(instance.record_count || 0),
+      }),
+      description: t("capabilityCenter.sources.deleteInstanceConfirmDescription", {
+        name: instance.label || sourceInstanceKey,
+        count: Number(instance.record_count || 0),
+      }),
+      confirmLabel: t("capabilityCenter.sources.delete"),
+      tone: "destructive",
+      onConfirm: () => deleteSourceInstance(instance),
+    });
+  }, [deleteSourceInstance, groupId, t]);
 
   if (!isOpen) return null;
 
@@ -499,7 +590,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
           })}
         </nav>
         <div className="border-t border-[var(--glass-border-subtle)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
-          {t("capabilityCenter.sidebarSummary", { capabilities: totalCount || stats.total, sources: sourceStats.total })}
+          {t("capabilityCenter.sidebarSummary", { capabilities: totalCount || stats.total, sources: Object.keys(sources || {}).length })}
         </div>
       </aside>
 
@@ -643,9 +734,11 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
             {section === "sources" ? (
               <SourcesView
                 sources={sources}
+                sourceInstances={sourceInstances}
                 busyKey={busyKey}
                 onToggle={toggleSource}
-                onDelete={deleteSource}
+                onDelete={confirmDeleteSource}
+                onDeleteInstance={confirmDeleteSourceInstance}
               />
             ) : (
               <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
@@ -682,7 +775,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
           </section>
 
           {section === "sources" ? (
-            <SourcesSummary sources={sources} />
+            <SourcesSummary sources={sources} sourceInstances={sourceInstances} />
           ) : (
             <CapabilityDetails
               item={selected}
@@ -698,6 +791,35 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
           )}
         </div>
       </main>
+      <Dialog open={Boolean(confirmDialog)} onOpenChange={(open) => {
+        if (!open && !busyKey) setConfirmDialog(null);
+      }}>
+        <DialogContent className="w-[min(calc(100vw-1.5rem),28rem)] p-5">
+          <DialogHeader>
+            <DialogTitle>{confirmDialog?.title || ""}</DialogTitle>
+            <DialogDescription className="leading-6">
+              {confirmDialog?.description || ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-5">
+            <Button type="button" variant="outline" onClick={() => setConfirmDialog(null)} disabled={Boolean(busyKey)}>
+              {t("capabilityCenter.confirm.cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant={confirmDialog?.tone === "destructive" ? "destructive" : "default"}
+              disabled={Boolean(busyKey)}
+              onClick={() => {
+                const pending = confirmDialog;
+                if (!pending) return;
+                void Promise.resolve(pending.onConfirm()).then(() => setConfirmDialog(null));
+              }}
+            >
+              {confirmDialog?.confirmLabel || t("capabilityCenter.confirm.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </div>
   );
@@ -1126,91 +1248,6 @@ function RemoveCapabilityButton({
         </span>
       )}
     </TooltipIconButton>
-  );
-}
-
-function SourcesView(props: {
-  sources: Record<string, CapabilitySourceState>;
-  busyKey: string;
-  onToggle: (sourceId: string, nextEnabled: boolean) => void;
-  onDelete: (source: CapabilitySourceState) => void;
-}) {
-  const { t } = useTranslation("settings");
-  const rows = Object.values(props.sources || {}).sort((left, right) => String(left.source_id || "").localeCompare(String(right.source_id || "")));
-  return (
-    <div className="h-full min-h-0 overflow-auto p-4 lg:p-6">
-      <div className="grid gap-2">
-        {rows.map((source) => {
-          const sourceId = String(source.source_id || "");
-          const enabled = Boolean(source.enabled);
-          const canDelete = capabilityCenterSourceRemovalAction(source) !== "none";
-          const toggleLabel = enabled ? t("capabilityCenter.sources.disable") : t("capabilityCenter.sources.enable");
-          const ToggleIcon = enabled ? PowerOff : Power;
-          return (
-          <div key={sourceId} className={capabilityCenterSourcesGridClass()}>
-            <div className="min-w-0">
-              <div className="break-words font-medium [overflow-wrap:anywhere] md:truncate">{sourceId}</div>
-              <div className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)] md:truncate">{source.rationale || source.error || t("capabilityCenter.emptyDash")}</div>
-            </div>
-            <div className="flex justify-end md:block"><SourceStatusBadge enabled={enabled} /></div>
-            <span className="col-span-2 text-xs text-[var(--color-text-secondary)] md:col-span-1">{t("capabilityCenter.sources.records", { count: source.record_count || 0 })}</span>
-            <span className="col-span-2 truncate text-xs text-[var(--color-text-muted)] md:col-span-1">{t("capabilityCenter.sources.sync", { state: source.sync_state || "unknown" })}</span>
-            <div className="col-span-2 flex w-full items-center justify-start gap-2 md:col-span-1 md:justify-end">
-              <TooltipIconButton label={toggleLabel}>
-                {(referenceProps, setReference) => (
-                  <span ref={setReference} {...referenceProps}>
-                    <button
-                      type="button"
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)] disabled:opacity-60 md:h-8 md:w-8"
-                      disabled={props.busyKey === `source:${sourceId}`}
-                      aria-label={toggleLabel}
-                      onClick={() => props.onToggle(sourceId, !enabled)}
-                    >
-                      <ToggleIcon size={14} aria-hidden="true" />
-                    </button>
-                  </span>
-                )}
-              </TooltipIconButton>
-              {canDelete ? (
-                <TooltipIconButton label={t("capabilityCenter.sources.delete")}>
-                  {(referenceProps, setReference) => (
-                    <span ref={setReference} {...referenceProps}>
-                      <button
-                        type="button"
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/10 text-xs text-rose-600 hover:bg-rose-500/15 disabled:opacity-60 dark:text-rose-300 md:h-8 md:w-8"
-                        disabled={props.busyKey === `source-delete:${sourceId}`}
-                        aria-label={props.busyKey === `source-delete:${sourceId}` ? t("capabilityCenter.sources.deleting") : t("capabilityCenter.sources.delete")}
-                        onClick={() => props.onDelete(source)}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </button>
-                    </span>
-                  )}
-                </TooltipIconButton>
-              ) : null}
-            </div>
-          </div>
-          );
-        })}
-        {rows.length === 0 ? <div className="text-sm text-[var(--color-text-muted)]">{t("capabilityCenter.sources.empty")}</div> : null}
-      </div>
-    </div>
-  );
-}
-
-function SourcesSummary({ sources }: { sources: Record<string, CapabilitySourceState> }) {
-  const { t } = useTranslation("settings");
-  const stats = sourceSummary(sources);
-  return (
-    <aside className="hidden min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-[var(--glass-panel-bg)] p-5 lg:block">
-      <div className="text-xs uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{t("capabilityCenter.sections.sources.label")}</div>
-      <h3 className="mt-1 text-lg font-semibold">{t("capabilityCenter.sections.sources.hint")}</h3>
-      <div className="mt-5 grid gap-2">
-        <Stat label={t("capabilityCenter.sources.total")} value={stats.total} />
-        <Stat label={t("capabilityCenter.status.enabled")} value={stats.enabled} />
-        <Stat label={t("capabilityCenter.status.disabled")} value={stats.disabled} />
-      </div>
-    </aside>
   );
 }
 

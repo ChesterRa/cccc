@@ -388,6 +388,121 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_source_delete_can_target_one_github_import_instance(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            records["skill:github:demo:one"] = {
+                "capability_id": "skill:github:demo:one",
+                "kind": "skill",
+                "name": "one",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/one/tree/main/skills/one",
+                "source_record_id": "demo/one:skills/one/SKILL.md",
+            }
+            records["skill:github:demo:two"] = {
+                "capability_id": "skill:github:demo:two",
+                "kind": "skill",
+                "name": "two",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/two/tree/main/skills/two",
+                "source_record_id": "demo/two:skills/two/SKILL.md",
+            }
+            catalog_doc["records"] = records
+            ops._refresh_source_record_counts(catalog_doc)
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            overview_resp, _ = self._call("capability_overview", {"include_indexed": True, "limit": 20})
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            instances = overview.get("source_instances") if isinstance(overview.get("source_instances"), list) else []
+            one = next((item for item in instances if isinstance(item, dict) and str(item.get("label") or "").startswith("demo/one")), None)
+            self.assertIsNotNone(one)
+
+            delete_resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "source_id": "github_import",
+                    "source_instance_key": str(one.get("source_instance_key") or ""),
+                },
+            )
+            self.assertTrue(delete_resp.ok, getattr(delete_resp, "error", None))
+            result = delete_resp.result if isinstance(delete_resp.result, dict) else {}
+            self.assertEqual(int(result.get("removed_records") or 0), 1)
+            self.assertFalse(bool(result.get("removed_allowlist_source")))
+
+            _, after_catalog = ops._load_catalog_doc()
+            after_records = after_catalog.get("records") if isinstance(after_catalog.get("records"), dict) else {}
+            self.assertNotIn("skill:github:demo:one", after_records)
+            self.assertIn("skill:github:demo:two", after_records)
+        finally:
+            cleanup()
+
+    def test_github_import_source_instances_keep_slash_refs_distinct(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            records["skill:github:demo:feature-foo"] = {
+                "capability_id": "skill:github:demo:feature-foo",
+                "kind": "skill",
+                "name": "feature foo",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/tools/tree/feature/foo/skills/foo",
+                "source_record_id": "demo/tools:skills/foo/SKILL.md",
+            }
+            records["skill:github:demo:feature-bar"] = {
+                "capability_id": "skill:github:demo:feature-bar",
+                "kind": "skill",
+                "name": "feature bar",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/tools/tree/feature/bar/skills/bar",
+                "source_record_id": "demo/tools:skills/bar/SKILL.md",
+            }
+            catalog_doc["records"] = records
+            ops._refresh_source_record_counts(catalog_doc)
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            overview_resp, _ = self._call("capability_overview", {"include_indexed": True, "limit": 20})
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            instances = overview.get("source_instances") if isinstance(overview.get("source_instances"), list) else []
+            foo = next((item for item in instances if isinstance(item, dict) and str(item.get("label") or "") == "demo/tools @ feature/foo"), None)
+            bar = next((item for item in instances if isinstance(item, dict) and str(item.get("label") or "") == "demo/tools @ feature/bar"), None)
+            self.assertIsNotNone(foo)
+            self.assertIsNotNone(bar)
+
+            delete_resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "source_id": "github_import",
+                    "source_instance_key": str(foo.get("source_instance_key") or ""),
+                },
+            )
+            self.assertTrue(delete_resp.ok, getattr(delete_resp, "error", None))
+            result = delete_resp.result if isinstance(delete_resp.result, dict) else {}
+            self.assertEqual(int(result.get("removed_records") or 0), 1)
+
+            _, after_catalog = ops._load_catalog_doc()
+            after_records = after_catalog.get("records") if isinstance(after_catalog.get("records"), dict) else {}
+            self.assertNotIn("skill:github:demo:feature-foo", after_records)
+            self.assertIn("skill:github:demo:feature-bar", after_records)
+        finally:
+            cleanup()
+
     def test_capability_source_delete_removes_user_owned_source_records(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -4639,6 +4754,7 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(uninstall_resp.ok, getattr(uninstall_resp, "error", None))
             result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
             self.assertGreaterEqual(int(result.get("removed_bindings") or 0), 1)
+            self.assertTrue(bool(result.get("removed_group_marker")))
             self.assertFalse(bool(result.get("removed_installation")))
             self.assertTrue(bool(result.get("removed_recent_success")))
 
@@ -4660,6 +4776,16 @@ class TestCapabilityOps(unittest.TestCase):
             autoload_skills = state.get("autoload_skills") if isinstance(state.get("autoload_skills"), list) else []
             autoload_ids = {str(item.get("capability_id") or "") for item in autoload_skills if isinstance(item, dict)}
             self.assertNotIn("skill:anthropic:triage", autoload_ids)
+
+            overview_resp, _ = self._call(
+                "capability_overview",
+                {"group_id": gid, "limit": 200, "include_indexed": True, "kind": "skill"},
+            )
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            overview_items = overview.get("items") if isinstance(overview.get("items"), list) else []
+            overview_ids = {str(item.get("capability_id") or "") for item in overview_items if isinstance(item, dict)}
+            self.assertNotIn("skill:anthropic:triage", overview_ids)
         finally:
             cleanup()
 

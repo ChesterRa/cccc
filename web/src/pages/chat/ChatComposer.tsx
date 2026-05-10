@@ -47,6 +47,7 @@ export interface ChatComposerProps {
   groups: GroupMeta[];
   destGroupId: string;
   setDestGroupId: (groupId: string) => void;
+  composerGroupSettled: boolean;
   destGroupScopeLabel?: string;
   busy: string;
   recentMessages?: LedgerEvent[];
@@ -100,6 +101,7 @@ export function ChatComposer({
   groups,
   destGroupId,
   setDestGroupId,
+  composerGroupSettled,
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
   recentMessages = [],
@@ -474,7 +476,7 @@ export function ChatComposer({
       if (showSlashMenu) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        onSendMessage();
+        if (composerGroupSettled) onSendMessage();
       }
     } else if (e.key === "Escape") {
       setShowMentionMenu(false);
@@ -507,7 +509,7 @@ export function ChatComposer({
     requestAnimationFrame(() => composerRef.current?.focus());
   };
 
-  const canSend = composerText.trim() || composerFiles.length > 0;
+  const canSend = composerGroupSettled && (composerText.trim() || composerFiles.length > 0);
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const canChooseDestGroup =
@@ -1048,7 +1050,7 @@ export function ChatComposer({
                   isDark={isDark}
                   selectedGroupId={selectedGroupId}
                   busy={busy}
-                  disabled={!selectedGroupId || busy === "send"}
+                  disabled={!selectedGroupId || busy === "send" || !composerGroupSettled}
                   variant="assistantRow"
                   captureMode={voiceCaptureMode}
                   onCaptureModeChange={setVoiceCaptureMode}

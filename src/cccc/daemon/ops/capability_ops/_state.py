@@ -47,6 +47,7 @@ from ._runtime import (
     _record_runtime_recent_success,
     _append_audit_event,
 )
+from ._removed import _set_removed_capability
 from ._policy import (
     _policy_level_visible,
     _allowlist_policy,
@@ -179,6 +180,8 @@ def _set_enabled_capability(
     gid = str(group_id or "").strip()
     aid = str(actor_id or "").strip()
     cap_id = str(capability_id or "").strip()
+    if enabled:
+        _set_removed_capability(state_doc, group_id=gid, capability_id=cap_id, removed=False)
     if scope == "group":
         group_enabled = state_doc.setdefault("group_enabled", {})
         items = set(group_enabled.get(gid) or [])

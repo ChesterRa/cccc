@@ -18,6 +18,10 @@ export function getEffectiveComposerDestGroupId(
   return dest || selected;
 }
 
+export function isComposerGroupSettled(activeGroupId: string, selectedGroupId: string): boolean {
+  return String(activeGroupId || "").trim() === String(selectedGroupId || "").trim();
+}
+
 interface GroupDraft {
   composerText: string;
   composerFiles: File[];
@@ -26,7 +30,6 @@ interface GroupDraft {
   quotedPresentationRef: PresentationMessageRef | null;
   priority: "normal" | "attention";
   replyRequired: boolean;
-  destGroupId: string;
 }
 
 interface ComposerState {
@@ -197,7 +200,6 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           quotedPresentationRef: state.quotedPresentationRef,
           priority: state.priority,
           replyRequired: state.replyRequired,
-          destGroupId: state.destGroupId,
         };
       } else {
         delete newDrafts[normalizedFromGroupId];
@@ -234,10 +236,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       const nextDraft = updater(state.drafts[gid] || null);
       const drafts = { ...state.drafts };
       if (nextDraft) {
-        drafts[gid] = {
-          ...nextDraft,
-          destGroupId: String(nextDraft.destGroupId || gid).trim() || gid,
-        };
+        drafts[gid] = nextDraft;
       } else {
         delete drafts[gid];
       }

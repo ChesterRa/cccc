@@ -333,9 +333,17 @@
       "disable": "禁用",
       "delete": "删除",
       "deleting": "删除中",
+      "instances": "来源实例",
+      "instanceMeta": "{{source}} · {{count}} 条记录",
+      "deleteInstance": "删除这个来源实例",
+      "deleteInstanceConfirm": "删除来源实例 {{name}}？\n\n这会移除该实例导入的 {{count}} 条 capability 记录，并清理相关绑定。",
+      "deleteInstanceConfirmTitle": "删除来源实例 {{name}}？",
+      "deleteInstanceConfirmDescription": "这会移除该实例导入的 {{count}} 条 capability 记录，并清理相关绑定。",
       "toggleFailed": "更新来源失败。",
       "deleteFailed": "删除来源失败。",
-      "deleteConfirm": "删除来源 {{id}}？\n\n这会移除该来源的 {{count}} 条 registry 记录，并清理相关绑定。"
+      "deleteConfirm": "删除来源 {{id}}？\n\n这会移除该来源的 {{count}} 条 registry 记录，并清理相关绑定。",
+      "deleteConfirmTitle": "删除来源 {{id}}？",
+      "deleteConfirmDescription": "这会移除该来源的 {{count}} 条 registry 记录，并清理相关绑定。"
     },
     "details": {
       "selectCapability": "请选择一个能力。",
@@ -357,8 +365,8 @@
       "disabledMeta": "当前工作组未启用",
       "slashVisibleMeta": "会出现在 / 命令中",
       "slashHiddenMeta": "已从 / 命令隐藏",
-      "blockMeta": "禁止 agents 使用它",
-      "blockedMeta": "当前已被阻止",
+      "blockMeta": "策略层阻止启用和使用",
+      "blockedMeta": "已被策略阻止，解除后才能用",
       "openGroup": "请打开一个工作组后再使用这些操作。"
     },
     "remove": {
@@ -381,23 +389,45 @@
         "remove": "移除 {{name}}？\n\n这会清理 {{id}} 在当前工作组的启用/自动加载引用。",
         "uninstall": "卸载 {{name}}？\n\n这会清理 {{id}} 在当前工作组的绑定和 runtime 安装引用。",
         "disable": "停用 {{name}}？\n\n这只会清理 {{id}} 在当前工作组的启用状态，不会删除内建能力。"
+      },
+      "confirmTitle": {
+        "delete": "删除 {{name}}？",
+        "remove": "移除 {{name}}？",
+        "uninstall": "卸载 {{name}}？",
+        "disable": "为当前工作组停用 {{name}}？"
+      },
+      "confirmDescription": {
+        "delete": "这会移除 {{id}} 的 registry 记录以及相关绑定。",
+        "remove": "这会清理 {{id}} 在当前工作组的启用/自动加载引用。",
+        "uninstall": "这会清理 {{id}} 在当前工作组的绑定和 runtime 安装引用。",
+        "disable": "这只会在当前工作组关闭 {{id}}，之后仍可再次启用。"
       }
     },
     "block": {
       "block": "阻止",
       "unblock": "解除阻止",
-      "blockTitle": "阻止这个能力",
-      "unblockTitle": "解除这个能力的阻止",
+      "blockTitle": "阻止这个能力再次启用",
+      "unblockTitle": "允许这个能力再次启用",
       "failed": "更新阻止状态失败。",
       "confirmBlock": "阻止 {{name}}？\n\n解除阻止前，agents 不能使用 {{id}}。",
-      "confirmUnblock": "解除阻止 {{name}}？\n\n如果 {{id}} 已启用且策略允许，agents 可以再次使用它。"
+      "confirmUnblock": "解除阻止 {{name}}？\n\n如果 {{id}} 已启用且策略允许，agents 可以再次使用它。",
+      "confirmBlockTitle": "阻止 {{name}}？",
+      "confirmBlockDescription": "这会为 {{id}} 增加策略阻止；解除阻止前不能被启用或使用。",
+      "confirmUnblockTitle": "解除阻止 {{name}}？",
+      "confirmUnblockDescription": "这会移除 {{id}} 的策略阻止；如果它已启用且策略允许，agents 可以再次使用。"
     },
     "enable": {
       "enable": "启用",
       "disable": "停用",
       "enableTitle": "为当前工作组启用",
-      "disableTitle": "为当前工作组停用",
-      "failed": "更新启用状态失败。"
+      "disableTitle": "仅在当前工作组停用",
+      "failed": "更新启用状态失败。",
+      "confirmDisableTitle": "为当前工作组停用 {{name}}？",
+      "confirmDisableDescription": "这只会在当前工作组关闭 {{id}}，不会阻止之后再次启用。"
+    },
+    "confirm": {
+      "cancel": "取消",
+      "confirm": "确认"
     },
     "showSystem": "系统项"
   },

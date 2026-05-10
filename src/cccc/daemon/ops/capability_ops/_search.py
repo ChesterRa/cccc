@@ -534,6 +534,7 @@ def _is_generated_skill_capability_id(capability_id: str) -> bool:
 
 
 def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
     query = str(args.get("query") or "").strip()
     limit = max(1, min(int(args.get("limit") or 400), 2000))
     offset = max(0, int(args.get("offset") or 0))
@@ -556,10 +557,12 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
             source_states = _render_source_states(catalog_doc)
             records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             external_rows = [dict(v) for v in records.values() if isinstance(v, dict)]
+            source_instances = _pkg().capability_source_instances(external_rows)
 
         with _STATE_LOCK:
             state_path, state_doc = _load_state_doc()
             blocked_caps_all, blocked_mutated = _pkg()._collect_blocked_capabilities(state_doc, group_id="")
+            removed_caps = set(_pkg()._collect_removed_capabilities(state_doc, group_id=group_id)) if group_id else set()
             if blocked_mutated:
                 _save_state_doc(state_path, state_doc)
 
@@ -754,6 +757,9 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
         if query:
             rows = [row for row in rows if _search_matches(query, row)]
 
+        if removed_caps:
+            rows = [row for row in rows if str(row.get("capability_id") or "").strip() not in removed_caps]
+
         if kind_filter == "pack":
             rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "pack"]
         elif kind_filter in {"mcp", "mcp_toolpack"}:
@@ -851,6 +857,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 "has_more": (offset + len(items)) < total_count,
                 "query": query,
                 "sources": sources,
+                "source_instances": source_instances,
                 "blocked_capabilities": blocked_list,
                 "allowlist_revision": str(snapshot.get("revision") or ""),
             },

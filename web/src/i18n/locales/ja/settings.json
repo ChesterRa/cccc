@@ -333,9 +333,17 @@
       "disable": "無効化",
       "delete": "削除",
       "deleting": "削除中",
+      "instances": "Source instances",
+      "instanceMeta": "{{source}} · {{count}} 件",
+      "deleteInstance": "この source instance を削除",
+      "deleteInstanceConfirm": "Source instance {{name}} を削除しますか？\n\nこの instance が import した capability record {{count}} 件と関連 binding を削除します。",
+      "deleteInstanceConfirmTitle": "Source instance {{name}} を削除しますか？",
+      "deleteInstanceConfirmDescription": "この instance が import した capability record {{count}} 件と関連 binding を削除します。",
       "toggleFailed": "Source の更新に失敗しました。",
       "deleteFailed": "Source の削除に失敗しました。",
-      "deleteConfirm": "Source {{id}} を削除しますか？\n\nこの source の registry レコード {{count}} 件と関連 binding を削除します。"
+      "deleteConfirm": "Source {{id}} を削除しますか？\n\nこの source の registry レコード {{count}} 件と関連 binding を削除します。",
+      "deleteConfirmTitle": "Source {{id}} を削除しますか？",
+      "deleteConfirmDescription": "この source の registry レコード {{count}} 件と関連 binding を削除します。"
     },
     "details": {
       "selectCapability": "Capability を選択してください。",
@@ -357,8 +365,8 @@
       "disabledMeta": "現在のグループでは無効",
       "slashVisibleMeta": "/ コマンドに表示",
       "slashHiddenMeta": "/ コマンドから非表示",
-      "blockMeta": "Agent の使用を禁止",
-      "blockedMeta": "現在ブロック中",
+      "blockMeta": "Policy で有効化と使用をブロック",
+      "blockedMeta": "解除するまで policy でブロック",
       "openGroup": "これらの操作にはグループを開いてください。"
     },
     "remove": {
@@ -381,23 +389,45 @@
         "remove": "{{name}} を除去しますか？\n\n{{id}} の現在のグループでの有効化と autoload 参照を消去します。",
         "uninstall": "{{name}} をアンインストールしますか？\n\n{{id}} の現在のグループでの binding と runtime インストール参照を消去します。",
         "disable": "{{name}} を無効化しますか？\n\n{{id}} の現在のグループでの有効化だけを消去します。組み込み capability 自体は削除されません。"
+      },
+      "confirmTitle": {
+        "delete": "{{name}} を削除しますか？",
+        "remove": "{{name}} を除去しますか？",
+        "uninstall": "{{name}} をアンインストールしますか？",
+        "disable": "このグループで {{name}} を無効化しますか？"
+      },
+      "confirmDescription": {
+        "delete": "{{id}} の registry レコードと関連 binding を削除します。",
+        "remove": "{{id}} の現在のグループでの有効化と autoload 参照を消去します。",
+        "uninstall": "{{id}} の現在のグループでの binding と runtime インストール参照を消去します。",
+        "disable": "{{id}} を現在のグループでのみ無効化します。あとで再び有効化できます。"
       }
     },
     "block": {
       "block": "ブロック",
       "unblock": "ブロック解除",
-      "blockTitle": "この capability をブロック",
-      "unblockTitle": "この capability のブロックを解除",
+      "blockTitle": "この capability の再有効化をブロック",
+      "unblockTitle": "この capability を再び有効化可能にする",
       "failed": "ブロック状態の更新に失敗しました。",
       "confirmBlock": "{{name}} をブロックしますか？\n\n解除するまで agent は {{id}} を使用できません。",
-      "confirmUnblock": "{{name}} のブロックを解除しますか？\n\n{{id}} が有効で policy で許可されていれば、agent が再び使用できます。"
+      "confirmUnblock": "{{name}} のブロックを解除しますか？\n\n{{id}} が有効で policy で許可されていれば、agent が再び使用できます。",
+      "confirmBlockTitle": "{{name}} をブロックしますか？",
+      "confirmBlockDescription": "{{id}} に policy block を追加します。解除するまで有効化も使用もできません。",
+      "confirmUnblockTitle": "{{name}} のブロックを解除しますか？",
+      "confirmUnblockDescription": "{{id}} の policy block を削除します。有効化済みで policy が許可していれば agent が再び使用できます。"
     },
     "enable": {
       "enable": "有効化",
       "disable": "無効化",
       "enableTitle": "このグループで有効化",
-      "disableTitle": "このグループで無効化",
-      "failed": "有効化状態の更新に失敗しました。"
+      "disableTitle": "現在のグループだけで無効化",
+      "failed": "有効化状態の更新に失敗しました。",
+      "confirmDisableTitle": "このグループで {{name}} を無効化しますか？",
+      "confirmDisableDescription": "{{id}} を現在のグループでのみ無効化します。あとで再び有効化できます。"
+    },
+    "confirm": {
+      "cancel": "キャンセル",
+      "confirm": "確認"
     },
     "showSystem": "システム"
   },

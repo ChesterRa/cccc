@@ -11,7 +11,7 @@ import {
   useFormStore,
   selectChatBucketState,
 } from "../stores";
-import { getEffectiveComposerDestGroupId } from "../stores/useComposerStore";
+import { getEffectiveComposerDestGroupId, isComposerGroupSettled } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment, Task } from "../types";
@@ -712,6 +712,7 @@ export function useChatTab({
     clearDraft,
     clearComposer,
   } = useComposerStore();
+  const composerGroupSettled = isComposerGroupSettled(activeGroupId, selectedGroupId);
   const { setRecipientsModal, setRelayModal, openModal } = useModalStore();
   const { setNewActorRole } = useFormStore();
 
@@ -1109,6 +1110,7 @@ export function useChatTab({
     if (!selectedGroupId) return;
     const latestSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
     if (latestSelectedGroupId !== selectedGroupId) return;
+    if (!isComposerGroupSettled(useComposerStore.getState().activeGroupId, latestSelectedGroupId)) return;
     if (!txt && composerFiles.length === 0) return;
 
     const dstGroup = String(sendGroupId || "").trim();
@@ -1591,6 +1593,7 @@ export function useChatTab({
     setReplyRequired,
     destGroupId: sendGroupId,
     setDestGroupId,
+    composerGroupSettled,
     mentionSuggestions,
 
     // Agent state
