@@ -62,6 +62,7 @@ from ._install import (
     _build_synthetic_tool_name,
     _invoke_installed_external_tool_with_aliases,
 )
+from ._install_visibility import clear_hidden_capability_after_install
 from ._import_sources import (
     _build_skill_record_from_markdown,
     _handle_capability_source_uri_import,
@@ -1408,6 +1409,7 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
 
         enable_result: Dict[str, Any] = {}
         refresh_required = False
+        cleared_hidden_after_import = False
         state = str(readiness_preview.get("preview_status") or "needs_inspect")
         result_reason = ""
         if enable_after_import:
@@ -1428,6 +1430,17 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
                 refresh_required = bool(enable_result.get("refresh_required"))
                 state = str(enable_result.get("state") or "runnable").strip().lower() or "runnable"
                 result_reason = str(enable_result.get("reason") or "").strip()
+                if state in {"runnable", "verified", "activation_pending", "ready"}:
+                    with _STATE_LOCK:
+                        state_path, state_doc = _load_state_doc()
+                        cleared_hidden_after_import = clear_hidden_capability_after_install(
+                            state_doc,
+                            group_id=group_id,
+                            actor_id=actor_id or by,
+                            capability_id=cap_id,
+                        )
+                        if cleared_hidden_after_import:
+                            _save_state_doc(state_path, state_doc)
             else:
                 state = "blocked"
                 result_reason = str((enable_resp.error.message if enable_resp.error else "enable_failed") or "enable_failed")
@@ -1490,6 +1503,7 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
             "enable_block_reason": enable_block_reason,
             "refresh_required": bool(refresh_required),
             "enable_after_import": bool(enable_after_import),
+            "cleared_hidden_after_import": bool(cleared_hidden_after_import),
             "state": final_state,
             "readiness_preview": readiness_preview,
         }
@@ -1632,6 +1646,18 @@ def handle_capability_install_target(args: Dict[str, Any]) -> DaemonResponse:
             enable_result = enable_resp.result if isinstance(enable_resp.result, dict) else {}
             state = str(enable_result.get("state") or "").strip().lower()
             use_ready = state in {"runnable", "verified", "activation_pending", "ready"}
+            cleared_hidden_after_install = False
+            if use_ready:
+                with _STATE_LOCK:
+                    state_path, state_doc = _load_state_doc()
+                    cleared_hidden_after_install = clear_hidden_capability_after_install(
+                        state_doc,
+                        group_id=group_id,
+                        actor_id=actor_id,
+                        capability_id=target,
+                    )
+                    if cleared_hidden_after_install:
+                        _save_state_doc(state_path, state_doc)
             return DaemonResponse(
                 ok=True,
                 result={
@@ -1646,6 +1672,7 @@ def handle_capability_install_target(args: Dict[str, Any]) -> DaemonResponse:
                     "use_ready_capability_ids": [target] if use_ready else [],
                     "requires_setup": not use_ready,
                     "refresh_required": bool(enable_result.get("refresh_required")),
+                    "cleared_hidden_after_install": bool(cleared_hidden_after_install),
                     "enable_result": enable_result,
                     "state": state or ("ready" if use_ready else "blocked"),
                 },

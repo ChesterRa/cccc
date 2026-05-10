@@ -226,7 +226,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
     setErr("");
     try {
       const overviewQuery = String(query || "").trim();
-      const [overviewResp, stateResp, skillStatsResp, mcpStatsResp, packStatsResp] = await Promise.all([
+      const [overviewResp, stateResp] = await Promise.all([
         api.fetchCapabilityOverview({
           includeIndexed: true,
           limit: nextLimit,
@@ -237,9 +237,6 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
           groupId,
         }),
         groupId ? api.fetchGroupCapabilityState(groupId, "user", { noCache: true }) : Promise.resolve(null),
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "skill", groupId }),
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "mcp", groupId }),
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1, offset: 0, query: overviewQuery || undefined, kind: "pack", groupId }),
       ]);
       if (seq !== requestSeqRef.current) return;
       if (!overviewResp.ok) {
@@ -259,11 +256,12 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
       setSourceInstances(overviewResp.result.source_instances || []);
       setState(nextState);
       const enabledCount = capabilityCenterEnabledIds(nextState).size;
+      const kindCounts = overviewResp.result.kind_counts || {};
       setSummaryStats({
         total: Number(overviewResp.result.total_count || nextItems.length) || 0,
-        skills: skillStatsResp.ok ? Number(skillStatsResp.result.total_count || 0) : 0,
-        mcp: mcpStatsResp.ok ? Number(mcpStatsResp.result.total_count || 0) : 0,
-        packs: packStatsResp.ok ? Number(packStatsResp.result.total_count || 0) : 0,
+        skills: Number(kindCounts.skill || 0),
+        mcp: Number(kindCounts.mcp || 0),
+        packs: Number(kindCounts.pack || 0),
         enabled: enabledCount,
         slashHidden: nextStats.slashHidden,
         blocked: nextStats.blocked,

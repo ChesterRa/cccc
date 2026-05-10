@@ -158,6 +158,7 @@ export async function fetchCapabilityOverview(opts?: {
   policy?: "all" | "actionable" | "blocked" | "indexed";
   sourceId?: string;
   groupId?: string;
+  includeSourceInstances?: boolean;
 }) {
   const params = new URLSearchParams();
   if (String(opts?.query || "").trim()) params.set("query", String(opts?.query || "").trim());
@@ -169,6 +170,9 @@ export async function fetchCapabilityOverview(opts?: {
   }
   if (typeof opts?.includeIndexed === "boolean") {
     params.set("include_indexed", opts.includeIndexed ? "true" : "false");
+  }
+  if (typeof opts?.includeSourceInstances === "boolean") {
+    params.set("include_source_instances", opts.includeSourceInstances ? "true" : "false");
   }
   if (String(opts?.kind || "").trim() && String(opts?.kind || "").trim() !== "all") {
     params.set("kind", String(opts?.kind || "").trim());
@@ -191,6 +195,7 @@ export async function fetchCapabilityOverview(opts?: {
     limit: number;
     has_more: boolean;
     query?: string;
+    kind_counts?: { skill?: number; mcp?: number; pack?: number };
     sources?: Record<string, CapabilitySourceState>;
     source_instances?: CapabilitySourceInstance[];
     blocked_capabilities?: CapabilityBlockEntry[];

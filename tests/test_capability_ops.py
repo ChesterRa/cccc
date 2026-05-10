@@ -277,6 +277,100 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_install_target_url_skill_reinstall_restores_slash_visibility(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            self._write_allowlist_override(
+                extra=(
+                    "skills:\n"
+                    "  source_overrides:\n"
+                    "    - source_id: url_import\n"
+                    "      level: mounted\n"
+                )
+            )
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            cap_id = "skill:url:url-skill"
+            target = "https://example.test/skills/url-skill/SKILL.md"
+            skill_md = (
+                "---\n"
+                "name: url-skill\n"
+                "description: Install from a remote SKILL.md URL.\n"
+                "---\n"
+                "# URL Skill\n"
+                "Use this remote skill through CCCC capability runtime."
+            )
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_text", return_value=skill_md):
+                first_resp, _ = self._call(
+                    "capability_install_target",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "target": target,
+                        "scope": "actor",
+                    },
+                )
+            self.assertTrue(first_resp.ok, getattr(first_resp, "error", None))
+
+            hide_resp, _ = self._call(
+                "capability_visibility",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": cap_id,
+                    "hidden": True,
+                },
+            )
+            self.assertTrue(hide_resp.ok, getattr(hide_resp, "error", None))
+
+            uninstall_resp, _ = self._call(
+                "capability_uninstall",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": cap_id,
+                },
+            )
+            self.assertTrue(uninstall_resp.ok, getattr(uninstall_resp, "error", None))
+
+            with patch("cccc.daemon.ops.capability_ops._http_get_text", return_value=skill_md):
+                reinstall_resp, _ = self._call(
+                    "capability_install_target",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "target": target,
+                        "scope": "actor",
+                    },
+                )
+            self.assertTrue(reinstall_resp.ok, getattr(reinstall_resp, "error", None))
+            reinstall = reinstall_resp.result if isinstance(reinstall_resp.result, dict) else {}
+            self.assertEqual(reinstall.get("enabled_capability_ids"), [cap_id])
+            import_result = reinstall.get("import_result") if isinstance(reinstall.get("import_result"), dict) else {}
+            self.assertTrue(bool(import_result.get("cleared_hidden_after_import")))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertIn(cap_id, state.get("enabled_capabilities") or [])
+            self.assertNotIn(cap_id, state.get("actor_hidden_capabilities") or [])
+            active_ids = {
+                str(item.get("capability_id") or "")
+                for item in (state.get("active_capsule_skills") or [])
+                if isinstance(item, dict)
+            }
+            self.assertIn(cap_id, active_ids)
+        finally:
+            cleanup()
+
     def test_capability_install_target_local_skill_imports_enables_and_uses_owned_source(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -500,6 +594,64 @@ class TestCapabilityOps(unittest.TestCase):
             after_records = after_catalog.get("records") if isinstance(after_catalog.get("records"), dict) else {}
             self.assertNotIn("skill:github:demo:feature-foo", after_records)
             self.assertIn("skill:github:demo:feature-bar", after_records)
+        finally:
+            cleanup()
+
+    def test_github_import_source_instances_keep_root_skill_slash_refs_distinct(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            records["skill:github:demo:root-foo"] = {
+                "capability_id": "skill:github:demo:root-foo",
+                "kind": "skill",
+                "name": "root foo",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/tools/tree/feature/foo",
+                "source_record_id": "demo/tools:SKILL.md",
+            }
+            records["skill:github:demo:root-bar"] = {
+                "capability_id": "skill:github:demo:root-bar",
+                "kind": "skill",
+                "name": "root bar",
+                "source_id": "github_import",
+                "source_uri": "https://github.com/demo/tools/tree/feature/bar",
+                "source_record_id": "demo/tools:SKILL.md",
+            }
+            catalog_doc["records"] = records
+            ops._refresh_source_record_counts(catalog_doc)
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            overview_resp, _ = self._call("capability_overview", {"include_indexed": True, "limit": 20})
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            instances = overview.get("source_instances") if isinstance(overview.get("source_instances"), list) else []
+            foo = next((item for item in instances if isinstance(item, dict) and str(item.get("label") or "") == "demo/tools @ feature/foo"), None)
+            bar = next((item for item in instances if isinstance(item, dict) and str(item.get("label") or "") == "demo/tools @ feature/bar"), None)
+            self.assertIsNotNone(foo)
+            self.assertIsNotNone(bar)
+
+            delete_resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "source_id": "github_import",
+                    "source_instance_key": str(foo.get("source_instance_key") or ""),
+                },
+            )
+            self.assertTrue(delete_resp.ok, getattr(delete_resp, "error", None))
+            result = delete_resp.result if isinstance(delete_resp.result, dict) else {}
+            self.assertEqual(int(result.get("removed_records") or 0), 1)
+
+            _, after_catalog = ops._load_catalog_doc()
+            after_records = after_catalog.get("records") if isinstance(after_catalog.get("records"), dict) else {}
+            self.assertNotIn("skill:github:demo:root-foo", after_records)
+            self.assertIn("skill:github:demo:root-bar", after_records)
         finally:
             cleanup()
 
@@ -3220,6 +3372,69 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_overview_can_skip_source_instance_aggregation(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with patch("cccc.daemon.ops.capability_ops.capability_source_instances") as mocked_instances:
+                mocked_instances.side_effect = AssertionError("source instance aggregation should be skipped")
+                resp, _ = self._call(
+                    "capability_overview",
+                    {
+                        "query": "",
+                        "limit": 1,
+                        "include_indexed": True,
+                        "include_source_instances": False,
+                        "kind": "skill",
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(result.get("source_instances"), [])
+        finally:
+            cleanup()
+
+    def test_capability_overview_returns_kind_counts_without_extra_requests(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            records["mcp:test:overview-counts"] = {
+                "capability_id": "mcp:test:overview-counts",
+                "kind": "mcp_toolpack",
+                "name": "Overview Counts MCP",
+                "source_id": "test_source",
+                "qualification_status": "qualified",
+            }
+            records["pack:test:overview-counts"] = {
+                "capability_id": "pack:test:overview-counts",
+                "kind": "pack",
+                "name": "Overview Counts Pack",
+                "source_id": "test_source",
+                "qualification_status": "qualified",
+            }
+            catalog_doc["records"] = records
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": "Overview Counts",
+                    "limit": 1,
+                    "include_indexed": True,
+                    "kind": "skill",
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            counts = result.get("kind_counts") if isinstance(result.get("kind_counts"), dict) else {}
+            self.assertEqual(int(counts.get("skill") or 0), 0)
+            self.assertEqual(int(counts.get("mcp") or 0), 1)
+            self.assertEqual(int(counts.get("pack") or 0), 1)
+        finally:
+            cleanup()
+
     def test_install_skill_capsule_prefers_cccc_capability_install_path(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -3256,8 +3471,8 @@ class TestCapabilityOps(unittest.TestCase):
             )
             capsule_text = str(install_row.get("capsule_text") or "")
             self.assertIn("Default /install behavior is CCCC capability installation", capsule_text)
-            self.assertIn("Default action: call cccc_capability_install for the target", capsule_text)
-            self.assertIn("enables actor scope, and returns use-ready capability ids", capsule_text)
+            self.assertIn("Default action: call cccc_capability_install for the target with scope=group", capsule_text)
+            self.assertIn("enables group scope, and returns use-ready capability ids", capsule_text)
             self.assertIn("Activate, assign, autoload, or use only after the CCCC capability record exists", capsule_text)
             self.assertIn("Do not bypass the registry by installing into Codex's local skills directory", capsule_text)
             self.assertIn("Do not install into Codex's local skills directory or use the Codex skill-installer workflow", capsule_text)

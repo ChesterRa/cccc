@@ -80,12 +80,22 @@ function buildHeadlessEventSignature(event: HeadlessStreamEvent): string {
   ].join("|");
 }
 
+function syncComposerToSelectedGroup(groupId: string): void {
+  const gid = String(groupId || "").trim();
+  const composerActiveGid = String(useComposerStore.getState().activeGroupId || "").trim();
+  if (composerActiveGid === gid) return;
+  useComposerStore.getState().switchGroup(composerActiveGid || null, gid || null);
+}
+
+const initialSelectedGroupId = loadSelectedGroupId();
+syncComposerToSelectedGroup(initialSelectedGroupId);
+
 export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
   groups: [],
   groupOrder: loadGroupOrder(),
   archivedGroupIds: loadArchivedGroupIds(),
-  selectedGroupId: loadSelectedGroupId(),
+  selectedGroupId: initialSelectedGroupId,
   chatByGroup: {},
   groupDoc: null,
   events: [],
@@ -170,11 +180,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   },
   setSelectedGroupId: (id) => {
     const gid = String(id || "").trim();
-    const prevGid = String(get().selectedGroupId || "").trim();
-    const composerActiveGid = String(useComposerStore.getState().activeGroupId || "").trim();
-    if (composerActiveGid !== gid) {
-      useComposerStore.getState().switchGroup(composerActiveGid || prevGid || null, gid || null);
-    }
+    syncComposerToSelectedGroup(gid);
     saveSelectedGroupId(gid);
     set((state) => {
       const statePrevGid = String(state.selectedGroupId || "").trim();
