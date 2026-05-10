@@ -25,28 +25,32 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
             linkify: true,
             typographer: true,
             breaks: true,
-            highlight: (str: string, lang: string): string => {
-                const finalLang = lang?.toLowerCase().trim() || 'code';
-                const escaped = instance.utils.escapeHtml(str);
-
-                // Render code blocks with a copy button, without syntax highlighting.
-                // Toggle state through CSS classes to avoid direct innerHTML edits during React reconciliation.
-                return (
-                    '<div class="code-block-wrapper relative group">' +
-                    '<div class="code-block-header flex items-center justify-between">' +
-                    '<span class="uppercase">' + finalLang + '</span>' +
-                    '<button class="copy-button flex items-center gap-1 select-none" data-code="' + encodeURIComponent(str) + '">' +
-                    '<span class="copy-icon pointer-events-none">' + copyIconMarkup + '</span>' +
-                    '<span class="copy-text pointer-events-none">Copy</span>' +
-                    '<span class="copied-icon pointer-events-none hidden text-green-500 dark:text-emerald-400">' + copiedIconMarkup + '</span>' +
-                    '<span class="copied-text pointer-events-none hidden text-green-500 dark:text-emerald-400">Copied!</span>' +
-                    '</button>' +
-                    '</div>' +
-                    '<pre><code class="language-' + finalLang + '">' + escaped + '</code></pre>' +
-                    '</div>'
-                );
-            },
         });
+        instance.renderer.rules.fence = (tokens, idx) => {
+            const token = tokens[idx];
+            const info = String(token.info || "").trim();
+            const rawLang = info.split(/\s+/)[0] || "";
+            const finalLang = rawLang.toLowerCase().trim() || "text";
+            const escapedLang = instance.utils.escapeHtml(finalLang);
+            const escaped = instance.utils.escapeHtml(token.content || "");
+            const encodedCode = encodeURIComponent(token.content || "");
+
+            // Render the full fence here so markdown-it does not wrap custom markup in another pre/code pair.
+            return (
+                '<div class="code-block-wrapper relative group">' +
+                '<div class="code-block-header flex items-center justify-between">' +
+                '<span class="code-block-lang uppercase">' + escapedLang + '</span>' +
+                '<button class="copy-button flex items-center gap-1 select-none" data-code="' + encodedCode + '">' +
+                '<span class="copy-icon pointer-events-none">' + copyIconMarkup + '</span>' +
+                '<span class="copy-text pointer-events-none">Copy</span>' +
+                '<span class="copied-icon pointer-events-none hidden text-green-500 dark:text-emerald-400">' + copiedIconMarkup + '</span>' +
+                '<span class="copied-text pointer-events-none hidden text-green-500 dark:text-emerald-400">Copied!</span>' +
+                '</button>' +
+                '</div>' +
+                '<pre><code class="language-' + escapedLang + '">' + escaped + '</code></pre>' +
+                '</div>'
+            );
+        };
         return instance;
     }, []);
 

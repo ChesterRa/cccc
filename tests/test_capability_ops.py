@@ -1987,6 +1987,41 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_enable_succeeds_when_capability_changed_event_publish_fails(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._state.publish_event",
+                side_effect=OSError("event disk full"),
+            ):
+                resp, _ = self._call(
+                    "capability_enable",
+                    {
+                        "group_id": gid,
+                        "by": "peer-1",
+                        "actor_id": "peer-1",
+                        "capability_id": "skill:cccc:install",
+                        "scope": "session",
+                        "enabled": True,
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertIn("event disk full", str(result.get("event_publish_error") or ""))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertIn("skill:cccc:install", state.get("enabled_capabilities") or [])
+        finally:
+            cleanup()
+
     def test_capability_search_supports_source_trust_and_qualification_filters(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -2948,6 +2983,52 @@ class TestCapabilityOps(unittest.TestCase):
                 if isinstance(item, dict)
             }
             self.assertIn(capability_id, visible_active_ids)
+        finally:
+            cleanup()
+
+    def test_capability_visibility_succeeds_when_capability_changed_event_publish_fails(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            capability_id = "skill:cccc:meeting-notes"
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "capability_id": capability_id,
+                    "scope": "session",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._state.publish_event",
+                side_effect=OSError("event disk full"),
+            ):
+                hide_resp, _ = self._call(
+                    "capability_visibility",
+                    {
+                        "group_id": gid,
+                        "by": "user",
+                        "actor_id": "user",
+                        "capability_id": capability_id,
+                        "hidden": True,
+                    },
+                )
+            self.assertTrue(hide_resp.ok, getattr(hide_resp, "error", None))
+            hide_result = hide_resp.result if isinstance(hide_resp.result, dict) else {}
+            self.assertIn("event disk full", str(hide_result.get("event_publish_error") or ""))
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "user", "by": "user"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertIn(capability_id, state.get("actor_hidden_capabilities") or [])
         finally:
             cleanup()
 

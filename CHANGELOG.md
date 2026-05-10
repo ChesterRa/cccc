@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.15] — 2026-05-10
+
+### Added
+- **Copy Groups** export/import for durable group duplication, migration, and backup. Copy packages include group ledger, actors, memory, attachments, automation, and durable settings while excluding workspace files, live credentials, browser sessions, caches, and runtime state.
+- **Capability Center lifecycle management** for discovering, importing, enabling, hiding, removing, and inspecting skills, MCP toolpacks, and capability packs from one Web surface.
+- **Slash command support for capability workflows**, including `/install` routing through the CCCC capability registry and capability-backed slash command discovery in chat.
+- **VNC-backed projected browser viewing** for CCCC-owned Xvfb browser sessions, with noVNC integration and CDP screencast fallback when VNC is unavailable.
+
+### Changed
+- **Group blueprints/templates were replaced by Copy Groups** as the supported group copy/migration path.
+- **ChatGPT Web Model delivery** now distinguishes submitted, ambiguous, pending, and failed delivery states more explicitly, avoids automatically resending previously failed batches, and exposes clearer user-message delivery status.
+- **Projected browser surfaces** now separate visual viewing from CDP automation more cleanly. VNC is used only for CCCC-owned displays, while inherited host desktops stay on the safer CDP fallback path.
+- **Capability overview and source management** were optimized with lighter overview requests, kind counts, source-instance deletion, SkillsMP deduplication, and fewer expensive aggregation calls from list-only UI surfaces.
+- **Web composer and settings behavior** were tightened around slash commands, group selection, recipient persistence, markdown code block rendering, and settings initialization.
+
+### Fixed
+- Fixed capability mutation APIs so a failed `capability.changed` notification no longer makes an already persisted enable/visibility change appear to fail.
+- Fixed install/reinstall flows where a capability could remain hidden from slash surfaces after being installed again.
+- Fixed GitHub capability source instance grouping so root-level skills from different refs remain distinct.
+- Fixed Web readiness timeouts on slower machines by making the Web child readiness window less brittle.
+- Fixed projected browser VNC safety so CCCC does not expose an inherited local desktop display through noVNC.
+- Fixed Markdown code block rendering that could wrap CCCC's code block UI inside redundant nested `<pre><code>` containers.
+
 ## [0.4.14] — 2026-05-07
 
 ### Added

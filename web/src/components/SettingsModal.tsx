@@ -75,10 +75,10 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const { t } = useTranslation("settings");
   const { modalRef } = useModalA11y(isOpen, onClose);
-  const initialLocation = useMemo(() => readSettingsLastLocation(Boolean(groupId)), []);
-  const [scope, setScope] = useState<SettingsScope>(initialLocation.scope);
-  const [groupTab, setGroupTab] = useState<GroupTabId>(initialLocation.groupTab);
-  const [globalTab, setGlobalTab] = useState<GlobalTabId>(initialLocation.globalTab);
+  const [initialLocation] = useState(() => readSettingsLastLocation(Boolean(groupId)));
+  const [scope, setScope] = useState<SettingsScope>(() => initialLocation.scope);
+  const [groupTab, setGroupTab] = useState<GroupTabId>(() => initialLocation.groupTab);
+  const [globalTab, setGlobalTab] = useState<GlobalTabId>(() => initialLocation.globalTab);
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
   const settingsTarget = useModalStore((state) => state.settingsTarget);

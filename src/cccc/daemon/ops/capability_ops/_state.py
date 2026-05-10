@@ -65,27 +65,34 @@ def _pkg():
     return sys.modules[__name__.rsplit(".", 1)[0]]
 
 
-def _publish_capability_changed_result(result: Dict[str, Any]) -> None:
+def _publish_capability_changed_result(result: Dict[str, Any]) -> str:
     group_id = str(result.get("group_id") or "").strip()
     capability_id = str(result.get("capability_id") or "").strip()
     if not group_id or not capability_id:
-        return
-    publish_event(
-        "capability.changed",
-        {
-            "group_id": group_id,
-            "actor_id": str(result.get("actor_id") or "").strip(),
-            "capability_id": capability_id,
-            "scope": str(result.get("scope") or "").strip(),
-            "enabled": bool(result.get("enabled")),
-            "action_id": str(result.get("action_id") or "").strip(),
-            "state": str(result.get("state") or "").strip(),
-        },
-    )
+        return ""
+    try:
+        publish_event(
+            "capability.changed",
+            {
+                "group_id": group_id,
+                "actor_id": str(result.get("actor_id") or "").strip(),
+                "capability_id": capability_id,
+                "scope": str(result.get("scope") or "").strip(),
+                "enabled": bool(result.get("enabled")),
+                "action_id": str(result.get("action_id") or "").strip(),
+                "state": str(result.get("state") or "").strip(),
+            },
+        )
+    except Exception as e:
+        message = str(e).strip() or type(e).__name__
+        return message[:500]
+    return ""
 
 
 def _changed_response(result: Dict[str, Any]) -> DaemonResponse:
-    _publish_capability_changed_result(result)
+    event_publish_error = _publish_capability_changed_result(result)
+    if event_publish_error:
+        result = {**result, "event_publish_error": event_publish_error}
     return DaemonResponse(ok=True, result=result)
 
 
@@ -1566,13 +1573,15 @@ def handle_capability_visibility(args: Dict[str, Any]) -> DaemonResponse:
             "state": "hidden" if hidden else "visible",
         }
         _audit("updated", state=str(result["state"]))
-        _publish_capability_changed_result(
+        event_publish_error = _publish_capability_changed_result(
             {
                 **result,
                 "scope": "actor",
                 "enabled": not hidden,
             }
         )
+        if event_publish_error:
+            result["event_publish_error"] = event_publish_error
         return DaemonResponse(ok=True, result=result)
     except LookupError as e:
         _audit("failed", state="failed", error_code="group_not_found", details={"error": str(e)})

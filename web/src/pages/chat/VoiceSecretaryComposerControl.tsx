@@ -1685,7 +1685,7 @@ export function VoiceSecretaryComposerControl({
       window.clearTimeout(browserSpeechStopFinalizeTimerRef.current);
       browserSpeechStopFinalizeTimerRef.current = null;
     }
-  }, [loadDocumentDraft, selectedGroupId]);
+  }, [loadDocumentDraft, selectedGroupId, stopBrowserMeter]);
 
   useEffect(() => {
     if (!selectedGroupId) return;
@@ -2050,8 +2050,8 @@ export function VoiceSecretaryComposerControl({
     });
     finalizeLiveTranscriptPreview();
   }, [
-    appendTranscriptSegment,
     captureMode,
+    appendTranscriptSegment,
     clearTranscriptFlushTimer,
     clearTranscriptMaxFlushTimer,
     finalizeLiveTranscriptPreview,
@@ -2605,7 +2605,6 @@ export function VoiceSecretaryComposerControl({
     }
     serviceCommittedTranscriptRef.current = mergeTranscriptChunks(committed, newText);
   }, [
-    appendTranscriptSegment,
     captureMode,
     clearServicePartialCommitTimer,
     finalizeLiveTranscriptPreview,
@@ -2910,7 +2909,6 @@ export function VoiceSecretaryComposerControl({
     clearServicePartialCommitTimer,
     loadAudioDevices,
     effectiveRecognitionLanguage,
-    appendTranscriptSegment,
     captureMode,
     requestPromptRefine,
     refreshAssistant,
@@ -2919,10 +2917,12 @@ export function VoiceSecretaryComposerControl({
     selectedAudioDeviceId,
     selectedGroupId,
     assistant,
+    captureTargetDocumentTitle,
     serviceRuntimesById,
+    effectiveCaptureTargetDocumentPath,
+    finalizeLiveTranscriptPreview,
     showError,
     t,
-    selectedAudioDeviceLabel,
     updateLiveTranscriptPreview,
     updateVoiceAudioLevelsFromSamples,
   ]);
