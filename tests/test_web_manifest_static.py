@@ -50,11 +50,13 @@ class TestWebManifestStatic(unittest.TestCase):
     def test_capability_center_path_serves_spa_index(self) -> None:
         client, cleanup = self._with_static_client()
         try:
-            resp = client.get("/ui/capabilities")
+            for path in ("/ui/capabilities", "/ui/capabilities/"):
+                with self.subTest(path=path):
+                    resp = client.get(path)
 
-            self.assertEqual(resp.status_code, 200)
-            self.assertTrue(str(resp.headers.get("content-type") or "").startswith("text/html"))
-            self.assertEqual(resp.text, "<html><body>ok</body></html>")
+                    self.assertEqual(resp.status_code, 200)
+                    self.assertTrue(str(resp.headers.get("content-type") or "").startswith("text/html"))
+                    self.assertEqual(resp.text, "<html><body>ok</body></html>")
         finally:
             cleanup()
 

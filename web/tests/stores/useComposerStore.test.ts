@@ -67,4 +67,26 @@ describe("useComposerStore recipient memory", () => {
 
     expect(useComposerStore.getState().toText).toBe("");
   });
+
+  it("ignores duplicate switches to the already active group", () => {
+    const store = useComposerStore.getState();
+    store.switchGroup(null, "g-a");
+    useComposerStore.getState().setToText("@all");
+    useComposerStore.getState().setComposerText("draft for a");
+
+    useComposerStore.getState().switchGroup("g-a", "g-b");
+    useComposerStore.getState().setComposerText("fresh text for b");
+
+    useComposerStore.getState().switchGroup("g-a", "g-b");
+
+    const state = useComposerStore.getState();
+    expect(state.activeGroupId).toBe("g-b");
+    expect(state.composerText).toBe("fresh text for b");
+    expect(state.toText).toBe("");
+    expect(state.drafts["g-a"]).toMatchObject({
+      composerText: "draft for a",
+      toText: "@all",
+      destGroupId: "g-a",
+    });
+  });
 });

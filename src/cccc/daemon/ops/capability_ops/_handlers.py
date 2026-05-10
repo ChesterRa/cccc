@@ -1821,6 +1821,7 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
             )
 
         removed_capability_ids: List[str] = []
+        source_state_reset = False
         with _CATALOG_LOCK:
             catalog_path, catalog_doc = _pkg()._load_catalog_doc()
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
@@ -1833,8 +1834,9 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
             if source_id in sources:
                 sources[source_id] = _source_state_template("never")
                 catalog_doc["sources"] = sources
+                source_state_reset = True
             _pkg()._refresh_source_record_counts(catalog_doc)
-            if removed_capability_ids:
+            if removed_capability_ids or source_state_reset:
                 _pkg()._save_catalog_doc(catalog_path, catalog_doc)
 
         removed_bindings = 0
@@ -1888,6 +1890,7 @@ def handle_capability_source_delete(args: Dict[str, Any]) -> DaemonResponse:
             or removed_actor_autoload > 0
             or removed_profile_autoload > 0
             or allowlist_changed
+            or source_state_reset
         )
         result: Dict[str, Any] = {
             "action_id": action_id,
@@ -2010,6 +2013,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
 
         removed_installation = False
         removed_runtime_bindings = 0
+        removed_recent_success = False
         cleanup_skipped_reason = ""
         with _RUNTIME_LOCK:
             runtime_path, runtime_doc = _load_runtime_doc()
@@ -2038,10 +2042,11 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                         artifact_id=removed_artifact_id,
                     )
                     runtime_changed = True
-                if remove_generated_record and _remove_runtime_recent_success(
+                if _remove_runtime_recent_success(
                     runtime_doc,
                     capability_id=capability_id,
                 ):
+                    removed_recent_success = True
                     runtime_changed = True
             if runtime_changed:
                 _save_runtime_doc(runtime_path, runtime_doc)
@@ -2063,6 +2068,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             or removed_blocked > 0
             or removed_installation
             or removed_runtime_bindings > 0
+            or removed_recent_success
             or removed_actor_autoload > 0
             or removed_profile_autoload > 0
         )
@@ -2075,6 +2081,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                 "removed_blocked": int(removed_blocked),
                 "removed_installation": bool(removed_installation),
                 "removed_runtime_bindings": int(removed_runtime_bindings),
+                "removed_recent_success": bool(removed_recent_success),
                 "removed_actor_autoload": int(removed_actor_autoload),
                 "removed_profile_autoload": int(removed_profile_autoload),
                 "cleanup_skipped_reason": cleanup_skipped_reason,
@@ -2091,6 +2098,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             "removed_blocked": int(removed_blocked),
             "removed_installation": bool(removed_installation),
             "removed_runtime_bindings": int(removed_runtime_bindings),
+            "removed_recent_success": bool(removed_recent_success),
             "removed_actor_autoload": int(removed_actor_autoload),
             "removed_profile_autoload": int(removed_profile_autoload),
             "refresh_required": refresh_required,

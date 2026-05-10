@@ -1107,6 +1107,8 @@ export function useChatTab({
     if (sendInFlightRef.current) return; // keyboard shortcut can bypass UI state; keep send single-flight locally
     const txt = composerText.trim();
     if (!selectedGroupId) return;
+    const latestSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
+    if (latestSelectedGroupId !== selectedGroupId) return;
     if (!txt && composerFiles.length === 0) return;
 
     const dstGroup = String(sendGroupId || "").trim();

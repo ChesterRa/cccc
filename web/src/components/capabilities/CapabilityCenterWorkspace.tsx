@@ -30,6 +30,7 @@ import {
   CAPABILITY_CENTER_DEFAULT_PAGE_SIZE,
   CAPABILITY_CENTER_PAGE_SIZE_OPTIONS,
   filterCapabilityCenterItems,
+  filterCapabilityCenterRemovedItems,
   mergeCapabilityCenterStickyItems,
   normalizeCapabilityCenterPagination,
   summarizeCapabilityCenter,
@@ -126,6 +127,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
   const [summaryStats, setSummaryStats] = useState<CapabilityCenterStats | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [stickyItems, setStickyItems] = useState<CapabilityOverviewItem[]>([]);
+  const [removedCapabilityIds, setRemovedCapabilityIds] = useState<Set<string>>(() => new Set());
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(CAPABILITY_CENTER_DEFAULT_PAGE_SIZE);
   const [totalCount, setTotalCount] = useState(0);
@@ -158,8 +160,11 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
   );
   const clientPagination = paginationMode === "client";
   const filteredItems = useMemo(
-    () => filterCapabilityCenterItems(items, { query, typeFilter: scopedTypeFilter, stateFilter: scopedStateFilter, state }),
-    [items, query, scopedStateFilter, scopedTypeFilter, state],
+    () => filterCapabilityCenterRemovedItems(
+      filterCapabilityCenterItems(items, { query, typeFilter: scopedTypeFilter, stateFilter: scopedStateFilter, state }),
+      removedCapabilityIds,
+    ),
+    [items, query, removedCapabilityIds, scopedStateFilter, scopedTypeFilter, state],
   );
   const baseMatchingItems = useMemo(
     () => capabilityCenterFilterItemsForSystemVisibility(filteredItems, {
@@ -336,6 +341,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
         setErr(resp.error?.message || t("capabilityCenter.remove.failed"));
         return;
       }
+      setRemovedCapabilityIds((current) => new Set([...current, capId]));
       await load();
       publishCapabilityChanged(groupId);
     } finally {
@@ -515,6 +521,7 @@ export function CapabilityCenterWorkspace({ isOpen, onClose, groupId = "", isDar
               disabled={loading}
               onClick={() => {
                 setStickyItems([]);
+                setRemovedCapabilityIds(new Set());
                 void load();
               }}
             >

@@ -386,6 +386,7 @@ def create_app() -> FastAPI:
             except Exception:
                 dist_dir = None
     if dist_dir is not None:
+        @app.get("/ui/capabilities/", include_in_schema=False)
         @app.get("/ui/capabilities", include_in_schema=False)
         async def _capability_center_page() -> FileResponse:
             return FileResponse(str(dist_dir / "index.html"))

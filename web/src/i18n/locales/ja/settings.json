@@ -239,53 +239,7 @@
     "noCandidates": "Autoload 候補が見つかりません。",
     "loading": "Capabilities を読み込み中...",
     "removeFromAutoload": "Autoload から削除",
-    "enable": "有効化",
-    "enableForGroup": "有効化",
-    "disableForGroup": "無効化",
-    "failedEnable": "能力の有効化に失敗しました。",
-    "operationFailedReason": "操作は反映されませんでした（{{reason}}）。",
-    "enableScope": {
-      "session": "セッション",
-      "actor": "アクター",
-      "group": "グループ"
-    },
-    "failedSafetyMode": "外部 capability 安全モードの更新に失敗しました。",
-    "safetyModeTitle": "外部能力ポリシー",
-    "safetyModeHint": "外部 capability の既定アクション可否を制御します。組み込み pack は影響を受けません。",
-    "safetyModeCurrent": "現在のポリシー: {{mode}}",
-    "safetyModeCurrentRule": "外部 source は現在 {{mode}} 方針に従います。",
-    "safetyMode": {
-      "normal": {
-        "label": "標準",
-        "hint": "外部 source は既定で利用可能ですが、source 単位・capability 単位の override は引き続き有効です。"
-      },
-      "conservative": {
-        "label": "保守",
-        "hint": "外部 source は明示的に緩和されない限り、より厳しい indexed 方針になります。"
-      }
-    },
-    "readiness": {
-      "nextLabel": "次の手順",
-      "missingEnv": "不足している環境変数: {{names}}",
-      "blockedBySafetyMode": "保守的な外部 import safety mode によりブロックされています。",
-      "status": {
-        "blocked": "ブロック",
-        "enableable": "有効化可能",
-        "needs_inspect": "確認が必要"
-      },
-      "next": {
-        "enable": "有効化",
-        "inspect": "確認",
-        "fix_known_blocker": "ブロック要因を修正",
-        "switch_external_capability_safety_mode_or_adjust_allowlist": "safety mode を緩和するか allowlist を調整"
-      },
-      "reason": {
-        "policy_level_indexed": "policy がこの capability を indexed に保っています。",
-        "qualification_blocked": "qualification status が有効化をブロックしています。",
-        "capability_unavailable": "この capability は現在利用できません。",
-        "missing_required_env": "必要な環境変数が不足しています。"
-      }
-    }
+    "enable": "有効化"
   },
   "capabilityCenter": {
     "title": "Capability Center",

@@ -12,6 +12,7 @@ import {
   capabilityCenterPageRange,
   capabilityCenterPaginationMode,
   capabilityCenterType,
+  filterCapabilityCenterRemovedItems,
   filterCapabilityCenterItems,
   mergeCapabilityCenterStickyItems,
   normalizeCapabilityCenterPagination,
@@ -31,6 +32,7 @@ function row(overrides: Partial<CapabilityOverviewItem> & { capability_id: strin
     blocked_global: overrides.blocked_global,
     enable_supported: overrides.enable_supported,
     readiness_preview: overrides.readiness_preview,
+    cached_install_state: overrides.cached_install_state,
     tags: overrides.tags,
     tool_names: overrides.tool_names,
   };
@@ -152,6 +154,15 @@ describe("CapabilityCenter model", () => {
     ]);
   });
 
+  it("suppresses locally removed rows even when the remote registry still indexes them", () => {
+    const visible = row({ capability_id: "skill:openclaw:afrexai-roofing-contractor", source_id: "openclaw_skills_remote" });
+    const kept = row({ capability_id: "skill:anthropic:algorithmic-art", source_id: "anthropic_skills" });
+
+    expect(filterCapabilityCenterRemovedItems([visible, kept], new Set([visible.capability_id])).map((item) => item.capability_id)).toEqual([
+      kept.capability_id,
+    ]);
+  });
+
   it("maps primary sidebar sections to their overview type filters", () => {
     expect(capabilityCenterSectionTypeFilter("skill")).toBe("skill");
     expect(capabilityCenterSectionTypeFilter("mcp")).toBe("mcp");
@@ -178,11 +189,27 @@ describe("CapabilityCenter model", () => {
       capability_id: "skill:github:obra:brainstorming",
       kind: "skill",
       source_id: "github_skills_curated",
-    }))).toBe("remove");
+    }), { enabled: true })).toBe("remove");
+    expect(capabilityCenterRemovalAction(row({
+      capability_id: "skill:skillsmp:openakita-finishing-branch",
+      kind: "skill",
+      source_id: "skillsmp_remote",
+    }))).toBe("none");
+    expect(capabilityCenterRemovalAction(row({
+      capability_id: "skill:skillsmp:openakita-finishing-branch",
+      kind: "skill",
+      source_id: "skillsmp_remote",
+    }), { enabled: true })).toBe("remove");
     expect(capabilityCenterRemovalAction(row({
       capability_id: "mcp:example/server",
       kind: "mcp_toolpack",
       source_id: "mcp_registry_official",
+    }))).toBe("none");
+    expect(capabilityCenterRemovalAction(row({
+      capability_id: "mcp:example/server",
+      kind: "mcp_toolpack",
+      source_id: "mcp_registry_official",
+      cached_install_state: "ready",
     }))).toBe("uninstall");
   });
 

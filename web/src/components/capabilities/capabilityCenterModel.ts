@@ -30,7 +30,7 @@ export function capabilityCenterSectionTypeFilter(section: CapabilityCenterSecti
 }
 
 export function capabilityCenterRemovalAction(
-  row: Pick<CapabilityOverviewItem, "capability_id" | "kind" | "source_id">,
+  row: Pick<CapabilityOverviewItem, "capability_id" | "kind" | "source_id" | "cached_install_state" | "recent_success">,
   input?: { enabled?: boolean },
 ): CapabilityCenterRemovalAction {
   const sourceId = String(row.source_id || "").trim();
@@ -38,6 +38,12 @@ export function capabilityCenterRemovalAction(
   if (sourceId === "cccc_builtin") return input?.enabled ? "disable" : "none";
   const type = capabilityCenterType(row);
   if (type === "skill" && sourceId === "agent_self_proposed") return "delete";
+  const hasLocalFootprint = Boolean(
+    input?.enabled
+      || String(row.cached_install_state || "").trim()
+      || row.recent_success,
+  );
+  if (!hasLocalFootprint) return "none";
   if (type === "skill") return "remove";
   return "uninstall";
 }
@@ -193,6 +199,14 @@ export function capabilityCenterMatchesQuery(row: CapabilityOverviewItem, query:
     ...(row.tool_names || []),
   ].map((value) => String(value || "").toLowerCase()).join("\n");
   return haystack.includes(needle);
+}
+
+export function filterCapabilityCenterRemovedItems(
+  items: CapabilityOverviewItem[],
+  removedIds: Set<string>,
+): CapabilityOverviewItem[] {
+  if (!removedIds.size) return items;
+  return items.filter((item) => !removedIds.has(String(item.capability_id || "").trim()));
 }
 
 export function capabilityCenterIsReadonlySystem(row: CapabilityOverviewItem, state?: CapabilityStateResult | null): boolean {

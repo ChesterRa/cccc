@@ -433,6 +433,49 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_source_delete_resets_zero_record_source_state(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.ops import capability_ops as ops
+
+            gid = self._create_group()
+            catalog_path, catalog_doc = ops._load_catalog_doc()
+            sources = catalog_doc.get("sources") if isinstance(catalog_doc.get("sources"), dict) else {}
+            sources["manual_import"] = {
+                "sync_state": "imported",
+                "last_synced_at": "2026-05-10T00:00:00Z",
+                "staleness_seconds": 12,
+                "error": "old",
+                "record_count": 0,
+                "next_cursor": "cursor",
+                "updated_since": "old",
+            }
+            catalog_doc["sources"] = sources
+            ops._save_catalog_doc(catalog_path, catalog_doc)
+
+            resp, _ = self._call(
+                "capability_source_delete",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "source_id": "manual_import",
+                },
+            )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(result.get("removed_records"), 0)
+            self.assertTrue(bool(result.get("refresh_required")))
+            _, next_catalog = ops._load_catalog_doc()
+            manual_source = (next_catalog.get("sources") or {}).get("manual_import") or {}
+            self.assertEqual(manual_source.get("sync_state"), "never")
+            self.assertEqual(manual_source.get("last_synced_at"), "")
+            self.assertEqual(manual_source.get("error"), "")
+            self.assertEqual(manual_source.get("record_count"), 0)
+        finally:
+            cleanup()
+
     def test_capability_source_delete_rejects_protected_sources(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -3283,6 +3326,15 @@ class TestCapabilityOps(unittest.TestCase):
                 "requires_capabilities": ["pack:space"],
             }
             ops._save_catalog_doc(catalog_path, catalog_doc)
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            ops._record_runtime_recent_success(
+                runtime_doc,
+                capability_id="skill:anthropic:triage",
+                group_id=gid,
+                actor_id="peer-1",
+                action="test",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
 
             enable_resp, _ = self._call(
                 "capability_enable",
@@ -4588,6 +4640,11 @@ class TestCapabilityOps(unittest.TestCase):
             result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
             self.assertGreaterEqual(int(result.get("removed_bindings") or 0), 1)
             self.assertFalse(bool(result.get("removed_installation")))
+            self.assertTrue(bool(result.get("removed_recent_success")))
+
+            _, runtime_after = ops._load_runtime_doc()
+            recent_after = runtime_after.get("recent_success") if isinstance(runtime_after.get("recent_success"), dict) else {}
+            self.assertNotIn("skill:anthropic:triage", recent_after)
 
             state_resp, _ = self._call(
                 "capability_state",

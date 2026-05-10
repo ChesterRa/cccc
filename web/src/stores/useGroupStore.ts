@@ -43,6 +43,7 @@ import {
 } from "./groupStoreCore";
 import { createGroupStoreAsyncActions } from "./groupStoreAsyncActions";
 import type { GroupState } from "./groupStoreTypes";
+import { useComposerStore } from "./useComposerStore";
 import {
   clearEmptyStreamingEventsForActorPatch,
   clearStreamingEventsForActorPatch,
@@ -169,13 +170,17 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   },
   setSelectedGroupId: (id) => {
     const gid = String(id || "").trim();
+    const prevGid = String(get().selectedGroupId || "").trim();
+    if (prevGid !== gid) {
+      useComposerStore.getState().switchGroup(prevGid || null, gid || null);
+    }
     saveSelectedGroupId(gid);
     set((state) => {
-      const prevGid = String(state.selectedGroupId || "").trim();
+      const statePrevGid = String(state.selectedGroupId || "").trim();
 
       // Cache the current view before switching groups so returning to it is instant.
-      if (prevGid && prevGid !== gid) {
-        saveCurrentViewSnapshot(prevGid, state);
+      if (statePrevGid && statePrevGid !== gid) {
+        saveCurrentViewSnapshot(statePrevGid, state);
       }
 
       const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);

@@ -239,53 +239,7 @@
     "noCandidates": "暂无可自动加载候选。",
     "loading": "正在加载能力...",
     "removeFromAutoload": "从自动加载中移除",
-    "enable": "启用",
-    "enableForGroup": "开启",
-    "disableForGroup": "关闭",
-    "failedEnable": "启用能力失败。",
-    "operationFailedReason": "操作未生效（{{reason}}）。",
-    "enableScope": {
-      "session": "会话",
-      "actor": "智能体",
-      "group": "工作组"
-    },
-    "failedSafetyMode": "更新外部能力安全模式失败。",
-    "safetyModeTitle": "外部能力策略",
-    "safetyModeHint": "控制外部能力的默认可操作性。内建能力包不受影响。",
-    "safetyModeCurrent": "当前策略：{{mode}}",
-    "safetyModeCurrentRule": "外部来源当前遵循 {{mode}} 姿态。",
-    "safetyMode": {
-      "normal": {
-        "label": "标准",
-        "hint": "外部来源默认可用，但仍受单个来源和单个能力覆盖规则影响。"
-      },
-      "conservative": {
-        "label": "保守",
-        "hint": "外部来源默认进入更严格的 indexed 姿态，除非被显式放宽。"
-      }
-    },
-    "readiness": {
-      "nextLabel": "下一步",
-      "missingEnv": "缺少环境变量：{{names}}",
-      "blockedBySafetyMode": "被保守的外部导入安全模式阻止。",
-      "status": {
-        "blocked": "阻塞",
-        "enableable": "可启用",
-        "needs_inspect": "需检查"
-      },
-      "next": {
-        "enable": "启用",
-        "inspect": "检查",
-        "fix_known_blocker": "修复阻塞",
-        "switch_external_capability_safety_mode_or_adjust_allowlist": "放宽安全模式或调整 allowlist"
-      },
-      "reason": {
-        "policy_level_indexed": "策略将该能力保持为 indexed。",
-        "qualification_blocked": "资格状态阻止启用。",
-        "capability_unavailable": "该能力当前不可用。",
-        "missing_required_env": "缺少所需环境变量。"
-      }
-    }
+    "enable": "启用"
   },
   "capabilityCenter": {
     "title": "能力工作台",

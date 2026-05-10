@@ -172,10 +172,15 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
 
   switchGroup: (fromGroupId, toGroupId) => {
     const state = get();
+    const normalizedFromGroupId = String(fromGroupId || "").trim();
+    const normalizedToGroupId = String(toGroupId || "").trim();
+    if (String(state.activeGroupId || "").trim() === normalizedToGroupId) {
+      return;
+    }
     const newDrafts = { ...state.drafts };
 
     // Save current state as draft for the old group (if any content)
-    if (fromGroupId) {
+    if (normalizedFromGroupId) {
       const hasContent =
         state.composerText.trim() ||
         state.composerFiles.length > 0 ||
@@ -184,7 +189,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         state.quotedPresentationRef;
 
       if (hasContent) {
-        newDrafts[fromGroupId] = {
+        newDrafts[normalizedFromGroupId] = {
           composerText: state.composerText,
           composerFiles: state.composerFiles,
           toText: state.toText,
@@ -195,15 +200,16 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           destGroupId: state.destGroupId,
         };
       } else {
-        delete newDrafts[fromGroupId];
+        delete newDrafts[normalizedFromGroupId];
       }
     }
 
     // Load draft for the new group
-    const draft = toGroupId ? newDrafts[toGroupId] : null;
-    const normalizedDestGroupId = String(toGroupId || "").trim();
+    const draft = normalizedToGroupId ? newDrafts[normalizedToGroupId] : null;
+    const normalizedDestGroupId = normalizedToGroupId;
 
-    const nextToText = draft?.toText ?? (toGroupId ? state.normalToTextByGroup[toGroupId] : undefined) ?? "";
+    const nextToText =
+      draft?.toText ?? (normalizedToGroupId ? state.normalToTextByGroup[normalizedToGroupId] : undefined) ?? "";
 
     set({
       activeGroupId: normalizedDestGroupId,
