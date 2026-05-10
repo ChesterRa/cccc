@@ -1,6 +1,6 @@
 import type { LedgerEvent, WebModelDeliveryStatusPayload } from "../types";
 
-export type WebModelDeliveryState = "submitting" | "submitted" | "pending" | "failed";
+export type WebModelDeliveryState = "submitting" | "submitted" | "pending" | "ambiguous" | "failed";
 
 export type WebModelDeliveryStatus = {
   state: WebModelDeliveryState;
@@ -14,6 +14,7 @@ const DELIVERY_KIND_TO_STATE: Record<string, WebModelDeliveryState> = {
   "web_model.browser_delivery.submitting": "submitting",
   "web_model.browser_delivery.submitted": "submitted",
   "web_model.browser_delivery.pending": "pending",
+  "web_model.browser_delivery.ambiguous": "ambiguous",
   "web_model.browser_delivery.failed": "failed",
 };
 
@@ -44,7 +45,7 @@ function statusFromMessageEvent(event: LedgerEvent): WebModelDeliveryStatus | nu
   const payload = event._web_model_delivery_status as WebModelDeliveryStatusPayload | undefined;
   if (!payload || typeof payload !== "object") return null;
   const state = String(payload.state || "").trim() as WebModelDeliveryState;
-  if (!state || !["submitting", "submitted", "pending", "failed"].includes(state)) return null;
+  if (!state || !["submitting", "submitted", "pending", "ambiguous", "failed"].includes(state)) return null;
   return {
     state,
     actorId: String(payload.actor_id || "").trim(),

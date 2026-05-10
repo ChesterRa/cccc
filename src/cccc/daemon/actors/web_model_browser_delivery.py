@@ -300,6 +300,14 @@ def _is_transient_projected_browser_error(error: str) -> bool:
     return False
 
 
+def _is_submission_ambiguous_error(error: str) -> bool:
+    lowered = str(error or "").lower()
+    return (
+        "submit action was attempted" in lowered
+        and "submission could not be verified" in lowered
+    ) or "submission_verification=ambiguous" in lowered
+
+
 def _append_delivery_event(
     *,
     group: Any,
@@ -580,6 +588,20 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             or bool(browser_result.get("submitted_without_conversation_url"))
         )
     )
+    submission_evidence = str(browser_result.get("submission_evidence") or "").strip()
+    if ok and submission_evidence != "message_echo":
+        ok = False
+        evidence_label = submission_evidence or "missing"
+        delivery_result = {
+            **delivery_result,
+            "ok": False,
+            "error": (
+                "ChatGPT submit action was attempted but submission could not be verified; "
+                "submission_verification=ambiguous; "
+                f"submission_evidence={evidence_label}"
+            ),
+        }
+        pending_conversation_url = False
     if ok and auto_bind_new_chat and not delivered_conversation_url and not pending_conversation_url:
         ok = False
         delivery_result = {
@@ -787,6 +809,77 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         }
 
     error = str(delivery_result.get("error") or "browser delivery failed")
+    if _is_submission_ambiguous_error(error):
+        delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
+        ambiguous_browser = delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {}
+        ambiguous_evidence = str(ambiguous_browser.get("submission_evidence") or "submit_unverified").strip()
+        ambiguous_send_selector = str(ambiguous_browser.get("send_selector") or "").strip()
+        try:
+            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
+
+            ensure_web_model_tool_confirm_watcher(group.group_id, aid, logger=_LOG)
+            start_web_model_browser_reload_window(
+                group.group_id,
+                aid,
+                reason="browser_delivery_ambiguous",
+                delivery_id=delivery_id,
+                turn_id=str(turn.get("turn_id") or ""),
+                event_ids=list(turn.get("event_ids") or []),
+                target_url=target_url,
+            )
+        except Exception:
+            pass
+        commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by="system")
+        record_chatgpt_browser_state(
+            group.group_id,
+            aid,
+            {
+                "last_delivery_at": utc_now_iso(),
+                "last_turn_id": str(turn.get("turn_id") or ""),
+                "last_event_ids": list(turn.get("event_ids") or []),
+                "last_delivery_id": delivery_id,
+                "last_delivery_status": "ambiguous",
+                "last_submission_evidence": ambiguous_evidence,
+                "last_send_selector": ambiguous_send_selector,
+                "last_error": error[:1200],
+            },
+        )
+        update_headless_state(
+            group.group_id,
+            aid,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+        )
+        event = _append_delivery_event(
+            group=group,
+            actor_id=aid,
+            turn=turn,
+            kind="web_model.browser_delivery.ambiguous",
+            data={
+                "provider": provider,
+                "trigger_event_id": str(trigger_event_id or "").strip(),
+                "delivery_id": delivery_id,
+                "error": error,
+                "submission_evidence": ambiguous_evidence,
+                "delivery_transport": "projected_session",
+                "cursor_committed": bool(commit.get("cursor_committed")),
+                "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+                "target_url": target_url,
+                "auto_bind_new_chat": bool(auto_bind_new_chat),
+                "browser": ambiguous_browser,
+            },
+        )
+        return {
+            "ok": False,
+            "status": "ambiguous",
+            "turn_id": str(turn.get("turn_id") or ""),
+            "error": error,
+            "cursor_committed": bool(commit.get("cursor_committed")),
+            "commit": commit,
+            "event": event,
+        }
+
     commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by="system")
     record_chatgpt_browser_state(
         group.group_id,

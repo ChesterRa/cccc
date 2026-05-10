@@ -48,6 +48,7 @@
     "submitting": "ChatGPT に配信中",
     "submitted": "ChatGPT に配信済み",
     "pending": "配信済み、ChatGPT 会話を紐付け中",
+    "ambiguous": "ChatGPT 配信を確認できません",
     "failed": "ChatGPT 配信に失敗"
   },
   "sendBlockedGroupStopped": "このグループは起動していません。エージェントに送信する前にグループを開始してください。",
@@ -478,5 +479,19 @@
   "presentationBrowserBack": "戻る",
   "presentationBrowserReconnect": "再接続",
   "presentationBrowserFrameAlt": "CCCC 内表示の画面",
-  "presentationBrowserWaiting": "CCCC 内表示の画面を待っています…"
+  "presentationBrowserWaiting": "CCCC 内表示の画面を待っています…",
+  "presentationBrowserViewerLabel": "表示",
+  "presentationBrowserViewerVnc": "VNC",
+  "presentationBrowserViewerScreencast": "CDP screencast",
+  "presentationBrowserViewerFallback": "CDP fallback",
+  "presentationBrowserViewerTooltipVnc": "現在の内表示は VNC ストリームを使用しています。ブラウザー自動操作は引き続き daemon 管理のブラウザーセッションを使用します。",
+  "presentationBrowserViewerTooltipScreencast": "現在の内表示は CDP screencast fallback を使用しています。ブラウザー自動操作は引き続き daemon 管理のブラウザーセッションを使用します。",
+  "presentationBrowserViewerFallbackReason": "Fallback reason",
+  "presentationBrowserViewerReasonX11vncNotFound": "x11vnc が未インストール",
+  "presentationBrowserViewerReasonWaylandEnv": "Wayland 環境を継承",
+  "presentationBrowserViewerReasonMissingDisplay": "X display なし",
+  "presentationBrowserViewerReasonDisplayNotOwned": "CCCC 専用 display ではありません",
+  "presentationBrowserViewerReasonDisabled": "VNC 無効",
+  "presentationBrowserViewerReasonUnsupportedPlatform": "未対応プラットフォーム",
+  "presentationBrowserViewerReasonStartupTimeout": "VNC 起動タイムアウト"
 }

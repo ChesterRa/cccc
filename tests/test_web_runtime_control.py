@@ -171,6 +171,61 @@ class TestWebRuntimeControl(unittest.TestCase):
             mock_stop.assert_called_once_with(proc, timeout_s=1.0)
             mock_clear.assert_called_once_with(home=home, pid=4321)
 
+    def test_start_supervised_web_child_uses_default_ready_timeout(self) -> None:
+        from cccc.ports.web import runtime_control
+        from cccc.ports.web import bind_preflight
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            proc = unittest.mock.Mock(pid=4321)
+            with patch.object(bind_preflight, "ensure_tcp_port_bindable", return_value=None), patch.object(
+                runtime_control, "spawn_web_child", return_value=proc
+            ), patch.object(runtime_control, "wait_for_web_ready", return_value=True) as wait_ready, patch.dict(
+                runtime_control.os.environ, {}, clear=True
+            ):
+                result, error = runtime_control.start_supervised_web_child(
+                    home=home,
+                    host="127.0.0.1",
+                    port=8848,
+                    mode="normal",
+                    reload=False,
+                    log_level="info",
+                    launch_source="test",
+                )
+
+        self.assertIs(result, proc)
+        self.assertIsNone(error)
+        self.assertEqual(wait_ready.call_args.kwargs.get("timeout_s"), 10.0)
+
+    def test_start_supervised_web_child_allows_ready_timeout_env_override(self) -> None:
+        from cccc.ports.web import runtime_control
+        from cccc.ports.web import bind_preflight
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            proc = unittest.mock.Mock(pid=4321)
+            proc.poll.return_value = None
+            with patch.object(bind_preflight, "ensure_tcp_port_bindable", return_value=None), patch.object(
+                runtime_control, "spawn_web_child", return_value=proc
+            ), patch.object(runtime_control, "wait_for_web_ready", return_value=False) as wait_ready, patch.object(
+                runtime_control, "stop_web_child", return_value=True
+            ), patch.object(runtime_control, "clear_web_runtime_state"), patch.dict(
+                runtime_control.os.environ, {"CCCC_WEB_READY_TIMEOUT_SECONDS": "15"}, clear=True
+            ):
+                result, error = runtime_control.start_supervised_web_child(
+                    home=home,
+                    host="127.0.0.1",
+                    port=8848,
+                    mode="normal",
+                    reload=False,
+                    log_level="info",
+                    launch_source="test",
+                )
+
+        self.assertIsNone(result)
+        self.assertIn("within 15s", str(error or ""))
+        self.assertEqual(wait_ready.call_args.kwargs.get("timeout_s"), 15.0)
+
     def test_web_runtime_pid_candidates_prefers_launcher_pid(self) -> None:
         from cccc.ports.web import runtime_control
 

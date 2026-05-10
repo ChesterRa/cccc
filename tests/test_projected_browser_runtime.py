@@ -231,6 +231,28 @@ class _CountingCaptureRuntime:
         return None
 
 
+class _FakeVncServer:
+    display = ":123"
+    port = 5901
+    started_at = "2026-05-09T00:00:00Z"
+    closed = False
+
+    def alive(self) -> bool:
+        return True
+
+    def snapshot(self):
+        return {
+            "available": True,
+            "display": self.display,
+            "port": self.port,
+            "started_at": self.started_at,
+            "pid": 9876,
+        }
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _recv_socket_line(sock: socket.socket, *, timeout: float = 1.0) -> str:
     sock.settimeout(timeout)
     data = b""
@@ -243,6 +265,86 @@ def _recv_socket_line(sock: socket.socket, *, timeout: float = 1.0) -> str:
 
 
 class TestProjectedBrowserRuntime(unittest.TestCase):
+    def test_x11vnc_env_strips_wayland_session_markers(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        with patch.dict(
+            runtime.os.environ,
+            {
+                "DISPLAY": ":0",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "WAYLAND_SOCKET": "socket",
+                "XDG_SESSION_TYPE": "wayland",
+                "PATH": "/usr/bin",
+            },
+            clear=True,
+        ):
+            env = runtime._x11vnc_env(":42")
+
+        self.assertEqual(env.get("DISPLAY"), ":42")
+        self.assertEqual(env.get("XDG_SESSION_TYPE"), "x11")
+        self.assertNotIn("WAYLAND_DISPLAY", env)
+        self.assertNotIn("WAYLAND_SOCKET", env)
+
+    def test_x11vnc_start_uses_sanitized_x11_env(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        captured: dict[str, object] = {}
+
+        def fake_popen(_args, **kwargs):
+            captured["env"] = dict(kwargs.get("env") or {})
+            return _FakeProc()
+
+        with patch.object(runtime.shutil, "which", return_value="/usr/bin/x11vnc"), patch.object(
+            runtime.subprocess,
+            "Popen",
+            side_effect=fake_popen,
+        ), patch.object(runtime, "_wait_tcp_endpoint", return_value=True), patch.dict(
+            runtime.os.environ,
+            {
+                "DISPLAY": ":0",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "WAYLAND_SOCKET": "socket",
+                "XDG_SESSION_TYPE": "wayland",
+                "PATH": "/usr/bin",
+            },
+            clear=True,
+        ):
+            server, error = runtime._ProjectedVncServer.start(display=":42", display_owned=True)
+
+        self.assertEqual(error, "")
+        self.assertIsNotNone(server)
+        env = captured.get("env")
+        self.assertIsInstance(env, dict)
+        self.assertEqual((env or {}).get("DISPLAY"), ":42")
+        self.assertEqual((env or {}).get("XDG_SESSION_TYPE"), "x11")
+        self.assertNotIn("WAYLAND_DISPLAY", env or {})
+        self.assertNotIn("WAYLAND_SOCKET", env or {})
+        if server is not None:
+            server.close()
+
+    def test_x11vnc_refuses_non_cccc_owned_display(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        with patch.object(runtime.shutil, "which", return_value="/usr/bin/x11vnc"), patch.object(
+            runtime.subprocess,
+            "Popen",
+        ) as popen:
+            server, error = runtime._ProjectedVncServer.start(display=":0", display_owned=False)
+
+        self.assertIsNone(server)
+        self.assertEqual(error, "display_not_cccc_owned")
+        popen.assert_not_called()
+
+    def test_x11vnc_error_summary_preserves_wayland_cause(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        message = runtime._x11vnc_start_error(
+            "x11vnc endpoint did not become ready",
+            "Wayland display server detected. Exiting.",
+        )
+        self.assertIn("x11vnc_wayland_env_detected", message)
+
     def test_projected_browser_session_captures_frames_only_for_viewers(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
@@ -251,6 +353,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             patch.object(runtime, "ensure_sync_playwright", return_value=lambda: fake_cm),
             patch.object(runtime, "_start_virtual_display", return_value=None),
             patch.object(runtime, "_system_browser_binaries", return_value=[]),
+            patch.object(runtime._ProjectedVncServer, "start", return_value=(None, "disabled")),
         ):
             manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
             try:
@@ -389,6 +492,53 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             finally:
                 manager.close(key="test-command-priority-session")
 
+    def test_vnc_viewer_mode_suppresses_cdp_frame_capture(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_runtime = _CountingCaptureRuntime()
+        fake_vnc = _FakeVncServer()
+        with patch.object(runtime, "launch_projected_browser_runtime", return_value=fake_runtime), patch.object(
+            runtime._ProjectedVncServer,
+            "start",
+            return_value=(fake_vnc, ""),
+        ):
+            manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
+            try:
+                state = manager.open(
+                    key="test-vnc-session",
+                    profile_dir=runtime.Path("/tmp/projected-browser-vnc-test"),
+                    url="https://chatgpt.com/",
+                    width=1280,
+                    height=800,
+                    headless=False,
+                    channel_candidates=("chrome",),
+                )
+                self.assertEqual(state["state"], "ready")
+                self.assertEqual(state["viewer"]["kind"], "vnc")
+
+                runtime_sock, viewer_sock = socket.socketpair()
+                try:
+                    self.assertTrue(
+                        manager.attach_socket_with_mode(
+                            key="test-vnc-session",
+                            sock=runtime_sock,
+                            viewer_mode="auto",
+                        )
+                    )
+                    line = _recv_socket_line(viewer_sock)
+                    self.assertIn('"t": "state"', line)
+                    time.sleep(0.25)
+                    self.assertEqual(fake_runtime.capture_calls, 0)
+                finally:
+                    try:
+                        viewer_sock.sendall(b'{"t":"disconnect"}\n')
+                    except Exception:
+                        pass
+                    viewer_sock.close()
+            finally:
+                manager.close(key="test-vnc-session")
+        self.assertTrue(fake_vnc.closed)
+
     def test_socket_command_read_does_not_wait_for_timeout(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
@@ -491,7 +641,12 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                 },
             )
 
-        submit_prompt.assert_called_once_with(page, "review this change", input_timeout_seconds=12.0)
+        self.assertEqual(submit_prompt.call_count, 1)
+        submit_args, submit_kwargs = submit_prompt.call_args
+        self.assertEqual(submit_args, (page, "review this change"))
+        self.assertEqual(submit_kwargs.get("input_timeout_seconds"), 12.0)
+        self.assertLessEqual(float(submit_kwargs.get("submit_timeout_seconds") or 0), 12.0)
+        self.assertGreater(float(submit_kwargs.get("submit_timeout_seconds") or 0), 0.0)
         mark_pending.assert_not_called()
         wait_conversation.assert_not_called()
         self.assertEqual(page.url, "https://chatgpt.com/c/bound-session")
@@ -650,7 +805,11 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         launch_kwargs = fake_cm.playwright.chromium.launch_calls[0]
         self.assertFalse(bool(launch_kwargs.get("headless")))
         self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":123")
+        self.assertIn("--app=https://example.com", list(launch_kwargs.get("args") or []))
+        self.assertIn("--window-position=0,0", list(launch_kwargs.get("args") or []))
         self.assertIn("xvfb", str(getattr(launched, "strategy", "") or ""))
+        self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owned"), True)
+        self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owner"), "cccc_xvfb")
         launched.close()
         self.assertTrue(xvfb_proc.terminated or xvfb_proc.killed)
 
@@ -684,6 +843,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         launch_kwargs = fake_cm.playwright.chromium.launch_calls[0]
         self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":123")
         self.assertIn("xvfb", str(getattr(launched, "strategy", "") or ""))
+        self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owned"), True)
         launched.close()
         self.assertTrue(xvfb_proc.terminated or xvfb_proc.killed)
 
@@ -721,7 +881,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             runtime, "_wait_cdp_endpoint", return_value=True
         ), patch.object(
             runtime.subprocess, "Popen", return_value=browser_proc
-        ), patch.dict(runtime.os.environ, {"DISPLAY": ":99"}, clear=True):
+        ) as popen, patch.dict(runtime.os.environ, {"DISPLAY": ":99"}, clear=True):
             launched = runtime.launch_projected_browser_runtime(
                 profile_dir=runtime.Path("/tmp/projected-browser-test"),
                 url="https://accounts.google.com",
@@ -733,7 +893,12 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
 
         self.assertEqual(fake_cm.playwright.chromium.connect_calls, [("http://127.0.0.1:9222", {"timeout": 15000})])
         self.assertEqual(fake_cm.playwright.chromium.launch_calls, [])
+        cmd = popen.call_args.args[0]
+        self.assertIn("--app=https://accounts.google.com", cmd)
+        self.assertNotIn("https://accounts.google.com", [arg for arg in cmd if not str(arg).startswith("--app=")])
         self.assertIn("system_browser_cdp", str(getattr(launched, "strategy", "") or ""))
+        self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owned"), False)
+        self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owner"), "")
         launched.close()
         self.assertTrue(browser_proc.terminated or browser_proc.killed)
 

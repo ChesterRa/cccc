@@ -821,6 +821,16 @@ def _raise_if_chatgpt_running_before_submit(page: Any) -> None:
         )
 
 
+def _chatgpt_started_after_submit_attempt(page: Any, *, timeout_seconds: float = 0.75) -> bool:
+    deadline = time.time() + max(0.0, float(timeout_seconds))
+    while True:
+        if _chatgpt_running_visible(page):
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def _selector_resolves_to_stop_control(page: Any, selector: str) -> bool:
     raw_selector = str(selector or "").strip()
     if not raw_selector:
@@ -853,6 +863,50 @@ def _selector_resolves_to_stop_control(page: Any, selector: str) -> bool:
         return False
 
 
+def _send_control_state(page: Any, selector: str) -> str:
+    button = page.locator(selector).first
+    if button.count() <= 0:
+        return "missing"
+    if not button.is_visible(timeout=250):
+        return "hidden"
+    try:
+        if button.is_disabled(timeout=250):
+            return "disabled"
+    except Exception:
+        pass
+    if _selector_resolves_to_stop_control(page, selector):
+        raise _UnsafeSubmitState(
+            f"ChatGPT composer control matched stop state for selector {selector}; refusing to click"
+        )
+    return "ready"
+
+
+def _wait_for_stable_send_control(
+    page: Any,
+    selector: str,
+    *,
+    deadline: float,
+    stable_seconds: float = 0.35,
+) -> bool:
+    stable_since = 0.0
+    wait_deadline = min(deadline, time.time() + max(0.45, float(stable_seconds) + 0.25))
+    while time.time() < wait_deadline:
+        _raise_if_chatgpt_running_before_submit(page)
+        state = _send_control_state(page, selector)
+        if state == "ready":
+            now = time.time()
+            if stable_since <= 0:
+                stable_since = now
+            if now - stable_since >= max(0.0, float(stable_seconds)):
+                return True
+        elif state in {"missing", "hidden"}:
+            return False
+        else:
+            stable_since = 0.0
+        time.sleep(0.05)
+    return False
+
+
 def _click_send(page: Any, *, timeout_seconds: float = 5.0) -> str:
     deadline = time.time() + max(0.5, float(timeout_seconds))
     last_error = ""
@@ -860,26 +914,16 @@ def _click_send(page: Any, *, timeout_seconds: float = 5.0) -> str:
         _raise_if_chatgpt_running_before_submit(page)
         for selector in SEND_BUTTON_SELECTORS:
             try:
-                button = page.locator(selector).first
-                if button.count() <= 0:
+                if not _wait_for_stable_send_control(page, selector, deadline=deadline):
                     continue
-                if not button.is_visible(timeout=250):
-                    continue
-                try:
-                    if button.is_disabled(timeout=250):
-                        continue
-                except Exception:
-                    pass
-                if _selector_resolves_to_stop_control(page, selector):
-                    raise _UnsafeSubmitState(
-                        f"ChatGPT composer control matched stop state for selector {selector}; refusing to click"
-                    )
-                button.click(timeout=5000)
+                page.locator(selector).first.click(timeout=5000)
                 return selector
             except _UnsafeSubmitState:
                 raise
             except Exception as exc:
                 last_error = str(exc)
+                if _chatgpt_started_after_submit_attempt(page):
+                    return f"{selector}:post_click_running"
         try:
             candidate_selector = page.evaluate(
                 """() => {
@@ -964,14 +1008,19 @@ def _click_send(page: Any, *, timeout_seconds: float = 5.0) -> str:
                     return `[data-cccc-chatgpt-send-candidate="${marker}"]`;
                 }"""
             )
-            if str(candidate_selector or "").strip():
+            candidate_selector = str(candidate_selector or "").strip()
+            if candidate_selector:
                 _raise_if_chatgpt_running_before_submit(page)
-                page.locator(str(candidate_selector)).first.click(timeout=5000)
+                if not _wait_for_stable_send_control(page, candidate_selector, deadline=deadline):
+                    continue
+                page.locator(candidate_selector).first.click(timeout=5000)
                 return "scored:composer-submit"
         except _UnsafeSubmitState:
             raise
         except Exception as exc:
             last_error = str(exc)
+            if _chatgpt_started_after_submit_attempt(page):
+                return "scored:composer-submit:post_click_running"
         time.sleep(0.15)
     raise RuntimeError(last_error or "ChatGPT send button not found or disabled")
 
@@ -1288,7 +1337,7 @@ def _wait_for_submission(
     prompt: str,
     timeout_seconds: float = 8.0,
 ) -> str:
-    deadline = time.time() + max(1.0, float(timeout_seconds))
+    deadline = time.time() + max(0.2, float(timeout_seconds))
     stop_seen = False
     while time.time() < deadline:
         if _submission_echo_found(page, prompt):
@@ -1303,6 +1352,7 @@ def _raise_submission_unverified(page: Any, selector: str, *, attempted_action: 
     diagnostics = _submission_diagnostics(page, selector)
     raise RuntimeError(
         "ChatGPT submit action was attempted but submission could not be verified; "
+        "submission_verification=ambiguous; "
         f"attempted_action={attempted_action}; "
         f"diagnostics={json.dumps(diagnostics, ensure_ascii=False, separators=(',', ':'))[:1200]}"
     )
@@ -1326,14 +1376,37 @@ def _wait_after_submit_action(
     return None
 
 
-def _submit_prompt(page: Any, prompt: str, *, input_timeout_seconds: float) -> dict[str, Any]:
+def _remaining_submit_timeout(deadline: float, *, maximum: float = 20.0, reserve_seconds: float = 0.75) -> float:
+    remaining = float(deadline) - time.time() - max(0.0, float(reserve_seconds))
+    if remaining <= 0:
+        return 0.0
+    return min(float(maximum), remaining)
+
+
+def _submit_prompt(
+    page: Any,
+    prompt: str,
+    *,
+    input_timeout_seconds: float,
+    submit_timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    submit_budget = max(1.0, float(submit_timeout_seconds if submit_timeout_seconds is not None else input_timeout_seconds))
+    submit_deadline = time.time() + submit_budget
+
+    def _wait_after_action(action: str) -> dict[str, Any] | None:
+        wait_seconds = _remaining_submit_timeout(submit_deadline)
+        if wait_seconds <= 0:
+            return None
+        return _wait_after_submit_action(page, selector, prompt, action, timeout_seconds=wait_seconds)
+
     _raise_if_chatgpt_running_before_submit(page)
-    selector = _visible_input_selector(page, timeout_seconds=input_timeout_seconds)
+    selector = _visible_input_selector(page, timeout_seconds=min(float(input_timeout_seconds), submit_budget))
     try:
         _clear_and_type_prompt(page, selector, prompt)
     except Exception as exc:
         first_error = str(exc)
-        selector = _visible_input_selector(page, timeout_seconds=min(3.0, max(1.0, float(input_timeout_seconds))))
+        retry_timeout = min(3.0, max(1.0, _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)))
+        selector = _visible_input_selector(page, timeout_seconds=retry_timeout)
         try:
             _clear_and_type_prompt(page, selector, prompt)
         except Exception as retry_exc:
@@ -1341,32 +1414,37 @@ def _submit_prompt(page: Any, prompt: str, *, input_timeout_seconds: float) -> d
                 "ChatGPT composer input was found but could not be focused; "
                 f"first_error={first_error[:400]}; retry_error={str(retry_exc)[:400]}"
             ) from retry_exc
-    if not _wait_for_prompt_inserted(page, selector, prompt):
+    insert_timeout = _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)
+    if not _wait_for_prompt_inserted(page, selector, prompt, timeout_seconds=max(0.2, insert_timeout)):
         raise RuntimeError("ChatGPT prompt insertion did not stick")
-    time.sleep(0.5)
+    settle_seconds = min(0.5, max(0.0, _remaining_submit_timeout(submit_deadline, maximum=0.5, reserve_seconds=0.25)))
+    if settle_seconds > 0:
+        time.sleep(settle_seconds)
     _raise_if_chatgpt_running_before_submit(page)
     send_selector = ""
     try:
-        send_selector = _click_send(page)
+        click_timeout = _remaining_submit_timeout(submit_deadline, maximum=5.0, reserve_seconds=0.25)
+        if click_timeout > 0:
+            send_selector = _click_send(page, timeout_seconds=max(0.5, click_timeout))
     except _UnsafeSubmitState:
         raise
     except Exception:
         send_selector = ""
     if send_selector:
-        result = _wait_after_submit_action(page, selector, prompt, send_selector, timeout_seconds=8.0)
+        result = _wait_after_action(send_selector)
         if result is not None:
             return result
         _raise_submission_unverified(page, selector, attempted_action=send_selector)
     _raise_if_chatgpt_running_before_submit(page)
     request_submit = _request_submit_composer(page)
     if request_submit:
-        result = _wait_after_submit_action(page, selector, prompt, request_submit, timeout_seconds=4.0)
+        result = _wait_after_action(request_submit)
         if result is not None:
             return result
         _raise_submission_unverified(page, selector, attempted_action=request_submit)
     _raise_if_chatgpt_running_before_submit(page)
     page.keyboard.press("Enter")
-    result = _wait_after_submit_action(page, selector, prompt, "keyboard:Enter", timeout_seconds=4.0)
+    result = _wait_after_action("keyboard:Enter")
     if result is not None:
         return result
     _raise_submission_unverified(page, selector, attempted_action="keyboard:Enter")
@@ -1553,6 +1631,10 @@ def build_chatgpt_web_model_health_snapshot(
         delivery_state = "submitting"
         delivery_label = "Submitting"
         delivery_reason = "CCCC is currently injecting this batch into the ChatGPT browser session."
+    elif raw_delivery_status == "ambiguous":
+        delivery_state = "ambiguous"
+        delivery_label = "Delivery unverified"
+        delivery_reason = last_error or "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it."
     elif raw_delivery_status == "failed":
         delivery_state = "failed"
         delivery_label = "Delivery failed"
@@ -1578,6 +1660,8 @@ def build_chatgpt_web_model_health_snapshot(
         next_action = _health_next_action("none", "Submitting to ChatGPT", delivery_reason)
     elif target_state == "missing":
         next_action = _health_next_action("bind_chat", "Choose a target ChatGPT chat", target_reason)
+    elif delivery_state == "ambiguous":
+        next_action = _health_next_action("inspect_error", "Inspect ChatGPT delivery", delivery_reason)
     elif delivery_state == "failed":
         next_action = _health_next_action("retry_delivery", "Retry or reload ChatGPT delivery", delivery_reason)
     else:
@@ -1626,7 +1710,7 @@ def build_chatgpt_web_model_health_snapshot(
             "last_submission_evidence": str(session.get("last_submission_evidence") or ""),
             "last_send_selector": str(session.get("last_send_selector") or ""),
             "last_error": "" if delivery_state == "pending_bind" and last_error == "conversation_url_pending" else last_error,
-            "cursor_committed": delivery_state in {"submitted", "pending_bind"},
+            "cursor_committed": delivery_state in {"submitted", "pending_bind", "ambiguous"},
         },
         "next_action": next_action,
     }

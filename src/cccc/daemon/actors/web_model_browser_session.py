@@ -371,6 +371,7 @@ def _submit_prompt_via_web_model_chatgpt_browser_session_locked(
             "delivery_id": str(delivery_id or ""),
             "input_timeout_seconds": float(input_timeout_seconds or 30.0),
             "new_chat_bind_timeout_seconds": float(new_chat_bind_timeout_seconds or 20.0),
+            "command_timeout_seconds": float(timeout_seconds or 120.0),
         },
         timeout=max(5.0, float(timeout_seconds or 120.0)),
     )
@@ -580,5 +581,14 @@ def can_attach_web_model_chatgpt_browser_socket(*, group_id: str, actor_id: str)
     return _MANAGER.can_attach(key=_session_key(group_id, actor_id))
 
 
-def attach_web_model_chatgpt_browser_socket(*, group_id: str, actor_id: str, sock) -> bool:
-    return _MANAGER.attach_socket(key=_session_key(group_id, actor_id), sock=sock)
+def attach_web_model_chatgpt_browser_socket(*, group_id: str, actor_id: str, sock, viewer_mode: str = "auto") -> bool:
+    return _MANAGER.attach_socket_with_mode(key=_session_key(group_id, actor_id), sock=sock, viewer_mode=viewer_mode)
+
+
+def can_attach_web_model_chatgpt_browser_vnc_socket(*, group_id: str, actor_id: str):
+    _close_stale_starting_surface(group_id, actor_id, _MANAGER.info(key=_session_key(group_id, actor_id)))
+    return _MANAGER.can_attach_vnc(key=_session_key(group_id, actor_id))
+
+
+def attach_web_model_chatgpt_browser_vnc_socket(*, group_id: str, actor_id: str, sock) -> bool:
+    return _MANAGER.attach_vnc_socket(key=_session_key(group_id, actor_id), sock=sock)

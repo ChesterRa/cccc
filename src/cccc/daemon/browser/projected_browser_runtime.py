@@ -4,8 +4,9 @@ This module owns the daemon-local Chromium session model:
 
 1. one Playwright runtime per session
 2. one active controller socket at a time
-3. CDP screencast frame projection over JSON-lines sockets
-4. input relay and lightweight inspection commands on the same runtime thread
+3. optional localhost VNC projection for Xvfb-backed sessions
+4. CDP screencast frame projection over JSON-lines sockets as fallback
+5. input relay and lightweight inspection commands on the same runtime thread
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -42,6 +44,7 @@ _SCREENCAST_EVENT_PUMP_TIMEOUT_MS = 80
 _SCREENCAST_EVERY_NTH_FRAME = 1
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
+_VNC_START_TIMEOUT_SECONDS = 3.0
 
 
 def ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -262,6 +265,157 @@ def _wait_cdp_endpoint(port: int, *, timeout_seconds: float) -> bool:
             pass
         time.sleep(0.2)
     return False
+
+
+def _browser_app_launch_args(url: str, *, width: int, height: int) -> list[str]:
+    args = [
+        f"--window-size={max(1024, int(width))},{max(768, int(height))}",
+        "--window-position=0,0",
+        "--force-device-scale-factor=1",
+    ]
+    target = str(url or "").strip()
+    if target:
+        args.append(f"--app={target}")
+    else:
+        args.append("about:blank")
+    return args
+
+
+def _wait_tcp_endpoint(port: int, *, timeout_seconds: float) -> bool:
+    deadline = time.time() + max(0.2, float(timeout_seconds))
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.4):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+def _vnc_viewer_enabled() -> bool:
+    value = str(os.environ.get("CCCC_PROJECTED_BROWSER_VNC", "1") or "").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
+def _x11vnc_env(display: str) -> dict[str, str]:
+    env = dict(os.environ)
+    env["DISPLAY"] = str(display or "").strip()
+    env.pop("WAYLAND_DISPLAY", None)
+    env.pop("WAYLAND_SOCKET", None)
+    env["XDG_SESSION_TYPE"] = "x11"
+    return env
+
+
+def _read_temp_text(handle: Any) -> str:
+    if handle is None:
+        return ""
+    try:
+        handle.flush()
+        handle.seek(0)
+        return str(handle.read() or "")
+    except Exception:
+        return ""
+
+
+def _x11vnc_start_error(reason: str, output: str = "") -> str:
+    normalized_reason = str(reason or "x11vnc startup failed").strip() or "x11vnc startup failed"
+    compact_output = " ".join(str(output or "").replace("\r", "\n").split())
+    lower = f"{normalized_reason} {compact_output}".lower()
+    if "wayland" in lower:
+        return "x11vnc_wayland_env_detected: x11vnc saw a Wayland session instead of the Xvfb display"
+    if "endpoint did not become ready" in lower:
+        prefix = "x11vnc_startup_timeout: x11vnc endpoint did not become ready"
+    else:
+        prefix = normalized_reason
+    if compact_output:
+        return f"{prefix}; {compact_output[:220]}"
+    return prefix[:300]
+
+
+class _ProjectedVncServer:
+    def __init__(self, *, display: str, port: int, proc: subprocess.Popen[Any]) -> None:
+        self.display = str(display or "").strip()
+        self.port = int(port)
+        self.proc = proc
+        self.started_at = utc_now_iso()
+
+    @classmethod
+    def start(cls, *, display: str, display_owned: bool = False) -> tuple[Optional["_ProjectedVncServer"], str]:
+        display_value = str(display or "").strip()
+        if not _vnc_viewer_enabled():
+            return None, "disabled"
+        if os.name == "nt":
+            return None, "unsupported_platform"
+        if not display_value:
+            return None, "missing_display"
+        if not bool(display_owned):
+            return None, "display_not_cccc_owned"
+        x11vnc = shutil.which("x11vnc")
+        if not x11vnc:
+            return None, "x11vnc_not_found"
+        port = _pick_free_port()
+        proc: subprocess.Popen[Any] | None = None
+        stderr_log: Any = None
+        try:
+            stderr_log = tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace")
+            proc = subprocess.Popen(
+                [
+                    x11vnc,
+                    "-display",
+                    display_value,
+                    "-localhost",
+                    "-nopw",
+                    "-shared",
+                    "-forever",
+                    "-rfbport",
+                    str(int(port)),
+                    "-quiet",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_log,
+                env=_x11vnc_env(display_value),
+                text=True,
+                start_new_session=True,
+            )
+            if not _wait_tcp_endpoint(port, timeout_seconds=_VNC_START_TIMEOUT_SECONDS):
+                output = _read_temp_text(stderr_log)
+                _terminate_process(proc)
+                proc = None
+                return None, _x11vnc_start_error("x11vnc endpoint did not become ready", output)
+            try:
+                stderr_log.close()
+            except Exception:
+                pass
+            return cls(display=display_value, port=port, proc=proc), ""
+        except Exception as exc:
+            if proc is not None:
+                _terminate_process(proc)
+            return None, _x11vnc_start_error(str(exc or "x11vnc startup failed"), _read_temp_text(stderr_log))
+        finally:
+            try:
+                if stderr_log is not None and not stderr_log.closed:
+                    stderr_log.close()
+            except Exception:
+                pass
+
+    def alive(self) -> bool:
+        try:
+            return self.proc.poll() is None
+        except Exception:
+            return False
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "available": self.alive(),
+            "display": self.display,
+            "port": self.port,
+            "started_at": self.started_at,
+            "pid": int(getattr(self.proc, "pid", 0) or 0),
+        }
+
+    def close(self) -> None:
+        _terminate_process(self.proc)
 
 
 def _page_urls_from_context(context: Any) -> list[str]:
@@ -690,6 +844,7 @@ def launch_projected_browser_runtime(
     browser_env = {str(k): str(v) for k, v in os.environ.items()}
     cleanup_callbacks: list[Any] = []
     strategy_suffix = ""
+    display_owned = False
 
     existing_port = int(existing_cdp_port or 0)
     if existing_port > 0:
@@ -701,6 +856,8 @@ def launch_projected_browser_runtime(
                         "cdp_port": existing_port,
                         "profile_dir": str(metadata.get("profile_dir") or profile_dir),
                         "adopted": True,
+                        "display_owned": False,
+                        "display_owner": "",
                     }
                 )
                 startup_metadata_callback(metadata)
@@ -733,6 +890,8 @@ def launch_projected_browser_runtime(
                     "cdp_port": existing_port,
                     "profile_dir": str(metadata.get("profile_dir") or profile_dir),
                     "adopted": True,
+                    "display_owned": False,
+                    "display_owner": "",
                 }
             )
             return PlaywrightProjectedRuntime(
@@ -760,6 +919,9 @@ def launch_projected_browser_runtime(
             browser_env.update(virtual_display.env_overlay())
             cleanup_callbacks.append(virtual_display.close)
             strategy_suffix = "_xvfb"
+            display_owned = True
+    browser_display = str(browser_env.get("DISPLAY") or "").strip()
+    display_owner = "cccc_xvfb" if display_owned else ""
 
     def _launch_system_browser_once(channel: str) -> PlaywrightProjectedRuntime | None:
         if bool(headless):
@@ -784,8 +946,7 @@ def launch_projected_browser_runtime(
                         f"--user-data-dir={system_profile_dir}",
                         "--no-first-run",
                         "--no-default-browser-check",
-                        f"--window-size={max(1024, int(width))},{max(768, int(height))}",
-                        str(url).strip() or "about:blank",
+                        *_browser_app_launch_args(str(url or ""), width=width, height=height),
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -801,6 +962,9 @@ def launch_projected_browser_runtime(
                             "profile_dir": str(system_profile_dir),
                             "browser_binary": str(binary),
                             "channel": str(channel),
+                            "display": browser_display,
+                            "display_owned": bool(display_owned),
+                            "display_owner": display_owner,
                             "started_at": utc_now_iso(),
                         }
                     )
@@ -835,6 +999,9 @@ def launch_projected_browser_runtime(
                         "profile_dir": str(system_profile_dir),
                         "browser_binary": str(binary),
                         "channel": str(channel),
+                        "display": browser_display,
+                        "display_owned": bool(display_owned),
+                        "display_owner": display_owner,
                     },
                     cleanup_callbacks=[lambda proc=proc: _terminate_process(proc), *cleanup_callbacks],
                 )
@@ -861,6 +1028,8 @@ def launch_projected_browser_runtime(
             "viewport": {"width": int(width), "height": int(height)},
             "env": browser_env,
         }
+        if not bool(headless):
+            launch_kwargs["args"] = _browser_app_launch_args(str(url or ""), width=width, height=height)
         if channel:
             launch_kwargs["channel"] = str(channel)
         context = pw.chromium.launch_persistent_context(**launch_kwargs)
@@ -893,6 +1062,9 @@ def launch_projected_browser_runtime(
                 "profile_dir": str(profile_dir),
                 "browser_binary": "",
                 "channel": str(channel or "playwright"),
+                "display": browser_display,
+                "display_owned": bool(display_owned),
+                "display_owner": display_owner,
             },
             cleanup_callbacks=cleanup_callbacks,
         )
@@ -980,6 +1152,7 @@ class ProjectedBrowserSession:
             name=f"cccc-browser-{self.session_key[:48]}",
         )
         self._controller_sockets: dict[int, socket.socket] = {}
+        self._controller_modes: dict[int, str] = {}
         self._controller_generation = 0
         self._state = "starting"
         self._message = "Preparing browser runtime..."
@@ -994,6 +1167,8 @@ class ProjectedBrowserSession:
         self._viewer_active_until = 0.0
         self._seed_storage_state: dict[str, Any] | None = None
         self._metadata: dict[str, Any] = {}
+        self._vnc_server: Optional[_ProjectedVncServer] = None
+        self._vnc_last_error = ""
 
     def set_seed_storage_state(self, storage_state: dict[str, Any] | None) -> None:
         self._seed_storage_state = dict(storage_state or {}) if isinstance(storage_state, dict) else None
@@ -1015,8 +1190,17 @@ class ProjectedBrowserSession:
             _terminate_pid(pid)
             self._thread.join(timeout=2.0)
         with self._lock:
+            vnc_server = self._vnc_server
+            self._vnc_server = None
+        if vnc_server is not None:
+            try:
+                vnc_server.close()
+            except Exception:
+                pass
+        with self._lock:
             controller_sockets = list(self._controller_sockets.values())
             self._controller_sockets.clear()
+            self._controller_modes.clear()
             if self._state not in {"failed", "closed"}:
                 self._state = "closed"
                 self._message = "Browser surface closed."
@@ -1048,6 +1232,7 @@ class ProjectedBrowserSession:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            vnc_snapshot = self._vnc_snapshot_locked()
             return {
                 "active": self._state in {"starting", "ready", "failed"},
                 "state": self._state,
@@ -1065,6 +1250,10 @@ class ProjectedBrowserSession:
                 "frame_interval_seconds": self._viewer_frame_interval_locked(),
                 "controller_attached": bool(self._controller_sockets),
                 "metadata": dict(self._metadata),
+                "viewer": {
+                    "kind": "vnc" if bool(vnc_snapshot.get("available")) else "screencast",
+                    "vnc": vnc_snapshot,
+                },
             }
 
     def can_attach(self) -> tuple[bool, dict[str, Any]]:
@@ -1074,17 +1263,41 @@ class ProjectedBrowserSession:
                 return False, {"code": "browser_surface_not_active", "message": message, "details": dict(self._error)}
             return True, {}
 
-    def _has_viewers(self) -> bool:
-        with self._lock:
-            return bool(self._controller_sockets)
+    def _vnc_snapshot_locked(self) -> dict[str, Any]:
+        if self._vnc_server is None:
+            return {
+                "available": False,
+                "error": self._vnc_last_error,
+            }
+        snapshot = self._vnc_server.snapshot()
+        if not bool(snapshot.get("available")):
+            snapshot["error"] = self._vnc_last_error or "x11vnc_not_running"
+        return snapshot
 
-    def attach_socket(self, sock: socket.socket) -> bool:
+    def _vnc_available_locked(self) -> bool:
+        return bool(self._vnc_server is not None and self._vnc_server.alive())
+
+    def _controller_mode_uses_frame_locked(self, mode: str) -> bool:
+        normalized = str(mode or "auto").strip().lower() or "auto"
+        if normalized in {"auto", "vnc"} and self._vnc_available_locked():
+            return False
+        return True
+
+    def _has_frame_viewers(self) -> bool:
+        with self._lock:
+            for generation in self._controller_sockets:
+                if self._controller_mode_uses_frame_locked(self._controller_modes.get(generation, "auto")):
+                    return True
+            return False
+
+    def attach_socket(self, sock: socket.socket, *, viewer_mode: str = "auto") -> bool:
         with self._lock:
             if self._state not in {"starting", "ready"}:
                 return False
             self._controller_generation += 1
             generation = self._controller_generation
             self._controller_sockets[generation] = sock
+            self._controller_modes[generation] = str(viewer_mode or "auto").strip().lower() or "auto"
             self._viewer_active_until = max(self._viewer_active_until, time.time() + _VIEWER_ACTIVITY_WINDOW_SECONDS)
             self._updated_at = utc_now_iso()
         threading.Thread(
@@ -1093,6 +1306,32 @@ class ProjectedBrowserSession:
             daemon=True,
             name=f"cccc-browser-stream-{self.session_key[:48]}",
         ).start()
+        return True
+
+    def can_attach_vnc(self) -> tuple[bool, dict[str, Any]]:
+        with self._lock:
+            if self._state not in {"ready", "starting"}:
+                message = str(self._error.get("message") or self._message or "browser surface is not active")
+                return False, {"code": "browser_surface_not_active", "message": message, "details": dict(self._error)}
+            vnc = self._vnc_snapshot_locked()
+            if bool(vnc.get("available")):
+                return True, {}
+            return False, {
+                "code": "browser_vnc_unavailable",
+                "message": str(vnc.get("error") or "VNC viewer is not available for this browser surface."),
+                "details": {"viewer": {"vnc": vnc}},
+            }
+
+    def attach_vnc_socket(self, sock: socket.socket) -> bool:
+        with self._lock:
+            if not self._vnc_available_locked() or self._vnc_server is None:
+                return False
+            port = int(self._vnc_server.port)
+        try:
+            vnc_sock = socket.create_connection(("127.0.0.1", port), timeout=3.0)
+        except Exception:
+            return False
+        _bridge_raw_sockets(sock, vnc_sock)
         return True
 
     def wait_for_frame(self, *, after_seq: int, timeout: float) -> Optional[dict[str, Any]]:
@@ -1228,16 +1467,21 @@ class ProjectedBrowserSession:
                 raise RuntimeError(f"ChatGPT sign-in required before delivery; current page is {str(getattr(page, 'url', '') or '')[:200]}")
             if auto_bind_new_chat:
                 _mark_page_pending_delivery(page, delivery_id)
+            command_timeout_seconds = float(payload.get("command_timeout_seconds") or payload.get("input_timeout_seconds") or 30.0)
+            command_deadline = time.time() + max(1.0, command_timeout_seconds) - 1.0
+            submit_timeout_seconds = max(1.0, command_deadline - time.time())
             submit = _submit_prompt(
                 page,
                 prompt,
                 input_timeout_seconds=float(payload.get("input_timeout_seconds") or 30.0),
+                submit_timeout_seconds=submit_timeout_seconds,
             )
             conversation_url = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
             if auto_bind_new_chat and not conversation_url:
+                bind_timeout = max(0.2, command_deadline - time.time())
                 conversation_url = _wait_for_conversation_url(
                     page,
-                    timeout_seconds=float(payload.get("new_chat_bind_timeout_seconds") or 20.0),
+                    timeout_seconds=min(float(payload.get("new_chat_bind_timeout_seconds") or 20.0), bind_timeout),
                 )
             tab_url = str(getattr(page, "url", "") or "")
             pending_conversation_url = bool(auto_bind_new_chat and not conversation_url)
@@ -1354,13 +1598,22 @@ class ProjectedBrowserSession:
                 self._metadata = dict(getattr(runtime, "metadata", {}) or {})
                 self._url = str(runtime.current_url() or self.initial_url)
                 self._updated_at = utc_now_iso()
+            runtime_metadata = dict((getattr(runtime, "metadata", {}) or {}))
+            vnc_server, vnc_error = _ProjectedVncServer.start(
+                display=str(runtime_metadata.get("display") or ""),
+                display_owned=bool(runtime_metadata.get("display_owned")),
+            )
+            with self._lock:
+                self._vnc_server = vnc_server
+                self._vnc_last_error = vnc_error
+                self._updated_at = utc_now_iso()
             self._set_state("ready", message=f"Browser surface ready ({self._strategy or 'chromium'}).")
             next_frame_at = 0.0
             had_viewers = False
             consecutive_capture_failures = 0
             capture_backoff_until = 0.0
             while not self._stop_event.is_set():
-                has_viewers = self._has_viewers()
+                has_viewers = self._has_frame_viewers()
                 if has_viewers and not had_viewers:
                     next_frame_at = 0.0
                     capture_backoff_until = 0.0
@@ -1395,7 +1648,7 @@ class ProjectedBrowserSession:
                     continue
 
                 now = time.time()
-                if not self._has_viewers():
+                if not self._has_frame_viewers():
                     try:
                         runtime.stop_screencast()
                     except Exception:
@@ -1442,6 +1695,14 @@ class ProjectedBrowserSession:
             try:
                 if runtime is not None:
                     runtime.close()
+            except Exception:
+                pass
+            try:
+                with self._lock:
+                    vnc_server = self._vnc_server
+                    self._vnc_server = None
+                if vnc_server is not None:
+                    vnc_server.close()
             except Exception:
                 pass
             with self._lock:
@@ -1531,6 +1792,13 @@ class ProjectedBrowserSession:
                 if not self._commands.empty():
                     time.sleep(0.01)
                     continue
+                with self._lock:
+                    uses_frame_viewer = self._controller_mode_uses_frame_locked(
+                        self._controller_modes.get(generation, "auto")
+                    )
+                if not uses_frame_viewer:
+                    time.sleep(0.05)
+                    continue
 
                 frame = self.wait_for_frame(after_seq=last_seq, timeout=0.08)
                 if not _drain_controller_commands():
@@ -1557,6 +1825,7 @@ class ProjectedBrowserSession:
             with self._lock:
                 if self._controller_sockets.get(generation) is sock:
                     self._controller_sockets.pop(generation, None)
+                    self._controller_modes.pop(generation, None)
                     self._updated_at = utc_now_iso()
                 self._frame_cond.notify_all()
             try:
@@ -1611,6 +1880,44 @@ def _recv_json_line_nonblocking(
         return json.loads(line.decode("utf-8", errors="replace")), remainder, False
     except Exception:
         return None, remainder, False
+
+
+def _bridge_raw_sockets(left: socket.socket, right: socket.socket) -> None:
+    closed = threading.Event()
+
+    def _close_both() -> None:
+        if closed.is_set():
+            return
+        closed.set()
+        for sock in (left, right):
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _pipe(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while not closed.is_set():
+                chunk = src.recv(65536)
+                if not chunk:
+                    break
+                dst.sendall(chunk)
+        except Exception:
+            pass
+        finally:
+            _close_both()
+
+    try:
+        left.settimeout(None)
+        right.settimeout(None)
+    except Exception:
+        pass
+    threading.Thread(target=_pipe, args=(left, right), daemon=True, name="cccc-browser-vnc-left").start()
+    threading.Thread(target=_pipe, args=(right, left), daemon=True, name="cccc-browser-vnc-right").start()
 
 
 class ProjectedBrowserSessionManager:
@@ -1713,12 +2020,35 @@ class ProjectedBrowserSessionManager:
         return session.can_attach()
 
     def attach_socket(self, *, key: str, sock: socket.socket) -> bool:
+        return self.attach_socket_with_mode(key=key, sock=sock, viewer_mode="auto")
+
+    def attach_socket_with_mode(self, *, key: str, sock: socket.socket, viewer_mode: str = "auto") -> bool:
         normalized_key = str(key or "").strip()
         with self._lock:
             session = self._sessions.get(normalized_key)
         if session is None:
             return False
-        return session.attach_socket(sock)
+        return session.attach_socket(sock, viewer_mode=viewer_mode)
+
+    def can_attach_vnc(self, *, key: str) -> tuple[bool, dict[str, Any]]:
+        normalized_key = str(key or "").strip()
+        with self._lock:
+            session = self._sessions.get(normalized_key)
+        if session is None:
+            return False, {
+                "code": "browser_surface_not_found",
+                "message": self._idle_message,
+                "details": {},
+            }
+        return session.can_attach_vnc()
+
+    def attach_vnc_socket(self, *, key: str, sock: socket.socket) -> bool:
+        normalized_key = str(key or "").strip()
+        with self._lock:
+            session = self._sessions.get(normalized_key)
+        if session is None:
+            return False
+        return session.attach_vnc_socket(sock)
 
     def execute(self, *, key: str, kind: str, payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
         normalized_key = str(key or "").strip()

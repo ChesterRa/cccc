@@ -316,6 +316,7 @@
     "steering": "Project steering",
     "subtask": "Subtask",
     "taskDetails": "Task editor",
+    "taskType": "Task type",
     "taskWorkflow": "Task type",
     "taskRequirements": "Requirements",
     "taskTypeDescFree": "Keep it lightweight. Use this when extra structure would add more ceremony than control.",

@@ -120,6 +120,11 @@ from ..schemas import (
     resolve_websocket_principal,
     websocket_tokens_active,
 )
+from .browser_surface_proxy import (
+    open_daemon_stream,
+    proxy_daemon_raw_stream_to_websocket,
+    send_daemon_attach_request,
+)
 
 _VOICE_DIARIZATION_INTERVAL_MS = 8_000
 _VOICE_DIARIZATION_MIN_AUDIO_MS = 10_000
@@ -876,6 +881,7 @@ _WEB_MODEL_DELIVERY_KIND_TO_STATE = {
     "web_model.browser_delivery.submitting": "submitting",
     "web_model.browser_delivery.submitted": "submitted",
     "web_model.browser_delivery.pending": "pending",
+    "web_model.browser_delivery.ambiguous": "ambiguous",
     "web_model.browser_delivery.failed": "failed",
 }
 _WEB_MODEL_DELIVERY_STATUS_LOOKBACK = 2000
@@ -3446,6 +3452,32 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             await websocket.close(code=1008)
             return
 
+        mode = str(websocket.query_params.get("mode") or "").strip().lower()
+        if mode == "vnc":
+            try:
+                reader, writer = await open_daemon_stream(home=ctx.home, limit=_PRESENTATION_BROWSER_STREAM_LIMIT_BYTES)
+            except Exception:
+                await websocket.close(code=1011)
+                return
+            try:
+                resp = await send_daemon_attach_request(
+                    reader,
+                    writer,
+                    op="presentation_browser_vnc_attach",
+                    args={"group_id": group_id, "slot": slot_id, "by": "user"},
+                )
+                if not isinstance(resp, dict) or not resp.get("ok"):
+                    await websocket.close(code=1008)
+                    return
+                await proxy_daemon_raw_stream_to_websocket(websocket, reader, writer)
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+            return
+
         try:
             ep = get_daemon_endpoint()
             transport = str(ep.get("transport") or "").strip().lower()
@@ -3463,7 +3495,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return
 
         try:
-            req = {"op": "presentation_browser_attach", "args": {"group_id": group_id, "slot": slot_id, "by": "user"}}
+            req = {
+                "op": "presentation_browser_attach",
+                "args": {
+                    "group_id": group_id,
+                    "slot": slot_id,
+                    "by": "user",
+                    "viewer_mode": str(websocket.query_params.get("viewer_mode") or "auto"),
+                },
+            }
             writer.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
             await writer.drain()
             line = await reader.readline()

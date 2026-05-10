@@ -59,6 +59,28 @@ describe("buildWebModelDeliveryStatusByEventId", () => {
     expect(status["evt-1"]).toBe(status["evt-2"]);
   });
 
+  it("maps ambiguous delivery as a non-failed state", () => {
+    const status = buildWebModelDeliveryStatusByEventId([
+      deliveryEvent(
+        "web_model.browser_delivery.ambiguous",
+        {
+          trigger_event_id: "evt-ambiguous",
+          actor_id: "web-1",
+          delivery_id: "del-ambiguous",
+          error: "submit verification timed out",
+        },
+        "2026-05-08T00:01:30Z",
+      ),
+    ]);
+
+    expect(status["evt-ambiguous"]).toMatchObject({
+      state: "ambiguous",
+      actorId: "web-1",
+      deliveryId: "del-ambiguous",
+      detail: "submit verification timed out",
+    });
+  });
+
   it("prefers event_ids over trigger_event_id", () => {
     const status = buildWebModelDeliveryStatusByEventId([
       deliveryEvent(

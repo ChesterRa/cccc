@@ -1374,6 +1374,65 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_browser_surface_raw_proxy_bridges_binary_vnc_bytes(self) -> None:
+        from cccc.ports.web.routes.browser_surface_proxy import proxy_daemon_raw_stream_to_websocket
+
+        async def run_proxy() -> tuple[list[bytes], list[bytes], bool]:
+            done = asyncio.Event()
+
+            class _FakeReader:
+                def __init__(self) -> None:
+                    self.sent = False
+
+                async def read(self, _limit: int) -> bytes:
+                    if not self.sent:
+                        self.sent = True
+                        return b"RFB 003.008\n"
+                    await done.wait()
+                    return b""
+
+            class _FakeWriter:
+                def __init__(self) -> None:
+                    self.writes: list[bytes] = []
+                    self.closed = False
+
+                def write(self, data: bytes) -> None:
+                    self.writes.append(bytes(data))
+
+                async def drain(self) -> None:
+                    return None
+
+                def close(self) -> None:
+                    self.closed = True
+
+                async def wait_closed(self) -> None:
+                    return None
+
+            class _FakeWebSocket:
+                def __init__(self) -> None:
+                    self.sent: list[bytes] = []
+                    self.received = False
+
+                async def send_bytes(self, data: bytes) -> None:
+                    self.sent.append(bytes(data))
+
+                async def receive(self) -> dict[str, object]:
+                    if not self.received:
+                        self.received = True
+                        return {"type": "websocket.receive", "bytes": b"client-vnc-bytes"}
+                    done.set()
+                    return {"type": "websocket.disconnect"}
+
+            websocket = _FakeWebSocket()
+            writer = _FakeWriter()
+            await proxy_daemon_raw_stream_to_websocket(websocket, _FakeReader(), writer)  # type: ignore[arg-type]
+            return websocket.sent, writer.writes, writer.closed
+
+        sent, writes, closed = asyncio.run(run_proxy())
+        self.assertEqual(sent, [b"RFB 003.008\n"])
+        self.assertEqual(writes, [b"client-vnc-bytes"])
+        self.assertTrue(closed)
+
     def test_web_model_connector_supports_streamable_http_probe_and_options(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
         from cccc.kernel.web_model_connectors import load_web_model_connectors

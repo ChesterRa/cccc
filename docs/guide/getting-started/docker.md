@@ -176,7 +176,7 @@ docker run -d \
   cccc
 ```
 
-Projected browser sessions now default to a headed browser for better site compatibility. In server/container environments without a native display, CCCC uses `Xvfb` automatically. If you use projected browser features heavily and see Chromium renderer crashes inside the container, add `--ipc=host` to the `docker run` command. Playwright's Docker guidance recommends a larger shared-memory budget for Chromium workloads.
+Projected browser sessions now default to a headed browser for better site compatibility. In server/container environments without a native display, CCCC uses its own `Xvfb` display automatically. The image also includes `x11vnc` so embedded browser panels can use the VNC-backed viewer when the browser is running on that CCCC-owned display, while delivery and automation still use the daemon-owned CDP session. CCCC does not attach VNC to an inherited host desktop display; those sessions use the CDP screencast fallback instead. The VNC endpoint is localhost-only inside the container and is intended for trusted single-user deployments; browser access from CCCC Web is proxied through the authenticated WebSocket route. If you use projected browser features heavily and see Chromium renderer crashes inside the container, add `--ipc=host` to the `docker run` command. Playwright's Docker guidance recommends a larger shared-memory budget for Chromium workloads.
 
 ### Custom Claude CLI Configuration
 

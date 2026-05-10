@@ -53,6 +53,11 @@ from ..schemas import (
     resolve_websocket_principal,
     websocket_tokens_active,
 )
+from .browser_surface_proxy import (
+    open_daemon_stream,
+    proxy_daemon_raw_stream_to_websocket,
+    send_daemon_attach_request,
+)
 
 _WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _WEB_MODEL_CONNECTOR_GET_ACTIVITY_MIN_SECONDS = 30.0
@@ -789,6 +794,32 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             await websocket.close(code=1000)
             return
 
+        mode = str(websocket.query_params.get("mode") or "").strip().lower()
+        if mode == "vnc":
+            try:
+                reader, writer = await open_daemon_stream(home=ctx.home, limit=_WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES)
+            except Exception:
+                await websocket.close(code=1011)
+                return
+            try:
+                resp = await send_daemon_attach_request(
+                    reader,
+                    writer,
+                    op="web_model_browser_vnc_attach",
+                    args={"group_id": group_id, "actor_id": actor_id},
+                )
+                if not isinstance(resp, dict) or not resp.get("ok"):
+                    await websocket.close(code=1008)
+                    return
+                await proxy_daemon_raw_stream_to_websocket(websocket, reader, writer)
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+            return
+
         try:
             from ....daemon.server import get_daemon_endpoint
 
@@ -808,7 +839,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return
 
         try:
-            req = {"op": "web_model_browser_attach", "args": {"group_id": group_id, "actor_id": actor_id}}
+            req = {
+                "op": "web_model_browser_attach",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "viewer_mode": str(websocket.query_params.get("viewer_mode") or "auto"),
+                },
+            }
             writer.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
             await writer.drain()
             line = await reader.readline()

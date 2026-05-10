@@ -164,7 +164,7 @@ Rules:
 - `heartbeat` items MUST NOT be appended to the group ledger; they are transport-level keepalives.
 - Streams are best-effort: clients MUST tolerate disconnects, duplicates, and gaps (use `inbox_list` or a ledger read to reconcile).
 
-### 4.6 Streaming Upgrade: `presentation_browser_attach` (Optional)
+### 4.6 Streaming Upgrade: `presentation_browser_attach` / VNC attach (Optional)
 
 `presentation_browser_attach` upgrades the connection into a daemon-local **browser-surface control stream** for a slot-scoped Presentation browser session.
 The same stream envelope is reused by other projected browser attach operations, including provider-auth and Web Model browser surfaces.
@@ -177,6 +177,7 @@ After upgrade:
 - The daemon pushes `state` and `frame` items for the active browser surface session.
 - The client MAY send browser-control commands such as navigation, click, scroll, key, text, resize, and close.
 - Only one active controller MAY be attached at a time for a given slot browser surface session.
+- If a matching `*_vnc_attach` operation succeeds, the connection upgrades into a raw RFB/VNC byte stream instead of NDJSON. VNC attach is an optional viewer transport; browser control and delivery semantics remain owned by the daemon runtime.
 
 Recommended daemon-to-client items (CCCC v0.4.x behavior):
 ```ts
@@ -3033,6 +3034,7 @@ Args:
   group_id: string
   slot: "slot-1" | "slot-2" | "slot-3" | "slot-4"
   by?: string
+  viewer_mode?: "auto" | "screencast" | "vnc"
 }
 ```
 
@@ -3048,6 +3050,28 @@ Streaming mode:
 - At most one active controller MAY be attached at a time; a second attach attempt SHOULD fail with a busy-style error.
 - If no active browser-surface session exists for the slot, attach SHOULD fail with `browser_surface_not_found`.
 - If the underlying browser runtime is no longer active, attach SHOULD fail with `browser_surface_not_active`.
+
+#### `presentation_browser_vnc_attach`
+
+Attach to the currently active slot browser-surface session over a raw RFB/VNC stream.
+
+Args:
+```ts
+{
+  group_id: string
+  slot: "slot-1" | "slot-2" | "slot-3" | "slot-4"
+  by?: string
+}
+```
+
+Handshake result:
+```ts
+{ group_id: string; slot_id: string }
+```
+
+Streaming mode:
+- After a successful handshake, the connection upgrades into a raw VNC/RFB byte stream.
+- The operation SHOULD fail with `browser_vnc_unavailable` when the browser surface is not backed by a local VNC projection.
 
 ### 8.15 Event Streaming (Optional)
 
@@ -3881,6 +3905,7 @@ Args:
 {
   provider: "notebooklm"
   by?: string // user-only
+  viewer_mode?: "auto" | "screencast" | "vnc"
 }
 ```
 
@@ -3897,6 +3922,27 @@ Streaming mode:
 - If no active projected auth browser exists, attach SHOULD fail with `browser_surface_not_found`.
 - If the underlying browser runtime is no longer active, attach SHOULD fail with `browser_surface_not_active`.
 
+#### `space_provider_auth_browser_vnc_attach`
+
+Attach to the currently active projected provider-auth browser surface over a raw RFB/VNC stream.
+
+Args:
+```ts
+{
+  provider: "notebooklm"
+  by?: string // user-only
+}
+```
+
+Handshake result:
+```ts
+{ provider: "notebooklm" }
+```
+
+Streaming mode:
+- After a successful handshake, the connection upgrades into a raw VNC/RFB byte stream.
+- The operation SHOULD fail with `browser_vnc_unavailable` when the browser surface is not backed by a local VNC projection.
+
 ### 8.19 ChatGPT Web Model Browser Surface (Optional)
 
 #### `web_model_browser_attach`
@@ -3909,6 +3955,7 @@ Args:
   group_id?: string
   actor_id?: string
   by?: string
+  viewer_mode?: "auto" | "screencast" | "vnc"
 }
 ```
 
@@ -3925,6 +3972,28 @@ Streaming mode:
 - When `group_id` or `actor_id` is supplied, the actor MUST exist and use `runtime=web_model`.
 - If no active Web Model browser surface exists, attach SHOULD fail with `browser_surface_not_found`.
 - If the underlying browser runtime is no longer active, attach SHOULD fail with `browser_surface_not_active`.
+
+#### `web_model_browser_vnc_attach`
+
+Attach to the currently active daemon-owned ChatGPT Web Model browser surface over a raw RFB/VNC stream.
+
+Args:
+```ts
+{
+  group_id?: string
+  actor_id?: string
+  by?: string
+}
+```
+
+Handshake result:
+```ts
+{ group_id: string; actor_id: string }
+```
+
+Streaming mode:
+- After a successful handshake, the connection upgrades into a raw VNC/RFB byte stream.
+- The operation SHOULD fail with `browser_vnc_unavailable` when the browser surface is not backed by a local VNC projection.
 
 ### 8.20 Copy Groups
 

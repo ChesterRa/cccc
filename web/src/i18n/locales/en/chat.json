@@ -48,6 +48,7 @@
     "submitting": "Delivering to ChatGPT",
     "submitted": "Delivered to ChatGPT",
     "pending": "Delivered; binding ChatGPT chat",
+    "ambiguous": "Delivery unverified",
     "failed": "ChatGPT delivery failed"
   },
   "sendBlockedGroupStopped": "This group is not running. Start the group before sending a message to agents.",
@@ -478,5 +479,19 @@
   "presentationBrowserBack": "Back",
   "presentationBrowserReconnect": "Reconnect",
   "presentationBrowserFrameAlt": "Interactive view frame",
-  "presentationBrowserWaiting": "Waiting for interactive view..."
+  "presentationBrowserWaiting": "Waiting for interactive view...",
+  "presentationBrowserViewerLabel": "Viewer",
+  "presentationBrowserViewerVnc": "VNC",
+  "presentationBrowserViewerScreencast": "CDP screencast",
+  "presentationBrowserViewerFallback": "CDP fallback",
+  "presentationBrowserViewerTooltipVnc": "Interactive view is using the VNC stream. Browser automation still uses the daemon-controlled browser session.",
+  "presentationBrowserViewerTooltipScreencast": "Interactive view is using the CDP screencast fallback. Browser automation still uses the daemon-controlled browser session.",
+  "presentationBrowserViewerFallbackReason": "Fallback reason",
+  "presentationBrowserViewerReasonX11vncNotFound": "x11vnc not installed",
+  "presentationBrowserViewerReasonWaylandEnv": "Wayland env inherited",
+  "presentationBrowserViewerReasonMissingDisplay": "No X display",
+  "presentationBrowserViewerReasonDisplayNotOwned": "Display is not CCCC-owned",
+  "presentationBrowserViewerReasonDisabled": "VNC disabled",
+  "presentationBrowserViewerReasonUnsupportedPlatform": "Unsupported platform",
+  "presentationBrowserViewerReasonStartupTimeout": "VNC startup timeout"
 }

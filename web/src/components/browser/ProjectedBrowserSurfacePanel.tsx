@@ -6,6 +6,18 @@ import type { PresentationBrowserSurfaceState } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { CollapseIcon, ExpandIcon } from "../Icons";
 
+type RfbInstance = {
+  viewOnly: boolean;
+  scaleViewport: boolean;
+  resizeSession: boolean;
+  clipViewport: boolean;
+  background: string;
+  disconnect: () => void;
+  addEventListener: (type: string, listener: (event: Event) => void) => void;
+};
+
+type RfbConstructor = new (target: HTMLElement, url: string, options?: Record<string, unknown>) => RfbInstance;
+
 export type ProjectedBrowserFrame = {
   seq: number;
   dataUrl: string;
@@ -37,6 +49,20 @@ type ProjectedBrowserSurfacePanelProps = {
     frameAlt: string;
     fullScreen: string;
     exitFullScreen: string;
+    viewerLabel: string;
+    viewerVnc: string;
+    viewerScreencast: string;
+    viewerFallback: string;
+    viewerTooltipVnc: string;
+    viewerTooltipScreencast: string;
+    viewerFallbackReason: string;
+    viewerReasonX11vncNotFound: string;
+    viewerReasonWaylandEnv: string;
+    viewerReasonMissingDisplay: string;
+    viewerReasonDisplayNotOwned: string;
+    viewerReasonDisabled: string;
+    viewerReasonUnsupportedPlatform: string;
+    viewerReasonStartupTimeout: string;
   }>;
 };
 
@@ -94,7 +120,35 @@ function normalizeState(raw: PresentationBrowserSurfaceState | null | undefined)
     last_frame_seq: Number.isFinite(Number(raw?.last_frame_seq)) ? Number(raw?.last_frame_seq) : 0,
     last_frame_at: String(raw?.last_frame_at || "").trim(),
     controller_attached: !!raw?.controller_attached,
+    viewer: raw?.viewer || null,
   };
+}
+
+function urlWithViewerParam(rawUrl: string, key: string, value: string): string {
+  try {
+    const url = new URL(rawUrl, window.location.href);
+    url.searchParams.set(key, value);
+    return url.toString();
+  } catch {
+    const separator = rawUrl.includes("?") ? "&" : "?";
+    return `${rawUrl}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
+function formatVncFallbackReason(raw: string, texts: { [key: string]: string }): string {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const lower = value.toLowerCase();
+  if (lower.includes("x11vnc_not_found")) return texts.viewerReasonX11vncNotFound;
+  if (lower.includes("wayland")) return texts.viewerReasonWaylandEnv;
+  if (lower.includes("missing_display")) return texts.viewerReasonMissingDisplay;
+  if (lower.includes("display_not_cccc_owned")) return texts.viewerReasonDisplayNotOwned;
+  if (lower.includes("disabled")) return texts.viewerReasonDisabled;
+  if (lower.includes("unsupported_platform")) return texts.viewerReasonUnsupportedPlatform;
+  if (lower.includes("endpoint did not become ready") || lower.includes("startup_timeout")) {
+    return texts.viewerReasonStartupTimeout;
+  }
+  return value.length > 120 ? `${value.slice(0, 117)}...` : value;
 }
 
 function buttonFromMouseEvent(button: number): "left" | "middle" | "right" {
@@ -123,6 +177,8 @@ export function ProjectedBrowserSurfacePanel({
   const { t } = useTranslation("chat");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const vncTargetRef = useRef<HTMLDivElement | null>(null);
+  const rfbRef = useRef<RfbInstance | null>(null);
   const frameRef = useRef<ProjectedBrowserFrame | null>(null);
   const renderedFrameRef = useRef<ProjectedBrowserFrame | null>(null);
   const lastFrameCallbackAtRef = useRef(0);
@@ -148,6 +204,39 @@ export function ProjectedBrowserSurfacePanel({
     frameAlt: labels?.frameAlt || t("presentationBrowserFrameAlt", { defaultValue: "Interactive view frame" }),
     fullScreen: labels?.fullScreen || t("presentationFullScreenAction", { defaultValue: "Full screen" }),
     exitFullScreen: labels?.exitFullScreen || t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" }),
+    viewerLabel: labels?.viewerLabel || t("presentationBrowserViewerLabel", { defaultValue: "Viewer" }),
+    viewerVnc: labels?.viewerVnc || t("presentationBrowserViewerVnc", { defaultValue: "VNC" }),
+    viewerScreencast:
+      labels?.viewerScreencast || t("presentationBrowserViewerScreencast", { defaultValue: "CDP screencast" }),
+    viewerFallback: labels?.viewerFallback || t("presentationBrowserViewerFallback", { defaultValue: "CDP fallback" }),
+    viewerTooltipVnc:
+      labels?.viewerTooltipVnc ||
+      t("presentationBrowserViewerTooltipVnc", {
+        defaultValue: "Interactive view is using the VNC stream. Browser automation still uses the daemon-controlled browser session.",
+      }),
+    viewerTooltipScreencast:
+      labels?.viewerTooltipScreencast ||
+      t("presentationBrowserViewerTooltipScreencast", {
+        defaultValue:
+          "Interactive view is using the CDP screencast fallback. Browser automation still uses the daemon-controlled browser session.",
+      }),
+    viewerFallbackReason:
+      labels?.viewerFallbackReason || t("presentationBrowserViewerFallbackReason", { defaultValue: "Fallback reason" }),
+    viewerReasonX11vncNotFound:
+      labels?.viewerReasonX11vncNotFound || t("presentationBrowserViewerReasonX11vncNotFound", { defaultValue: "x11vnc not installed" }),
+    viewerReasonWaylandEnv:
+      labels?.viewerReasonWaylandEnv || t("presentationBrowserViewerReasonWaylandEnv", { defaultValue: "Wayland env inherited" }),
+    viewerReasonMissingDisplay:
+      labels?.viewerReasonMissingDisplay || t("presentationBrowserViewerReasonMissingDisplay", { defaultValue: "No X display" }),
+    viewerReasonDisplayNotOwned:
+      labels?.viewerReasonDisplayNotOwned ||
+      t("presentationBrowserViewerReasonDisplayNotOwned", { defaultValue: "Display is not CCCC-owned" }),
+    viewerReasonDisabled:
+      labels?.viewerReasonDisabled || t("presentationBrowserViewerReasonDisabled", { defaultValue: "VNC disabled" }),
+    viewerReasonUnsupportedPlatform:
+      labels?.viewerReasonUnsupportedPlatform || t("presentationBrowserViewerReasonUnsupportedPlatform", { defaultValue: "Unsupported platform" }),
+    viewerReasonStartupTimeout:
+      labels?.viewerReasonStartupTimeout || t("presentationBrowserViewerReasonStartupTimeout", { defaultValue: "VNC startup timeout" }),
   };
 
   const [runNonce, setRunNonce] = useState(0);
@@ -161,6 +250,8 @@ export function ProjectedBrowserSurfacePanel({
   const [renderedFrame, setRenderedFrame] = useState<ProjectedBrowserFrame | null>(null);
   const [panelError, setPanelError] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [vncConnected, setVncConnected] = useState(false);
+  const [vncFailed, setVncFailed] = useState(false);
 
   useEffect(() => {
     loadSessionRef.current = loadSession;
@@ -171,8 +262,22 @@ export function ProjectedBrowserSurfacePanel({
   }, [startSession]);
 
   useEffect(() => {
+    setVncConnected(false);
+    setVncFailed(false);
+    if (rfbRef.current) {
+      rfbRef.current.disconnect();
+      rfbRef.current = null;
+    }
+    vncTargetRef.current?.replaceChildren();
+  }, [webSocketUrl]);
+
+  useEffect(() => {
     return () => {
       onFrameUpdate?.(null);
+      if (rfbRef.current) {
+        rfbRef.current.disconnect();
+        rfbRef.current = null;
+      }
       frameRef.current = null;
       renderedFrameRef.current = null;
       const ws = wsRef.current;
@@ -232,7 +337,8 @@ export function ProjectedBrowserSurfacePanel({
     };
 
     const attachSocket = () => {
-      const ws = new WebSocket(webSocketUrl);
+      const viewerMode = vncFailed ? "screencast" : "auto";
+      const ws = new WebSocket(urlWithViewerParam(webSocketUrl, "viewer_mode", viewerMode));
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
@@ -343,6 +449,12 @@ export function ProjectedBrowserSurfacePanel({
     const open = async () => {
       reconnectAttemptsRef.current = 0;
       setPanelError("");
+      setVncConnected(false);
+      if (rfbRef.current) {
+        rfbRef.current.disconnect();
+        rfbRef.current = null;
+      }
+      vncTargetRef.current?.replaceChildren();
       frameRef.current = null;
       renderedFrameRef.current = null;
       lastFrameCallbackAtRef.current = 0;
@@ -410,13 +522,80 @@ export function ProjectedBrowserSurfacePanel({
       disposed = true;
       cleanupTransport();
     };
-  }, [onFrameUpdate, runNonce, texts.closed, texts.reconnecting, webSocketUrl]);
+  }, [onFrameUpdate, runNonce, texts.closed, texts.reconnecting, vncFailed, webSocketUrl]);
+
+  const vncAvailable = String(sessionState.viewer?.kind || "").trim().toLowerCase() === "vnc" && !vncFailed;
+  const viewerKindLabel = vncAvailable ? texts.viewerVnc : texts.viewerFallback;
+  const vncFallbackReason = String(sessionState.viewer?.vnc?.error || "").trim();
+  const vncFallbackReasonLabel = vncAvailable ? "" : formatVncFallbackReason(vncFallbackReason, texts);
+  const viewerTooltip = vncAvailable
+    ? texts.viewerTooltipVnc
+    : vncFallbackReason
+      ? `${texts.viewerTooltipScreencast} ${texts.viewerFallbackReason}: ${vncFallbackReason}`
+      : texts.viewerTooltipScreencast;
+
+  useEffect(() => {
+    if (!vncAvailable || sessionState.state !== "ready") {
+      if (rfbRef.current) {
+        rfbRef.current.disconnect();
+        rfbRef.current = null;
+      }
+      vncTargetRef.current?.replaceChildren();
+      setVncConnected(false);
+      return;
+    }
+    const target = vncTargetRef.current;
+    if (!target || rfbRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const mod = await import("@novnc/novnc/lib/rfb");
+        if (cancelled || rfbRef.current) return;
+        const RFB = mod.default as RfbConstructor;
+        target.replaceChildren();
+        const rfb = new RFB(target, urlWithViewerParam(webSocketUrl, "mode", "vnc"), {});
+        rfb.viewOnly = false;
+        rfb.scaleViewport = true;
+        rfb.clipViewport = false;
+        rfb.resizeSession = false;
+        rfb.background = "transparent";
+        rfb.addEventListener("connect", () => {
+          if (!cancelled) setVncConnected(true);
+        });
+        rfb.addEventListener("disconnect", () => {
+          if (!cancelled) {
+            setVncConnected(false);
+            setVncFailed(true);
+          }
+        });
+        rfbRef.current = rfb;
+      } catch (error) {
+        if (!cancelled) {
+          setVncFailed(true);
+          const message = error instanceof Error ? error.message : String(error || "");
+          if (message) setPanelError(message);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (rfbRef.current) {
+        rfbRef.current.disconnect();
+        rfbRef.current = null;
+      }
+      target.replaceChildren();
+      setVncConnected(false);
+    };
+  }, [sessionState.state, vncAvailable, webSocketUrl]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
 
     const sendResize = () => {
+      if (String(sessionState.viewer?.kind || "").trim().toLowerCase() === "vnc" && !vncFailed) {
+        return;
+      }
       const width = Math.max(640, Math.round(container.clientWidth || 0));
       const height = Math.max(480, Math.round(container.clientHeight || 0));
       if (!width || !height) return;
@@ -445,7 +624,7 @@ export function ProjectedBrowserSurfacePanel({
         resizeTimerRef.current = null;
       }
     };
-  }, [isExpanded]);
+  }, [isExpanded, sessionState.viewer?.kind, vncFailed]);
 
   const handleBack = () => {
     setPanelError("");
@@ -455,8 +634,14 @@ export function ProjectedBrowserSurfacePanel({
   const handleReconnect = () => {
     frameRef.current = null;
     renderedFrameRef.current = null;
+    if (rfbRef.current) {
+      rfbRef.current.disconnect();
+      rfbRef.current = null;
+    }
     lastFrameCallbackAtRef.current = 0;
     setRenderedFrame(null);
+    setVncConnected(false);
+    setVncFailed(false);
     setPanelError("");
     reconnectAttemptsRef.current = 0;
     setSessionState(
@@ -476,8 +661,14 @@ export function ProjectedBrowserSurfacePanel({
       const timer = window.setTimeout(() => {
         frameRef.current = null;
         renderedFrameRef.current = null;
+        if (rfbRef.current) {
+          rfbRef.current.disconnect();
+          rfbRef.current = null;
+        }
         lastFrameCallbackAtRef.current = 0;
         setRenderedFrame(null);
+        setVncConnected(false);
+        setVncFailed(false);
         setPanelError("");
         reconnectAttemptsRef.current = 0;
         setSessionState(
@@ -499,6 +690,7 @@ export function ProjectedBrowserSurfacePanel({
   }, [refreshNonce, sessionState.state, texts.starting]);
 
   const handleMouseDown = (event: MouseEvent<HTMLImageElement>) => {
+    if (vncAvailable) return;
     const frame = frameRef.current || renderedFrame;
     if (!frame || !imageRef.current) return;
     const rect = imageRef.current.getBoundingClientRect();
@@ -517,6 +709,7 @@ export function ProjectedBrowserSurfacePanel({
   };
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (vncAvailable) return;
     sendCommand({
       t: "scroll",
       dx: Math.round(event.deltaX),
@@ -526,6 +719,7 @@ export function ProjectedBrowserSurfacePanel({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (vncAvailable) return;
     if (event.metaKey || event.ctrlKey) return;
     if (!event.altKey && event.key.length === 1) {
       sendCommand({ t: "text", text: event.key });
@@ -588,6 +782,19 @@ export function ProjectedBrowserSurfacePanel({
                 ? texts.closed
                 : texts.starting}
         </span>
+        <span
+          className={classNames(
+            "inline-flex max-w-[220px] items-center gap-1 rounded-full px-2.5 py-1 font-medium",
+            isDark ? "bg-white/[0.06] text-slate-300" : "bg-gray-100 text-gray-700",
+          )}
+          title={viewerTooltip}
+        >
+          <span className="text-[0.68rem] uppercase opacity-70">{texts.viewerLabel}</span>
+          <span className="truncate">{viewerKindLabel}</span>
+          {vncFallbackReasonLabel ? (
+            <span className="hidden max-w-[180px] truncate opacity-70 sm:inline">· {vncFallbackReasonLabel}</span>
+          ) : null}
+        </span>
         <span className="min-w-0 flex-1 truncate">{sessionState.url || fallbackUrl || ""}</span>
         {chromeMode === "standalone" ? (
           <button
@@ -628,7 +835,21 @@ export function ProjectedBrowserSurfacePanel({
       </div>
 
       <div className={classNames("relative flex min-h-0 flex-1 items-center justify-center overflow-hidden", chromeMode === "embedded" ? "" : "p-4")}>
-        {renderedFrame ? (
+        {vncAvailable ? (
+          <div className="relative h-full w-full">
+            <div ref={vncTargetRef} className="h-full w-full overflow-hidden" />
+            {!vncConnected ? (
+              <div
+                className={classNames(
+                  "pointer-events-none absolute inset-0 flex items-center justify-center text-sm",
+                  isDark ? "text-slate-400" : "text-gray-500",
+                )}
+              >
+                {sessionState.message || texts.waiting}
+              </div>
+            ) : null}
+          </div>
+        ) : renderedFrame ? (
           <img
             ref={imageRef}
             src={renderedFrame.dataUrl}

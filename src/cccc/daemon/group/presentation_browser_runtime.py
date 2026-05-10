@@ -103,3 +103,15 @@ def can_attach_browser_surface_socket(*, group_id: str, slot_id: str):
 
 def attach_browser_surface_socket(*, group_id: str, slot_id: str, sock) -> bool:
     return _MANAGER.attach_socket(key=_session_key(group_id, slot_id), sock=sock)
+
+
+def attach_browser_surface_socket_with_mode(*, group_id: str, slot_id: str, sock, viewer_mode: str = "auto") -> bool:
+    return _MANAGER.attach_socket_with_mode(key=_session_key(group_id, slot_id), sock=sock, viewer_mode=viewer_mode)
+
+
+def can_attach_browser_surface_vnc_socket(*, group_id: str, slot_id: str):
+    return _MANAGER.can_attach_vnc(key=_session_key(group_id, slot_id))
+
+
+def attach_browser_surface_vnc_socket(*, group_id: str, slot_id: str, sock) -> bool:
+    return _MANAGER.attach_vnc_socket(key=_session_key(group_id, slot_id), sock=sock)

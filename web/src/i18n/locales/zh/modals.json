@@ -316,6 +316,7 @@
     "steering": "项目调度",
     "subtask": "子任务",
     "taskDetails": "任务编辑器",
+    "taskType": "任务类型",
     "taskWorkflow": "任务类型",
     "taskRequirements": "要求",
     "taskTypeDescFree": "保持轻量。适合那些再加结构只会增加形式成本、不会提升控制力的任务。",

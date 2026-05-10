@@ -863,6 +863,117 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
+    def test_browser_delivery_ambiguous_submit_commits_cursor_without_failed_status(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.daemon.runner_state_ops import read_headless_state
+        from cccc.kernel.inbox import get_cursor, unread_messages
+        from cccc.kernel.ledger import append_event, read_last_lines
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group)
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "possibly submitted message", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=RuntimeError(
+                    "ChatGPT submit action was attempted but submission could not be verified; "
+                    "submission_verification=ambiguous; attempted_action=#composer-submit-button"
+                ),
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertTrue(result.get("cursor_committed"))
+            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            state = read_headless_state(group.group_id, "peer1")
+            self.assertEqual(str(state.get("status") or ""), "waiting")
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("last_delivery_status"), "ambiguous")
+            self.assertEqual(browser_state.get("last_submission_evidence"), "submit_unverified")
+            ambiguous_events = [
+                json.loads(line)
+                for line in read_last_lines(group.ledger_path, 20)
+                if "web_model.browser_delivery.ambiguous" in line
+            ]
+            self.assertTrue(ambiguous_events)
+            self.assertEqual((ambiguous_events[-1].get("data") or {}).get("event_ids"), [event["id"]])
+            self.assertEqual((ambiguous_events[-1].get("data") or {}).get("cursor_committed"), True)
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_browser_delivery_weak_submit_evidence_is_unverified_not_submitted(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.kernel.inbox import get_cursor, unread_messages
+        from cccc.kernel.ledger import append_event, read_last_lines
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group)
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "maybe submitted message", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                return_value=self._projected_submit_result(
+                    delivery_id="delivery-weak",
+                    submission_evidence="running_without_echo",
+                ),
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertTrue(result.get("cursor_committed"))
+            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("last_delivery_status"), "ambiguous")
+            self.assertEqual(browser_state.get("last_submission_evidence"), "running_without_echo")
+            ambiguous_events = [
+                json.loads(line)
+                for line in read_last_lines(group.ledger_path, 20)
+                if "web_model.browser_delivery.ambiguous" in line
+            ]
+            self.assertTrue(ambiguous_events)
+            data = ambiguous_events[-1].get("data") or {}
+            self.assertEqual(data.get("submission_evidence"), "running_without_echo")
+            self.assertEqual((data.get("browser") or {}).get("submission_evidence"), "running_without_echo")
+            self.assertEqual(data.get("cursor_committed"), True)
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
     def test_browser_delivery_requires_bound_target_chat_before_claiming_turn(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.daemon.runner_state_ops import read_headless_state
@@ -1030,6 +1141,70 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertTrue(
                 any("web_model.browser_delivery.pending" in line for line in read_last_lines(group.ledger_path, 20))
             )
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_browser_delivery_new_chat_weak_evidence_is_ambiguous_not_pending_bind(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.kernel.inbox import get_cursor, unread_messages
+        from cccc.kernel.ledger import append_event, read_last_lines
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            record_chatgpt_browser_state(
+                group.group_id,
+                "peer1",
+                {
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": "https://chatgpt.com/",
+                },
+            )
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "new chat weak evidence", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+
+            def submit_via_session(**kwargs) -> dict:
+                return self._projected_submit_result(
+                    delivery_id="delivery-new-chat-weak",
+                    tab_url="https://chatgpt.com/",
+                    conversation_url="",
+                    pending_conversation_url=True,
+                    submitted_without_conversation_url=True,
+                    submission_evidence="running_without_echo",
+                )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
+
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertTrue(result.get("cursor_committed"))
+            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(state.get("pending_new_chat_bind"), True)
+            self.assertNotEqual(state.get("pending_new_chat_submitted"), True)
+            self.assertEqual(state.get("last_delivery_status"), "ambiguous")
+            self.assertEqual(state.get("last_submission_evidence"), "running_without_echo")
+            lines = read_last_lines(group.ledger_path, 30)
+            self.assertFalse(any("web_model.browser_delivery.pending" in line for line in lines))
+            self.assertTrue(any("web_model.browser_delivery.ambiguous" in line for line in lines))
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)

@@ -60,6 +60,18 @@ def attach_notebooklm_auth_browser_socket(*, sock) -> bool:
     return _MANAGER.attach_socket(key=_SESSION_KEY, sock=sock)
 
 
+def attach_notebooklm_auth_browser_socket_with_mode(*, sock, viewer_mode: str = "auto") -> bool:
+    return _MANAGER.attach_socket_with_mode(key=_SESSION_KEY, sock=sock, viewer_mode=viewer_mode)
+
+
+def can_attach_notebooklm_auth_browser_vnc_socket() -> tuple[bool, dict[str, Any]]:
+    return _MANAGER.can_attach_vnc(key=_SESSION_KEY)
+
+
+def attach_notebooklm_auth_browser_vnc_socket(*, sock) -> bool:
+    return _MANAGER.attach_vnc_socket(key=_SESSION_KEY, sock=sock)
+
+
 def notebooklm_auth_browser_page_urls() -> list[str]:
     result = _MANAGER.execute(key=_SESSION_KEY, kind="inspect_page_urls", payload={}, timeout=5.0)
     raw = result.get("page_urls")

@@ -316,6 +316,7 @@
     "steering": "プロジェクト運営",
     "subtask": "サブタスク",
     "taskDetails": "タスク編集",
+    "taskType": "タスクタイプ",
     "taskWorkflow": "タスクタイプ",
     "taskRequirements": "要件",
     "taskTypeDescFree": "軽量なまま扱います。構造を足しても制御力が増えないなら、儀式を増やさないでください。",

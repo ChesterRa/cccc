@@ -6,7 +6,7 @@ GPT-5.x Pro is different. Current ChatGPT platform restrictions mean GPT-5.x Pro
 
 There are two delivery modes behind the same actor identity:
 
-1. **Browser delivery**: CCCC injects the current unread message batch into a bound ChatGPT web chat through the shared daemon-owned projected browser session. A successful injection commits the actor cursor. A failed injection is recorded as a durable delivery failure for that source message and is not automatically bundled into later deliveries; retry by sending a new message or using an explicit retry action when available.
+1. **Browser delivery**: CCCC injects the current unread message batch into a bound ChatGPT web chat through the shared daemon-owned projected browser session. A confirmed injection commits the actor cursor. If CCCC clicked the submit control but cannot prove ChatGPT accepted the prompt, the source message is recorded as delivery-unverified and the cursor still advances so it is not automatically bundled into later deliveries. A definite failure is recorded as a durable delivery failure; retry by sending a new message or using an explicit retry action when available.
 2. **Remote-MCP pull**: ChatGPT calls `cccc_runtime_wait_next_turn` through MCP and receives a pull-mode turn. Pull mode advances the cursor on `cccc_runtime_complete_turn`.
 
 In both modes, the model uses CCCC tools for visible replies and workspace work. Browser delivery does not depend on a completion call; `cccc_runtime_complete_turn` remains useful for remote-MCP pull and optional evidence, but it is not a browser-delivery gate.
@@ -126,7 +126,9 @@ For remote-MCP pull mode, prompt the model to use CCCC explicitly:
 
 Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared daemon-owned projected Chrome/Edge browser session for settings, runtime inspection, tool-confirm approval, auto-reload, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If the selected model cannot see MCP tools, switch to an MCP-capable GPT-5.x chat before assigning local work.
 
-The default submit timeout is 30 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. This is the outer delivery hard cap; slow page loads, composer waits, and new-chat binding share that budget and may not each consume their full internal timeout. Browser startup is handled by the projected browser runtime, which requires a real system Chrome or Edge CDP-capable browser for ChatGPT.
+The default submit timeout is 30 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. This is the outer delivery hard cap; slow page loads, composer waits, and new-chat binding share that budget and may not each consume their full internal timeout. Browser startup is handled by the projected browser runtime, which requires a real system Chrome or Edge CDP-capable browser for ChatGPT. During an active delivery window, CCCC defaults to a 60-second soft auto-reload interval (`CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD_INACTIVITY_SECONDS`) so long ChatGPT threads have time to recover after each reload. If CCCC clicks the submit control but cannot verify ChatGPT accepted the prompt, the message is marked as delivery unverified instead of failed; it is not automatically re-bundled into the next delivery.
+
+Embedded browser viewing uses a localhost VNC projection when the session is running on a CCCC-owned Xvfb display and `x11vnc` is installed. CCCC does not attach VNC to an inherited host desktop display; those sessions fall back to the built-in CDP screencast viewer. This keeps the visual/interactive viewer separate from the Playwright/CDP delivery path without exposing unrelated local windows. The VNC server binds to localhost and is intended for trusted single-user hosts or containers; remote access still goes through the authenticated CCCC WebSocket bridge. Set `CCCC_PROJECTED_BROWSER_VNC=0` to force the screencast fallback while diagnosing viewer issues.
 
 The login and delivery paths share this profile:
 
@@ -151,7 +153,7 @@ The browser-injected prompt should stay small. It identifies the actor and deliv
 Use this split to avoid duplicate or drifting instructions:
 
 - Shared agent behavior: `cccc_bootstrap`, `cccc_help`, role notes, capability state, context, memory, and messaging rules.
-- Web transport behavior: do not pull a browser-injected batch again; do pull when operating in remote-MCP mode without an injected batch; visible communication must use CCCC MCP tools; browser delivery commits on successful injection rather than completion. Failed browser deliveries stay visible as failed and are not automatically redelivered in a later batch.
+- Web transport behavior: do not pull a browser-injected batch again; do pull when operating in remote-MCP mode without an injected batch; visible communication must use CCCC MCP tools; browser delivery commits on confirmed injection rather than completion. Delivery-unverified and failed browser deliveries stay visible and are not automatically redelivered in a later batch.
 
 ## Smoke Test
 

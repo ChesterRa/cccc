@@ -208,7 +208,7 @@ export type LedgerEventStatusPayload = {
 };
 
 export type WebModelDeliveryStatusPayload = {
-  state?: "submitting" | "submitted" | "pending" | "failed" | string;
+  state?: "submitting" | "submitted" | "pending" | "ambiguous" | "failed" | string;
   actor_id?: string;
   delivery_id?: string;
   updated_at?: string;
@@ -634,6 +634,14 @@ export type PresentationBrowserSurfaceState = {
   last_frame_seq?: number;
   last_frame_at?: string | null;
   controller_attached?: boolean;
+  viewer?: {
+    kind?: string | null;
+    vnc?: {
+      available?: boolean;
+      error?: string | null;
+      started_at?: string | null;
+    } | null;
+  } | null;
 };
 
 export type ContextAttention = {

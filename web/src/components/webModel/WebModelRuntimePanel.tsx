@@ -173,6 +173,14 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
         tone: "needs",
       };
     }
+    if (state === "ambiguous") {
+      return {
+        label: "Activity",
+        value: String(health.delivery.label || "").trim() || "Delivery unverified",
+        detail: String(health.delivery.reason || health.delivery.last_error || "").trim() || "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
+        tone: "needs",
+      };
+    }
     if (queuedCount > 0) {
       return {
         label: "Activity",
@@ -208,6 +216,14 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       label: "Activity",
       value: "Submitting",
       detail: "CCCC is injecting this batch into ChatGPT.",
+      tone: "needs",
+    };
+  }
+  if (deliveryStatus === "ambiguous") {
+    return {
+      label: "Activity",
+      value: "Delivery unverified",
+      detail: lastError || "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
       tone: "needs",
     };
   }

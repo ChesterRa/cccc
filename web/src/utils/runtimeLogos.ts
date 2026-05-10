@@ -11,6 +11,7 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   gemini: "logos/gemini.png",
   kimi: "logos/kimi.png",
   neovate: "logos/neovate.png",
+  web_model: "logo.png",
 };
 
 export function getRuntimeLogoSrc(runtime: string | null | undefined): string | null {

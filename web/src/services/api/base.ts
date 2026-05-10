@@ -674,6 +674,8 @@ export function normalizePresentation(raw: unknown): GroupPresentation {
 export function normalizePresentationBrowserSurfaceState(value: unknown): PresentationBrowserSurfaceState {
   const record = asRecord(value) ?? {};
   const errorRecord = asRecord(record.error);
+  const viewerRecord = asRecord(record.viewer);
+  const vncRecord = asRecord(viewerRecord?.vnc);
   return {
     active: !!record.active,
     state: asString(record.state).trim() || "idle",
@@ -693,6 +695,18 @@ export function normalizePresentationBrowserSurfaceState(value: unknown): Presen
     last_frame_seq: Number.isFinite(Number(record.last_frame_seq)) ? Number(record.last_frame_seq) : 0,
     last_frame_at: asOptionalString(record.last_frame_at),
     controller_attached: !!record.controller_attached,
+    viewer: viewerRecord
+      ? {
+          kind: asOptionalString(viewerRecord.kind),
+          vnc: vncRecord
+            ? {
+                available: !!vncRecord.available,
+                error: asOptionalString(vncRecord.error),
+                started_at: asOptionalString(vncRecord.started_at),
+              }
+            : null,
+        }
+      : null,
   };
 }
 

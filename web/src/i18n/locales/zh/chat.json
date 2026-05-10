@@ -48,6 +48,7 @@
     "submitting": "正在投递到 ChatGPT",
     "submitted": "已投递到 ChatGPT",
     "pending": "已投递，正在绑定 ChatGPT 会话",
+    "ambiguous": "ChatGPT 投递未能确认",
     "failed": "ChatGPT 投递失败"
   },
   "sendBlockedGroupStopped": "工作组未启动，无法发送给智能体。请先启动工作组后再发送。",
@@ -478,5 +479,19 @@
   "presentationBrowserBack": "返回",
   "presentationBrowserReconnect": "重新连接",
   "presentationBrowserFrameAlt": "CCCC 内浏览画面",
-  "presentationBrowserWaiting": "正在等待 CCCC 内浏览画面……"
+  "presentationBrowserWaiting": "正在等待 CCCC 内浏览画面……",
+  "presentationBrowserViewerLabel": "视图",
+  "presentationBrowserViewerVnc": "VNC",
+  "presentationBrowserViewerScreencast": "CDP 截屏流",
+  "presentationBrowserViewerFallback": "CDP fallback",
+  "presentationBrowserViewerTooltipVnc": "当前内嵌视图使用 VNC 流。浏览器自动化仍使用 daemon 控制的浏览器会话。",
+  "presentationBrowserViewerTooltipScreencast": "当前内嵌视图使用 CDP 截屏流 fallback。浏览器自动化仍使用 daemon 控制的浏览器会话。",
+  "presentationBrowserViewerFallbackReason": "Fallback 原因",
+  "presentationBrowserViewerReasonX11vncNotFound": "未安装 x11vnc",
+  "presentationBrowserViewerReasonWaylandEnv": "继承了 Wayland 环境",
+  "presentationBrowserViewerReasonMissingDisplay": "没有 X display",
+  "presentationBrowserViewerReasonDisplayNotOwned": "不是 CCCC 专用显示器",
+  "presentationBrowserViewerReasonDisabled": "VNC 已关闭",
+  "presentationBrowserViewerReasonUnsupportedPlatform": "当前平台不支持",
+  "presentationBrowserViewerReasonStartupTimeout": "VNC 启动超时"
 }

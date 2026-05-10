@@ -15,7 +15,7 @@ ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
 
-ENV CCCC_BROWSER_TOOLS="xvfb fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-scalable fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf"
+ENV CCCC_BROWSER_TOOLS="xvfb x11vnc fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-scalable fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf"
 ENV CCCC_BROWSER_DEPS="libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2"
 
 # Install OS dependencies plus minimal Chromium shared libraries for projected browser/runtime auth.
