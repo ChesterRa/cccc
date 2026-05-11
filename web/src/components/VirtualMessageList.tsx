@@ -17,6 +17,7 @@ import {
   getStableMessageKey,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
+  shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
@@ -414,10 +415,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = useCallback((opts?: { force?: boolean }) => {
     const el = parentRef.current;
     if (!el || displayMessages.length <= 0) return;
     window.requestAnimationFrame(() => {
+      if (!shouldRunScheduledBottomScroll({
+        followMode: followModeRef.current,
+        isAtBottom: isAtBottomRef.current,
+        forceStickToBottom: forceStickToBottomUntilRef.current > performance.now(),
+        explicitForce: !!opts?.force,
+      })) {
+        return;
+      }
       el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
     });
   }, [displayMessages.length]);
@@ -449,7 +458,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     scrollRafRef.current = window.requestAnimationFrame(() => {
       scrollRafRef.current = null;
       if (!shouldForceStickToBottom()) return;
-      scrollToBottom();
+      scrollToBottom({ force: true });
     });
   }, [cancelScheduledScroll, scrollToBottom, shouldForceStickToBottom]);
 
@@ -1130,9 +1139,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               className={`fixed bottom-52 right-5 sm:bottom-44 sm:right-6 p-3 rounded-full shadow-xl transition-all z-30 ${isDark
                 ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"
                 : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
-                }`}
+              }`}
               onClick={() => {
-                scrollToBottom();
+                scrollToBottom({ force: true });
                 onScrollButtonClick();
               }}
               aria-label="Scroll to bottom"

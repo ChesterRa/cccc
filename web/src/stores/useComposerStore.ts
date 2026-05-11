@@ -22,6 +22,16 @@ export function isComposerGroupSettled(activeGroupId: string, selectedGroupId: s
   return String(activeGroupId || "").trim() === String(selectedGroupId || "").trim();
 }
 
+export function getComposerDestGroupDisplayValue(
+  destGroupId: string,
+  selectedGroupId: string,
+  composerGroupSettled: boolean
+): string {
+  const selected = String(selectedGroupId || "").trim();
+  if (!composerGroupSettled) return selected;
+  return String(destGroupId || "").trim() || selected;
+}
+
 interface GroupDraft {
   composerText: string;
   composerFiles: File[];

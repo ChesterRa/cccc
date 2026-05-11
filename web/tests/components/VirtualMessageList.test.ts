@@ -5,6 +5,7 @@ import {
   getStableMessageKey,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
+  shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
 } from "../../src/components/virtualMessageListHelpers";
 import type { LedgerEvent } from "../../src/types";
@@ -262,6 +263,30 @@ describe("shouldAutoScrollToBottom", () => {
         followMode: "detached",
         isAtBottom: false,
         forceStickToBottom: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("shouldRunScheduledBottomScroll", () => {
+  it("drops a queued auto-scroll when the user leaves the bottom before it runs", () => {
+    expect(
+      shouldRunScheduledBottomScroll({
+        followMode: "detached",
+        isAtBottom: false,
+        forceStickToBottom: false,
+        explicitForce: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps explicit scroll-to-bottom actions working while detached", () => {
+    expect(
+      shouldRunScheduledBottomScroll({
+        followMode: "detached",
+        isAtBottom: false,
+        forceStickToBottom: false,
+        explicitForce: true,
       }),
     ).toBe(true);
   });

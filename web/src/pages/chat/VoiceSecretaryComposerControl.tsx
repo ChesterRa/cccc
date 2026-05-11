@@ -42,6 +42,7 @@ import { VoiceSecretaryWorkspacePanel } from "./voice-secretary/VoiceSecretaryWo
 import { useVoiceCaptureTargetDocumentSelection } from "./voice-secretary/useVoiceCaptureTargetDocumentSelection";
 import { useVoiceAudioLevelMeter } from "./voice-secretary/useVoiceAudioLevelMeter";
 import { voiceCaptureStopAction } from "./voice-secretary/voiceCaptureStopModel";
+import { getVoiceSecretaryWorkspaceVisibility } from "./voice-secretary/voiceSecretaryWorkspaceLayout";
 import {
   appendVoiceActivityStreamItem,
   filterVisibleVoiceActivityStreamItems,
@@ -723,7 +724,9 @@ export function VoiceSecretaryComposerControl({
   const { t } = useTranslation("chat");
   const showError = useUIStore((state) => state.showError);
   const showNotice = useUIStore((state) => state.showNotice);
+  const isSmallScreen = useUIStore((state) => state.isSmallScreen);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
   const refreshSeq = useRef(0);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -3656,6 +3659,36 @@ export function VoiceSecretaryComposerControl({
     : speechError.trim();
   const startAfterEnableRef = useRef(false);
   const assistantRowCurrentMode = assistantRowModeOptions.find((option) => option.key === captureMode) || assistantRowModeOptions[0];
+  const workspaceVisibility = getVoiceSecretaryWorkspaceVisibility({ captureMode, isSmallScreen });
+  useEffect(() => {
+    if (!open || !isSmallScreen) return undefined;
+    const node = workspaceScrollRef.current;
+    if (!node) return undefined;
+    const resetScroll = () => {
+      node.scrollTop = 0;
+      node.scrollLeft = 0;
+    };
+    resetScroll();
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      resetScroll();
+      secondFrame = window.requestAnimationFrame(resetScroll);
+    });
+    const lateReset = window.setTimeout(resetScroll, 160);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      window.clearTimeout(lateReset);
+    };
+  }, [
+    activeDocumentPath,
+    assistantEnabled,
+    captureMode,
+    isSmallScreen,
+    open,
+    serviceAsrReady,
+    voiceWorkspaceView,
+  ]);
   const modeChangeDisabledReason = recording
     ? t("voiceSecretaryModeChangeDisabledRecording", { defaultValue: "Stop recording before changing mode." })
     : "";
@@ -3748,7 +3781,7 @@ export function VoiceSecretaryComposerControl({
               aria-labelledby="voice-secretary-sheet-title"
               aria-describedby="voice-secretary-sheet-description"
               className={classNames(
-                "relative z-[181] flex h-[min(92vh,58rem)] w-full max-w-[88rem] flex-col overflow-hidden rounded-t-[28px] border p-3 pt-6 shadow-2xl glass-modal sm:w-[min(94vw,88rem)] sm:rounded-[30px]",
+                "relative z-[181] flex h-[min(92dvh,58rem)] max-h-[calc(100dvh-0.75rem)] w-full max-w-[88rem] flex-col overflow-hidden rounded-t-[28px] border p-3 pt-6 shadow-2xl glass-modal sm:w-[min(94vw,88rem)] sm:rounded-[30px]",
                 isDark ? "border-white/10 bg-slate-950/96" : "border-black/10 bg-white/96",
               )}
               onPointerDown={(event) => event.stopPropagation()}
@@ -3863,10 +3896,10 @@ export function VoiceSecretaryComposerControl({
                     })}
                   </div>
                 ) : null}
-                <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 lg:justify-end">
+                <div className="grid min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-start lg:justify-end">
                   {assistantEnabled ? (
                     <>
-                      <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                      <label className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:inline-flex">
                         <span>{t("voiceSecretaryLanguage", { defaultValue: "Language" })}</span>
                         <GroupCombobox
                           items={voiceLanguageOptions.map((optionValue) => ({
@@ -3880,7 +3913,7 @@ export function VoiceSecretaryComposerControl({
                           emptyText={t("common:noResults", { defaultValue: "No matching results" })}
                           ariaLabel={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
                           triggerClassName={classNames(
-                            "min-h-[38px] min-w-[7.5rem] rounded-full border px-3 py-2 text-xs font-semibold transition-colors",
+                            "min-h-[38px] min-w-0 rounded-full border px-3 py-2 text-xs font-semibold transition-colors sm:min-w-[7.5rem]",
                             isDark
                               ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-white/30"
                               : "border-black/10 bg-white text-gray-800 focus:border-black/25",
@@ -3915,8 +3948,9 @@ export function VoiceSecretaryComposerControl({
                       ) : null}
                       {serviceAsrReady ? (
                         <>
-                          <label className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                          <label className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:inline-flex">
                             <span className="hidden xl:inline">{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
+                            <span className="xl:hidden">{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
                             <SelectCombobox
                               items={[
                                 { value: "", label: t("voiceSecretaryDefaultMic", { defaultValue: "System default microphone" }) },
@@ -3931,7 +3965,7 @@ export function VoiceSecretaryComposerControl({
                               value={selectedAudioDeviceId}
                               onChange={setSelectedAudioDeviceId}
                               className={classNames(
-                                "h-[38px] w-[11.5rem] truncate rounded-full border px-3 py-1.5 text-xs font-semibold outline-none transition-colors sm:w-[13rem] lg:w-[14rem]",
+                                "h-[38px] min-w-0 truncate rounded-full border px-3 py-1.5 text-xs font-semibold outline-none transition-colors sm:w-[13rem] lg:w-[14rem]",
                                 isDark
                                   ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-white/30"
                                   : "border-black/10 bg-white text-gray-800 focus:border-black/25",
@@ -4032,7 +4066,12 @@ export function VoiceSecretaryComposerControl({
               </div>
             ) : null}
 
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-auto scrollbar-hide px-4 py-4 sm:px-5 sm:py-5 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden">
+            <div
+              key={`${captureMode}-${isSmallScreen ? "mobile" : "desktop"}`}
+              ref={workspaceScrollRef}
+              className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden scrollbar-hide px-4 py-4 [overflow-anchor:none] sm:px-5 sm:py-5 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden"
+            >
+            {workspaceVisibility.showDocumentList ? (
             <VoiceSecretaryDocumentListPanel
               actionBusy={actionBusy}
               activeDocumentPath={String(activeDocumentWritePath || viewedDocumentPath || "").trim()}
@@ -4053,7 +4092,9 @@ export function VoiceSecretaryComposerControl({
               onSetCaptureTargetDocument={(document) => void setCaptureTargetDocument(document)}
               onStartCreateDocument={startCreateDocument}
             />
+            ) : null}
 
+            {workspaceVisibility.showWorkspace ? (
             <VoiceSecretaryWorkspacePanel
               activeDocumentPath={activeDocumentPath}
               activeDocumentWritePath={activeDocumentWritePath}
@@ -4087,13 +4128,16 @@ export function VoiceSecretaryComposerControl({
               formatFullTime={formatVoiceActivityFullTimeMs}
               normalizeTranscriptText={normalizeBrowserTranscriptChunk}
             />
+            ) : null}
 
+            {workspaceVisibility.showRequestPanel ? (
             <aside
               className={classNames(
                 "flex min-h-0 flex-col gap-4 rounded-[26px] border p-3.5",
                 isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-[rgb(250,250,250)]",
               )}
             >
+              {workspaceVisibility.showRequestCard ? (
               <div
                 className={classNames(
                   "shrink-0 rounded-2xl border p-3",
@@ -4141,10 +4185,12 @@ export function VoiceSecretaryComposerControl({
                   </button>
                 ) : null}
               </div>
+              ) : null}
 
+              {workspaceVisibility.showActivityFeed ? (
               <div
                 className={classNames(
-                  "flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border p-3",
+                  "flex min-h-0 flex-col overflow-hidden rounded-2xl border p-3 lg:flex-1",
                   isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
                 )}
               >
@@ -4176,7 +4222,7 @@ export function VoiceSecretaryComposerControl({
                     ) : null}
                   </div>
                 </div>
-                <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable]">
+                <div className="mt-2 min-h-0 max-h-[42dvh] space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable] lg:max-h-none lg:flex-1">
                   {liveActivityStreamItem ? (
                     <VoiceActivityStreamCard
                       item={liveActivityStreamItem}
@@ -4444,8 +4490,10 @@ export function VoiceSecretaryComposerControl({
                   ) : null}
                 </div>
               </div>
+              ) : null}
             </aside>
-          </div>
+            ) : null}
+            </div>
           <button
             type="button"
             onClick={closePanel}
@@ -4461,7 +4509,7 @@ export function VoiceSecretaryComposerControl({
         : null}
 
       {isAssistantRow ? (
-        <div className="relative inline-flex max-w-full items-center gap-1.5">
+        <div className="relative flex min-w-0 max-w-full items-center gap-1.5">
           {voiceReplyBubbleFeedback && voiceReplyBubbleText ? (
             <div
               className={classNames(
@@ -4532,7 +4580,7 @@ export function VoiceSecretaryComposerControl({
           ) : null}
           <div
             className={classNames(
-              "inline-flex h-9 shrink-0 items-center gap-0.5 rounded-lg border p-0.5 transition-colors",
+              "inline-flex h-11 min-w-0 max-w-full shrink items-center gap-0.5 rounded-lg border transition-colors sm:h-9 sm:shrink-0 sm:p-0.5",
               recording
                 ? isDark
                   ? "border-rose-400/30 bg-rose-500/10"
@@ -4545,7 +4593,7 @@ export function VoiceSecretaryComposerControl({
             <button
               type="button"
               className={classNames(
-                "relative inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                 recording
                   ? isDark
                     ? "bg-rose-500/20 text-rose-200 hover:bg-rose-500/28"
@@ -4575,7 +4623,7 @@ export function VoiceSecretaryComposerControl({
                   <button
                     type="button"
                     className={classNames(
-                      "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                      "inline-flex h-11 min-w-0 shrink items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:shrink-0",
                       isDark
                         ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                         : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
@@ -4668,7 +4716,7 @@ export function VoiceSecretaryComposerControl({
               <button
                 type="button"
                 className={classNames(
-                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                  "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                   promptOptimizePending
                     ? isDark
                       ? "bg-amber-400/12 text-amber-100"
@@ -4691,7 +4739,7 @@ export function VoiceSecretaryComposerControl({
                 <button
                   type="button"
                   className={classNames(
-                    "inline-flex h-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",
                     isDark
                       ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                       : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
@@ -4759,7 +4807,7 @@ export function VoiceSecretaryComposerControl({
             <button
               type="button"
               className={classNames(
-                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                 open
                   ? isDark
                     ? "bg-white/10 text-[var(--color-text-primary)]"

@@ -74,6 +74,20 @@ export function shouldAutoScrollToBottom(input: {
   return input.followMode === "follow" && input.isAtBottom;
 }
 
+export function shouldRunScheduledBottomScroll(input: {
+  followMode: "follow" | "detached";
+  isAtBottom: boolean;
+  forceStickToBottom: boolean;
+  explicitForce: boolean;
+}): boolean {
+  if (input.explicitForce) return true;
+  return shouldAutoScrollToBottom({
+    followMode: input.followMode,
+    isAtBottom: input.isAtBottom,
+    forceStickToBottom: input.forceStickToBottom,
+  });
+}
+
 export function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
   if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
     const eventId = typeof message.id === "string" ? String(message.id || "").trim() : "";

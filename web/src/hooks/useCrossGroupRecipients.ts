@@ -27,6 +27,28 @@ interface UseCrossGroupRecipientsResult {
   destGroupScopeLabel: string;
 }
 
+export function resolveRecipientActorsForComposer({
+  actors,
+  remoteActorsByGroup,
+  selectedGroupId,
+  composerGroupId,
+  sendGroupId,
+}: {
+  actors: Actor[];
+  remoteActorsByGroup: Record<string, Actor[]>;
+  selectedGroupId: string;
+  composerGroupId: string;
+  sendGroupId: string;
+}): Actor[] {
+  const selectedGid = String(selectedGroupId || "").trim();
+  const composerGid = String(composerGroupId || "").trim();
+  const sendGid = String(sendGroupId || "").trim();
+  if (!sendGid) return [];
+  if (composerGid !== selectedGid) return [];
+  if (sendGid === selectedGid) return actors;
+  return remoteActorsByGroup[sendGid] ?? [];
+}
+
 function getActiveScopeLabel(doc: GroupDoc | null): string {
   if (!doc) return "";
   const key = String(doc.active_scope_key || "").trim();
@@ -104,18 +126,23 @@ export function useCrossGroupRecipients({
   }, [groupDoc, remoteGroupDocsByGroup, selectedGid, sendGid]);
 
   const recipientActors = useMemo(() => {
-    if (!sendGid) return [];
-    if (sendGid === selectedGid) return actors;
-    return remoteActorsByGroup[sendGid] ?? [];
-  }, [actors, remoteActorsByGroup, selectedGid, sendGid]);
+    return resolveRecipientActorsForComposer({
+      actors,
+      remoteActorsByGroup,
+      selectedGroupId: selectedGid,
+      composerGroupId: composerGid,
+      sendGroupId: sendGid,
+    });
+  }, [actors, composerGid, remoteActorsByGroup, selectedGid, sendGid]);
 
   const recipientActorsBusy = useMemo(() => {
     if (!sendGid) return false;
     if (!selectedGid) return false;
+    if (composerGid !== selectedGid) return true;
     if (sendGid === selectedGid) return false;
     if (!canFetchRemoteRecipients) return false;
     return !Object.prototype.hasOwnProperty.call(remoteActorsByGroup, sendGid);
-  }, [canFetchRemoteRecipients, remoteActorsByGroup, selectedGid, sendGid]);
+  }, [canFetchRemoteRecipients, composerGid, remoteActorsByGroup, selectedGid, sendGid]);
 
   return { recipientActors, recipientActorsBusy, destGroupScopeLabel };
 }
