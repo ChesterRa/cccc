@@ -54,7 +54,7 @@
   "sendBlockedGroupStopped": "工作组未启动，无法发送给智能体。请先启动工作组后再发送。",
   "sendBlockedGroupPaused": "工作组已暂停，消息不会投递给智能体。请先恢复工作组后再发送。",
   "slashCommandAttachmentUnsupported": "斜杠命令不支持附件。",
-  "slashCommandReplyUnsupported": "斜杠命令不支持回复。",
+  "slashCommandReplyUnsupported": "斜杠命令暂不支持回复某条消息。",
   "slashCommandQuotedPresentationUnsupported": "斜杠命令不支持引用演示内容。",
   "slashCommandCrossGroupUnsupported": "斜杠命令不支持跨工作组发送。",
   "slashCommandMissingArgs": "请在 {{command}} 后输入任务。",

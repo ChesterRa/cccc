@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 
 import * as api from "../services/api";
+import type { ReplyTarget } from "../types";
 import {
   buildSlashCommandToolArgumentsForItem,
   parseSlashCommandInput,
@@ -14,6 +15,10 @@ type TranslateFn = (key: string, options?: Record<string, unknown>) => string;
 export type OptimisticSlashDispatchResult = {
   ok: boolean;
   dispatchText: string;
+};
+
+export type SlashDispatchMessageOptions = {
+  replyTarget?: ReplyTarget;
 };
 
 function summarizeCapabilityUseResult(result: unknown): string {
@@ -36,14 +41,15 @@ function summarizeCapabilityUseResult(result: unknown): string {
 export async function dispatchSlashMessageOptimistically(args: {
   dispatchText: string;
   originalText: string;
-  dispatchMessage: (text: string) => Promise<boolean>;
+  replyTarget?: ReplyTarget;
+  dispatchMessage: (text: string, options?: SlashDispatchMessageOptions) => Promise<boolean>;
   clearComposer: () => void;
   restoreComposerText: (text: string) => void;
 }): Promise<OptimisticSlashDispatchResult> {
   const dispatchText = String(args.dispatchText || "").trim();
   if (!dispatchText) return { ok: false, dispatchText: "" };
   args.clearComposer();
-  const sent = await args.dispatchMessage(dispatchText);
+  const sent = await args.dispatchMessage(dispatchText, { replyTarget: args.replyTarget || null });
   if (!sent) {
     args.restoreComposerText(args.originalText);
   }
@@ -56,7 +62,7 @@ export function useSlashCommands(args: {
   restoreComposerText: (text: string) => void;
   showError: (message: string) => void;
   showNotice: (payload: { message: string }) => void;
-  dispatchMessage?: (text: string) => Promise<boolean>;
+  dispatchMessage?: (text: string, options?: SlashDispatchMessageOptions) => Promise<boolean>;
   onExecuted?: () => void;
   t: TranslateFn;
 }) {
@@ -68,6 +74,8 @@ export function useSlashCommands(args: {
     text: string;
     composerFilesCount: number;
     hasReplyTarget: boolean;
+    replyTarget?: ReplyTarget;
+    replyRequired: boolean;
     hasQuotedPresentationRef: boolean;
     sendGroupId: string;
   }): Promise<boolean> => {
@@ -76,9 +84,10 @@ export function useSlashCommands(args: {
     if (!slashCommand || !gid) return false;
     if (slashInFlightRef.current) return true;
 
-    const guard = resolveSlashCommandGuard({ ...opts, selectedGroupId: gid }, {
+    const item = slashCommand.item;
+    const guard = resolveSlashCommandGuard({ ...opts, sourceType: item.sourceType, selectedGroupId: gid }, {
       attachmentsUnsupported: t("slashCommandAttachmentUnsupported", { defaultValue: "Slash command does not support attachments." }),
-      repliesUnsupported: t("slashCommandReplyUnsupported", { defaultValue: "Slash command does not support replies." }),
+      repliesUnsupported: t("slashCommandReplyUnsupported", { defaultValue: "Slash command does not support replying to a specific message yet." }),
       quotedPresentationUnsupported: t("slashCommandQuotedPresentationUnsupported", { defaultValue: "Slash command does not support quoted presentation views." }),
       crossGroupUnsupported: t("slashCommandCrossGroupUnsupported", { defaultValue: "Slash command does not support cross-group send." }),
     });
@@ -87,7 +96,6 @@ export function useSlashCommands(args: {
       return true;
     }
 
-    const item = slashCommand.item;
     slashInFlightRef.current = true;
     try {
       if (item.sourceType === "builtin_command") {
@@ -96,6 +104,7 @@ export function useSlashCommands(args: {
         const sent = await dispatchSlashMessageOptimistically({
           dispatchText,
           originalText: opts.text,
+          replyTarget: opts.replyTarget || null,
           dispatchMessage,
           clearComposer,
           restoreComposerText,
@@ -117,6 +126,7 @@ export function useSlashCommands(args: {
           const sent = await dispatchSlashMessageOptimistically({
             dispatchText: resolution.dispatchText,
             originalText: opts.text,
+            replyTarget: opts.replyTarget || null,
             dispatchMessage,
             clearComposer,
             restoreComposerText,

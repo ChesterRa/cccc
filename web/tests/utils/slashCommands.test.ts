@@ -226,7 +226,7 @@ describe("slashCommands", () => {
   it("keeps slash command execution guards as a pure decision", () => {
     const messages = {
       attachmentsUnsupported: "附件不能用于斜杠命令。",
-      repliesUnsupported: "回复不能用于斜杠命令。",
+      repliesUnsupported: "不能回复某条消息。",
       quotedPresentationUnsupported: "引用演示不能用于斜杠命令。",
       crossGroupUnsupported: "跨工作组发送不能用于斜杠命令。",
     };
@@ -242,10 +242,11 @@ describe("slashCommands", () => {
     expect(resolveSlashCommandGuard({
       composerFilesCount: 0,
       hasReplyTarget: true,
+      sourceType: "dynamic_tool",
       hasQuotedPresentationRef: false,
       sendGroupId: "g1",
       selectedGroupId: "g1",
-    }, messages)).toEqual({ ok: false, message: "回复不能用于斜杠命令。" });
+    }, messages)).toEqual({ ok: false, message: "不能回复某条消息。" });
 
     expect(resolveSlashCommandGuard({
       composerFilesCount: 0,
@@ -266,6 +267,34 @@ describe("slashCommands", () => {
     expect(resolveSlashCommandGuard({
       composerFilesCount: 0,
       hasReplyTarget: false,
+      hasQuotedPresentationRef: false,
+      sendGroupId: "g1",
+      selectedGroupId: "g1",
+    })).toEqual({ ok: true });
+  });
+
+  it("allows reply targets for message-backed slash commands only", () => {
+    const base = {
+      composerFilesCount: 0,
+      hasReplyTarget: true,
+      hasQuotedPresentationRef: false,
+      sendGroupId: "g1",
+      selectedGroupId: "g1",
+    };
+
+    expect(resolveSlashCommandGuard({ ...base, sourceType: "builtin_command" })).toEqual({ ok: true });
+    expect(resolveSlashCommandGuard({ ...base, sourceType: "capsule_skill" })).toEqual({ ok: true });
+    expect(resolveSlashCommandGuard({ ...base, sourceType: "dynamic_tool" })).toEqual({
+      ok: false,
+      message: "Slash command does not support replying to a specific message yet.",
+    });
+  });
+
+  it("allows slash commands when the message only requires recipients to reply", () => {
+    expect(resolveSlashCommandGuard({
+      composerFilesCount: 0,
+      hasReplyTarget: false,
+      replyRequired: true,
       hasQuotedPresentationRef: false,
       sendGroupId: "g1",
       selectedGroupId: "g1",

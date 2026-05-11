@@ -29,6 +29,8 @@ export type CapsuleSkillSlashCommandResolution =
 export type SlashCommandGuardInput = {
   composerFilesCount: number;
   hasReplyTarget: boolean;
+  replyRequired?: boolean;
+  sourceType?: SlashCommandItem["sourceType"];
   hasQuotedPresentationRef: boolean;
   sendGroupId: string;
   selectedGroupId: string;
@@ -51,10 +53,14 @@ export type CapsuleSkillSlashCommandMessages = {
 
 const DEFAULT_SLASH_GUARD_MESSAGES: SlashCommandGuardMessages = {
   attachmentsUnsupported: "Slash command does not support attachments.",
-  repliesUnsupported: "Slash command does not support replies.",
+  repliesUnsupported: "Slash command does not support replying to a specific message yet.",
   quotedPresentationUnsupported: "Slash command does not support quoted presentation views.",
   crossGroupUnsupported: "Slash command does not support cross-group send.",
 };
+
+export function slashCommandSupportsReplyTarget(sourceType: SlashCommandItem["sourceType"] | undefined): boolean {
+  return sourceType === "builtin_command" || sourceType === "capsule_skill";
+}
 
 export function slashCommandDisplayKind(item: Pick<SlashCommandItem, "sourceType" | "capabilityId">): SlashCommandDisplayKind {
   if (String(item.capabilityId || "").trim().startsWith("skill:")) return "skill";
@@ -205,7 +211,7 @@ export function resolveSlashCommandGuard(
   if (input.composerFilesCount > 0) {
     return { ok: false, message: copy.attachmentsUnsupported };
   }
-  if (input.hasReplyTarget) {
+  if (input.hasReplyTarget && !slashCommandSupportsReplyTarget(input.sourceType)) {
     return { ok: false, message: copy.repliesUnsupported };
   }
   if (input.hasQuotedPresentationRef) {

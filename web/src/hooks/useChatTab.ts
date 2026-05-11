@@ -1119,6 +1119,8 @@ export function useChatTab({
       text: composerText,
       composerFilesCount: composerFiles.length,
       hasReplyTarget: !!replyTarget,
+      replyTarget,
+      replyRequired,
       hasQuotedPresentationRef: !!quotedPresentationRef,
       sendGroupId: dstGroup,
     })) {

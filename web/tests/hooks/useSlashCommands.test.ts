@@ -36,6 +36,29 @@ describe("dispatchSlashMessageOptimistically", () => {
     expect(calls).toEqual(["clear", "dispatch-start"]);
   });
 
+  it("passes reply context to the slash dispatch request", async () => {
+    const replyTarget = {
+      eventId: "evt-original",
+      by: "foreman",
+      text: "请基于这个失败日志继续处理",
+    };
+    const dispatchMessage = vi.fn(async () => true);
+
+    await expect(dispatchSlashMessageOptimistically({
+      dispatchText: "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
+      originalText: "/using-superpowers 开始执行",
+      replyTarget,
+      dispatchMessage,
+      clearComposer: vi.fn(),
+      restoreComposerText: vi.fn(),
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(dispatchMessage).toHaveBeenCalledWith(
+      "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
+      { replyTarget },
+    );
+  });
+
   it("restores the original slash text when dispatch fails", async () => {
     const calls: string[] = [];
 

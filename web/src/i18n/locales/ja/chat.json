@@ -54,7 +54,7 @@
   "sendBlockedGroupStopped": "このグループは起動していません。エージェントに送信する前にグループを開始してください。",
   "sendBlockedGroupPaused": "このグループは一時停止中です。エージェントに送信する前にグループを再開してください。",
   "slashCommandAttachmentUnsupported": "スラッシュコマンドは添付ファイルに対応していません。",
-  "slashCommandReplyUnsupported": "スラッシュコマンドは返信に対応していません。",
+  "slashCommandReplyUnsupported": "スラッシュコマンドは特定のメッセージへの返信にはまだ対応していません。",
   "slashCommandQuotedPresentationUnsupported": "スラッシュコマンドは引用されたプレゼンテーションに対応していません。",
   "slashCommandCrossGroupUnsupported": "スラッシュコマンドはグループ間送信に対応していません。",
   "slashCommandMissingArgs": "{{command}} の後にタスクを入力してください。",

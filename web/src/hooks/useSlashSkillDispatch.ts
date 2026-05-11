@@ -2,13 +2,49 @@ import { useCallback } from "react";
 
 import * as api from "../services/api";
 import type { ChatFilter } from "../stores/useUIStore";
-import type { LedgerEvent } from "../types";
+import type { LedgerEvent, ReplyTarget } from "../types";
 import {
   formatSendMessageError,
   getGroupSendBlockedMessage,
   type ChatTFunction,
   type GroupSendBlockedReason,
 } from "../utils/chatSend";
+import type { SlashDispatchMessageOptions } from "./useSlashCommands";
+
+export async function sendSlashSkillMessageRequest(args: {
+  selectedGroupId: string;
+  message: string;
+  toTokens: string[];
+  priority: "normal" | "attention";
+  replyRequired: boolean;
+  localId: string;
+  replyTarget: ReplyTarget;
+}) {
+  if (args.replyTarget) {
+    return api.replyMessage(
+      args.selectedGroupId,
+      args.message,
+      args.toTokens,
+      args.replyTarget.eventId,
+      undefined,
+      args.priority,
+      args.replyRequired,
+      args.localId,
+      [],
+    );
+  }
+
+  return api.sendMessage(
+    args.selectedGroupId,
+    args.message,
+    args.toTokens,
+    undefined,
+    args.priority,
+    args.replyRequired,
+    args.localId,
+    [],
+  );
+}
 
 export function useSlashSkillDispatch(args: {
   selectedGroupId: string;
@@ -43,9 +79,10 @@ export function useSlashSkillDispatch(args: {
     t,
   } = args;
 
-  return useCallback(async (text: string): Promise<boolean> => {
+  return useCallback(async (text: string, options?: SlashDispatchMessageOptions): Promise<boolean> => {
     const message = String(text || "").trim();
     if (!selectedGroupId || !message) return false;
+    const replyTarget: ReplyTarget = options?.replyTarget || null;
     if (groupSendBlockedReason) {
       showError(getGroupSendBlockedMessage(groupSendBlockedReason, t));
       return false;
@@ -65,6 +102,8 @@ export function useSlashSkillDispatch(args: {
         priority: prio,
         reply_required: replyRequired,
         client_id: localId,
+        reply_to: replyTarget?.eventId || null,
+        quote_text: replyTarget?.text || undefined,
         refs: [],
         format: "plain",
         attachments: [],
@@ -73,16 +112,15 @@ export function useSlashSkillDispatch(args: {
     };
     enqueueOutbox(selectedGroupId, localId, optimisticEvent);
 
-    const resp = await api.sendMessage(
+    const resp = await sendSlashSkillMessageRequest({
       selectedGroupId,
       message,
       toTokens,
-      undefined,
-      prio as "normal" | "attention",
+      priority: prio as "normal" | "attention",
       replyRequired,
       localId,
-      [],
-    );
+      replyTarget,
+    });
     if (!resp.ok) {
       removeOutbox(selectedGroupId, localId);
       showError(formatSendMessageError({
