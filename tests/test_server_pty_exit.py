@@ -103,6 +103,15 @@ class TestServerPtyExit(unittest.TestCase):
             self.assertTrue(state_path.exists())
             state_doc = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state_doc.get("pid"), 22222)
+            runtime_session_path = (
+                Path(os.environ["CCCC_HOME"])
+                / "groups"
+                / group_id
+                / "state"
+                / "runtime_sessions"
+                / "peer1.json"
+            )
+            self.assertFalse(runtime_session_path.exists())
             ledger_events = [
                 json.loads(line)
                 for line in reloaded.ledger_path.read_text(encoding="utf-8").splitlines()

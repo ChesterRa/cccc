@@ -22,6 +22,12 @@ from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .mcp_install import ensure_mcp_installed
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
+from .runtime_session_ops import (
+    mark_runtime_session_resume_failed,
+    prepare_headless_runtime_resume,
+    record_headless_runtime_session,
+    runtime_resume_enabled,
+)
 from ..util.fs import atomic_write_json
 from ..util.node_env import with_node_deprecation_warnings_suppressed
 from ..util.process import pid_is_alive
@@ -138,6 +144,7 @@ class CodexSessionState:
             "actor_id": actor_id,
             "status": self.status,
             "current_task_id": self.current_task_id,
+            "thread_id": self.thread_id,
             "updated_at": self.updated_at,
         }
 
@@ -170,6 +177,7 @@ class CodexAppSession:
         self._active_payload: Optional[_PendingTurn] = None
         self._last_turn_event_monotonic = 0.0
         self._active_stalled_emitted = False
+        self._runtime_command: list[str] = []
 
     def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
         stream_id = str(item_id or "").strip()
@@ -422,8 +430,9 @@ class CodexAppSession:
             env = with_node_deprecation_warnings_suppressed(env)
             if not ensure_mcp_installed("codex", self.cwd, auto_mcp_runtimes=("codex",), env=env):
                 raise RuntimeError("failed to install MCP for runtime: codex")
+            self._runtime_command = ["codex", "app-server", "--listen", "stdio://"]
             self._proc = subprocess.Popen(
-                ["codex", "app-server", "--listen", "stdio://"],
+                self._runtime_command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -456,11 +465,46 @@ class CodexAppSession:
             }
             if self.model:
                 thread_params["model"] = self.model
-            thread_resp = self._request(
-                "thread/start",
-                thread_params,
-                timeout=20.0,
+            resume_doc = prepare_headless_runtime_resume(
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                runtime="codex",
+                cwd=self.cwd,
+                command=self._runtime_command,
+                model=self.model,
             )
+            resumed = False
+            if resume_doc:
+                resume_params: Dict[str, Any] = {
+                    "threadId": str(resume_doc.get("provider_thread_id") or "").strip(),
+                    "personality": "pragmatic",
+                }
+                if self.model:
+                    resume_params["model"] = self.model
+                try:
+                    thread_resp = self._request(
+                        "thread/resume",
+                        resume_params,
+                        timeout=20.0,
+                    )
+                    resumed = True
+                except Exception as exc:
+                    mark_runtime_session_resume_failed(
+                        group_id=self.group_id,
+                        actor_id=self.actor_id,
+                        error=str(exc),
+                    )
+                    thread_resp = self._request(
+                        "thread/start",
+                        thread_params,
+                        timeout=20.0,
+                    )
+            else:
+                thread_resp = self._request(
+                    "thread/start",
+                    thread_params,
+                    timeout=20.0,
+                )
             thread = thread_resp.get("thread") if isinstance(thread_resp, dict) else {}
             thread_id = str((thread or {}).get("id") or "").strip()
             if not thread_id:
@@ -470,7 +514,23 @@ class CodexAppSession:
                 self._session_state.status = "idle"
                 self._session_state.updated_at = utc_now_iso()
             self._persist_state()
-            self._emit("headless.thread.started", {"thread_id": thread_id})
+            if runtime_resume_enabled():
+                try:
+                    record_headless_runtime_session(
+                        group_id=self.group_id,
+                        actor_id=self.actor_id,
+                        runtime="codex",
+                        cwd=self.cwd,
+                        model=self.model,
+                        command=self._runtime_command,
+                        provider_thread_id=thread_id,
+                        status="usable",
+                        captured_from="app_server_thread_resume" if resumed else "app_server_thread_start",
+                        resume_eligible=True,
+                    )
+                except Exception:
+                    pass
+            self._emit("headless.thread.resumed" if resumed else "headless.thread.started", {"thread_id": thread_id})
             self._queue_bootstrap_control_turn()
             self._turn_thread.start()
         except Exception:

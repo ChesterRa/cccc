@@ -9,6 +9,8 @@ interface ModalFrameProps {
   closeAriaLabel: string;
   panelClassName: string;
   headerActions?: ReactNode;
+  floatingCloseClassName?: string;
+  floatingCloseButtonClassName?: string;
   modalRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }
@@ -22,6 +24,8 @@ export function ModalFrame({
   closeAriaLabel,
   panelClassName,
   headerActions,
+  floatingCloseClassName = "",
+  floatingCloseButtonClassName = "",
   modalRef,
   children,
 }: ModalFrameProps) {
@@ -77,10 +81,10 @@ export function ModalFrame({
             </div>
           </div>
         ) : (
-          <div className="pointer-events-none absolute right-4 top-4 z-10 sm:right-5 sm:top-5">
+          <div className={`pointer-events-none absolute right-4 top-4 z-10 sm:right-5 sm:top-5 ${floatingCloseClassName}`}>
             <button
               onClick={onClose}
-              className={`pointer-events-auto flex min-h-[44px] min-w-[44px] items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] text-lg leading-none text-[var(--color-text-muted)] shadow-sm backdrop-blur-xl transition-colors hover:text-[var(--color-text-primary)] ${
+              className={`pointer-events-auto flex min-h-[44px] min-w-[44px] items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] text-lg leading-none text-[var(--color-text-muted)] shadow-sm backdrop-blur-xl transition-colors hover:text-[var(--color-text-primary)] ${floatingCloseButtonClassName} ${
                 isDark
                   ? "bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)]"
                   : "bg-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.98)]"

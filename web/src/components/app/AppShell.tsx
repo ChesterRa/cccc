@@ -108,6 +108,8 @@ function RuntimeInspectorModal({
       title=""
       closeAriaLabel={closeAriaLabel}
       panelClassName="h-full w-full max-w-none overflow-hidden sm:h-[92vh] sm:w-[min(1480px,98vw)] sm:max-w-[98vw]"
+      floatingCloseClassName="sm:!top-3"
+      floatingCloseButtonClassName="!min-h-[40px] !min-w-[40px] !rounded-xl"
       modalRef={modalRef}
     >
       {children}

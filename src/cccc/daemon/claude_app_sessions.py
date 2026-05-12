@@ -31,6 +31,12 @@ from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .mcp_install import ensure_mcp_installed
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
+from .runtime_session_ops import (
+    mark_runtime_session_resume_failed,
+    prepare_claude_headless_launch_command,
+    record_headless_runtime_session,
+    runtime_resume_enabled,
+)
 from ..util.fs import atomic_write_json
 from ..util.node_env import with_node_deprecation_warnings_suppressed
 from ..util.process import pid_is_alive
@@ -66,6 +72,23 @@ def _safe_logger_call(method: str, message: str, *args: Any, **kwargs: Any) -> N
         if _is_closed_stream_logging_error(exc):
             return
         raise
+
+
+def _looks_like_stale_resume_error(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered:
+        return False
+    markers = (
+        "no conversation found",
+        "conversation not found",
+        "session not found",
+        "resume session not found",
+        "could not find conversation",
+        "could not resume",
+        "failed to resume",
+        "invalid session",
+    )
+    return any(marker in lowered for marker in markers)
 
 
 def _voice_secretary_prepare_control_turn(
@@ -119,6 +142,7 @@ class ClaudeSessionState:
             "actor_id": actor_id,
             "status": self.status,
             "current_task_id": self.current_task_id,
+            "session_id": self.session_id,
             "updated_at": self.updated_at,
         }
 
@@ -152,6 +176,8 @@ class ClaudeAppSession:
         self._stdout_thread: Optional[threading.Thread] = None
         self._stderr_thread: Optional[threading.Thread] = None
         self._turn_thread: Optional[threading.Thread] = None
+        self._runtime_command: list[str] = []
+        self._resumed_provider_session_id = ""
 
         # Streaming text delta tracking (snapshot diffing)
         self._last_text_snapshot = ""
@@ -489,6 +515,9 @@ class ClaudeAppSession:
     # ── lifecycle ───────────────────────────────────────────────────────
 
     def start(self) -> None:
+        initial_session_id = ""
+        initial_captured_from = ""
+        resumed = False
         with self._lock:
             if self._running:
                 return
@@ -511,13 +540,30 @@ class ClaudeAppSession:
                 "--include-hook-events",
                 "--verbose",
                 "--dangerously-skip-permissions",
-                "--no-session-persistence",
             ]
             if self.model:
                 cmd.extend(["--model", self.model])
+            self._runtime_command = list(cmd)
+            launch_cmd, runtime_doc, launch_kind = prepare_claude_headless_launch_command(
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                cwd=self.cwd,
+                base_command=cmd,
+                model=self.model,
+            )
+            resumed = launch_kind == "resume"
+            resumed_provider_session_id = (
+                str((runtime_doc or {}).get("provider_session_id") or "").strip()
+                if isinstance(runtime_doc, dict) and resumed
+                else ""
+            )
+            self._resumed_provider_session_id = resumed_provider_session_id
+            if launch_kind != "resume" and isinstance(runtime_doc, dict):
+                initial_session_id = str(runtime_doc.get("provider_session_id") or "").strip()
+                initial_captured_from = str(runtime_doc.get("captured_from") or "").strip()
 
             self._proc = subprocess.Popen(
-                cmd,
+                launch_cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -527,6 +573,56 @@ class ClaudeAppSession:
                 bufsize=1,
             )
             self._running = True
+
+        # Wait briefly for process to prove it's alive (MCP init may take time).
+        time.sleep(1.0)
+        if not self.is_running() and resumed:
+            mark_runtime_session_resume_failed(
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                error="claude headless resume process exited immediately",
+            )
+            with self._lock:
+                old_proc = self._proc
+                self._proc = None
+                self._running = False
+                self._resumed_provider_session_id = ""
+            if old_proc is not None:
+                try:
+                    old_proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    old_proc.wait(timeout=1.0)
+                except Exception:
+                    try:
+                        old_proc.kill()
+                    except Exception:
+                        pass
+            with self._lock:
+                self._stop_requested = False
+                fresh_cmd, runtime_doc, _ = prepare_claude_headless_launch_command(
+                    group_id=self.group_id,
+                    actor_id=self.actor_id,
+                    cwd=self.cwd,
+                    base_command=self._runtime_command,
+                    model=self.model,
+                )
+                initial_session_id = str((runtime_doc or {}).get("provider_session_id") or "").strip()
+                initial_captured_from = str((runtime_doc or {}).get("captured_from") or "").strip()
+                self._proc = subprocess.Popen(
+                    fresh_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=str(self.cwd),
+                    env=env,
+                    text=True,
+                    bufsize=1,
+                )
+                self._running = True
+                self._resumed_provider_session_id = ""
+            time.sleep(1.0)
 
         self._stdout_thread = threading.Thread(
             target=self._stdout_loop,
@@ -547,11 +643,25 @@ class ClaudeAppSession:
         self._stdout_thread.start()
         self._stderr_thread.start()
 
-        # Wait briefly for process to prove it's alive (MCP init may take time)
-        time.sleep(1.0)
         if not self.is_running():
             raise RuntimeError("claude process exited immediately")
 
+        if initial_session_id and runtime_resume_enabled():
+            try:
+                record_headless_runtime_session(
+                    group_id=self.group_id,
+                    actor_id=self.actor_id,
+                    runtime="claude",
+                    cwd=self.cwd,
+                    model=self.model,
+                    command=self._runtime_command,
+                    provider_session_id=initial_session_id,
+                    status="usable",
+                    captured_from=initial_captured_from or "claude_generated_session_id",
+                    resume_eligible=True,
+                )
+            except Exception:
+                pass
         with self._lock:
             self._session_state.status = "idle"
             self._session_state.updated_at = utc_now_iso()
@@ -571,6 +681,7 @@ class ClaudeAppSession:
             self._session_state.current_task_id = None
             self._session_state.updated_at = utc_now_iso()
             self._active_control_kind = ""
+            self._resumed_provider_session_id = ""
         if was_running:
             exit_code = proc.poll() if proc else None
             logger.info("claude headless stopping: group=%s actor=%s exit_code=%s", self.group_id, self.actor_id, exit_code)
@@ -613,6 +724,128 @@ class ClaudeAppSession:
     def _control_turn_kind(self) -> str:
         with self._lock:
             return str(self._active_control_kind or "").strip().lower()
+
+    def _mark_stale_resume_failed(self, *, error: str) -> bool:
+        with self._lock:
+            session_id = str(self._resumed_provider_session_id or "").strip()
+            if not session_id:
+                return False
+            self._resumed_provider_session_id = ""
+        mark_runtime_session_resume_failed(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            error=error or f"claude headless resume rejected session {session_id}",
+        )
+        self._emit(
+            "headless.session.resume_failed",
+            {
+                "provider_session_id": session_id,
+                "error": error or "claude headless resume rejected",
+            },
+        )
+        return True
+
+    def _drain_restart_replay_turns(self) -> list[_PendingTurn]:
+        replay: list[_PendingTurn] = []
+        while True:
+            try:
+                payload = self._turn_queue.get_nowait()
+            except queue.Empty:
+                return replay
+            except Exception:
+                return replay
+            if payload is None:
+                continue
+            if str(payload.control_kind or "").strip().lower() == "bootstrap":
+                continue
+            replay.append(payload)
+
+    def _requeue_restart_replay_turns(self, payloads: list[_PendingTurn]) -> None:
+        for payload in payloads:
+            try:
+                self._turn_queue.put_nowait(payload)
+                self._emit(
+                    "headless.control.requeued" if payload.control_kind else "headless.turn.requeued",
+                    {
+                        "event_id": payload.event_id,
+                        "control_kind": payload.control_kind or None,
+                        "status": "requeued",
+                        "reason": "resume_rejected_restart",
+                    },
+                )
+            except Exception as exc:
+                self._emit(
+                    "headless.control.failed" if payload.control_kind else "headless.turn.failed",
+                    {
+                        "event_id": payload.event_id,
+                        "control_kind": payload.control_kind or None,
+                        "status": "failed",
+                        "error": {"message": f"resume rejected restart requeue failed: {exc}"},
+                    },
+                )
+
+    def _fail_restart_replay_turns(self, payloads: list[_PendingTurn], *, error: str) -> None:
+        for payload in payloads:
+            self._emit(
+                "headless.control.failed" if payload.control_kind else "headless.turn.failed",
+                {
+                    "event_id": payload.event_id,
+                    "control_kind": payload.control_kind or None,
+                    "status": "failed",
+                    "error": {"message": error},
+                },
+            )
+
+    def _restart_fresh_after_resume_rejected(self) -> None:
+        def _worker() -> None:
+            old_stdout_thread = self._stdout_thread
+            old_stderr_thread = self._stderr_thread
+            old_turn_thread = self._turn_thread
+            try:
+                self.stop(persist_actor_stopped=False)
+            except Exception:
+                return
+            current = threading.current_thread()
+            for thread in (old_stdout_thread, old_stderr_thread, old_turn_thread):
+                if thread is None or thread is current:
+                    continue
+                try:
+                    if thread.is_alive():
+                        thread.join(timeout=2.0)
+                except Exception:
+                    pass
+            if old_stdout_thread is not None and old_stdout_thread.is_alive():
+                self._emit(
+                    "headless.session.restart_failed",
+                    {
+                        "reason": "resume_rejected",
+                        "error": "previous stdout loop did not stop",
+                    },
+                )
+                return
+            replay_payloads = self._drain_restart_replay_turns()
+            try:
+                self.start()
+            except Exception as exc:
+                self._fail_restart_replay_turns(
+                    replay_payloads,
+                    error=f"resume rejected restart failed: {str(exc)[:500]}",
+                )
+                self._emit(
+                    "headless.session.restart_failed",
+                    {
+                        "reason": "resume_rejected",
+                        "error": str(exc)[:500],
+                    },
+                )
+                return
+            self._requeue_restart_replay_turns(replay_payloads)
+
+        threading.Thread(
+            target=_worker,
+            name=f"cccc-claude-resume-reject-restart:{self.group_id}:{self.actor_id}",
+            daemon=True,
+        ).start()
 
     def _build_bootstrap_control_text(self) -> str:
         group = load_group(self.group_id)
@@ -923,6 +1156,22 @@ class ClaudeAppSession:
             session_id = str(event.get("session_id") or "").strip()
             with self._lock:
                 self._session_state.session_id = session_id or None
+            if session_id and runtime_resume_enabled():
+                try:
+                    record_headless_runtime_session(
+                        group_id=self.group_id,
+                        actor_id=self.actor_id,
+                        runtime="claude",
+                        cwd=self.cwd,
+                        model=self.model,
+                        command=self._runtime_command,
+                        provider_session_id=session_id,
+                        status="usable",
+                        captured_from="stream_json_init",
+                        resume_eligible=True,
+                    )
+                except Exception:
+                    pass
             logger.info(
                 "claude session init: group=%s actor=%s session=%s model=%s",
                 self.group_id, self.actor_id, session_id,
@@ -1426,7 +1675,14 @@ class ClaudeAppSession:
             self._session_state.status = "idle"
             self._session_state.current_task_id = None
             self._session_state.updated_at = now
+            if subtype in ("success", ""):
+                self._resumed_provider_session_id = ""
         self._persist_state()
+
+        resume_error_text = str(event.get("error") or event.get("result") or "unknown error")
+        resume_rejected = False
+        if subtype not in ("success", "") and _looks_like_stale_resume_error(resume_error_text):
+            resume_rejected = self._mark_stale_resume_failed(error=resume_error_text)
 
         # Complete any remaining tool activities
         for tool_use_id in list(self._active_tool_activities):
@@ -1511,7 +1767,7 @@ class ClaudeAppSession:
                 },
             )
         elif control_kind:
-            error_text = str(event.get("error") or event.get("result") or "unknown error")
+            error_text = resume_error_text
             self._emit(
                 "headless.control.failed",
                 {
@@ -1532,7 +1788,7 @@ class ClaudeAppSession:
                 },
             )
         else:
-            error_text = str(event.get("error") or event.get("result") or "unknown error")
+            error_text = resume_error_text
             self._emit(
                 "headless.turn.failed" if subtype == "error" else "headless.turn.completed",
                 {
@@ -1544,6 +1800,8 @@ class ClaudeAppSession:
             )
 
         self._turn_done.set()
+        if resume_rejected:
+            self._restart_fresh_after_resume_rejected()
 
     # ── tool classification ─────────────────────────────────────────────
 

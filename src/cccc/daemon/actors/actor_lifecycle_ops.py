@@ -11,8 +11,10 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
+from ...kernel.runtime import runtime_start_preflight_error
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -386,14 +388,16 @@ def handle_actor_restart(
             except Exception:
                 pass
         else:
-            session = pty_runner.SUPERVISOR.start_actor(
+            session = start_pty_actor_with_runtime_resume(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,
-                command=launch_spec["effective_command"],
+                base_command=launch_spec["effective_command"],
                 env=prepare_pty_env(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                 runtime=runtime,
+                model=model_from_runtime_command(launch_spec["effective_command"]),
                 max_backlog_bytes=pty_backlog_bytes(),
+                runtime_start_preflight_error=runtime_start_preflight_error,
             )
             try:
                 write_pty_state(group.group_id, actor_id, pid=session.pid)

@@ -400,6 +400,80 @@ class TestGroupLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_start_preserves_existing_pet_runtime_config(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env, update_actor_private_env
+        from cccc.kernel.actors import update_actor
+        from cccc.kernel.group import load_group
+        from cccc.kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "group-start-pet-preserve", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            self._add_actor(group_id, actor_id="lead")
+            enable_pet, _ = self._call(
+                "group_settings_update",
+                {"group_id": group_id, "by": "user", "patch": {"desktop_pet_enabled": True}},
+            )
+            self.assertTrue(enable_pet.ok, getattr(enable_pet, "error", None))
+
+            group = load_group(group_id)
+            assert group is not None
+            update_actor(
+                group,
+                PET_ACTOR_ID,
+                {
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "command": ["codex", "-m", "pet-manual"],
+                    "env": {"PET_PUBLIC": "manual"},
+                    "submit": "newline",
+                    "avatar_asset_path": "avatars/pet.png",
+                },
+            )
+            update_actor_private_env(group_id, PET_ACTOR_ID, set_vars={"PET_SECRET": "pet-secret"}, unset_keys=[], clear=True)
+            update_actor_private_env(group_id, "lead", set_vars={"FOREMAN_SECRET": "foreman-secret"}, unset_keys=[], clear=True)
+
+            captured: list[dict[str, object]] = []
+
+            def _fake_codex_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str], model: str = ""):
+                captured.append({"group_id": group_id, "actor_id": actor_id, "cwd": cwd, "env": dict(env), "model": model})
+
+                class _Session:
+                    pass
+
+                return _Session()
+
+            with patch("cccc.daemon.group.group_lifecycle_ops.codex_app_supervisor.start_actor", side_effect=_fake_codex_start_actor):
+                start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+
+            self.assertTrue(start.ok, getattr(start, "error", None))
+            group = load_group(group_id)
+            assert group is not None
+            pet_actor = get_pet_actor(group)
+            self.assertIsNotNone(pet_actor)
+            assert pet_actor is not None
+            self.assertEqual(pet_actor.get("command"), ["codex", "-m", "pet-manual"])
+            self.assertEqual(pet_actor.get("env"), {"PET_PUBLIC": "manual"})
+            self.assertEqual(str(pet_actor.get("submit") or ""), "newline")
+            self.assertEqual(str(pet_actor.get("avatar_asset_path") or ""), "avatars/pet.png")
+            self.assertEqual(load_actor_private_env(group_id, PET_ACTOR_ID), {"PET_SECRET": "pet-secret"})
+            pet_launches = [item for item in captured if item.get("actor_id") == PET_ACTOR_ID]
+            self.assertEqual(len(pet_launches), 1)
+            pet_env = pet_launches[0].get("env")
+            self.assertIsInstance(pet_env, dict)
+            assert isinstance(pet_env, dict)
+            self.assertEqual(pet_env.get("PET_SECRET"), "pet-secret")
+            self.assertNotIn("FOREMAN_SECRET", pet_env)
+        finally:
+            cleanup()
+
     def test_group_start_pet_falls_back_when_foreman_is_web_model(self) -> None:
         from cccc.kernel.group import load_group
         from cccc.kernel.pet_actor import PET_ACTOR_ID, get_pet_actor

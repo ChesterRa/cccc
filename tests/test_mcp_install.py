@@ -93,6 +93,58 @@ class TestMcpInstall(unittest.TestCase):
                         timeout=30,
                     )
 
+    def test_ensure_mcp_installed_gemini_verifies_against_actor_home_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            actor_home = Path(td) / "actor-home"
+            env = {"HOME": str(actor_home)}
+
+            def fake_run(argv, **kwargs):
+                run_home = Path((kwargs.get("env") or {}).get("HOME") or "")
+                self.assertEqual(run_home, actor_home)
+                config_path = run_home / ".gemini" / "settings.json"
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(
+                    json.dumps({"mcpServers": {"cccc": {"command": "/abs/cccc", "args": ["mcp"]}}}),
+                    encoding="utf-8",
+                )
+                return Mock(returncode=0, stdout="", stderr="")
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)
+            ), patch("cccc.daemon.mcp_install.subprocess.run", side_effect=fake_run):
+                ok = ensure_mcp_installed("gemini", cwd, auto_mcp_runtimes=("gemini",), env=env)
+                self.assertTrue(ok)
+                config_path = actor_home / ".gemini" / "settings.json"
+                self.assertTrue(config_path.exists())
+                self.assertTrue(is_mcp_installed("gemini", env=env))
+
+    def test_ensure_mcp_installed_kimi_verifies_against_actor_home_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            actor_home = Path(td) / "actor-home"
+            env = {"HOME": str(actor_home)}
+
+            def fake_run(argv, **kwargs):
+                run_home = Path((kwargs.get("env") or {}).get("HOME") or "")
+                self.assertEqual(run_home, actor_home)
+                config_path = run_home / ".kimi" / "mcp.json"
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(
+                    json.dumps({"mcpServers": {"cccc": {"command": "/abs/cccc", "args": ["mcp"]}}}),
+                    encoding="utf-8",
+                )
+                return Mock(returncode=0, stdout="", stderr="")
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)
+            ), patch("cccc.daemon.mcp_install.subprocess.run", side_effect=fake_run):
+                ok = ensure_mcp_installed("kimi", cwd, auto_mcp_runtimes=("kimi",), env=env)
+                self.assertTrue(ok)
+                config_path = actor_home / ".kimi" / "mcp.json"
+                self.assertTrue(config_path.exists())
+                self.assertTrue(is_mcp_installed("kimi", env=env))
+
     def test_ensure_mcp_installed_claude_windows_repairs_stale_config(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             cwd = Path(td)

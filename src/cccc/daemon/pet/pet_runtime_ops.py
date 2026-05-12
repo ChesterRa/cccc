@@ -7,6 +7,7 @@ from ...kernel.actors import INTERNAL_KIND_PET, add_actor, find_actor, remove_ac
 from ...kernel.ledger import append_event
 from ...kernel.pet_actor import (
     PET_ACTOR_ID,
+    PET_ACTOR_TITLE,
     build_pet_actor_seed,
     ensure_pet_actor,
     get_pet_actor,
@@ -172,6 +173,20 @@ def sync_pet_actor_from_foreman(
     source_id = str(source.get("id") or "").strip()
     if not source_id:
         raise ValueError("desktop pet requires a foreman actor")
+
+    current = get_pet_actor(group)
+    current_runtime = str((current or {}).get("runtime") or "").strip().lower() if isinstance(current, dict) else ""
+    current_runner = str((current or {}).get("runner") or "").strip() if isinstance(current, dict) else ""
+    if isinstance(current, dict) and current_runtime and current_runner and current_runtime != "web_model":
+        return ensure_pet_actor(
+            group,
+            seed={
+                "title": PET_ACTOR_TITLE,
+                "capability_autoload": ["pack:pet"],
+                "default_scope_key": str(group.doc.get("active_scope_key") or "").strip(),
+                "enabled": True,
+            },
+        )
 
     resolved_caller_id = str(caller_id or "").strip()
     if not resolved_caller_id:

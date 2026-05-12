@@ -119,13 +119,22 @@ def _runtime_expected_cccc_command(runtime: str) -> list[str]:
     return cmd
 
 
+def _home_dir(env: Dict[str, str] | None) -> Path:
+    raw = ""
+    if isinstance(env, dict):
+        raw = str(env.get("HOME") or env.get("USERPROFILE") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home()
+
+
 def _kimi_share_dir(env: Dict[str, str] | None) -> Path:
     raw = ""
     if isinstance(env, dict):
         raw = str(env.get("KIMI_SHARE_DIR") or "").strip()
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".kimi"
+    return _home_dir(env) / ".kimi"
 
 
 def build_mcp_add_command(runtime: str) -> list[str] | None:
@@ -212,17 +221,18 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         return "ready" if _codex_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
 
     if runtime == "droid":
+        home = _home_dir(env)
         return _json_mcp_state(
             (
-                Path.home() / ".factory" / "mcp.json",
-                Path.home() / ".config" / "droid" / "mcp.json",
-                Path.home() / ".droid" / "mcp.json",
+                home / ".factory" / "mcp.json",
+                home / ".config" / "droid" / "mcp.json",
+                home / ".droid" / "mcp.json",
             ),
             expected_cmd,
         )
 
     if runtime == "amp":
-        settings_path = Path.home() / ".config" / "amp" / "settings.json"
+        settings_path = _home_dir(env) / ".config" / "amp" / "settings.json"
         if not settings_path.exists():
             return "missing"
         doc = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
@@ -237,7 +247,7 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         return "ready" if _json_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
 
     if runtime == "auggie":
-        settings_path = Path.home() / ".augment" / "settings.json"
+        settings_path = _home_dir(env) / ".augment" / "settings.json"
         if not settings_path.exists():
             return "missing"
         doc = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
@@ -252,7 +262,7 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         return "ready" if _json_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
 
     if runtime == "neovate":
-        config_path = Path.home() / ".neovate" / "config.json"
+        config_path = _home_dir(env) / ".neovate" / "config.json"
         if not config_path.exists():
             return "missing"
         doc = json.loads(config_path.read_text(encoding="utf-8") or "{}")
@@ -267,7 +277,7 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         return "ready" if _json_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
 
     if runtime == "gemini":
-        return _json_mcp_state((Path.home() / ".gemini" / "settings.json",), expected_cmd)
+        return _json_mcp_state((_home_dir(env) / ".gemini" / "settings.json",), expected_cmd)
 
     if runtime == "kimi":
         return _json_mcp_state((_kimi_share_dir(env) / "mcp.json",), expected_cmd)

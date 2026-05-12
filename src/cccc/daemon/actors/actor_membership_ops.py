@@ -17,6 +17,7 @@ from ...util.conv import coerce_bool
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..context.context_ops import _schedule_summary_snapshot_rebuild
+from ..runtime_session_ops import remove_runtime_session
 from .web_model_browser_session import clear_web_model_chatgpt_browser_actor_runtime
 
 
@@ -62,6 +63,7 @@ def handle_actor_remove(
         remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
         remove_headless_state(group.group_id, actor_id)
+        remove_runtime_session(group.group_id, actor_id)
         throttle_clear_actor(group.group_id, actor_id)
         delete_actor_private_env(group.group_id, actor_id)
         if avatar_rel_path:

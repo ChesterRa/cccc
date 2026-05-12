@@ -82,8 +82,8 @@ def _voice_secretary_actor_seed(group: Group) -> Dict[str, Any]:
 
 def ensure_voice_secretary_actor(group: Group, *, seed: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     current = get_voice_secretary_actor(group)
-    seed = dict(seed or _voice_secretary_actor_seed(group))
     if current is None:
+        seed = dict(seed or _voice_secretary_actor_seed(group))
         return add_actor(
             group,
             actor_id=VOICE_SECRETARY_ACTOR_ID,
@@ -98,25 +98,30 @@ def ensure_voice_secretary_actor(group: Group, *, seed: Optional[Dict[str, Any]]
             runtime=str(seed["runtime"]),  # type: ignore[arg-type]
             internal_kind=INTERNAL_KIND_VOICE_SECRETARY,
         )
+    seed = dict(seed or {})
 
     patch: Dict[str, Any] = {
-        "title": seed["title"],
-        "default_scope_key": seed["default_scope_key"],
-        "enabled": seed["enabled"],
+        "title": str(current.get("title") or seed.get("title") or VOICE_SECRETARY_ACTOR_TITLE),
+        "enabled": bool(seed.get("enabled", current.get("enabled", True))),
         "internal_kind": INTERNAL_KIND_VOICE_SECRETARY,
     }
-    # Actor profiles are runtime templates, not identity templates. When the
-    # Voice Secretary is linked to a profile, preserve profile-controlled
-    # launch fields while still enforcing its internal actor identity.
-    if not str(current.get("profile_id") or "").strip():
+    if not str(current.get("default_scope_key") or "").strip() and str(seed.get("default_scope_key") or "").strip():
+        patch["default_scope_key"] = str(seed.get("default_scope_key") or "").strip()
+    current_runtime = str(current.get("runtime") or "").strip()
+    missing_launch = (
+        not current_runtime
+        or not str(current.get("runner") or "").strip()
+        or current_runtime.lower() == "web_model"
+    )
+    if missing_launch and seed:
         patch.update(
             {
-                "command": seed["command"],
-                "env": seed["env"],
-                "capability_autoload": seed["capability_autoload"],
-                "submit": seed["submit"],
-                "runner": seed["runner"],
-                "runtime": seed["runtime"],
+                "command": list(seed.get("command") or []),
+                "env": dict(seed.get("env") or {}),
+                "capability_autoload": list(seed.get("capability_autoload") or []),
+                "submit": str(seed.get("submit") or "enter").strip() or "enter",
+                "runner": str(seed.get("runner") or "pty"),
+                "runtime": str(seed.get("runtime") or "codex"),
             }
         )
     update_actor(group, VOICE_SECRETARY_ACTOR_ID, patch)

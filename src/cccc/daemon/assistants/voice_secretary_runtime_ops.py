@@ -8,6 +8,7 @@ from ...kernel.group import Group
 from ...kernel.ledger import append_event
 from ...kernel.voice_secretary_actor import (
     VOICE_SECRETARY_ACTOR_ID,
+    VOICE_SECRETARY_ACTOR_TITLE,
     build_voice_secretary_actor_seed,
     ensure_voice_secretary_actor,
     get_voice_secretary_actor,
@@ -188,6 +189,19 @@ def sync_voice_secretary_actor_from_foreman(
     source_id = str(source.get("id") or "").strip()
     if not source_id:
         raise ValueError("voice secretary requires a foreman actor")
+
+    current = get_voice_secretary_actor(group)
+    current_runtime = str((current or {}).get("runtime") or "").strip().lower() if isinstance(current, dict) else ""
+    current_runner = str((current or {}).get("runner") or "").strip() if isinstance(current, dict) else ""
+    if isinstance(current, dict) and current_runtime and current_runner and current_runtime != "web_model":
+        return ensure_voice_secretary_actor(
+            group,
+            seed={
+                "title": VOICE_SECRETARY_ACTOR_TITLE,
+                "default_scope_key": str(group.doc.get("active_scope_key") or "").strip(),
+                "enabled": True,
+            },
+        )
 
     resolved_caller_id = str(caller_id or "").strip()
     if not resolved_caller_id:

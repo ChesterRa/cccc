@@ -409,16 +409,16 @@ export function AgentTab({
     <div className="flex flex-col h-full">
       {/* Agent Header */}
       <div className={classNames(
-        "border-b px-4 py-3 sm:px-5",
+        "border-b px-4 py-2 sm:px-5",
         isDark
           ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
           : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]"
       )}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 items-start gap-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-4">
             <span
               className={classNames(
-                "relative mt-[0.42rem] inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full transition-all",
+                "relative inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full transition-all",
                 statusTone.dotClass
               )}
             >
@@ -437,7 +437,7 @@ export function AgentTab({
               )}
             </span>
 
-            <div className="flex min-w-0 items-start gap-4">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="min-w-0 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]">{actor.title || actor.id}</span>
@@ -467,17 +467,17 @@ export function AgentTab({
 
               <div
                 className={classNames(
-                  "hidden sm:flex min-w-0 flex-1 items-start gap-3 rounded-2xl border px-4 py-3 shadow-sm backdrop-blur-sm",
+                  "hidden sm:grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-xl border px-3 py-1.5 backdrop-blur-sm",
                   isDark
-                    ? "max-w-[min(760px,58vw)] border-white/10 bg-white/[0.04]"
-                    : "max-w-[min(760px,58vw)] border-black/8 bg-white/90"
+                    ? "max-w-[min(660px,54vw)] border-white/10 bg-white/[0.035]"
+                    : "max-w-[min(660px,54vw)] border-black/8 bg-white/78"
                 )}
                 aria-label={t('agentState')}
               >
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                   <div
                     className={classNames(
-                      "min-w-0 text-sm font-medium leading-6",
+                      "min-w-0 text-sm font-medium leading-[1.15rem]",
                       stateHeadline !== t('noAgentStateYet')
                         ? "text-[var(--color-text-primary)]"
                         : isDark
@@ -494,20 +494,20 @@ export function AgentTab({
                     <span>{stateHeadline}</span>
                   </div>
                   {(stateTask || blockerCount > 0 || stateNext) ? (
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
                       {stateTask ? (
-                        <span className={classNames("rounded-full bg-[var(--glass-tab-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text-secondary)]")}>
+                        <span className={classNames("shrink-0 rounded-full bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]")}>
                           {t("taskShort", { id: stateTask })}
                         </span>
                       ) : null}
                       {blockerCount > 0 ? (
-                        <span className={classNames("rounded-full bg-rose-500/15 px-2.5 py-1 text-[11px] text-rose-600 dark:text-rose-300")}>
+                        <span className={classNames("shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] text-rose-600 dark:text-rose-300")}>
                           {t("blockersShort", { count: blockerCount })}
                         </span>
                       ) : null}
                       {stateNext ? (
                         <span
-                          className={classNames("truncate text-[11px]", "text-[var(--color-text-tertiary)]")}
+                          className={classNames("min-w-0 truncate text-[10px] leading-4", "text-[var(--color-text-tertiary)]")}
                           title={stateNext}
                         >
                           {t("nextShort", { value: stateNext })}
@@ -517,7 +517,7 @@ export function AgentTab({
                   ) : null}
                 </div>
                 {agentState?.updated_at ? (
-                  <div className="shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2.5 py-1 text-[10px] font-medium text-[var(--color-text-tertiary)]">
+                  <div className="shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2 py-0.5 text-[10px] font-medium leading-4 text-[var(--color-text-tertiary)]">
                     {formatTime(agentState.updated_at)}
                   </div>
                 ) : null}

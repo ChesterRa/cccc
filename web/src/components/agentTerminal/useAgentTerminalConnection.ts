@@ -5,7 +5,7 @@ import type { Terminal } from "@xterm/xterm";
 import { fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
-import { buildTerminalConnectionKey } from "../../utils/terminalConnection";
+import { buildTerminalConnectionKey, isTerminalAttachNonRetryableErrorCode } from "../../utils/terminalConnection";
 
 export type AgentTerminalConnectionStatus = "disconnected" | "connecting" | "connected" | "reconnecting";
 
@@ -55,7 +55,7 @@ export function useAgentTerminalConnection(args: {
   const terminalReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const outputFilterTailRef = useRef("");
   const terminalSignalBufferRef = useRef("");
-  const actorNotRunningRef = useRef(false);
+  const terminalAttachNoRetryRef = useRef(false);
   const lastTermEpochRef = useRef(termEpoch);
 
   const isRunningRef = useRef(isRunning);
@@ -73,7 +73,7 @@ export function useAgentTerminalConnection(args: {
     setTerminalSignalRef.current = setTerminalSignal;
     clearTerminalSignalRef.current = clearTerminalSignal;
     if (isRunning) {
-      actorNotRunningRef.current = false;
+      terminalAttachNoRetryRef.current = false;
     }
   }, [actorRuntime, canControl, clearTerminalSignal, isRunning, onStatusChange, setTerminalSignal]);
 
@@ -85,7 +85,7 @@ export function useAgentTerminalConnection(args: {
 
   const requestReconnect = useCallback(() => {
     reconnectAttemptRef.current = 0;
-    actorNotRunningRef.current = false;
+    terminalAttachNoRetryRef.current = false;
     setReconnectTrigger((n) => n + 1);
   }, [setReconnectTrigger]);
 
@@ -238,8 +238,11 @@ export function useAgentTerminalConnection(args: {
             const msg = JSON.parse(event.data);
             if (msg.ok === false && msg.error) {
               handleDecoded(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
-              if (msg.error.code === "actor_not_running") {
-                actorNotRunningRef.current = true;
+              const code = String(msg.error.code || "").trim();
+              if (isTerminalAttachNonRetryableErrorCode(code)) {
+                terminalAttachNoRetryRef.current = true;
+              }
+              if (code === "actor_not_running" || code === "not_pty_actor") {
                 onStatusChangeRef.current?.();
               }
             }
@@ -252,7 +255,7 @@ export function useAgentTerminalConnection(args: {
       ws.onclose = (event) => {
         if (disposed) return;
         wsRef.current = null;
-        const noRetry = event.code === 1000 || event.code === 4401 || actorNotRunningRef.current;
+        const noRetry = event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
 
         if (!noRetry && isRunningRef.current && !isHeadless) {
           const attempt = reconnectAttemptRef.current;

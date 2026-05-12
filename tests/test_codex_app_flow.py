@@ -96,6 +96,294 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_claude_headless_start_uses_persistent_print_session(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            launch_commands: list[list[str]] = []
+
+            def fake_popen(cmd, *args, **kwargs):
+                launch_commands.append(list(cmd))
+                return FakeProc()
+
+            with (
+                patch("cccc.daemon.claude_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.claude_app_sessions.subprocess.Popen", side_effect=fake_popen),
+                patch("cccc.daemon.claude_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch("cccc.daemon.claude_app_sessions.time.sleep", return_value=None),
+                patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="42e9ef0c-3b75-43a0-9056-eef13dd1061d"),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_queue_bootstrap_control_turn", return_value=None),
+            ):
+                session.start()
+
+            self.assertEqual(len(launch_commands), 1)
+            self.assertIn("--session-id", launch_commands[0])
+            self.assertIn("42e9ef0c-3b75-43a0-9056-eef13dd1061d", launch_commands[0])
+            self.assertNotIn("--no-session-persistence", launch_commands[0])
+            stored = read_runtime_session("g_claude_resume", "peer1")
+            self.assertEqual(stored.get("runner"), "headless")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+        finally:
+            cleanup()
+
+    def test_claude_headless_start_resumes_existing_session_id(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.daemon.runtime_session_ops import record_headless_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            base_command = [
+                "claude",
+                "-p",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--include-partial-messages",
+                "--include-hook-events",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ]
+            record_headless_runtime_session(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                runtime="claude",
+                cwd=cwd,
+                command=base_command,
+                provider_session_id="434d41d0-02e9-4760-9f13-155d04cde834",
+                status="usable",
+                captured_from="stream_json_init",
+                resume_eligible=True,
+            )
+            session = ClaudeAppSession(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+            )
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            launch_commands: list[list[str]] = []
+
+            def fake_popen(cmd, *args, **kwargs):
+                launch_commands.append(list(cmd))
+                return FakeProc()
+
+            with (
+                patch("cccc.daemon.claude_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.claude_app_sessions.subprocess.Popen", side_effect=fake_popen),
+                patch("cccc.daemon.claude_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch("cccc.daemon.claude_app_sessions.time.sleep", return_value=None),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_queue_bootstrap_control_turn", return_value=None),
+            ):
+                session.start()
+
+            self.assertEqual(len(launch_commands), 1)
+            self.assertEqual(launch_commands[0][:3], ["claude", "--resume", "434d41d0-02e9-4760-9f13-155d04cde834"])
+            self.assertIn("-p", launch_commands[0])
+        finally:
+            cleanup()
+
+    def test_claude_headless_resume_exit_falls_back_without_poisoning_turn_queue(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            base_command = [
+                "claude",
+                "-p",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--include-partial-messages",
+                "--include-hook-events",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ]
+            record_headless_runtime_session(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                runtime="claude",
+                cwd=cwd,
+                command=base_command,
+                provider_session_id="stale-session",
+                status="usable",
+                captured_from="stream_json_init",
+                resume_eligible=True,
+            )
+            session = ClaudeAppSession(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+            )
+
+            class ExitedProc:
+                pid = 111
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return 1
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 1
+
+            class RunningProc:
+                pid = 222
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            launch_commands: list[list[str]] = []
+
+            def fake_popen(cmd, *args, **kwargs):
+                launch_commands.append(list(cmd))
+                return ExitedProc() if len(launch_commands) == 1 else RunningProc()
+
+            with (
+                patch("cccc.daemon.claude_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.claude_app_sessions.subprocess.Popen", side_effect=fake_popen),
+                patch("cccc.daemon.claude_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch("cccc.daemon.claude_app_sessions.time.sleep", return_value=None),
+                patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="fresh-session"),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_queue_bootstrap_control_turn", return_value=None),
+            ):
+                session.start()
+
+            self.assertEqual(launch_commands[0][:3], ["claude", "--resume", "stale-session"])
+            self.assertEqual(launch_commands[1][:3], ["claude", "--session-id", "fresh-session"])
+            self.assertEqual(session._turn_queue.qsize(), 0)
+            stored = read_runtime_session("g_claude_resume", "peer1")
+            self.assertEqual(stored.get("provider_session_id"), "fresh-session")
+            self.assertEqual(stored.get("status"), "usable")
+        finally:
+            cleanup()
+
+    def test_claude_headless_resume_rejected_on_first_turn_marks_metadata_failed(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            base_command = [
+                "claude",
+                "-p",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--include-partial-messages",
+                "--include-hook-events",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ]
+            record_headless_runtime_session(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                runtime="claude",
+                cwd=cwd,
+                command=base_command,
+                provider_session_id="stale-session",
+                status="usable",
+                captured_from="stream_json_init",
+                resume_eligible=True,
+            )
+            session = ClaudeAppSession(
+                group_id="g_claude_resume",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+            )
+            session._resumed_provider_session_id = "stale-session"
+            session._active_turn_id = "turn-bootstrap"
+            session._active_event_id = "bootstrap-event"
+            session._active_control_kind = "bootstrap"
+
+            emitted: list[str] = []
+            with (
+                patch.object(session, "_persist_state", return_value=None),
+                patch.object(session, "_emit", side_effect=lambda event_type, payload: emitted.append(event_type)),
+                patch.object(session, "_restart_fresh_after_resume_rejected", return_value=None) as restart_after_resume_rejected,
+            ):
+                session._handle_result_event(
+                    {
+                        "type": "result",
+                        "subtype": "error",
+                        "error": "No conversation found for stale-session",
+                    }
+                )
+
+            stored = read_runtime_session("g_claude_resume", "peer1")
+            self.assertEqual(stored.get("status"), "resume_failed")
+            self.assertFalse(bool(stored.get("resume_eligible")))
+            self.assertIn("No conversation found", str(stored.get("last_resume_error") or ""))
+            self.assertIn("headless.session.resume_failed", emitted)
+            self.assertIn("headless.control.failed", emitted)
+            restart_after_resume_rejected.assert_called_once()
+        finally:
+            cleanup()
+
     def test_actor_list_uses_codex_supervisor_state_for_headless_working(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
 
@@ -2330,6 +2618,38 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_claude_resume_rejected_restart_preserves_non_bootstrap_queued_turns(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            bootstrap = _PendingTurn(text="bootstrap", event_id="", control_kind="bootstrap")
+            user_turn = _PendingTurn(text="user work", event_id="evt-user")
+            control_turn = _PendingTurn(text="control work", event_id="evt-control", control_kind="system_notify")
+            session._turn_queue.put_nowait(bootstrap)
+            session._turn_queue.put_nowait(user_turn)
+            session._turn_queue.put_nowait(None)
+            session._turn_queue.put_nowait(control_turn)
+
+            with patch.object(session, "_emit") as emit:
+                preserved = session._drain_restart_replay_turns()
+                session._requeue_restart_replay_turns(preserved)
+
+            self.assertEqual([payload.event_id for payload in preserved], ["evt-user", "evt-control"])
+            self.assertEqual(session._turn_queue.qsize(), 2)
+            self.assertIs(session._turn_queue.get_nowait(), user_turn)
+            self.assertIs(session._turn_queue.get_nowait(), control_turn)
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertEqual(event_types, ["headless.turn.requeued", "headless.control.requeued"])
+        finally:
+            cleanup()
+
     def test_codex_notifications_keep_streaming_when_agent_message_phase_missing(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.kernel.headless_events import headless_events_path
@@ -3054,6 +3374,149 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(int(payload.get("pid") or 0), os.getpid())
             self.assertEqual(str(payload.get("status") or ""), "working")
             self.assertEqual(str(payload.get("current_task_id") or ""), "turn-1")
+        finally:
+            cleanup()
+
+    def test_codex_headless_start_resumes_recorded_app_server_thread(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            record_headless_runtime_session(
+                group_id="g_codex_resume",
+                actor_id="peer1",
+                runtime="codex",
+                cwd=cwd,
+                command=["codex", "app-server", "--listen", "stdio://"],
+                provider_thread_id="thr_existing",
+                status="usable",
+                captured_from="app_server_thread_start",
+                resume_eligible=True,
+            )
+            session = CodexAppSession(
+                group_id="g_codex_resume",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+            )
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            requests: list[tuple[str, dict]] = []
+
+            def fake_request(method, params, *, timeout):
+                requests.append((method, dict(params or {})))
+                if method == "initialize":
+                    return {}
+                if method == "thread/resume":
+                    return {"thread": {"id": "thr_existing"}}
+                raise AssertionError(f"unexpected request: {method}")
+
+            with (
+                patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()),
+                patch("cccc.daemon.codex_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch.object(session, "_request", side_effect=fake_request),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_queue_bootstrap_control_turn", return_value=None),
+            ):
+                session.start()
+
+            self.assertEqual(requests[1][0], "thread/resume")
+            self.assertEqual(requests[1][1].get("threadId"), "thr_existing")
+            stored = read_runtime_session("g_codex_resume", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr_existing")
+            self.assertEqual(stored.get("captured_from"), "app_server_thread_resume")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+        finally:
+            cleanup()
+
+    def test_codex_headless_resume_failure_falls_back_to_fresh_thread(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            record_headless_runtime_session(
+                group_id="g_codex_resume",
+                actor_id="peer1",
+                runtime="codex",
+                cwd=cwd,
+                command=["codex", "app-server", "--listen", "stdio://"],
+                provider_thread_id="thr_stale",
+                status="usable",
+                captured_from="app_server_thread_start",
+                resume_eligible=True,
+            )
+            session = CodexAppSession(
+                group_id="g_codex_resume",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+            )
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            requests: list[str] = []
+
+            def fake_request(method, params, *, timeout):
+                requests.append(method)
+                if method == "initialize":
+                    return {}
+                if method == "thread/resume":
+                    raise RuntimeError("thread not found")
+                if method == "thread/start":
+                    return {"thread": {"id": "thr_fresh"}}
+                raise AssertionError(f"unexpected request: {method}")
+
+            with (
+                patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()),
+                patch("cccc.daemon.codex_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch.object(session, "_request", side_effect=fake_request),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_queue_bootstrap_control_turn", return_value=None),
+            ):
+                session.start()
+
+            self.assertEqual(requests, ["initialize", "thread/resume", "thread/start"])
+            stored = read_runtime_session("g_codex_resume", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr_fresh")
+            self.assertEqual(stored.get("captured_from"), "app_server_thread_start")
+            self.assertTrue(bool(stored.get("resume_eligible")))
         finally:
             cleanup()
 

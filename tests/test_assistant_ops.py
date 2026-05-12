@@ -708,6 +708,62 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_settings_sync_preserves_existing_voice_runtime_config(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.actors.private_env_ops import load_actor_private_env, update_actor_private_env
+            from cccc.kernel.actors import update_actor
+            from cccc.kernel.group import load_group
+            from cccc.kernel.voice_secretary_actor import VOICE_SECRETARY_ACTOR_ID, get_voice_secretary_actor
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            update_actor(
+                group,
+                VOICE_SECRETARY_ACTOR_ID,
+                {
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "command": ["codex", "-m", "voice-manual"],
+                    "env": {"VOICE_PUBLIC": "manual"},
+                    "submit": "newline",
+                    "default_scope_key": "voice-scope",
+                    "avatar_asset_path": "avatars/voice.png",
+                },
+            )
+            update_actor_private_env(group_id, VOICE_SECRETARY_ACTOR_ID, set_vars={"VOICE_SECRET": "voice-secret"}, unset_keys=[], clear=True)
+            update_actor_private_env(group_id, "lead", set_vars={"FOREMAN_SECRET": "foreman-secret"}, unset_keys=[], clear=True)
+
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_language": "zh-CN"}},
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(actor.get("command"), ["codex", "-m", "voice-manual"])
+            self.assertEqual(actor.get("env"), {"VOICE_PUBLIC": "manual"})
+            self.assertEqual(str(actor.get("submit") or ""), "newline")
+            self.assertEqual(str(actor.get("default_scope_key") or ""), "voice-scope")
+            self.assertEqual(str(actor.get("avatar_asset_path") or ""), "avatars/voice.png")
+            self.assertEqual(load_actor_private_env(group_id, VOICE_SECRETARY_ACTOR_ID), {"VOICE_SECRET": "voice-secret"})
+        finally:
+            cleanup()
+
     def test_voice_actor_update_allows_runtime_profile_link_without_losing_voice_tools(self) -> None:
         _, cleanup = self._with_home()
         try:

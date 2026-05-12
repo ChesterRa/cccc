@@ -11,6 +11,7 @@ from ...kernel.ledger import append_event
 from ...kernel.runtime import runtime_start_preflight_error
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...runners.platform_support import pty_support_error_message
@@ -311,14 +312,16 @@ def start_actor_process(
             except Exception:
                 pass
         else:
-            session = pty_runner.SUPERVISOR.start_actor(
+            session = start_pty_actor_with_runtime_resume(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,
-                command=effective_cmd,
+                base_command=effective_cmd,
                 env=prepare_pty_env(inject_actor_context_env(effective_env, group.group_id, actor_id)),
                 runtime=runtime,
+                model=model_from_runtime_command(effective_cmd),
                 max_backlog_bytes=pty_backlog_bytes(),
+                runtime_start_preflight_error=runtime_start_preflight_error,
             )
             try:
                 write_pty_state(group.group_id, actor_id, session.pid)

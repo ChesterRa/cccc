@@ -79,8 +79,8 @@ def _pet_actor_seed(group: Group) -> Dict[str, Any]:
 
 def ensure_pet_actor(group: Group, *, seed: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     current = get_pet_actor(group)
-    seed = dict(seed or _pet_actor_seed(group))
     if current is None:
+        seed = dict(seed or _pet_actor_seed(group))
         return add_actor(
             group,
             actor_id=PET_ACTOR_ID,
@@ -95,21 +95,42 @@ def ensure_pet_actor(group: Group, *, seed: Optional[Dict[str, Any]] = None) -> 
             runtime=str(seed["runtime"]),  # type: ignore[arg-type]
             internal_kind=INTERNAL_KIND_PET,
         )
+    seed = dict(seed or {})
+    capability_autoload = (
+        list(current.get("capability_autoload") or [])
+        if isinstance(current.get("capability_autoload"), list)
+        else list(seed.get("capability_autoload") or [])
+    )
+    if "pack:pet" not in capability_autoload:
+        capability_autoload.append("pack:pet")
+    patch: Dict[str, Any] = {
+        "title": str(current.get("title") or seed.get("title") or PET_ACTOR_TITLE),
+        "capability_autoload": capability_autoload,
+        "enabled": bool(seed.get("enabled", current.get("enabled", True))),
+        "internal_kind": INTERNAL_KIND_PET,
+    }
+    if not str(current.get("default_scope_key") or "").strip() and str(seed.get("default_scope_key") or "").strip():
+        patch["default_scope_key"] = str(seed.get("default_scope_key") or "").strip()
+    current_runtime = str(current.get("runtime") or "").strip()
+    missing_launch = (
+        not current_runtime
+        or not str(current.get("runner") or "").strip()
+        or current_runtime.lower() == "web_model"
+    )
+    if missing_launch and seed:
+        patch.update(
+            {
+                "command": list(seed.get("command") or []),
+                "env": dict(seed.get("env") or {}),
+                "submit": str(seed.get("submit") or "enter").strip() or "enter",
+                "runner": str(seed.get("runner") or "pty"),
+                "runtime": str(seed.get("runtime") or "codex"),
+            }
+        )
     return update_actor(
         group,
         PET_ACTOR_ID,
-        {
-            "title": seed["title"],
-            "command": seed["command"],
-            "env": seed["env"],
-            "capability_autoload": seed["capability_autoload"],
-            "default_scope_key": seed["default_scope_key"],
-            "submit": seed["submit"],
-            "enabled": seed["enabled"],
-            "runner": seed["runner"],
-            "runtime": seed["runtime"],
-            "internal_kind": INTERNAL_KIND_PET,
-        },
+        patch,
     )
 
 

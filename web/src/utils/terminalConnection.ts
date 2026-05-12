@@ -17,3 +17,16 @@ export function buildTerminalConnectionKey(args: {
     args.canControl ? "control" : "readonly",
   ].join(":");
 }
+
+export function isTerminalAttachNonRetryableErrorCode(code: unknown): boolean {
+  const normalized = String(code || "").trim();
+  return [
+    "actor_not_found",
+    "actor_not_running",
+    "auth_required",
+    "group_not_found",
+    "not_pty_actor",
+    "permission_denied",
+    "read_only_terminal",
+  ].includes(normalized);
+}

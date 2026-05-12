@@ -12,6 +12,7 @@ from ...kernel.group import load_group
 from ...kernel.runtime import runtime_start_preflight_error
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ..runner_state_ops import web_model_group_running
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
@@ -233,14 +234,16 @@ def autostart_running_groups(
                         env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
                     )
                 else:
-                    session = pty_runner.SUPERVISOR.start_actor(
+                    session = start_pty_actor_with_runtime_resume(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
-                        command=effective_cmd,
+                        base_command=effective_cmd,
                         env=prepare_pty_env(inject_actor_context_env(effective_env, group.group_id, actor_id)),
                         runtime=runtime,
+                        model=model_from_runtime_command(effective_cmd),
                         max_backlog_bytes=pty_backlog_bytes(),
+                        runtime_start_preflight_error=runtime_start_preflight_error,
                     )
                 logger.info(
                     "autostart started group=%s actor=%s runtime=%s runner_effective=%s",

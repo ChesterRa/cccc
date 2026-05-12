@@ -70,6 +70,7 @@ _RUNTIME_DIR_PARTS = {
     "projections",
     "pty",
     "runners",
+    "runtime_sessions",
     "web_model",
 }
 
