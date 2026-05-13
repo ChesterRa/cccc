@@ -18,6 +18,30 @@ def test_codex_model_footer_does_not_stand_in_for_prompt_visibility() -> None:
     assert derive_pty_terminal_override(runtime="codex", terminal_text=terminal_text) is None
 
 
+def test_codex_working_banner_after_prompt_is_working() -> None:
+    terminal_text = """
+› Run /review on my current changes
+◦ Working (6s • esc to interrupt)
+"""
+
+    assert derive_pty_terminal_override(runtime="codex", terminal_text=terminal_text) == {
+        "effective_working_state": "working",
+        "effective_working_reason": "pty_terminal_codex_working_banner",
+    }
+
+
+def test_codex_prompt_after_working_banner_is_idle() -> None:
+    terminal_text = """
+◦ Working (6s • esc to interrupt)
+› Run /review on my current changes
+"""
+
+    assert derive_pty_terminal_override(runtime="codex", terminal_text=terminal_text) == {
+        "effective_working_state": "idle",
+        "effective_working_reason": "pty_terminal_prompt_visible",
+    }
+
+
 def test_claude_boxed_prompt_visible_is_idle() -> None:
     terminal_text = """
 ╭────────────────────────────────────────────────────────────╮

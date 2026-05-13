@@ -46,8 +46,14 @@ def _has_terminal_prompt_visible(text: str) -> bool:
     return False
 
 
-def _recent_lines_have_terminal_prompt(text: str) -> bool:
-    return any(_is_terminal_prompt_line(line) for line in _recent_non_empty_lines(text))
+def _last_terminal_prompt_offset(text: str) -> int:
+    offset = 0
+    last_offset = -1
+    for raw_line in str(text or "").splitlines(keepends=True):
+        if _is_terminal_prompt_line(raw_line.strip()):
+            last_offset = offset
+        offset += len(raw_line)
+    return last_offset
 
 
 def _has_claude_prompt_visible(text: str) -> bool:
@@ -74,12 +80,11 @@ def _tail_window_has_claude_working_indicator(text: str) -> bool:
     )
 
 
-def _tail_window_has_codex_working_banner(text: str) -> bool:
-    value = str(text or "")
-    if not value:
-        return False
-    compact = re.sub(r"\s+", " ", value)
-    return bool(re.search(r"\bworking\s*\(", compact, re.IGNORECASE))
+def _last_codex_working_banner_offset(text: str) -> int:
+    last_offset = -1
+    for match in re.finditer(r"\bworking\s*\(", str(text or ""), re.IGNORECASE):
+        last_offset = match.start()
+    return last_offset
 
 
 def _tail_window(text: str, *, max_chars: int = DEFAULT_TERMINAL_SIGNAL_WINDOW_CHARS) -> str:
@@ -107,19 +112,23 @@ def derive_pty_terminal_override(*, runtime: str, terminal_text: str) -> Optiona
         return None
 
     tail_text = _tail_window(cleaned)
-    if runtime_id == "codex" and (
-        _has_terminal_prompt_visible(cleaned)
-        or (_recent_lines_have_terminal_prompt(cleaned) and _tail_window_has_codex_working_banner(tail_text))
-    ):
-        return {
-            "effective_working_state": "idle",
-            "effective_working_reason": "pty_terminal_prompt_visible",
-        }
-
-    if runtime_id == "codex" and _tail_window_has_codex_working_banner(tail_text):
-        return {
-            "effective_working_state": "working",
-            "effective_working_reason": "pty_terminal_codex_working_banner",
-        }
+    if runtime_id == "codex":
+        prompt_offset = _last_terminal_prompt_offset(tail_text)
+        working_offset = _last_codex_working_banner_offset(tail_text)
+        if working_offset >= 0:
+            if prompt_offset > working_offset:
+                return {
+                    "effective_working_state": "idle",
+                    "effective_working_reason": "pty_terminal_prompt_visible",
+                }
+            return {
+                "effective_working_state": "working",
+                "effective_working_reason": "pty_terminal_codex_working_banner",
+            }
+        if _has_terminal_prompt_visible(cleaned):
+            return {
+                "effective_working_state": "idle",
+                "effective_working_reason": "pty_terminal_prompt_visible",
+            }
 
     return None

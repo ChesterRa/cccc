@@ -3794,6 +3794,8 @@ class TestCodexAppFlow(unittest.TestCase):
             ), patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True), patch(
                 "cccc.daemon.codex_app_sessions._connect_websocket", return_value=FakeWs()
             ) as connect_ws, patch(
+                "cccc.daemon.codex_app_sessions._codex_cli_available", return_value=True
+            ), patch(
                 "cccc.daemon.codex_app_sessions.CodexAppSession._request", fake_request
             ), patch(
                 "cccc.daemon.codex_app_sessions.CodexAppSession._build_bootstrap_control_text", return_value="bootstrap"
