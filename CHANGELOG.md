@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.17] — 2026-05-14
+
+### Added
+- **Codex PTY app-server state source** for interactive Codex actors. Codex can now keep a PTY surface for the user while CCCC derives runtime activity from Codex app-server events instead of relying only on terminal text heuristics.
+- **Runtime state source controls** across daemon, CLI, Web API, and actor contracts, currently scoped to Codex PTY actors that opt into app-server-backed state.
+- **WeCom media bridging improvements**, including outbound file/media upload through the WeCom AI Bot WebSocket chunk protocol and active outbound sends when no callback reply handle is available.
+
+### Changed
+- **Codex PTY lifecycle handling** was tightened so remote TUI exit stops the backing app-server session, disabled actors project as stopped even if stale runtime state remains, and app-server-backed PTY actors avoid duplicate bootstrap queuing.
+- **PTY activity detection** was split into reusable terminal-state helpers with better Claude prompt/working detection and safer Codex prompt-versus-working ordering.
+- **Runtime dock and actor list state** now treat app-server-backed Codex PTY actors like structured runtime sessions for activity rings while preserving their PTY runner identity for terminal access.
+- **Chat scrolling behavior** now clears stale scroll affordances more reliably when the user is already at the bottom or jumps to a specific message.
+
+### Fixed
+- Fixed Codex PTY state false-idle cases where an older prompt line could override a newer visible `Working (...)` banner.
+- Fixed app-server-backed Codex PTY tests so CI does not depend on the runner having the Codex CLI installed.
+- Fixed disabled actor projections that could still appear active when stale headless/app-server state existed.
+- Fixed runtime avatar rendering for Claude by using an inline Claude logo where the packaged runtime logo path is not appropriate.
+
 ## [0.4.16] — 2026-05-13
 
 ### Added
