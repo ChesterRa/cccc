@@ -1,4 +1,4 @@
-import type { GroupContext, GroupDoc, LedgerEvent } from "../types";
+import type { Actor, GroupContext, GroupDoc, LedgerEvent } from "../types";
 import * as api from "../services/api";
 import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import {
@@ -43,6 +43,22 @@ import {
 } from "./groupStoreCore";
 import type { GroupStoreAsyncActions, GroupStoreGet, GroupStoreSet, GroupState } from "./groupStoreTypes";
 import { useComposerStore } from "./useComposerStore";
+
+function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntimeActors: Actor[] } {
+  const visibleActors: Actor[] = [];
+  const internalRuntimeActors: Actor[] = [];
+  for (const actor of Array.isArray(actors) ? actors : []) {
+    const internalKind = String(actor.internal_kind || "").trim().toLowerCase();
+    if (internalKind) {
+      if (internalKind === "pet" || internalKind === "voice_secretary") {
+        internalRuntimeActors.push(actor);
+      }
+      continue;
+    }
+    visibleActors.push(actor);
+  }
+  return { actors: visibleActors, internalRuntimeActors };
+}
 
 export function createGroupStoreAsyncActions(
   set: GroupStoreSet,
@@ -133,18 +149,26 @@ export function createGroupStoreAsyncActions(
       }
       refreshActorsInFlight.add(gid);
       try {
-        const resp = await api.fetchActors(gid, includeUnread);
+        const resp = await api.fetchActors(gid, includeUnread, undefined, { includeInternal: true });
         if (resp.ok) {
+          const split = splitFetchedActors(resp.result.actors || []);
           const prevActors = get().selectedGroupId === gid ? get().actors : getCachedGroupView(gid)?.actors || [];
+          const prevInternalActors = get().internalRuntimeActorsByGroup[gid] || [];
           const nextActors = includeUnread
-            ? (resp.result.actors || [])
-            : mergeActorUnreadCounts(resp.result.actors || [], prevActors);
+            ? split.actors
+            : mergeActorUnreadCounts(split.actors, prevActors);
+          const nextInternalRuntimeActors = includeUnread
+            ? split.internalRuntimeActors
+            : mergeActorUnreadCounts(split.internalRuntimeActors, prevInternalActors);
           const current = get();
           const runtimeFallback =
             current.groupDoc?.group_id === gid
               ? current.groupDoc.runtime_status || null
               : current.groups.find((group) => String(group.group_id || "").trim() === gid)?.runtime_status || null;
-          const runtimeStatus = deriveRuntimeStatusFromActors(nextActors, runtimeFallback);
+          const runtimeStatus = deriveRuntimeStatusFromActors(
+            [...nextActors, ...nextInternalRuntimeActors],
+            runtimeFallback,
+          );
           const nextGroups = patchGroupRuntimeStatus(current.groups, gid, runtimeStatus);
           const nextGroupDoc = current.selectedGroupId === gid && current.groupDoc
             ? {
@@ -157,6 +181,10 @@ export function createGroupStoreAsyncActions(
           saveGroupView(gid, { actors: nextActors, groupDoc: nextGroupDoc });
           const patch: Partial<GroupState> = {};
           if (nextGroups !== current.groups) patch.groups = nextGroups;
+          patch.internalRuntimeActorsByGroup = {
+            ...current.internalRuntimeActorsByGroup,
+            [gid]: nextInternalRuntimeActors,
+          };
           if (current.selectedGroupId === gid) {
             patch.actors = nextActors;
             patch.selectedGroupActorsHydrating = false;
@@ -189,10 +217,7 @@ export function createGroupStoreAsyncActions(
         const resp = await api.fetchActors(gid, false, { noCache: true }, { includeInternal: true });
         if (!resp.ok) return;
         if (!isLatestGroupRequestEpoch(internalActorsRequestEpochByGroup, gid, epoch)) return;
-        const nextActors = (resp.result.actors || []).filter((actor) => {
-          const internalKind = String(actor.internal_kind || "").trim().toLowerCase();
-          return internalKind === "pet" || internalKind === "voice_secretary";
-        });
+        const nextActors = splitFetchedActors(resp.result.actors || []).internalRuntimeActors;
         set((state) => ({
           internalRuntimeActorsByGroup: {
             ...state.internalRuntimeActorsByGroup,
@@ -302,7 +327,7 @@ export function createGroupStoreAsyncActions(
 
       const showPromise = api.fetchGroup(gid);
       const tailPromise = api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false });
-      const actorsPromise = api.fetchActors(gid, false);
+      const actorsPromise = api.fetchActors(gid, false, undefined, { includeInternal: true });
       const contextEpoch = beginContextRequest(gid);
       const settingsEpoch = beginGroupRequestEpoch(settingsRequestEpochByGroup, gid);
 
@@ -364,7 +389,16 @@ export function createGroupStoreAsyncActions(
 
       void actorsPromise.then((actorsResp) => {
         if (!actorsResp.ok) return;
-        commitViewPatch({ actors: actorsResp.result.actors || [] });
+        const split = splitFetchedActors(actorsResp.result.actors || []);
+        commitViewPatch({ actors: split.actors });
+        if (isLatestSelection()) {
+          set((state) => ({
+            internalRuntimeActorsByGroup: {
+              ...state.internalRuntimeActorsByGroup,
+              [gid]: split.internalRuntimeActors,
+            },
+          }));
+        }
       }).catch((error) => {
         console.error(`Failed to load actors for group=${gid}:`, error);
       }).finally(() => {
@@ -456,7 +490,7 @@ export function createGroupStoreAsyncActions(
         const [show, tail, actorsResp] = await Promise.all([
           api.fetchGroup(gid),
           api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false }),
-          api.fetchActors(gid, false),
+          api.fetchActors(gid, false, undefined, { includeInternal: true }),
         ]);
 
         const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};
@@ -470,7 +504,7 @@ export function createGroupStoreAsyncActions(
           patch.hasMoreHistory = !!tail.result.has_more;
         }
         if (actorsResp.ok) {
-          patch.actors = actorsResp.result.actors || [];
+          patch.actors = splitFetchedActors(actorsResp.result.actors || []).actors;
         }
         saveGroupView(gid, patch);
       } catch (error) {

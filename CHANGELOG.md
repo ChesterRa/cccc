@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.16] — 2026-05-13
+
+### Added
+- **Durable runtime session resume state** for supported provider runtimes. CCCC now stores provider session metadata under each group so actors can relaunch into the same Claude, Codex, or Gemini session when the runtime supports explicit resume.
+- **PTY runtime resume support** for Claude, Codex, and Gemini with provider-specific session capture: generated explicit session IDs for Claude/Gemini, Codex `/status` session detection, stale-resume fallback, and safeguards against PTY/headless session mix-ups.
+- **Headless runtime session metadata** for Claude and Codex app sessions, including provider session/thread recording and guarded native-resume handling where supported.
+
+### Changed
+- **Actor terminal connection handling** was extracted into a reusable hook, reducing AgentTab complexity and making PTY attach, reconnect, terminal signals, and runtime transitions easier to maintain.
+- **Runtime state synchronization in Web** now uses one unified actor snapshot path for ordinary actors and built-in runtime actors, while `actor.activity` updates merge into both stores. Runtime dock state is less likely to appear stale until a manual page refresh.
+- **Composer and Voice Secretary UI behavior** were tightened around cross-group recipients, mobile/voice layout, live transcript preview behavior, and attachment/action plumbing.
+- **MCP install and runtime startup checks** were hardened so already-installed runtime MCP configurations are handled more predictably during actor startup.
+
+### Fixed
+- Fixed runtime dock desynchronization where an actor could be running in the daemon but still appear stopped in the Web UI until refresh.
+- Fixed noisy terminal attach loops when switching between PTY and headless actors, including repeated `terminal attach is only available for PTY actors` messages.
+- Fixed stale or rejected runtime resume metadata so failed provider resume attempts fall back to fresh starts and do not poison subsequent launches.
+- Fixed Copy Groups export so runtime session metadata remains excluded from copied group packages.
+- Fixed built-in assistant startup/profile synchronization so PET and Voice Secretary use their own configuration instead of inheriting foreman runtime details.
+
 ## [0.4.15] — 2026-05-10
 
 ### Added

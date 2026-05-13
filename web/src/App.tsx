@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
 const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ default: m.WebPet })));
@@ -126,6 +126,14 @@ export default function App() {
     () => internalRuntimeActorsByGroup[String(selectedGroupId || "").trim()] || [],
     [internalRuntimeActorsByGroup, selectedGroupId]
   );
+  const refreshRuntimeActors = useCallback(
+    async (groupIdArg?: string, opts?: { includeUnread?: boolean }) => {
+      const gid = String(groupIdArg || selectedGroupId || "").trim();
+      if (!gid) return;
+      await refreshActors(gid, opts);
+    },
+    [refreshActors, selectedGroupId],
+  );
   const visibleRuntimeActors = useMemo(
     () =>
       filterVisibleRuntimeActors(
@@ -166,7 +174,6 @@ export default function App() {
     handleTabChange,
   } = useAppTabState({
     activeTab,
-    actors,
     runtimeActors: visibleRuntimeActors,
     selectedGroupId,
     isSmallScreen,
@@ -263,7 +270,7 @@ export default function App() {
 
   useGlobalEvents({
     refreshGroups,
-    refreshActors,
+    refreshActors: refreshRuntimeActors,
     selectedGroupId,
     refreshCapabilities: (groupId) => {
       publishCapabilityChanged(groupId);
@@ -429,7 +436,7 @@ export default function App() {
         onEditActor={editActor}
         onRemoveActor={removeActor}
         onOpenActorInbox={openActorInbox}
-        onRefreshActors={() => void refreshActors()}
+        onRefreshActors={() => void refreshRuntimeActors(selectedGroupId)}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       />

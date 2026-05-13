@@ -54,7 +54,6 @@ from ..schemas import (
 
 _READONLY_ACTOR_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _READONLY_ACTOR_INFLIGHT: Dict[str, Dict[str, Any]] = {}
-_READONLY_ACTOR_HANDOFF_ONCE: set[str] = set()
 _READONLY_ACTOR_GENERATION: Dict[str, int] = {}
 _READONLY_ACTOR_CACHE_LOCK = threading.Lock()
 _READONLY_ACTOR_TTL_S = 0.8
@@ -112,7 +111,6 @@ async def invalidate_readonly_actor_list(group_id: str) -> None:
             cache_key = f"actors:{gid}:{suffix}"
             _READONLY_ACTOR_GENERATION[cache_key] = int(_READONLY_ACTOR_GENERATION.get(cache_key, 0)) + 1
             _READONLY_ACTOR_CACHE.pop(cache_key, None)
-            _READONLY_ACTOR_HANDOFF_ONCE.discard(cache_key)
             _READONLY_ACTOR_INFLIGHT.pop(cache_key, None)
 
 
@@ -267,10 +265,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             hit = _READONLY_ACTOR_CACHE.get(cache_key)
             if ttl_s > 0 and hit is not None and hit[0] > now:
                 return hit[1]
-            if ttl_s <= 0 and hit is not None and cache_key in _READONLY_ACTOR_HANDOFF_ONCE:
-                _READONLY_ACTOR_HANDOFF_ONCE.discard(cache_key)
-                _READONLY_ACTOR_CACHE.pop(cache_key, None)
-                return hit[1]
             inflight_entry = _READONLY_ACTOR_INFLIGHT.get(cache_key)
             if inflight_entry is None:
                 inflight_entry = {"event": threading.Event(), "result": None, "error": None, "waiters": 1}
@@ -297,9 +291,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 if current_generation == fetch_generation and _READONLY_ACTOR_INFLIGHT.get(cache_key) is inflight_entry:
                     if ttl_s > 0:
                         _READONLY_ACTOR_CACHE[cache_key] = (time.monotonic() + ttl_s, val)
-                    elif int(inflight_entry.get("waiters", 1)) <= 1:
-                        _READONLY_ACTOR_CACHE[cache_key] = (time.monotonic(), val)
-                        _READONLY_ACTOR_HANDOFF_ONCE.add(cache_key)
                 if inflight_entry is not None:
                     inflight_entry["result"] = val
                     inflight_entry["event"].set()

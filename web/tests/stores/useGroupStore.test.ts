@@ -529,7 +529,7 @@ describe("useGroupStore actors fetch policy", () => {
 
   it("refreshActors explicitly requests unread counts by default", async () => {
     await useGroupStore.getState().refreshActors("g-demo");
-    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", true);
+    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", true, undefined, { includeInternal: true });
   });
 
   it("refreshActors can do pure-read refresh without wiping existing unread counts", async () => {
@@ -543,8 +543,29 @@ describe("useGroupStore actors fetch policy", () => {
 
     await useGroupStore.getState().refreshActors("g-demo", { includeUnread: false });
 
-    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false);
+    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false, undefined, { includeInternal: true });
     expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: false, unread_count: 4 }]);
+  });
+
+  it("refreshActors splits internal runtime actors from the primary actor list", async () => {
+    vi.mocked(api.fetchActors).mockResolvedValue({
+      ok: true,
+      result: {
+        actors: [
+          { id: "peer-1", running: true },
+          { id: "voice-secretary", internal_kind: "voice_secretary", running: true },
+          { id: "pet-peer", internal_kind: "pet", running: false },
+        ],
+      },
+    } as Awaited<ReturnType<typeof api.fetchActors>>);
+
+    await useGroupStore.getState().refreshActors("g-demo", { includeUnread: false });
+
+    expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: true }]);
+    expect(useGroupStore.getState().internalRuntimeActorsByGroup["g-demo"]).toEqual([
+      { id: "voice-secretary", internal_kind: "voice_secretary", running: true },
+      { id: "pet-peer", internal_kind: "pet", running: false },
+    ]);
   });
 
   it("filterUiEvents drops runtime-only ledger events from chat tail", () => {
@@ -584,6 +605,44 @@ describe("useGroupStore actors fetch policy", () => {
         effective_working_updated_at: null,
         effective_active_task_id: "T1",
       },
+    ]);
+  });
+
+  it("updateActorActivity merges internal runtime actor state", () => {
+    useGroupStore.setState({
+      selectedGroupId: "g-demo",
+      actors: [{ id: "peer-1", running: true }],
+      internalRuntimeActorsByGroup: {
+        "g-demo": [
+          { id: "voice-secretary", internal_kind: "voice_secretary", running: false, idle_seconds: 20 },
+          { id: "pet-peer", internal_kind: "pet", running: false },
+        ],
+      },
+    });
+
+    useGroupStore.getState().updateActorActivity([
+      {
+        id: "voice-secretary",
+        running: true,
+        idle_seconds: 1,
+        effective_working_state: "waiting",
+        effective_working_reason: "runtime_running",
+      },
+    ]);
+
+    expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: true }]);
+    expect(useGroupStore.getState().internalRuntimeActorsByGroup["g-demo"]).toEqual([
+      {
+        id: "voice-secretary",
+        internal_kind: "voice_secretary",
+        running: true,
+        idle_seconds: 1,
+        effective_working_state: "waiting",
+        effective_working_reason: "runtime_running",
+        effective_working_updated_at: null,
+        effective_active_task_id: null,
+      },
+      { id: "pet-peer", internal_kind: "pet", running: false },
     ]);
   });
 
@@ -684,8 +743,8 @@ describe("useGroupStore actors fetch policy", () => {
   it("loadGroup keeps unread counts on the selected group path", async () => {
     await useGroupStore.getState().loadGroup("g-demo");
     await vi.waitFor(() => {
-      expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false);
-      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true);
+      expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false, undefined, { includeInternal: true });
+      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true, undefined, { includeInternal: true });
     });
   });
 
@@ -703,12 +762,12 @@ describe("useGroupStore actors fetch policy", () => {
     await useGroupStore.getState().loadGroup("g-demo");
     await flushDeferredUnreadRefresh();
     expect(api.fetchActors).toHaveBeenCalledTimes(1);
-    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false);
+    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false, undefined, { includeInternal: true });
 
     resolvePureRead?.({ ok: true, result: { actors: [{ id: "peer-1" }] } } as Awaited<ReturnType<typeof api.fetchActors>>);
     await vi.waitFor(() => {
       expect(api.fetchActors).toHaveBeenCalledTimes(2);
-      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true);
+      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true, undefined, { includeInternal: true });
     });
   });
 
@@ -730,7 +789,7 @@ describe("useGroupStore actors fetch policy", () => {
     const queuedUnreadRefresh = useGroupStore.getState().refreshActors("g-demo", { includeUnread: true });
 
     expect(api.fetchActors).toHaveBeenCalledTimes(1);
-    expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false);
+    expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false, undefined, { includeInternal: true });
 
     resolvePureRead?.({ ok: true, result: { actors: [{ id: "peer-1" }] } } as Awaited<ReturnType<typeof api.fetchActors>>);
     await readonlyRefresh;
@@ -738,7 +797,7 @@ describe("useGroupStore actors fetch policy", () => {
 
     await vi.waitFor(() => {
       expect(api.fetchActors).toHaveBeenCalledTimes(2);
-      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true);
+      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true, undefined, { includeInternal: true });
     });
   });
 
@@ -754,7 +813,7 @@ describe("useGroupStore actors fetch policy", () => {
     });
 
     await useGroupStore.getState().warmGroup(warmGroupId);
-    expect(api.fetchActors).toHaveBeenCalledWith(warmGroupId, false);
+    expect(api.fetchActors).toHaveBeenCalledWith(warmGroupId, false, undefined, { includeInternal: true });
   });
 
   it("refreshPresentation updates the selected group snapshot", async () => {

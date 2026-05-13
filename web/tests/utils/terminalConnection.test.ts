@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTerminalConnectionKey, isTerminalAttachNonRetryableErrorCode } from "../../src/utils/terminalConnection";
+import {
+  buildTerminalConnectionKey,
+  isTerminalAttachNonRetryableErrorCode,
+  isTerminalAttachStartupRaceErrorCode,
+  shouldSuppressTerminalAttachErrorOutput,
+} from "../../src/utils/terminalConnection";
 
 describe("buildTerminalConnectionKey", () => {
   it("changes when terminal control becomes available", () => {
@@ -18,9 +23,24 @@ describe("buildTerminalConnectionKey", () => {
     );
   });
 
-  it("treats terminal-inapplicable attach errors as non-retryable", () => {
+  it("treats runner-mismatch attach errors as non-retryable but keeps startup races retryable", () => {
     expect(isTerminalAttachNonRetryableErrorCode("not_pty_actor")).toBe(true);
-    expect(isTerminalAttachNonRetryableErrorCode("actor_not_running")).toBe(true);
+    expect(isTerminalAttachNonRetryableErrorCode("actor_not_running")).toBe(false);
+    expect(isTerminalAttachNonRetryableErrorCode("actor_not_found")).toBe(true);
     expect(isTerminalAttachNonRetryableErrorCode("daemon_unavailable")).toBe(false);
+  });
+
+  it("classifies transient terminal attach startup races", () => {
+    expect(isTerminalAttachStartupRaceErrorCode("not_pty_actor")).toBe(false);
+    expect(isTerminalAttachStartupRaceErrorCode("actor_not_running")).toBe(true);
+    expect(isTerminalAttachStartupRaceErrorCode("actor_not_found")).toBe(false);
+    expect(isTerminalAttachStartupRaceErrorCode("daemon_unavailable")).toBe(false);
+  });
+
+  it("suppresses noisy terminal attach state-transition errors in the terminal buffer", () => {
+    expect(shouldSuppressTerminalAttachErrorOutput("not_pty_actor")).toBe(true);
+    expect(shouldSuppressTerminalAttachErrorOutput("actor_not_running")).toBe(true);
+    expect(shouldSuppressTerminalAttachErrorOutput("actor_not_found")).toBe(false);
+    expect(shouldSuppressTerminalAttachErrorOutput("daemon_unavailable")).toBe(false);
   });
 });

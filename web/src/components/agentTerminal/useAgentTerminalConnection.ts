@@ -5,7 +5,12 @@ import type { Terminal } from "@xterm/xterm";
 import { fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
-import { buildTerminalConnectionKey, isTerminalAttachNonRetryableErrorCode } from "../../utils/terminalConnection";
+import {
+  buildTerminalConnectionKey,
+  isTerminalAttachNonRetryableErrorCode,
+  isTerminalAttachStartupRaceErrorCode,
+  shouldSuppressTerminalAttachErrorOutput,
+} from "../../utils/terminalConnection";
 
 export type AgentTerminalConnectionStatus = "disconnected" | "connecting" | "connected" | "reconnecting";
 
@@ -13,6 +18,7 @@ const TERMINAL_SHOW_DELAY_MS = 150;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const STARTUP_RACE_RECONNECT_DELAY_MS = 750;
 
 export function useAgentTerminalConnection(args: {
   activated: boolean;
@@ -56,6 +62,7 @@ export function useAgentTerminalConnection(args: {
   const outputFilterTailRef = useRef("");
   const terminalSignalBufferRef = useRef("");
   const terminalAttachNoRetryRef = useRef(false);
+  const terminalAttachStartupRaceRef = useRef(false);
   const lastTermEpochRef = useRef(termEpoch);
 
   const isRunningRef = useRef(isRunning);
@@ -74,6 +81,7 @@ export function useAgentTerminalConnection(args: {
     clearTerminalSignalRef.current = clearTerminalSignal;
     if (isRunning) {
       terminalAttachNoRetryRef.current = false;
+      terminalAttachStartupRaceRef.current = false;
     }
   }, [actorRuntime, canControl, clearTerminalSignal, isRunning, onStatusChange, setTerminalSignal]);
 
@@ -113,6 +121,9 @@ export function useAgentTerminalConnection(args: {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    reconnectAttemptRef.current = 0;
+    terminalAttachNoRetryRef.current = false;
+    terminalAttachStartupRaceRef.current = false;
 
     let disposed = false;
     let disposable: { dispose: () => void } | null = null;
@@ -237,14 +248,17 @@ export function useAgentTerminalConnection(args: {
           try {
             const msg = JSON.parse(event.data);
             if (msg.ok === false && msg.error) {
-              handleDecoded(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
               const code = String(msg.error.code || "").trim();
+              if (!shouldSuppressTerminalAttachErrorOutput(code)) {
+                handleDecoded(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
+              }
               if (isTerminalAttachNonRetryableErrorCode(code)) {
                 terminalAttachNoRetryRef.current = true;
               }
-              if (code === "actor_not_running" || code === "not_pty_actor") {
-                onStatusChangeRef.current?.();
+              if (isTerminalAttachStartupRaceErrorCode(code)) {
+                terminalAttachStartupRaceRef.current = true;
               }
+              onStatusChangeRef.current?.();
             }
           } catch {
             handleDecoded(event.data);
@@ -258,17 +272,24 @@ export function useAgentTerminalConnection(args: {
         const noRetry = event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
 
         if (!noRetry && isRunningRef.current && !isHeadless) {
-          const attempt = reconnectAttemptRef.current;
-          if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+          const startupRace = terminalAttachStartupRaceRef.current;
+          const attempt = startupRace ? 0 : reconnectAttemptRef.current;
+          if (!startupRace && attempt >= MAX_RECONNECT_ATTEMPTS) {
             setConnectionStatus("disconnected");
             return;
           }
 
-          const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), RECONNECT_MAX_DELAY_MS);
+          const delay = startupRace
+            ? STARTUP_RACE_RECONNECT_DELAY_MS
+            : Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), RECONNECT_MAX_DELAY_MS);
           setConnectionStatus("reconnecting");
 
           reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttemptRef.current++;
+            if (startupRace) {
+              terminalAttachStartupRaceRef.current = false;
+            } else {
+              reconnectAttemptRef.current++;
+            }
             connect();
           }, delay);
         } else {

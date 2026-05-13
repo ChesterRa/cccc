@@ -7,7 +7,6 @@ export function isChatViewportAtBottom(scrollHeight: number, scrollTop: number, 
 
 type UseAppTabStateOptions = {
   activeTab: string;
-  actors: Actor[];
   runtimeActors: Actor[];
   selectedGroupId: string;
   isSmallScreen: boolean;
@@ -32,7 +31,6 @@ type UseAppTabStateResult = {
 
 export function useAppTabState({
   activeTab,
-  actors,
   runtimeActors,
   selectedGroupId,
   isSmallScreen,
@@ -81,8 +79,8 @@ export function useAppTabState({
   }, [activeTab, isSmallScreen]);
 
   useEffect(() => {
-    actorsRef.current = actors;
-  }, [actors]);
+    actorsRef.current = runtimeActors;
+  }, [runtimeActors]);
 
   const renderedActorIds = useMemo(() => {
     const live = new Set(runtimeActors.map((actor) => String(actor.id || "")).filter((id) => id));

@@ -530,44 +530,65 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }),
   updateActorActivity: (updates) =>
     set((state) => {
-      if (!state.actors.length || !updates.length) return state;
-      const map = new Map(updates.map((u) => [u.id, u]));
-      let changed = false;
-      const next = state.actors.map((a) => {
-        const u = map.get(a.id);
-        if (
-          u && (
-            a.idle_seconds !== (u.idle_seconds ?? null)
-            || a.running !== u.running
-            || a.effective_working_state !== u.effective_working_state
-            || a.effective_working_reason !== u.effective_working_reason
-            || a.effective_working_updated_at !== (u.effective_working_updated_at ?? null)
-            || a.effective_active_task_id !== (u.effective_active_task_id ?? null)
-          )
-        ) {
-          changed = true;
-          return {
-            ...a,
-            idle_seconds: u.idle_seconds ?? null,
-            running: u.running,
-            effective_working_state: u.effective_working_state,
-            effective_working_reason: u.effective_working_reason,
-            effective_working_updated_at: u.effective_working_updated_at ?? null,
-            effective_active_task_id: u.effective_active_task_id ?? null,
-            web_model_queued_count: String(a.runtime || "").trim().toLowerCase() === "web_model"
-              && String(u.effective_working_state || "").trim().toLowerCase() !== "working"
-                ? 0
-                : a.web_model_queued_count,
-          };
+      if (!updates.length) return state;
+      const updateById = new Map(updates.map((u) => [String(u.id || "").trim(), u]));
+      const applyUpdates = (actors: typeof state.actors) => {
+        if (!Array.isArray(actors) || actors.length === 0) {
+          return { actors, changed: false };
         }
-        return a;
-      });
-      if (!changed) return state;
+        let changed = false;
+        const next = actors.map((a) => {
+          const u = updateById.get(String(a.id || "").trim());
+          if (
+            u && (
+              a.idle_seconds !== (u.idle_seconds ?? null)
+              || a.running !== u.running
+              || a.effective_working_state !== u.effective_working_state
+              || a.effective_working_reason !== u.effective_working_reason
+              || a.effective_working_updated_at !== (u.effective_working_updated_at ?? null)
+              || a.effective_active_task_id !== (u.effective_active_task_id ?? null)
+            )
+          ) {
+            changed = true;
+            return {
+              ...a,
+              idle_seconds: u.idle_seconds ?? null,
+              running: u.running,
+              effective_working_state: u.effective_working_state,
+              effective_working_reason: u.effective_working_reason,
+              effective_working_updated_at: u.effective_working_updated_at ?? null,
+              effective_active_task_id: u.effective_active_task_id ?? null,
+              web_model_queued_count: String(a.runtime || "").trim().toLowerCase() === "web_model"
+                && String(u.effective_working_state || "").trim().toLowerCase() !== "working"
+                  ? 0
+                  : a.web_model_queued_count,
+            };
+          }
+          return a;
+        });
+        return { actors: next, changed };
+      };
+
+      const normal = applyUpdates(state.actors);
       const gid = String(state.selectedGroupId || "").trim();
-      if (gid) {
-        saveGroupView(gid, { actors: next });
+      const currentInternalActors = gid ? state.internalRuntimeActorsByGroup[gid] || [] : [];
+      const internal = applyUpdates(currentInternalActors);
+
+      if (!normal.changed && !internal.changed) return state;
+      const patch: Partial<typeof state> = {};
+      if (normal.changed) {
+        patch.actors = normal.actors;
+        if (gid) {
+          saveGroupView(gid, { actors: normal.actors });
+        }
       }
-      return { actors: next };
+      if (internal.changed && gid) {
+        patch.internalRuntimeActorsByGroup = {
+          ...state.internalRuntimeActorsByGroup,
+          [gid]: internal.actors,
+        };
+      }
+      return patch;
     }),
   setGroupContext: (ctx) =>
     set((state) => {
