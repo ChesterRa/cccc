@@ -10,9 +10,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from ...kernel.inbox import is_message_for_actor
+from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 
 TRANSPORT_SKIP = "skip"
 TRANSPORT_PTY = "pty"
+TRANSPORT_CODEX_APP_SERVER = "codex_app_server"
 TRANSPORT_CODEX_HEADLESS = "codex_headless"
 TRANSPORT_CLAUDE_HEADLESS = "claude_headless"
 TRANSPORT_WEB_MODEL_BROWSER = "web_model_browser"
@@ -131,6 +133,15 @@ def plan_actor_chat_delivery(
         )
 
     if runner_effective == "pty":
+        if actor_uses_codex_app_server_state(actor):
+            return ActorDeliveryDecision(
+                actor_id=actor_id,
+                transport=TRANSPORT_PTY,
+                reason="codex_pty_app_server_state_only",
+                runtime=runtime,
+                runner_kind=runner_kind,
+                runner_effective=runner_effective,
+            )
         return ActorDeliveryDecision(
             actor_id=actor_id,
             transport=TRANSPORT_PTY,

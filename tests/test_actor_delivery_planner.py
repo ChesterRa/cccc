@@ -54,6 +54,30 @@ def test_planner_routes_targeted_pty_actor() -> None:
     assert decision.reason == "pty_runner"
 
 
+def test_planner_keeps_codex_pty_app_server_actor_on_pty_delivery() -> None:
+    actor = {
+        "id": "peer1",
+        "runner": "pty",
+        "runtime": "codex",
+        "runtime_state_source": "app_server",
+    }
+    decision = plan_actor_chat_delivery(
+        group=_group(actor),
+        actor=actor,
+        event=_event(),
+        by="user",
+        effective_to=["peer1"],
+        effective_runner_kind=_runner,
+        codex_headless_running=lambda _group_id, _actor_id: True,
+        claude_headless_running=lambda _group_id, _actor_id: False,
+    )
+
+    assert decision.actor_id == "peer1"
+    assert decision.transport == TRANSPORT_PTY
+    assert decision.reason == "codex_pty_app_server_state_only"
+    assert decision.runner_effective == "pty"
+
+
 def test_planner_skips_sender_and_non_targeted_actor() -> None:
     actor = {"id": "peer1", "runner": "pty", "runtime": "codex"}
     sender_decision = plan_actor_chat_delivery(

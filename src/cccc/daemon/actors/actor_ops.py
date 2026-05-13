@@ -12,6 +12,7 @@ from ...kernel.actors import find_actor, get_effective_role, list_actors
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
+from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -94,6 +95,10 @@ def handle_actor_list(
             if runtime.lower() == "web_model" and effective_runner == "headless":
                 headless_state = read_headless_state(group_id, aid)
                 running = bool(coerce_bool(actor.get("enabled"), default=True) and headless_state_running(group_id, aid))
+            elif actor_uses_codex_app_server_state(actor):
+                state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
+                headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
+                running = bool(state is not None and codex_app_supervisor.actor_running(group_id, aid))
             elif runtime.lower() == "codex" and effective_runner == "headless":
                 state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
@@ -127,7 +132,7 @@ def handle_actor_list(
             actor.update(
                 derive_effective_working_state(
                     running=running,
-                    effective_runner=effective_runner,
+                    effective_runner="headless" if actor_uses_codex_app_server_state(actor) else effective_runner,
                     runtime=runtime,
                     idle_seconds=idle_seconds,
                     pty_terminal_text=pty_terminal_text,

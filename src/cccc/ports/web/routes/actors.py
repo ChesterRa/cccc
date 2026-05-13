@@ -23,6 +23,7 @@ from ....kernel.actors import find_actor
 from ....kernel.context import ContextStorage
 from ....kernel.inbox import get_indexed_unread_counts
 from ....kernel.query_projections import get_actor_list_projection
+from ....kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ....kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
@@ -139,6 +140,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
             continue
         runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
         effective_runner = "headless" if runner_kind == "headless" else "pty"
+        uses_codex_app_server_state = actor_uses_codex_app_server_state(actor)
         runtime = str(actor.get("runtime") or "").strip()
         running = False
         idle_seconds = None
@@ -167,7 +169,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 state = codex_app_supervisor.get_state(group_id=gid, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else headless_state)
                 running = bool(state is not None and codex_app_supervisor.actor_running(gid, aid))
-            if running:
+            if running and not uses_codex_app_server_state:
                 effective_runner = "headless"
         if not running and runtime.lower() == "claude" and effective_runner == "headless":
             try:
@@ -190,7 +192,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
             state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
             headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
             running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(gid, aid))
-        if not running and effective_runner != "headless":
+        if not running and effective_runner != "headless" and not uses_codex_app_server_state:
             running = bool(pty_runner.SUPERVISOR.actor_running(gid, aid))
             if not running:
                 try:
@@ -210,7 +212,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 )
             idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=gid, actor_id=aid) if running else None
         pty_terminal_text = ""
-        if effective_runner == "pty" and running:
+        if effective_runner == "pty" and running and not uses_codex_app_server_state:
             try:
                 pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
                     group_id=gid,
@@ -222,10 +224,11 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         actor["running"] = running
         actor["idle_seconds"] = idle_seconds
         actor["runner_effective"] = effective_runner
+        state_runner = "headless" if uses_codex_app_server_state else effective_runner
         actor.update(
             derive_effective_working_state(
                 running=running,
-                effective_runner=effective_runner,
+                effective_runner=state_runner,
                 runtime=runtime,
                 idle_seconds=idle_seconds,
                 pty_terminal_text=pty_terminal_text,
@@ -642,6 +645,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch["runner"] = req.runner
         if req.runtime is not None:
             patch["runtime"] = req.runtime
+        if req.runtime_state_source is not None:
+            patch["runtime_state_source"] = req.runtime_state_source
         if req.enabled is not None:
             patch["enabled"] = bool(req.enabled)
         if req.avatar_asset_path is not None:

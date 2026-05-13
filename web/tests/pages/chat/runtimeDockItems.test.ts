@@ -87,6 +87,7 @@ function makeRuntimeDockItem(args: {
   actorLabel: string;
   liveWorkCard: LiveWorkCard | null;
   runner?: RuntimeDockItem["runner"];
+  runtimeStateSource?: Actor["runtime_state_source"];
 }): RuntimeDockItem {
   const runner = args.runner || "headless";
   const actor: Actor = {
@@ -94,6 +95,7 @@ function makeRuntimeDockItem(args: {
     title: args.actorLabel,
     runtime: "codex",
     runner,
+    runtime_state_source: args.runtimeStateSource,
   };
   return {
     actor,
@@ -102,6 +104,7 @@ function makeRuntimeDockItem(args: {
     runtime: "codex",
     runner,
     unreadCount: 0,
+    webModelQueuedCount: 0,
     liveWorkCard: args.liveWorkCard,
   };
 }
@@ -769,6 +772,13 @@ describe("runtimeDockItems", () => {
       liveWorkCard: null,
       runner: "pty",
     });
+    const appServerPtyItem = makeRuntimeDockItem({
+      actorId: "pty-app",
+      actorLabel: "PTY App",
+      liveWorkCard: null,
+      runner: "pty",
+      runtimeStateSource: "app_server",
+    });
 
     expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("attention");
     expect(getRuntimeRingTone(pendingItem, false, "idle")).toBe("stopped");
@@ -777,9 +787,13 @@ describe("runtimeDockItems", () => {
     expect(getRuntimeRingTone(completedFinalAnswerItem, true, "idle")).toBe("idle");
     expect(getRuntimeRingTone(headlessItem, true, "working")).toBe("active");
     expect(getRuntimeRingTone(headlessItem, true, "waiting")).toBe("idle");
-    expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("active");
+    expect(getRuntimeRingTone(headlessItem, true, "stuck")).toBe("attention");
+    expect(getRuntimeRingTone(appServerPtyItem, true, "working")).toBe("active");
+    expect(getRuntimeRingTone(appServerPtyItem, true, "waiting")).toBe("idle");
+    expect(getRuntimeRingTone(appServerPtyItem, true, "stuck")).toBe("attention");
+    expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("idle");
-    expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("attention");
+    expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, false, "working")).toBe("stopped");
   });

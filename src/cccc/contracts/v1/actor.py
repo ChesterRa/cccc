@@ -13,6 +13,7 @@ from ...util.time import utc_now_iso
 ActorRole = Literal["foreman", "peer"]
 ActorSubmit = Literal["enter", "newline", "none"]
 RunnerKind = Literal["pty", "headless"]
+RuntimeStateSource = Literal["terminal", "app_server"]
 AgentRuntime = Literal[
     "amp",
     "auggie",
@@ -49,6 +50,7 @@ class Actor(BaseModel):
     enabled: bool = True
     runner: RunnerKind = "pty"  # "pty" for interactive, "headless" for MCP-driven
     runtime: AgentRuntime = "codex"  # Agent CLI runtime
+    runtime_state_source: RuntimeStateSource = "terminal"
     internal_kind: Optional[InternalActorKind] = None
     avatar_asset_path: str = ""
     profile_id: str = ""

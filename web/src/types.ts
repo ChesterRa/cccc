@@ -236,6 +236,7 @@ export type Actor = {
   runner?: string;
   runner_effective?: string;
   runtime?: string;
+  runtime_state_source?: "terminal" | "app_server" | string;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
   profile_scope?: "global" | "user";

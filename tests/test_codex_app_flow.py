@@ -3341,6 +3341,145 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_activity_thread_uses_pty_tail_prompt_when_override_missing(self) -> None:
+        from cccc.daemon.serve_ops import start_actor_activity_thread
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="pty-tail-activity", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            published: list[dict] = []
+
+            class _PtySupervisor:
+                @staticmethod
+                def actor_running(_group_id: str, _actor_id: str) -> bool:
+                    return True
+
+                @staticmethod
+                def idle_seconds(*, group_id: str, actor_id: str) -> float:
+                    return 600.0
+
+                @staticmethod
+                def terminal_override(*, group_id: str, actor_id: str):
+                    return None
+
+                @staticmethod
+                def tail_output(*, group_id: str, actor_id: str, max_bytes: int) -> bytes:
+                    return "previous output\n› \n".encode("utf-8")
+
+            class _Broadcaster:
+                def publish(self, event: dict) -> None:
+                    published.append(event)
+
+            stop_event = threading.Event()
+            thread = start_actor_activity_thread(
+                stop_event=stop_event,
+                home=Path(home),
+                pty_supervisor=_PtySupervisor(),
+                headless_supervisor=object(),
+                codex_supervisor=object(),
+                event_broadcaster=_Broadcaster(),
+                load_group=load_group,
+                interval_seconds=1.0,
+            )
+            try:
+                time.sleep(0.25)
+                actor_events = [event for event in published if str(event.get("kind") or "") == "actor.activity"]
+                self.assertTrue(actor_events)
+                actors = ((actor_events[-1].get("data") or {}).get("actors") or [])
+                self.assertEqual(len(actors), 1)
+                self.assertEqual(str(actors[0].get("effective_working_state") or ""), "idle")
+                self.assertEqual(str(actors[0].get("effective_working_reason") or ""), "pty_terminal_prompt_visible")
+            finally:
+                stop_event.set()
+                thread.join(timeout=1.0)
+        finally:
+            cleanup()
+
+    def test_actor_activity_thread_uses_codex_app_server_state_for_pty_app_server_actor(self) -> None:
+        from cccc.daemon.serve_ops import start_actor_activity_thread
+        from cccc.kernel.actors import add_actor, update_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="pty-app-server-activity", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            update_actor(group, "peer1", {"runtime_state_source": "app_server"})  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            published: list[dict] = []
+
+            class _PtySupervisor:
+                @staticmethod
+                def actor_running(_group_id: str, _actor_id: str) -> bool:
+                    return True
+
+                @staticmethod
+                def idle_seconds(*, group_id: str, actor_id: str) -> float:
+                    return 600.0
+
+                @staticmethod
+                def terminal_override(*, group_id: str, actor_id: str):
+                    raise AssertionError("PTY terminal signals should not drive app-server-backed Codex PTY state")
+
+            class _CodexSupervisor:
+                @staticmethod
+                def actor_running(group_id: str, actor_id: str) -> bool:
+                    return True
+
+                @staticmethod
+                def get_state(group_id: str, actor_id: str) -> dict:
+                    return {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "status": "working",
+                        "current_task_id": "turn-1",
+                        "updated_at": "2026-05-12T00:00:00Z",
+                    }
+
+            class _Broadcaster:
+                def publish(self, event: dict) -> None:
+                    published.append(event)
+
+            stop_event = threading.Event()
+            thread = start_actor_activity_thread(
+                stop_event=stop_event,
+                home=Path(home),
+                pty_supervisor=_PtySupervisor(),
+                headless_supervisor=object(),
+                codex_supervisor=_CodexSupervisor(),
+                event_broadcaster=_Broadcaster(),
+                load_group=load_group,
+                interval_seconds=1.0,
+            )
+            try:
+                time.sleep(0.25)
+                actor_events = [event for event in published if str(event.get("kind") or "") == "actor.activity"]
+                self.assertTrue(actor_events)
+                actors = ((actor_events[-1].get("data") or {}).get("actors") or [])
+                self.assertEqual(len(actors), 1)
+                self.assertEqual(str(actors[0].get("runner_effective") or ""), "pty")
+                self.assertEqual(str(actors[0].get("effective_working_state") or ""), "working")
+                self.assertEqual(str(actors[0].get("effective_working_reason") or ""), "headless_working")
+            finally:
+                stop_event.set()
+                thread.join(timeout=1.0)
+        finally:
+            cleanup()
+
     def test_codex_session_persists_headless_state_file(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.daemon.runner_state_ops import headless_state_path
@@ -3586,6 +3725,206 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("codex", str(payload.get("reason") or "").lower())
         finally:
             manager.stop_actor(group_id="g_test", actor_id="peer1")
+            cleanup()
+
+    def test_codex_pty_app_session_starts_ws_server_and_remote_tui(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSessionManager
+
+        home, cleanup = self._with_home()
+        try:
+            manager = CodexAppSessionManager()
+            requests: list[tuple[str, dict]] = []
+            started_pty: list[dict] = []
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            class FakeWs:
+                def send(self, data):
+                    return None
+
+                def recv(self):
+                    time.sleep(1)
+                    return ""
+
+                def close(self):
+                    return None
+
+            def fake_request(self, method: str, params: dict, *, timeout: float):
+                requests.append((method, params))
+                if method == "initialize":
+                    return {}
+                if method == "thread/start":
+                    return {"thread": {"id": "thr-pty-app"}}
+                return {}
+
+            def fake_start_actor(**kwargs):
+                started_pty.append(dict(kwargs))
+
+                class _PtySession:
+                    pid = 22222
+
+                    def is_running(self):
+                        return True
+
+                return _PtySession()
+
+            with patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()) as popen, patch(
+                "cccc.daemon.codex_app_sessions.threading.Thread", FakeThread
+            ), patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True), patch(
+                "cccc.daemon.codex_app_sessions._connect_websocket", return_value=FakeWs()
+            ) as connect_ws, patch(
+                "cccc.daemon.codex_app_sessions.CodexAppSession._request", fake_request
+            ), patch(
+                "cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.start_actor", side_effect=fake_start_actor
+            ):
+                session = manager.start_pty_app_actor(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    cwd=Path(home),
+                    env={},
+                    model="gpt-5.5",
+                    remote_tui_base_command=[
+                        "codex",
+                        "-c",
+                        "shell_environment_policy.inherit=all",
+                        "--dangerously-bypass-approvals-and-sandbox",
+                        "--search",
+                    ],
+                    max_backlog_bytes=1234,
+                )
+
+            self.assertTrue(session.is_running())
+            self.assertTrue(manager.actor_running("g_test", "peer1"))
+            command = list(popen.call_args.args[0])
+            self.assertEqual(command[:3], ["codex", "app-server", "--listen"])
+            self.assertTrue(str(command[3]).startswith("ws://127.0.0.1:"))
+            connect_ws.assert_called_once()
+            self.assertEqual([item[0] for item in requests[:2]], ["initialize", "thread/start"])
+            self.assertEqual(len(started_pty), 1)
+            self.assertEqual(
+                started_pty[0]["command"],
+                [
+                    "codex",
+                    "-c",
+                    "shell_environment_policy.inherit=all",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--search",
+                    "--remote",
+                    command[3],
+                ],
+            )
+            self.assertEqual(started_pty[0]["runtime"], "codex")
+        finally:
+            manager.stop_actor(group_id="g_test", actor_id="peer1")
+            cleanup()
+
+    def test_codex_remote_tui_command_filters_prompt_and_keeps_approval_flags(self) -> None:
+        from cccc.daemon.codex_app_sessions import _codex_remote_tui_command
+
+        command = _codex_remote_tui_command(
+            [
+                "codex",
+                "-c",
+                "shell_environment_policy.inherit=all",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--search",
+                "do not forward this prompt",
+            ],
+            "ws://127.0.0.1:12345",
+        )
+        self.assertEqual(
+            command,
+            [
+                "codex",
+                "-c",
+                "shell_environment_policy.inherit=all",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--search",
+                "--remote",
+                "ws://127.0.0.1:12345",
+            ],
+        )
+
+    def test_codex_websocket_idle_timeout_does_not_stop_session(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_ws_timeout",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+                transport="websocket",
+            )
+
+            class FakeProc:
+                pid = 12345
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+            class FakeWsTimeout(Exception):
+                pass
+
+            FakeWsTimeout.__name__ = "WebSocketTimeoutException"
+
+            release = threading.Event()
+            entered_second_recv = threading.Event()
+
+            class FakeWs:
+                count = 0
+
+                def recv(self):
+                    self.count += 1
+                    if self.count == 1:
+                        raise FakeWsTimeout("timed out")
+                    entered_second_recv.set()
+                    release.wait(timeout=1)
+                    raise RuntimeError("closed")
+
+                def close(self):
+                    release.set()
+
+            session._proc = FakeProc()
+            session._ws = FakeWs()
+            session._running = True
+
+            thread = threading.Thread(target=session._websocket_loop, daemon=True)
+            thread.start()
+            self.assertTrue(entered_second_recv.wait(timeout=1))
+            self.assertTrue(session.is_running())
+            release.set()
+            thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+        finally:
             cleanup()
 
 if __name__ == "__main__":

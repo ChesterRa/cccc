@@ -17,6 +17,7 @@ import {
   getStableMessageKey,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
+  shouldNotifyScrollChange,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
 } from "./virtualMessageListHelpers";
@@ -612,7 +613,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     // to avoid triggering store updates and re-renders during inertia scrolling.
     const wasAtBottom = isAtBottomRef.current;
     setAtBottom(atBottom);
-    if (atBottom !== wasAtBottom) {
+    if (shouldNotifyScrollChange({ wasAtBottom, atBottom, showScrollButton, chatUnreadCount })) {
       onScrollChange?.(atBottom);
     }
 
@@ -664,7 +665,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       onLoadMore();
     }
     });
-  }, [cancelScheduledScroll, checkIsAtBottom, getAnchorSnapshot, getCurrentContentSize, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot, setAtBottom, setFollowMode]);
+  }, [cancelScheduledScroll, chatUnreadCount, checkIsAtBottom, getAnchorSnapshot, getCurrentContentSize, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot, setAtBottom, setFollowMode, showScrollButton]);
 
   // When switching views (group or window-mode), reset internal scroll bookkeeping.
   //
@@ -692,8 +693,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     latestSnapshotRef.current = null;
 
     scrollTokenRef.current += 1;
-    setAtBottom(true);
-    setFollowMode(initialScrollAnchorId ? "detached" : "follow");
+    const hasInitialJumpTarget = !!(initialScrollAnchorId || initialScrollTargetId);
+    setAtBottom(!hasInitialJumpTarget);
+    setFollowMode(hasInitialJumpTarget ? "detached" : "follow");
     didInitialScrollRef.current = false;
     topLoadArmedRef.current = true;
     cancelScheduledScroll();
@@ -718,7 +720,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (shouldVirtualize) {
       virtualizer.measure();
     }
-  }, [displayMessages, initialScrollAnchorId, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, setFollowMode, shouldVirtualize, virtualizer]);
+  }, [displayMessages, initialScrollAnchorId, initialScrollTargetId, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, setFollowMode, shouldVirtualize, virtualizer]);
 
   const tailMutationSignature = useMemo(() => {
     const lastMessage = displayMessages[displayMessages.length - 1];

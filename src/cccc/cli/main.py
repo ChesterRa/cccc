@@ -182,6 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
     p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
     p_actor_update.add_argument("--submit", choices=["enter", "newline", "none"], default=None, help="Submit key")
+    p_actor_update.add_argument("--runtime-state-source", choices=["terminal", "app_server"], default=None, help="Runtime state source for Codex PTY actors")
     p_actor_update.add_argument("--enabled", type=int, choices=[0, 1], default=None, help="Set enabled (1) or disabled (0)")
     p_actor_update.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_update.add_argument("--group", default="", help="Target group_id (default: active group)")

@@ -14,8 +14,11 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   web_model: "logo.png",
 };
 
+function normalizeRuntime(runtime: string | null | undefined): RuntimeLogoRuntime {
+  return String(runtime || "").trim().toLowerCase() as RuntimeLogoRuntime;
+}
+
 export function getRuntimeLogoSrc(runtime: string | null | undefined): string | null {
-  const normalizedRuntime = String(runtime || "").trim().toLowerCase() as RuntimeLogoRuntime;
-  const relativePath = RUNTIME_LOGO_FILE_BY_RUNTIME[normalizedRuntime];
+  const relativePath = RUNTIME_LOGO_FILE_BY_RUNTIME[normalizeRuntime(runtime)];
   return relativePath ? `${import.meta.env.BASE_URL}${relativePath}` : null;
 }

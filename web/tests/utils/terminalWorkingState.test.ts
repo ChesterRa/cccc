@@ -59,10 +59,19 @@ describe("terminalWorkingState", () => {
   it("prefers the visible prompt over an older codex working banner", () => {
     const result = getTerminalSignalFromChunk(
       "",
-      "◦ Working (13s • esc to interrupt)\nstream disconnected before completion\n› Find and fix a bug in @filename\ngpt-5.4 default · 41% left · ~/Desktop/waterbang/ai/hr-agent\n",
+      "◦ Working (13s • esc to interrupt)\nstream disconnected before completion\n› Find and fix a bug in @filename\n",
       "codex",
     );
     expect(result.signalKind).toBe("idle_prompt");
+  });
+
+  it("does not treat codex model footers as prompt visibility", () => {
+    const result = getTerminalSignalFromChunk(
+      "",
+      "› \ngpt-5.5 medium · ~/Desktop/waterbang/ai/cccc\n",
+      "codex",
+    );
+    expect(result.signalKind).toBe(null);
   });
 
   it("keeps codex in working when the latest signal is the working banner", () => {

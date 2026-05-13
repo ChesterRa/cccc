@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from .actor_runtime_cache import replace_group_runtime
+from .pty_activity_probe import read_pty_activity_signal
 from .runner_state_ops import headless_state_running, read_headless_state
 from ..kernel.context import ContextStorage
-from ..kernel.working_state import (
-    derive_effective_working_state,
-)
+from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
+from ..kernel.working_state import derive_effective_working_state
 
 _LOG = logging.getLogger("cccc.daemon.serve_ops")
 _LOOP_ERROR_LAST_TS: Dict[str, float] = {}
@@ -358,6 +358,9 @@ def start_actor_activity_thread(
                                             )
                                     except Exception:
                                         pass
+                            elif actor_uses_codex_app_server_state(actor):
+                                headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
+                                running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))
                             elif runtime == "codex" and effective_runner == "headless":
                                 headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))
@@ -372,11 +375,11 @@ def start_actor_activity_thread(
                                 running = bool(pty_supervisor.actor_running(gid, aid))
                                 idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid) if running else None
                             pty_terminal_override = None
-                            if effective_runner == "pty" and running:
-                                try:
-                                    pty_terminal_override = pty_supervisor.terminal_override(group_id=gid, actor_id=aid)
-                                except Exception:
-                                    pty_terminal_override = None
+                            pty_terminal_text = ""
+                            if effective_runner == "pty" and running and not actor_uses_codex_app_server_state(actor):
+                                pty_signal = read_pty_activity_signal(pty_supervisor, group_id=gid, actor_id=aid)
+                                pty_terminal_override = pty_signal.terminal_override
+                                pty_terminal_text = pty_signal.terminal_text
                             if not running:
                                 continue
                             payload = {
@@ -385,12 +388,14 @@ def start_actor_activity_thread(
                                 "runner_effective": effective_runner,
                                 "idle_seconds": round(float(idle), 1) if idle is not None else None,
                             }
+                            state_runner = "headless" if actor_uses_codex_app_server_state(actor) else effective_runner
                             payload.update(
                                 derive_effective_working_state(
                                     running=running,
-                                    effective_runner=effective_runner,
+                                    effective_runner=state_runner,
                                     runtime=str(actor.get("runtime") or ""),
                                     idle_seconds=idle,
+                                    pty_terminal_text=pty_terminal_text,
                                     pty_terminal_override=pty_terminal_override,
                                     agent_state=agent_state_by_id.get(aid),
                                     headless_state=headless_state,

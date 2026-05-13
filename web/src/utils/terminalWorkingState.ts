@@ -48,17 +48,9 @@ function getRecentNonEmptyLines(text: string, maxLines: number = 4): string[] {
   return result;
 }
 
-function isTerminalFooterLine(line: string): boolean {
-  const value = String(line || "").trim();
-  if (!value) return false;
-  return /^gpt-[\w.-]+\s+default\b/i.test(value)
-    || (value.includes("/Desktop/") && /\bleft\b/i.test(value));
-}
-
 export function isTerminalPromptVisible(buffer: string): boolean {
   const lines = getRecentNonEmptyLines(buffer);
   for (const line of lines) {
-    if (isTerminalFooterLine(line)) continue;
     if (/^(?:>|›)\s?.*/.test(line)) return true;
     if (/^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line)) return true;
     if (/^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)) return true;

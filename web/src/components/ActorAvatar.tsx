@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from "react";
 import { classNames } from "../utils/classNames";
 import { withAuthToken } from "../services/api/base";
 import { getRuntimeLogoSrc } from "../utils/runtimeLogos";
+import { ClaudeLogo } from "./runtimeLogos/ClaudeLogo";
 export type ActorAvatarProps = {
   avatarUrl?: string | null;
   previewUrl?: string | null;
@@ -42,10 +43,12 @@ export const ActorAvatar = memo(function ActorAvatar({
   const [failedCustomAvatarSrc, setFailedCustomAvatarSrc] = useState<string | null>(null);
   const customAvatarFailed = !!customAvatarSrc && failedCustomAvatarSrc === customAvatarSrc;
 
+  const usesInlineClaudeLogo = !isUser && String(runtime || "").trim().toLowerCase() === "claude";
+
   const logoSrc = useMemo(() => {
-    if (isUser) return null;
+    if (isUser || usesInlineClaudeLogo) return null;
     return getRuntimeLogoSrc(runtime);
-  }, [isUser, runtime]);
+  }, [isUser, runtime, usesInlineClaudeLogo]);
 
   const fallbackText = isUser ? "U" : (String(title || "").trim() || "?")[0].toUpperCase();
 
@@ -73,6 +76,8 @@ export const ActorAvatar = memo(function ActorAvatar({
           className="h-full w-full object-contain"
           onError={() => setFailedCustomAvatarSrc(customAvatarSrc)}
         />
+      ) : usesInlineClaudeLogo ? (
+        <ClaudeLogo className="h-3/5 w-3/5" />
       ) : logoSrc ? (
         <img src={logoSrc} alt="" className="h-full w-full object-cover" />
       ) : (

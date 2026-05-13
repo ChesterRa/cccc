@@ -143,11 +143,13 @@ The current WeCom adapter supports:
 - outbound replies bound to the latest inbound callback request
 - plain text messaging
 - streaming replies
+- outbound file/media attachments via the WeCom AI Bot WebSocket chunk upload protocol
+- inbound file/media download with WeCom AES decryption when the callback includes a download URL and AES key
 
 Current limitations:
 
-- non-text inbound messages are normalized as text placeholders such as `[image]`
-- file/media upload and download bridging is not fully implemented yet
+- non-text inbound messages include text placeholders such as `[image]`, `[file: name]`, `[voice]`, or `[video]` alongside attachment metadata
+- inline stream image replies are limited to PNG/JPEG payloads that fit WeCom's stream item size limit; other attachments use media upload first
 
 The adapter implementation lives in:
 

@@ -5,6 +5,7 @@ import {
   getStableMessageKey,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
+  shouldNotifyScrollChange,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
 } from "../../src/components/virtualMessageListHelpers";
@@ -221,6 +222,30 @@ describe("shouldDetachChatFollowOnScroll", () => {
         atBottom: true,
         isContainerResizing: false,
         topLoadThresholdPx: 80,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldNotifyScrollChange", () => {
+  it("notifies at bottom when parent scroll affordance state is stale", () => {
+    expect(
+      shouldNotifyScrollChange({
+        wasAtBottom: true,
+        atBottom: true,
+        showScrollButton: true,
+        chatUnreadCount: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not notify repeatedly when bottom state and parent affordance are already clean", () => {
+    expect(
+      shouldNotifyScrollChange({
+        wasAtBottom: true,
+        atBottom: true,
+        showScrollButton: false,
+        chatUnreadCount: 0,
       }),
     ).toBe(false);
   });

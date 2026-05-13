@@ -38,6 +38,7 @@ from .delivery import (
 )
 from .actor_delivery_planner import (
     TRANSPORT_CLAUDE_HEADLESS,
+    TRANSPORT_CODEX_APP_SERVER,
     TRANSPORT_CODEX_HEADLESS,
     TRANSPORT_PTY,
     TRANSPORT_WEB_MODEL_BROWSER,
@@ -542,7 +543,7 @@ def handle_send(
             web_model_browser_delivery_enabled=web_model_browser_delivery_enabled,
         )
         actor_id = decision.actor_id
-        if decision.transport == TRANSPORT_CODEX_HEADLESS:
+        if decision.transport in {TRANSPORT_CODEX_HEADLESS, TRANSPORT_CODEX_APP_SERVER}:
             delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -1032,7 +1033,7 @@ def handle_reply(
             web_model_browser_delivery_enabled=web_model_browser_delivery_enabled,
         )
         actor_id = decision.actor_id
-        if decision.transport == TRANSPORT_CODEX_HEADLESS:
+        if decision.transport in {TRANSPORT_CODEX_HEADLESS, TRANSPORT_CODEX_APP_SERVER}:
             delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,

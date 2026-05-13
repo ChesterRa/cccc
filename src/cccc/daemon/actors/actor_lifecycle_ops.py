@@ -12,6 +12,7 @@ from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
@@ -358,6 +359,20 @@ def handle_actor_restart(
         if runtime == "web_model" and runner_effective == "headless":
             try:
                 write_headless_state(group.group_id, actor_id)
+            except Exception:
+                pass
+        elif actor_uses_codex_app_server_state(actor):
+            session = codex_app_supervisor.start_pty_app_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                model=model_from_runtime_command(launch_spec["effective_command"]),
+                remote_tui_base_command=list(launch_spec["effective_command"]),
+                max_backlog_bytes=pty_backlog_bytes(),
+            )
+            try:
+                write_pty_state(group.group_id, actor_id, pid=session.remote_tui_pid())
             except Exception:
                 pass
         elif runtime == "codex" and runner_effective == "headless":

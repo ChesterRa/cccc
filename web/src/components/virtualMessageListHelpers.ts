@@ -65,6 +65,16 @@ export function shouldDetachChatFollowOnScroll(input: {
   return input.currentTop < input.previousTop - 4;
 }
 
+export function shouldNotifyScrollChange(input: {
+  wasAtBottom: boolean;
+  atBottom: boolean;
+  showScrollButton: boolean;
+  chatUnreadCount: number;
+}): boolean {
+  if (input.atBottom && (input.showScrollButton || input.chatUnreadCount > 0)) return true;
+  return input.atBottom !== input.wasAtBottom;
+}
+
 export function shouldAutoScrollToBottom(input: {
   followMode: "follow" | "detached";
   isAtBottom: boolean;

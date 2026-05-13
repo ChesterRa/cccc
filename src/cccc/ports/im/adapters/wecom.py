@@ -42,6 +42,8 @@ DEFAULT_MAX_LINES = 64
 WECOM_WS_URL = "wss://openws.work.weixin.qq.com"
 WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
 WECOM_ACTIVE_STREAM_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+WECOM_MEDIA_UPLOAD_CHUNK_SIZE = 512 * 1024
+WECOM_MEDIA_UPLOAD_MAX_CHUNKS = 100
 WS_HEARTBEAT_INTERVAL = 25  # seconds
 WS_HEARTBEAT_MAX_FAILURES = 3
 WS_RECONNECT_INITIAL = 1.0  # seconds
@@ -257,6 +259,18 @@ class WecomAdapter(IMAdapter):
 
         return False
 
+    def _send_active_body(self, chat_id: str, body: Dict[str, Any], *, timeout: float = 5.0) -> bool:
+        normalized_chat_id = str(chat_id or "").strip()
+        if not normalized_chat_id:
+            return False
+        active_body = dict(body)
+        active_body["chatid"] = normalized_chat_id
+        ok, _ = self._ws_send_and_wait_ack(
+            self._build_command_frame(cmd="aibot_send_msg", body=active_body),
+            timeout=timeout,
+        )
+        return ok
+
     # -- WebSocket send helper --
 
     def _ws_send(self, payload: Dict[str, Any]) -> bool:
@@ -361,6 +375,13 @@ class WecomAdapter(IMAdapter):
             "body": body,
         }
 
+    def _build_command_frame(self, *, cmd: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "cmd": cmd,
+            "headers": {"req_id": f"{cmd}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"},
+            "body": body,
+        }
+
     def _next_stream_id(self) -> str:
         return f"cccc-wecom-{int(time.time() * 1000)}"
 
@@ -429,50 +450,69 @@ class WecomAdapter(IMAdapter):
             raise ValueError(f"wecom media decrypt failed: {e}") from e
         return self._strip_pkcs7_padding(decrypted)
 
-    def _upload_media(self, raw: bytes, filename: str, media_type: str) -> str:
-        """Upload media via HTTP multipart to /media/upload (bot_id+secret auth)."""
-        boundary = "----cccc" + uuid.uuid4().hex
-        safe_fn = (filename or "file").replace("\\", "_").replace("/", "_")
-        content_type = self._guess_content_type(safe_fn, media_type)
-
-        body = b""
-        body += (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="media"; filename="{safe_fn}"\r\n'
-            f"Content-Type: {content_type}\r\n\r\n"
-        ).encode("utf-8")
-        body += raw
-        body += f"\r\n--{boundary}--\r\n".encode("utf-8")
-
-        req = urllib.request.Request(
-            self._build_media_api_url("/media/upload", type=media_type),
-            data=body,
-            method="POST",
+    def _send_upload_command(self, cmd: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        ok, frame = self._ws_send_and_wait_ack(
+            self._build_command_frame(cmd=cmd, body=body),
+            timeout=60.0,
         )
-        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        if not ok or not isinstance(frame, dict):
+            raise ValueError(f"{cmd} failed")
+        response_body = frame.get("body")
+        return response_body if isinstance(response_body, dict) else {}
 
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read().decode("utf-8", errors="replace"))
-        except Exception as e:
-            raise ValueError(f"upload failed: {e}") from e
+    def _upload_media(self, raw: bytes, filename: str, media_type: str) -> str:
+        """Upload media through WeCom AI Bot WebSocket chunk protocol."""
+        if not raw:
+            raise ValueError("empty media payload")
 
-        if int(result.get("errcode", 0) or 0) != 0:
-            raise ValueError(str(result.get("errmsg") or "upload failed"))
+        safe_fn = (filename or "file").replace("\\", "_").replace("/", "_")
+        total_size = len(raw)
+        total_chunks = (total_size + WECOM_MEDIA_UPLOAD_CHUNK_SIZE - 1) // WECOM_MEDIA_UPLOAD_CHUNK_SIZE
+        if total_chunks > WECOM_MEDIA_UPLOAD_MAX_CHUNKS:
+            raise ValueError(
+                f"file too large: {total_chunks} chunks exceeds maximum of {WECOM_MEDIA_UPLOAD_MAX_CHUNKS}"
+            )
 
-        media_id = str(result.get("media_id") or "").strip()
+        init_body = {
+            "type": media_type,
+            "filename": safe_fn,
+            "total_size": total_size,
+            "total_chunks": total_chunks,
+            "md5": hashlib.md5(raw).hexdigest(),
+        }
+        init_result = self._send_upload_command("aibot_upload_media_init", init_body)
+        upload_id = str(init_result.get("upload_id") or "").strip()
+        if not upload_id:
+            raise ValueError("upload init response missing upload_id")
+
+        for chunk_index in range(total_chunks):
+            start = chunk_index * WECOM_MEDIA_UPLOAD_CHUNK_SIZE
+            end = min(start + WECOM_MEDIA_UPLOAD_CHUNK_SIZE, total_size)
+            self._send_upload_command(
+                "aibot_upload_media_chunk",
+                {
+                    "upload_id": upload_id,
+                    "chunk_index": chunk_index,
+                    "base64_data": base64.b64encode(raw[start:end]).decode("ascii"),
+                },
+            )
+
+        finish_result = self._send_upload_command(
+            "aibot_upload_media_finish",
+            {"upload_id": upload_id},
+        )
+        media_id = str(finish_result.get("media_id") or "").strip()
         if not media_id:
-            raise ValueError("upload response missing media_id")
+            raise ValueError("upload finish response missing media_id")
         self._log(f"[upload] media_id={media_id} type={media_type} size={len(raw)}")
         return media_id
 
     def _send_media_reply(self, chat_id: str, *, msgtype: str, body: Dict[str, Any]) -> bool:
         if not self._get_reply_req_id(chat_id) and not self._get_response_url(chat_id):
-            self._log(
-                f"[send_file] No callback req_id/response_url for chat={chat_id}, cannot send media. "
-                "Ask the user to send any message in that chat to re-establish outbound replies."
-            )
-            return False
+            ok = self._send_active_body(chat_id, {"msgtype": msgtype, **body})
+            if ok:
+                self._log(f"[send_file] Sent media via active send (chat={chat_id})")
+            return ok
         return self._send_reply_body(chat_id, {"msgtype": msgtype, **body})
 
     def _send_stream_msg_item_image(self, chat_id: str, *, raw: bytes, caption: str = "") -> bool:
@@ -1059,11 +1099,16 @@ class WecomAdapter(IMAdapter):
         self._rate_limiter.wait_and_acquire(chat_id)
 
         if not self._get_reply_req_id(chat_id) and not self._get_response_url(chat_id):
-            self._log(
-                f"[send] No callback req_id/response_url for chat={chat_id}, cannot send. "
-                "Ask the user to send any message in that chat to re-establish outbound replies."
+            ok = self._send_active_body(
+                chat_id,
+                {
+                    "msgtype": "markdown",
+                    "markdown": {"content": safe_text},
+                },
             )
-            return False
+            if ok:
+                self._log(f"[send] Sent via active send (chat={chat_id})")
+            return ok
 
         ok = self._send_reply_body(
             chat_id,

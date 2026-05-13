@@ -315,6 +315,8 @@ def cmd_actor_update(args: argparse.Namespace) -> int:
         patch["runner"] = str(args.runner)
     if getattr(args, "runtime", None) is not None:
         patch["runtime"] = str(args.runtime)
+    if getattr(args, "runtime_state_source", None) is not None:
+        patch["runtime_state_source"] = str(args.runtime_state_source)
     if args.enabled is not None:
         patch["enabled"] = bool(args.enabled)
 

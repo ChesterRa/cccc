@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, Literal, Optional, Union
 from fastapi import Depends, HTTPException, Path as FastApiPath, Request, WebSocket
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
+from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind, RuntimeStateSource
 from ...contracts.v1.automation import AutomationRule
 from ...kernel.access_tokens import list_access_tokens, lookup_access_token
 
@@ -125,6 +125,7 @@ class ActorUpdateRequest(BaseModel):
     submit: Optional[ActorSubmit] = None
     runner: Optional[RunnerKind] = None
     runtime: Optional[AgentRuntime] = None
+    runtime_state_source: Optional[RuntimeStateSource] = None
     enabled: Optional[bool] = None
     profile_id: Optional[str] = None
     profile_scope: Optional[Literal["global", "user"]] = None

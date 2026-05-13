@@ -4,7 +4,7 @@ from .async_result import (
     DEFAULT_ASYNC_COMPLETION_SIGNAL,
     build_async_result_fields,
 )
-from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, HeadlessState, RunnerKind
+from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, HeadlessState, RunnerKind, RuntimeStateSource
 from .actor_profile import ActorProfile, ActorProfileRef
 from .assistant import (
     AssistantKind,
@@ -110,5 +110,6 @@ __all__ = [
     "PresentationTableData",
     "Reference",
     "RunnerKind",
+    "RuntimeStateSource",
     "SystemNotifyData",
 ]

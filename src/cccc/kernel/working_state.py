@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, Literal, Optional
+
+from .pty_terminal_state import derive_pty_terminal_override, strip_ansi
 
 
 EffectiveWorkingState = Literal["stopped", "idle", "working", "waiting", "stuck"]
@@ -10,7 +11,6 @@ DEFAULT_PTY_STUCK_IDLE_SECONDS = 300.0
 DEFAULT_PTY_WORKING_IDLE_SECONDS = 5.0
 DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES = 12_000
 DEFAULT_PTY_ACTIVITY_SIGNAL_TAIL_BYTES = 4_000
-DEFAULT_CODEX_TERMINAL_SIGNAL_WINDOW_CHARS = 1_600
 
 
 def _clean_text(value: Any) -> str:
@@ -26,74 +26,8 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
-def _strip_ansi(text: str) -> str:
-    return re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))", "", str(text or "")).replace("\r", "")
-
-
-def _recent_non_empty_lines(text: str, *, max_lines: int = 4) -> list[str]:
-    lines: list[str] = []
-    for raw_line in reversed(str(text or "").split("\n")):
-        line = raw_line.strip()
-        if not line:
-            continue
-        lines.append(line)
-        if len(lines) >= max_lines:
-            break
-    return lines
-
-
-def _last_non_empty_line(text: str) -> str:
-    lines = _recent_non_empty_lines(text, max_lines=1)
-    return lines[0] if lines else ""
-
-
-def _is_terminal_footer_line(line: str) -> bool:
-    value = str(line or "").strip()
-    if not value:
-        return False
-    return bool(re.match(r"^gpt-[\w.-]+\s+default\b", value, re.IGNORECASE)) or (
-        "/Desktop/" in value and bool(re.search(r"\bleft\b", value, re.IGNORECASE))
-    )
-
-
-def _is_terminal_prompt_line(line: str) -> bool:
-    value = str(line or "").strip()
-    if not value:
-        return False
-    if re.match(r"^(?:>|›)\s?.*", value):
-        return True
-    if re.match(r"^(?:\$|%|#|❯|➜|›)\s+.*$", value):
-        return True
-    if re.match(r"^[\w.@:/~-]+\s*(?:\$|%|#)\s*$", value):
-        return True
-    return False
-
-
-def _has_terminal_prompt_visible(text: str) -> bool:
-    for line in _recent_non_empty_lines(text):
-        if _is_terminal_footer_line(line):
-            continue
-        return _is_terminal_prompt_line(line)
-    return False
-
-
-def _tail_window_has_codex_working_banner(text: str) -> bool:
-    value = str(text or "")
-    if not value:
-        return False
-    compact = re.sub(r"\s+", " ", value)
-    return bool(re.search(r"\bworking\s*\(", compact, re.IGNORECASE))
-
-
-def _tail_window(text: str, *, max_chars: int = DEFAULT_CODEX_TERMINAL_SIGNAL_WINDOW_CHARS) -> str:
-    value = str(text or "")
-    if max_chars <= 0 or len(value) <= max_chars:
-        return value
-    return value[-max_chars:]
-
-
 def _has_visible_terminal_output(text: str) -> bool:
-    cleaned = _strip_ansi(str(text or ""))
+    cleaned = strip_ansi(str(text or ""))
     for ch in cleaned:
         code = ord(ch)
         if code in (9, 10):
@@ -101,28 +35,6 @@ def _has_visible_terminal_output(text: str) -> bool:
         if 32 <= code <= 126 or code > 159:
             return True
     return False
-
-
-def derive_pty_terminal_override(*, runtime: str, terminal_text: str) -> Optional[Dict[str, Any]]:
-    runtime_id = _clean_text(runtime).lower()
-    cleaned = _strip_ansi(terminal_text)
-    if runtime_id != "codex":
-        return None
-
-    if _has_terminal_prompt_visible(cleaned):
-        return {
-            "effective_working_state": "idle",
-            "effective_working_reason": "pty_terminal_prompt_visible",
-        }
-
-    tail_text = _tail_window(cleaned)
-    if _tail_window_has_codex_working_banner(tail_text):
-        return {
-            "effective_working_state": "working",
-            "effective_working_reason": "pty_terminal_codex_working_banner",
-        }
-
-    return None
 
 
 def derive_effective_working_state(

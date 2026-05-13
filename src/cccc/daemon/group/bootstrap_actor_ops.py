@@ -10,6 +10,7 @@ from ...kernel.context import ContextStorage
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
 from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
@@ -210,6 +211,16 @@ def autostart_running_groups(
                             )
                     except Exception:
                         pass
+                elif actor_uses_codex_app_server_state(actor):
+                    session = codex_app_supervisor.start_pty_app_actor(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        cwd=cwd,
+                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        model=model_from_runtime_command(launch_spec["effective_command"]),
+                        remote_tui_base_command=list(launch_spec["effective_command"]),
+                        max_backlog_bytes=pty_backlog_bytes(),
+                    )
                 elif runtime == "codex" and effective_runner == "headless":
                     codex_app_supervisor.start_actor(
                         group_id=group.group_id,
@@ -259,6 +270,8 @@ def autostart_running_groups(
             try:
                 if runtime == "web_model" and effective_runner == "headless":
                     pass
+                elif actor_uses_codex_app_server_state(actor):
+                    write_pty_state(group.group_id, actor_id, session.remote_tui_pid())
                 elif runtime == "codex" and effective_runner == "headless":
                     pass
                 elif runtime == "claude" and effective_runner == "headless":
