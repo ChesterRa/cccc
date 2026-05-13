@@ -20,6 +20,7 @@ from ....daemon.context.context_ops import _agent_state_to_dict
 from ....daemon.runner_state_ops import headless_state_path, headless_state_running, pty_state_path, read_headless_state
 from ....kernel.group import load_group
 from ....kernel.actors import find_actor
+from ....kernel.actor_runtime_projection import actor_runtime_enabled, disabled_actor_runtime_projection
 from ....kernel.context import ContextStorage
 from ....kernel.inbox import get_indexed_unread_counts
 from ....kernel.query_projections import get_actor_list_projection
@@ -145,9 +146,14 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         running = False
         idle_seconds = None
         headless_state = None
+        if not actor_runtime_enabled(actor):
+            actor.update(disabled_actor_runtime_projection(effective_runner=effective_runner, runtime=runtime))
+            if runtime.lower() == "web_model":
+                decorate_web_model_queued_turn_info(actor, group, actor_id=aid, headless_state=None)
+            continue
         if runtime.lower() == "web_model" and effective_runner == "headless":
             headless_state = read_headless_state(gid, aid)
-            running = bool(coerce_bool(actor.get("enabled"), default=True) and headless_state_running(gid, aid))
+            running = bool(headless_state_running(gid, aid))
         if not running and runtime.lower() == "codex":
             try:
                 state_doc = read_json(headless_state_path(gid, aid))

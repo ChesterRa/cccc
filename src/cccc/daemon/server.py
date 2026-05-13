@@ -43,6 +43,7 @@ from .automation import AutomationManager
 from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from .codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from .pty_app_server_exit import stop_codex_app_server_for_pty_actor_if_needed
 from .im.bootstrap_im_ops import autostart_enabled_im_bridges
 from .group.bootstrap_actor_ops import autostart_running_groups
 from .assistants.voice_idle_review_scheduler import recover_pending_voice_idle_reviews
@@ -602,6 +603,7 @@ def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
 def _handle_pty_session_exit(session: pty_runner.PtySession, *, persist_actor_stopped: bool = True) -> None:
     """Persist user-visible PTY exits as stopped so daemon autostart does not resurrect them."""
     removed_current_state = bool(_remove_pty_state_if_pid(session.group_id, session.actor_id, pid=session.pid))
+    stop_codex_app_server_for_pty_actor_if_needed(group_id=session.group_id, actor_id=session.actor_id)
     if not persist_actor_stopped:
         return
     if not removed_current_state:

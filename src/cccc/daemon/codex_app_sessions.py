@@ -660,7 +660,8 @@ class CodexAppSession:
                 except Exception:
                     pass
             self._emit("headless.thread.resumed" if resumed else "headless.thread.started", {"thread_id": thread_id})
-            self._queue_bootstrap_control_turn()
+            if not self.start_remote_tui:
+                self._queue_bootstrap_control_turn()
             if self.start_remote_tui:
                 remote_command = _codex_remote_tui_command(self.remote_tui_base_command, self.listen_url)
                 self._pty_session = pty_runner.SUPERVISOR.start_actor(

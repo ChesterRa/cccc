@@ -3796,6 +3796,8 @@ class TestCodexAppFlow(unittest.TestCase):
             ) as connect_ws, patch(
                 "cccc.daemon.codex_app_sessions.CodexAppSession._request", fake_request
             ), patch(
+                "cccc.daemon.codex_app_sessions.CodexAppSession._build_bootstrap_control_text", return_value="bootstrap"
+            ), patch(
                 "cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.start_actor", side_effect=fake_start_actor
             ):
                 session = manager.start_pty_app_actor(
@@ -3816,6 +3818,7 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertTrue(session.is_running())
             self.assertTrue(manager.actor_running("g_test", "peer1"))
+            self.assertTrue(session._turn_queue.empty())
             command = list(popen.call_args.args[0])
             self.assertEqual(command[:3], ["codex", "app-server", "--listen"])
             self.assertTrue(str(command[3]).startswith("ws://127.0.0.1:"))
@@ -3837,6 +3840,36 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(started_pty[0]["runtime"], "codex")
         finally:
             manager.stop_actor(group_id="g_test", actor_id="peer1")
+            cleanup()
+
+    def test_codex_pty_app_remote_tui_exit_stops_app_server_session(self) -> None:
+        from cccc.daemon.server import _handle_pty_session_exit
+        from cccc.kernel.actors import add_actor, update_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="pty-app-exit", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            update_actor(group, "peer1", {"runtime_state_source": "app_server"})  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            class _Session:
+                group_id = created.group_id
+                actor_id = "peer1"
+                pid = 12345
+
+            with patch("cccc.daemon.server._remove_pty_state_if_pid", return_value=True), patch(
+                "cccc.daemon.server.codex_app_supervisor.stop_actor"
+            ) as stop_actor:
+                _handle_pty_session_exit(_Session())  # type: ignore[arg-type]
+
+            stop_actor.assert_called_once_with(group_id=created.group_id, actor_id="peer1")
+        finally:
             cleanup()
 
     def test_codex_remote_tui_command_filters_prompt_and_keeps_approval_flags(self) -> None:

@@ -11,6 +11,7 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.actors import find_actor, get_effective_role, list_actors
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
+from ...kernel.actor_runtime_projection import actor_runtime_enabled, disabled_actor_runtime_projection
 from ...kernel.query_projections import get_actor_list_projection
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
@@ -69,6 +70,13 @@ def handle_actor_list(
         effective_runner = effective_runner_kind(runner_kind)
         runtime = str(actor.get("runtime") or "").strip()
         headless_state = None
+        if not actor_runtime_enabled(actor):
+            actor.update(disabled_actor_runtime_projection(effective_runner=effective_runner, runtime=runtime))
+            if effective_runner != "headless" and effective_runner == runner_kind:
+                actor.pop("runner_effective", None)
+            if runtime.lower() == "web_model":
+                decorate_web_model_queued_turn_info(actor, group, actor_id=aid, headless_state=None)
+            continue
         snap = runtime_snapshot.get(aid) if isinstance(runtime_snapshot.get(aid), dict) else {}
         if snap:
             actor["running"] = bool(snap.get("running"))
@@ -94,7 +102,7 @@ def handle_actor_list(
             pty_terminal_text = ""
             if runtime.lower() == "web_model" and effective_runner == "headless":
                 headless_state = read_headless_state(group_id, aid)
-                running = bool(coerce_bool(actor.get("enabled"), default=True) and headless_state_running(group_id, aid))
+                running = bool(headless_state_running(group_id, aid))
             elif actor_uses_codex_app_server_state(actor):
                 state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)

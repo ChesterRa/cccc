@@ -662,6 +662,59 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_list_route_disabled_codex_pty_app_server_actor_is_stopped(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runner_state_ops import headless_state_path
+            from cccc.kernel.actors import update_actor
+            from cccc.kernel.group import load_group
+            from cccc.util.fs import atomic_write_json
+
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            self._add_actor(group_id, runtime="codex")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            update_actor(group, "peer-1", {"runtime_state_source": "app_server", "enabled": False})  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            atomic_write_json(
+                headless_state_path(group_id, "peer-1"),
+                {
+                    "v": 1,
+                    "kind": "headless",
+                    "runtime": "codex",
+                    "group_id": group_id,
+                    "actor_id": "peer-1",
+                    "pid": os.getpid(),
+                    "status": "working",
+                },
+            )
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list), patch(
+                "cccc.ports.web.routes.actors.codex_app_supervisor.get_state",
+                return_value={
+                    "group_id": group_id,
+                    "actor_id": "peer-1",
+                    "status": "working",
+                    "current_task_id": "turn-1",
+                },
+            ), patch(
+                "cccc.ports.web.routes.actors.codex_app_supervisor.actor_running",
+                return_value=True,
+            ):
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/actors")
+
+            self.assertEqual(resp.status_code, 200)
+            actor = resp.json()["result"]["actors"][0]
+            self.assertFalse(bool(actor["running"]))
+            self.assertEqual(actor["runner_effective"], "pty")
+            self.assertEqual(actor["effective_working_state"], "stopped")
+            self.assertEqual(actor["effective_working_reason"], "runner_not_running")
+        finally:
+            cleanup()
+
     def test_normal_mode_actor_list_include_unread_uses_inflight_without_ttl(self) -> None:
         _, cleanup = self._with_home()
         try:

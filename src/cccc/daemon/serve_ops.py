@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, Optional
 from .actor_runtime_cache import replace_group_runtime
 from .pty_activity_probe import read_pty_activity_signal
 from .runner_state_ops import headless_state_running, read_headless_state
+from ..kernel.actor_runtime_projection import actor_runtime_enabled
 from ..kernel.context import ContextStorage
 from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..kernel.working_state import derive_effective_working_state
@@ -331,6 +332,8 @@ def start_actor_activity_thread(
                                 continue
                             aid = str(actor.get("id") or "").strip()
                             if not aid:
+                                continue
+                            if not actor_runtime_enabled(actor):
                                 continue
                             runtime = str(actor.get("runtime") or "").strip().lower()
                             runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
