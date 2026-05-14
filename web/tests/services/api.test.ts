@@ -905,6 +905,32 @@ describe("api.message refs", () => {
     );
   });
 
+  it("sends cross-group messages through the source group endpoint with explicit dst_group_id", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { src_event: { id: "src-1" }, dst_event: { id: "dst-1" } } }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.sendCrossGroupMessage("g-src", "g-dst", "route this", ["@foreman"], "attention", true);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-src/send_cross_group",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          text: "route this",
+          by: "user",
+          dst_group_id: "g-dst",
+          to: ["@foreman"],
+          priority: "attention",
+          reply_required: true,
+        }),
+      }),
+    );
+  });
+
   it("sends tracked delegation payloads through the daemon endpoint", async () => {
     fetchMock.mockResolvedValue({
       status: 200,

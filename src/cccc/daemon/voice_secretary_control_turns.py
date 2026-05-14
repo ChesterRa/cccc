@@ -102,6 +102,68 @@ def _request_ids_from_input_batches(input_batches: list[Any]) -> tuple[list[str]
     return composer_request_ids, report_request_ids, input_target_kinds
 
 
+def _document_paths_from_input_batches(input_batches: list[Any]) -> list[str]:
+    document_paths: list[str] = []
+    for batch in input_batches:
+        if not isinstance(batch, dict):
+            continue
+        if str(batch.get("target_kind") or "").strip().lower() != "document":
+            continue
+        document_path = str(batch.get("document_path") or "").strip()
+        if document_path and document_path not in document_paths:
+            document_paths.append(document_path)
+    return document_paths
+
+
+def _voice_document_state(group_id: str, *, document_paths: list[str]) -> Dict[str, Dict[str, Any]]:
+    wanted = [str(item).strip() for item in document_paths if str(item).strip()]
+    if not wanted:
+        return {}
+    group = load_group(group_id)
+    if group is None:
+        return {}
+    try:
+        from .assistants.assistant_ops import _retained_voice_documents
+    except Exception:
+        logger.exception("voice-secretary document state import failed: %s", group_id)
+        return {}
+    try:
+        documents = _retained_voice_documents(group, include_archived=True, include_content=False)
+    except Exception:
+        logger.exception("voice-secretary document state read failed: %s", group_id)
+        return {}
+    by_path: Dict[str, Dict[str, Any]] = {}
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        document_path = str(document.get("document_path") or document.get("workspace_path") or "").strip()
+        if document_path not in wanted:
+            continue
+        by_path[document_path] = {
+            "updated_at": str(document.get("updated_at") or ""),
+            "content_sha256": str(document.get("content_sha256") or ""),
+            "content_chars": max(0, int(document.get("content_chars") or 0)),
+            "revision_count": max(0, int(document.get("revision_count") or 0)),
+        }
+    return by_path
+
+
+def _voice_document_changed(before: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    if not isinstance(before, dict) or not isinstance(current, dict):
+        return False
+    before_sha = str(before.get("content_sha256") or "").strip()
+    current_sha = str(current.get("content_sha256") or "").strip()
+    if before_sha and current_sha and before_sha != current_sha:
+        return True
+    before_chars = max(0, int(before.get("content_chars") or 0))
+    current_chars = max(0, int(current.get("content_chars") or 0))
+    if before_chars != current_chars:
+        return True
+    before_revision = max(0, int(before.get("revision_count") or 0))
+    current_revision = max(0, int(current.get("revision_count") or 0))
+    return current_revision > before_revision
+
+
 def _voice_input_snapshot_from_envelope(*, group_id: str, event_id: str, envelope: Dict[str, Any]) -> Dict[str, Any]:
     input_batches = envelope.get("input_batches") if isinstance(envelope.get("input_batches"), list) else []
     composer_request_ids = [
@@ -128,6 +190,7 @@ def _voice_input_snapshot_from_envelope(*, group_id: str, event_id: str, envelop
     ]
     if not composer_request_ids and not report_request_ids:
         composer_request_ids, report_request_ids, input_target_kinds = _request_ids_from_input_batches(input_batches)
+    document_paths = _document_paths_from_input_batches(input_batches)
     seq_end = max(0, int(envelope.get("seq_end") or envelope.get("latest_seq") or 0))
     latest_seq = max(seq_end, int(envelope.get("latest_seq") or 0))
     return {
@@ -141,6 +204,8 @@ def _voice_input_snapshot_from_envelope(*, group_id: str, event_id: str, envelop
         "secretary_request_ids": report_request_ids,
         "report_request_ids": report_request_ids,
         "input_target_kinds": input_target_kinds,
+        "document_paths": document_paths,
+        "before_voice_documents": _voice_document_state(group_id, document_paths=document_paths),
         "before_prompt_drafts": _prompt_draft_state(group_id, request_ids=composer_request_ids),
         "before_ask_requests": _ask_request_state(group_id, request_ids=report_request_ids),
     }
@@ -217,6 +282,7 @@ def prefetched_control_snapshot(*, group_id: str, event_id: str, prefetched_inpu
     input_batches = prefetched_input.get("input_batches") if isinstance(prefetched_input.get("input_batches"), list) else []
     input_timing = prefetched_input.get("input_timing") if isinstance(prefetched_input.get("input_timing"), dict) else {}
     composer_request_ids, report_request_ids, input_target_kinds = _request_ids_from_input_batches(input_batches)
+    document_paths = _document_paths_from_input_batches(input_batches)
     latest_seq = max(0, int(input_timing.get("latest_seq") or 0))
     current_cursor = max(0, int(input_timing.get("secretary_read_cursor") or latest_seq))
     return {
@@ -229,6 +295,8 @@ def prefetched_control_snapshot(*, group_id: str, event_id: str, prefetched_inpu
         "secretary_request_ids": report_request_ids,
         "report_request_ids": report_request_ids,
         "input_target_kinds": input_target_kinds,
+        "document_paths": document_paths,
+        "before_voice_documents": _voice_document_state(group_id, document_paths=document_paths),
         "before_prompt_drafts": _prompt_draft_state(group_id, request_ids=composer_request_ids),
         "before_ask_requests": _ask_request_state(group_id, request_ids=report_request_ids),
     }
@@ -324,18 +392,33 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
         for item in ((snapshot or {}).get("input_target_kinds") if isinstance((snapshot or {}).get("input_target_kinds"), list) else [])
         if str(item).strip()
     ]
+    document_paths = [
+        str(item).strip()
+        for item in ((snapshot or {}).get("document_paths") if isinstance((snapshot or {}).get("document_paths"), list) else [])
+        if str(item).strip()
+    ]
     if before_latest <= before_cursor and not composer_request_ids and not report_request_ids:
-        return {
-            "before_latest_seq": before_latest,
-            "before_secretary_read_cursor": before_cursor,
-            "current_secretary_read_cursor": current_cursor,
-            "cursor_advanced": cursor_advanced,
-            "missing": [],
-        }
+        before_documents = (snapshot or {}).get("before_voice_documents") if isinstance((snapshot or {}).get("before_voice_documents"), dict) else {}
+        if not document_paths or not before_documents:
+            return {
+                "before_latest_seq": before_latest,
+                "before_secretary_read_cursor": before_cursor,
+                "current_secretary_read_cursor": current_cursor,
+                "cursor_advanced": cursor_advanced,
+                "missing": [],
+            }
 
     missing: list[str] = []
     if not prefetched and not envelope_delivered and not cursor_advanced:
         missing.append("read_new_input")
+    before_documents = (snapshot or {}).get("before_voice_documents") if isinstance((snapshot or {}).get("before_voice_documents"), dict) else {}
+    if document_paths and before_documents:
+        current_documents = _voice_document_state(group_id, document_paths=document_paths)
+        for document_path in document_paths:
+            before_document = before_documents.get(document_path) if isinstance(before_documents.get(document_path), dict) else {}
+            current_document = current_documents.get(document_path) if isinstance(current_documents.get(document_path), dict) else {}
+            if not _voice_document_changed(before_document, current_document):
+                missing.append(f"document_update:{document_path}")
     if report_request_ids:
         before_ask_requests = (snapshot or {}).get("before_ask_requests") if isinstance((snapshot or {}).get("before_ask_requests"), dict) else {}
         current_ask_requests = _ask_request_state(group_id, request_ids=report_request_ids)
@@ -370,6 +453,7 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
         "input_envelope_delivered": envelope_delivered,
         "delivery_id": str((snapshot or {}).get("delivery_id") or "").strip(),
         "input_target_kinds": input_target_kinds,
+        "document_paths": document_paths,
         "composer_request_ids": composer_request_ids,
         "secretary_request_ids": report_request_ids,
         "report_request_ids": report_request_ids,

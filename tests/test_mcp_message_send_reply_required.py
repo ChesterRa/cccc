@@ -68,6 +68,37 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("refs"), refs)
 
+    def test_message_send_uses_cross_group_op_for_explicit_destination(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        captured = {}
+
+        def _fake_call_daemon(req):
+            captured["req"] = req
+            return {"ok": True, "result": {"src_event": {"id": "src-1"}, "dst_event": {"id": "dst-1"}}}
+
+        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            out = mcp_server.handle_tool_call(
+                "cccc_message_send",
+                {
+                    "group_id": "g_runtime",
+                    "dst_group_id": "g_selected",
+                    "actor_id": "peer1",
+                    "text": "hello",
+                    "to": ["@foreman"],
+                },
+            )
+
+        self.assertEqual((out.get("dst_event") or {}).get("id"), "dst-1")
+        req = captured.get("req") or {}
+        self.assertEqual(req.get("op"), "send_cross_group")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_runtime")
+        self.assertEqual(args.get("dst_group_id"), "g_selected")
+        self.assertEqual(args.get("to"), ["@foreman"])
+
     def test_message_reply_passes_refs(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common

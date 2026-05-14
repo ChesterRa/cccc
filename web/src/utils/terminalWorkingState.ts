@@ -113,6 +113,7 @@ export type ActorWorkingStateInput = {
   enabled?: boolean;
   runner?: string;
   runner_effective?: string;
+  runtime_state_source?: string;
   effective_working_state?: string;
 };
 
@@ -123,9 +124,10 @@ export function getActorDisplayWorkingState(
 ): string {
   const backendState = String(actor.effective_working_state || "").trim().toLowerCase() || "idle";
   const effectiveRunner = getEffectiveActorRunner(actor);
+  const stateSource = String(actor.runtime_state_source || "").trim().toLowerCase();
   const isRunning = actor.running ?? actor.enabled ?? false;
 
-  if (!isRunning || effectiveRunner === "headless") {
+  if (!isRunning || effectiveRunner === "headless" || stateSource === "app_server") {
     return backendState;
   }
 

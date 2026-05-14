@@ -3052,6 +3052,143 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_document_envelope_requires_markdown_update(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.codex_app_sessions import (
+                _voice_secretary_control_consumed_input,
+                _voice_secretary_control_consumption_diagnostics,
+            )
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            create, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "create_new": True,
+                    "title": "Meeting Notes",
+                },
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            document = (create.result or {}).get("document") if isinstance(create.result, dict) else {}
+            document_path = str(document.get("document_path") or "")
+            self.assertTrue(document_path)
+            before_documents = {
+                document_path: {
+                    "updated_at": str(document.get("updated_at") or ""),
+                    "content_sha256": str(document.get("content_sha256") or ""),
+                    "content_chars": int(document.get("content_chars") or 0),
+                    "revision_count": int(document.get("revision_count") or 0),
+                }
+            }
+            snapshot = {
+                "kind": "voice_secretary_input",
+                "before_latest_seq": 8,
+                "before_secretary_read_cursor": 8,
+                "input_envelope_delivered": True,
+                "delivery_id": f"voice-input:{group_id}:7-8",
+                "input_target_kinds": ["document"],
+                "document_paths": [document_path],
+                "before_voice_documents": before_documents,
+            }
+
+            diagnostics = _voice_secretary_control_consumption_diagnostics(group_id=group_id, snapshot=snapshot)
+            self.assertIn(f"document_update:{document_path}", diagnostics.get("missing") or [])
+            self.assertFalse(_voice_secretary_control_consumed_input(group_id=group_id, snapshot=snapshot))
+
+            save, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "document_path": document_path,
+                    "content": "# Meeting Notes\n\n- 用户要求生成可分析 doc。\n",
+                },
+            )
+            self.assertTrue(save.ok, getattr(save, "error", None))
+
+            after_diagnostics = _voice_secretary_control_consumption_diagnostics(group_id=group_id, snapshot=snapshot)
+            self.assertNotIn(f"document_update:{document_path}", after_diagnostics.get("missing") or [])
+            self.assertTrue(_voice_secretary_control_consumed_input(group_id=group_id, snapshot=snapshot))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_retries_delivered_but_unread_input(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import assistant_ops
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-retry-session",
+                    "segment_id": "doc-retry-seg-1",
+                    "text": "这段输入必须在小秘书没写文档时重新提醒。",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-retry-session",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(append.ok, getattr(append, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            state = assistant_ops._load_voice_input_state(group)
+            self.assertEqual(state.get("latest_seq"), 1)
+            self.assertEqual(state.get("secretary_delivery_cursor"), 1)
+            self.assertEqual(state.get("secretary_read_cursor"), 0)
+            state["last_notify_at"] = "2000-01-01T00:00:00+00:00"
+            assistant_ops._save_voice_input_state(group, state)
+            before_events = [
+                event
+                for event in iter_events(group.ledger_path)
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
+            ]
+            self.assertEqual(len(before_events), 1)
+
+            assistant_state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(assistant_state.ok, getattr(assistant_state, "error", None))
+            after_events = [
+                event
+                for event in iter_events(group.ledger_path)
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
+            ]
+            self.assertEqual(len(after_events), 2)
+            envelope = (((after_events[-1].get("data") or {}).get("context") or {}).get("input_envelope") or {})
+            self.assertEqual(envelope.get("seq_start"), 1)
+            self.assertEqual(envelope.get("seq_end"), 1)
+            retry_state = assistant_ops._load_voice_input_state(group)
+            self.assertEqual(retry_state.get("retry_count"), 1)
+        finally:
+            cleanup()
+
     def test_voice_secretary_transcript_append_auto_wakes_actor_when_input_created(self) -> None:
         home, cleanup = self._with_home()
         try:

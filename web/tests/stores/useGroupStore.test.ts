@@ -188,6 +188,39 @@ describe("useGroupStore selection and archive persistence", () => {
     expect(useComposerStore.getState().destGroupId).toBe("g-2");
   });
 
+  it("does not let a stale refresh response switch back after an explicit group change", async () => {
+    let resolveFetchGroups: (value: Awaited<ReturnType<typeof api.fetchGroups>>) => void = () => {};
+    vi.mocked(api.fetchGroups).mockReturnValueOnce(new Promise((resolve) => {
+      resolveFetchGroups = resolve;
+    }));
+
+    const mod = await importFreshStore();
+    mod.useGroupStore.setState({
+      selectedGroupId: "g-old",
+      groups: [
+        { group_id: "g-old", title: "Old", state: "active", topic: "" },
+        { group_id: "g-new", title: "New", state: "active", topic: "" },
+      ],
+    });
+
+    const refreshPromise = mod.useGroupStore.getState().refreshGroups();
+    mod.useGroupStore.getState().setSelectedGroupId("g-new");
+    resolveFetchGroups({
+      ok: true,
+      result: {
+        groups: [
+          { group_id: "g-old", title: "Old", state: "active", topic: "" },
+        ],
+      },
+    } as Awaited<ReturnType<typeof api.fetchGroups>>);
+    await refreshPromise;
+
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-new");
+    expect(useComposerStore.getState().activeGroupId).toBe("g-new");
+    expect(useComposerStore.getState().destGroupId).toBe("g-new");
+    expect(localStorageMock.getItem(SELECTED_GROUP_ID_KEY)).toBe("g-new");
+  });
+
   it("refreshGroups falls back to the first group when the persisted one no longer exists", async () => {
     localStorageMock.setItem(SELECTED_GROUP_ID_KEY, "g-missing");
     vi.mocked(api.fetchGroups).mockResolvedValue({

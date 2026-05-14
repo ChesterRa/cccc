@@ -575,6 +575,12 @@ class TestWebActorRoutesCache(unittest.TestCase):
             os.environ.pop("CCCC_WEB_MODE", None)
             group_id = self._create_group()
             self._add_actor(group_id, runtime="codex")
+            from cccc.kernel.actors import update_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            update_actor(group, "peer-1", {"runtime_state_source": "terminal"})  # type: ignore[arg-type]
 
             atomic_write_json(
                 headless_state_path(group_id, "peer-1"),

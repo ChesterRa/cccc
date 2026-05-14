@@ -1395,6 +1395,10 @@ def _voice_input_delivery_cursor(state: Dict[str, Any]) -> int:
     )
 
 
+def _voice_input_read_cursor(state: Dict[str, Any]) -> int:
+    return max(0, int(state.get("secretary_read_cursor") or 0))
+
+
 def _voice_input_timing_public(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         key: value
@@ -2086,8 +2090,13 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
         return {}
     state = _load_voice_input_state(group)
     delivery_cursor = _voice_input_delivery_cursor(state)
-    if int(state.get("latest_seq") or 0) <= delivery_cursor:
-        return {}
+    latest_seq = int(state.get("latest_seq") or 0)
+    read_cursor = _voice_input_read_cursor(state)
+    if latest_seq <= delivery_cursor:
+        if reason != "new_input" and read_cursor < latest_seq:
+            delivery_cursor = read_cursor
+        else:
+            return {}
     now = utc_now_iso()
     preview = _peek_voice_input_batch(group, after_seq=delivery_cursor)
     envelope = _voice_input_envelope_from_preview(group, preview=preview, reason=reason, created_at=now)
@@ -2107,7 +2116,6 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
         },
     )
     notify_event = emit_system_notify(group, by="system", notify=notify)
-    latest_seq = int(state.get("latest_seq") or 0)
     seq_end = max(0, int(envelope.get("seq_end") or 0))
     if seq_end > int(state.get("secretary_delivery_cursor") or 0):
         state["secretary_delivery_cursor"] = seq_end
@@ -2115,7 +2123,7 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
     state["last_notify_emitted_at"] = now
     state["last_input_envelope_at"] = now
     state["last_input_envelope_id"] = str(envelope.get("delivery_id") or "")
-    if _voice_input_delivery_cursor(state) >= latest_seq:
+    if _voice_input_read_cursor(state) >= latest_seq:
         state["last_notify_at"] = ""
         state["retry_count"] = 0
     elif reason != "new_input":
@@ -2128,7 +2136,7 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
 
 def _maybe_emit_voice_input_retry_notify(group: Group) -> None:
     state = _load_voice_input_state(group)
-    if int(state.get("latest_seq") or 0) <= _voice_input_delivery_cursor(state):
+    if int(state.get("latest_seq") or 0) <= _voice_input_read_cursor(state):
         return
     retry_count = int(state.get("retry_count") or 0)
     if retry_count >= len(_VOICE_INPUT_NUDGE_RETRY_SECONDS):

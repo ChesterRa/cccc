@@ -25,11 +25,13 @@ const { localStorageMock } = vi.hoisted(() => {
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
+  buildComposerSendRoutingSnapshot,
   buildReplyAnchorTsMap,
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
   mergeVisibleChatMessages,
+  parseComposerRecipientTokens,
   sortChatMessages,
   shouldRestoreDetachedScrollSnapshot,
 } from "../../src/hooks/useChatTab";
@@ -175,6 +177,47 @@ describe("dedupeStreamingEvents", () => {
     expect(events.map((event) => String(event.id || ""))).toEqual([
       "pending:evt-2:claude-1",
       "stream:commentary-2",
+    ]);
+  });
+});
+
+describe("buildComposerSendRoutingSnapshot", () => {
+  it("uses the selected group while the composer still belongs to the previous group", () => {
+    const snapshot = buildComposerSendRoutingSnapshot({
+      selectedGroupId: "g-new",
+      activeGroupId: "g-old",
+      destGroupId: "g-old-remote",
+    });
+
+    expect(snapshot).toEqual({
+      selectedGroupId: "g-new",
+      destGroupId: "g-new",
+      composerGroupSettled: false,
+      isCrossGroup: false,
+    });
+  });
+
+  it("marks explicit cross-group delivery only after composer ownership is settled", () => {
+    const snapshot = buildComposerSendRoutingSnapshot({
+      selectedGroupId: "g-current",
+      activeGroupId: "g-current",
+      destGroupId: "g-dst",
+    });
+
+    expect(snapshot).toMatchObject({
+      selectedGroupId: "g-current",
+      destGroupId: "g-dst",
+      composerGroupSettled: true,
+      isCrossGroup: true,
+    });
+  });
+});
+
+describe("parseComposerRecipientTokens", () => {
+  it("deduplicates recipient tokens from the same composer snapshot", () => {
+    expect(parseComposerRecipientTokens("@foreman, @, peer-1, peer-1, missing", new Set(["@foreman", "peer-1"]))).toEqual([
+      "@foreman",
+      "peer-1",
     ]);
   });
 });

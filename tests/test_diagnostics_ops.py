@@ -12,11 +12,11 @@ class TestDiagnosticsOps(unittest.TestCase):
         os.environ["CCCC_HOME"] = td
 
         def cleanup() -> None:
-            td_ctx.__exit__(None, None, None)
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
             else:
                 os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
 
         return td, cleanup
 

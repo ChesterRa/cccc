@@ -533,6 +533,9 @@ class TestBootstrapActorOps(unittest.TestCase):
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
+            for actor in group.doc.get("actors", []):
+                if isinstance(actor, dict) and actor.get("id") == "peer1":
+                    actor["runtime_state_source"] = "terminal"
             group.doc["running"] = True
             group.doc["state"] = "active"
             group.save()

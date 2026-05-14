@@ -640,6 +640,51 @@ interface UseChatTabOptions {
 
 type ChatEmptyState = "ready" | "hydrating" | "business_empty";
 
+export type ComposerSendRoutingSnapshot = {
+  selectedGroupId: string;
+  destGroupId: string;
+  composerGroupSettled: boolean;
+  isCrossGroup: boolean;
+};
+
+export function buildComposerSendRoutingSnapshot({
+  selectedGroupId,
+  activeGroupId,
+  destGroupId,
+}: {
+  selectedGroupId: string;
+  activeGroupId: string;
+  destGroupId: string;
+}): ComposerSendRoutingSnapshot {
+  const selected = String(selectedGroupId || "").trim();
+  const active = String(activeGroupId || "").trim();
+  const dest = getEffectiveComposerDestGroupId(destGroupId, active, selected);
+  const composerGroupSettled = isComposerGroupSettled(active, selected);
+  return {
+    selectedGroupId: selected,
+    destGroupId: dest,
+    composerGroupSettled,
+    isCrossGroup: !!selected && !!dest && dest !== selected,
+  };
+}
+
+export function parseComposerRecipientTokens(toText: string, validRecipientSet: Set<string>): string[] {
+  const raw = String(toText || "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const token of raw) {
+    if (token === "@") continue;
+    if (!validRecipientSet.has(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
 export function useChatTab({
   selectedGroupId,
   selectedGroupRunning,
@@ -779,20 +824,7 @@ export function useChatTab({
 
   // Parse toText into validated tokens
   const toTokens = useMemo(() => {
-    const raw = toText
-      .split(",")
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const token of raw) {
-      if (token === "@") continue;
-      if (!validRecipientSet.has(token)) continue;
-      if (seen.has(token)) continue;
-      seen.add(token);
-      out.push(token);
-    }
-    return out;
+    return parseComposerRecipientTokens(toText, validRecipientSet);
   }, [toText, validRecipientSet]);
 
   // Mention suggestions
@@ -1106,22 +1138,30 @@ export function useChatTab({
 
   const sendMessage = useCallback(async () => {
     if (sendInFlightRef.current) return; // keyboard shortcut can bypass UI state; keep send single-flight locally
-    const txt = composerText.trim();
     if (!selectedGroupId) return;
     const latestSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
     if (latestSelectedGroupId !== selectedGroupId) return;
-    if (!isComposerGroupSettled(useComposerStore.getState().activeGroupId, latestSelectedGroupId)) return;
-    if (!txt && composerFiles.length === 0) return;
+    const composerStateSnapshot = useComposerStore.getState();
+    const routingSnapshot = buildComposerSendRoutingSnapshot({
+      selectedGroupId: latestSelectedGroupId,
+      activeGroupId: composerStateSnapshot.activeGroupId,
+      destGroupId: composerStateSnapshot.destGroupId,
+    });
+    if (!routingSnapshot.composerGroupSettled) return;
 
-    const dstGroup = String(sendGroupId || "").trim();
-    const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
+    const txt = String(composerStateSnapshot.composerText || "").trim();
+    const composerFilesSnapshot = composerStateSnapshot.composerFiles.slice();
+    if (!txt && composerFilesSnapshot.length === 0) return;
+
+    const dstGroup = routingSnapshot.destGroupId;
+    const isCrossGroup = routingSnapshot.isCrossGroup;
     if (await tryExecuteSlashCommand({
-      text: composerText,
-      composerFilesCount: composerFiles.length,
-      hasReplyTarget: !!replyTarget,
-      replyTarget,
-      replyRequired,
-      hasQuotedPresentationRef: !!quotedPresentationRef,
+      text: composerStateSnapshot.composerText,
+      composerFilesCount: composerFilesSnapshot.length,
+      hasReplyTarget: !!composerStateSnapshot.replyTarget,
+      replyTarget: composerStateSnapshot.replyTarget,
+      replyRequired: composerStateSnapshot.replyRequired,
+      hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
       sendGroupId: dstGroup,
     })) {
       return;
@@ -1131,15 +1171,15 @@ export function useChatTab({
       return;
     }
 
-    const prio = replyRequired ? "attention" : (priority || "normal");
-    const replyTargetSnapshot = replyTarget;
-    const composerFilesSnapshot = composerFiles.slice();
-    const quotedPresentationRefSnapshot = quotedPresentationRef;
+    const replyTargetSnapshot = composerStateSnapshot.replyTarget;
+    const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
     const refsSnapshot: MessageRef[] = quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : [];
-    const prioritySnapshot = priority;
-    const replyRequiredSnapshot = replyRequired;
-    const toTextSnapshot = toText;
-    const assistantTargets = !isCrossGroup ? resolveAssistantTargets(toTokens) : [];
+    const prioritySnapshot = composerStateSnapshot.priority;
+    const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
+    const toTextSnapshot = composerStateSnapshot.toText;
+    const toTokensSnapshot = parseComposerRecipientTokens(toTextSnapshot, validRecipientSet);
+    const prio = replyRequiredSnapshot ? "attention" : (prioritySnapshot || "normal");
+    const assistantTargets = !isCrossGroup ? resolveAssistantTargets(toTokensSnapshot) : [];
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1239,9 +1279,9 @@ export function useChatTab({
         group_id: selectedGroupId,
         data: {
           text: txt,
-          to: toTokens,
+          to: toTokensSnapshot,
           priority: prio,
-          reply_required: replyRequired,
+          reply_required: replyRequiredSnapshot,
           client_id: localId,
           reply_to: replyTargetSnapshot?.eventId || null,
           quote_text: replyTargetSnapshot?.text || undefined,
@@ -1258,7 +1298,7 @@ export function useChatTab({
     applyImmediateComposerFeedback();
     sendInFlightRef.current = true;
     try {
-      const to = toTokens;
+      const to = toTokensSnapshot;
       let resp;
       if (replyTargetSnapshot) {
         resp = await api.replyMessage(
@@ -1268,7 +1308,7 @@ export function useChatTab({
           replyTargetSnapshot.eventId,
           composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
           prio,
-          replyRequired,
+          replyRequiredSnapshot,
           localId,
           refsSnapshot,
         );
@@ -1282,7 +1322,7 @@ export function useChatTab({
             to,
             composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
             prio,
-            replyRequired,
+            replyRequiredSnapshot,
             localId,
             refsSnapshot,
           );
@@ -1354,18 +1394,10 @@ export function useChatTab({
       sendInFlightRef.current = false;
     }
   }, [
-    composerText,
-    composerFiles,
     selectedGroupId,
     groupSendBlockedReason,
     tryExecuteSlashCommand,
-    sendGroupId,
-    priority,
-    replyRequired,
-    toText,
-    toTokens,
-    replyTarget,
-    quotedPresentationRef,
+    validRecipientSet,
     inChatWindow,
     appendEvent,
     enqueueOutbox,

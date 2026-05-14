@@ -185,4 +185,19 @@ describe("terminalWorkingState", () => {
       ),
     ).toBe("idle");
   });
+
+  it("does not apply terminal signal overrides to app-server-backed PTY actors", () => {
+    expect(
+      getActorDisplayWorkingState(
+        {
+          id: "peer-1",
+          running: true,
+          runner: "pty",
+          runtime_state_source: "app_server",
+          effective_working_state: "working",
+        },
+        { kind: "idle_prompt", updatedAt: Date.now() },
+      ),
+    ).toBe("working");
+  });
 });

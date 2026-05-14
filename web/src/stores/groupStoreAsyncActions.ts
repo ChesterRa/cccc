@@ -71,10 +71,19 @@ export function createGroupStoreAsyncActions(
         return;
       }
       setRefreshGroupsInFlight(true);
+      const selectedAtRequestStart = String(get().selectedGroupId || "").trim();
       try {
         const resp = await api.fetchGroups();
         if (resp.ok) {
           const next = resp.result.groups || [];
+          const selectedBeforeApply = String(get().selectedGroupId || "").trim();
+          const selectedChangedDuringRequest = selectedBeforeApply !== selectedAtRequestStart;
+          const selectedExistsInNext =
+            !!selectedBeforeApply && next.some((g) => String(g.group_id || "") === selectedBeforeApply);
+          if (selectedChangedDuringRequest && selectedBeforeApply && !selectedExistsInNext) {
+            return;
+          }
+
           get().setGroups(next);
 
           const cur = String(get().selectedGroupId || "").trim();

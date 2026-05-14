@@ -281,7 +281,14 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One", runtime="codex", runner="pty")  # type: ignore[arg-type]
+                add_actor(
+                    group,
+                    actor_id="peer1",
+                    title="Peer One",
+                    runtime="codex",
+                    runner="pty",
+                    runtime_state_source="terminal",
+                )  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
                 storage = ContextStorage(group)  # type: ignore[arg-type]

@@ -3287,7 +3287,14 @@ class TestCodexAppFlow(unittest.TestCase):
             created = create_group(reg, title="pty-ledger-activity", topic="")
             group = load_group(created.group_id)
             self.assertIsNotNone(group)
-            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            add_actor(
+                group,
+                actor_id="peer1",
+                title="Peer 1",
+                runtime="codex",
+                runner="pty",
+                runtime_state_source="terminal",
+            )  # type: ignore[arg-type]
             group.save()  # type: ignore[union-attr]
 
             group = load_group(created.group_id)
@@ -3353,7 +3360,14 @@ class TestCodexAppFlow(unittest.TestCase):
             created = create_group(reg, title="pty-tail-activity", topic="")
             group = load_group(created.group_id)
             self.assertIsNotNone(group)
-            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            add_actor(
+                group,
+                actor_id="peer1",
+                title="Peer 1",
+                runtime="codex",
+                runner="pty",
+                runtime_state_source="terminal",
+            )  # type: ignore[arg-type]
             group.save()  # type: ignore[union-attr]
 
             published: list[dict] = []
