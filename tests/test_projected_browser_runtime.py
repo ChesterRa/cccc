@@ -866,6 +866,42 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
 
         self.assertEqual(fake_cm.playwright.chromium.launch_calls, [])
 
+    def test_macos_headed_launch_does_not_require_display_or_xvfb(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        browser_proc = _FakeProc()
+        fake_cm = _FakePlaywrightCM()
+        with patch.object(runtime.sys, "platform", "darwin"), patch.object(
+            runtime, "ensure_sync_playwright", return_value=lambda: fake_cm
+        ), patch.object(
+            runtime, "_system_browser_binaries", return_value=["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        ), patch.object(
+            runtime, "_pick_free_port", return_value=9444
+        ), patch.object(
+            runtime, "_wait_cdp_endpoint", return_value=True
+        ), patch.object(
+            runtime.subprocess, "Popen", return_value=browser_proc
+        ) as popen, patch.dict(runtime.os.environ, {}, clear=True):
+            launched = runtime.launch_projected_browser_runtime(
+                profile_dir=runtime.Path("/tmp/projected-browser-macos-profile"),
+                url="https://chatgpt.com",
+                width=1280,
+                height=800,
+                headless=False,
+                channel_candidates=("chrome",),
+            )
+
+        self.assertEqual(fake_cm.playwright.chromium.connect_calls, [("http://127.0.0.1:9444", {"timeout": 15000})])
+        cmd = popen.call_args.args[0]
+        self.assertIn("--app=https://chatgpt.com", cmd)
+        metadata = getattr(launched, "metadata", {}) or {}
+        self.assertEqual(metadata.get("display"), "")
+        self.assertEqual(metadata.get("display_owned"), False)
+        self.assertEqual(metadata.get("display_owner"), "")
+        self.assertIn("system_browser_cdp", str(getattr(launched, "strategy", "") or ""))
+        launched.close()
+        self.assertTrue(browser_proc.terminated or browser_proc.killed)
+
     def test_headed_launch_prefers_system_browser_cdp_when_available(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
