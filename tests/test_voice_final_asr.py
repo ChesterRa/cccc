@@ -4,7 +4,12 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from cccc.daemon.assistants.voice_final_asr import iter_final_asr_events
+from cccc.daemon.assistants.voice_final_asr import (
+    FinalAsrEvent,
+    build_final_asr_text_event,
+    collect_final_asr_text,
+    iter_final_asr_events,
+)
 from cccc.daemon.assistants.voice_final_asr_debug import voice_final_asr_quality_flags
 from cccc.daemon.assistants.voice_pcm_segments import VoicePcmSegment
 
@@ -102,6 +107,155 @@ class VoiceFinalAsrTests(unittest.TestCase):
 
         self.assertGreaterEqual(flags["suspicious_ascii_fragment_count"], 2)
         self.assertIn("chanchanl", flags["suspicious_ascii_fragments"])
+
+
+class CollectFinalAsrTextTests(unittest.TestCase):
+    @staticmethod
+    def _final_event(text: str) -> FinalAsrEvent:
+        return FinalAsrEvent({"type": "final", "text": text}, text=text)
+
+    @staticmethod
+    def _progress_event(stage: str) -> FinalAsrEvent:
+        return FinalAsrEvent({"type": "final_asr_progress", "stage": stage}, text="")
+
+    def test_empty_audio_returns_empty_string(self) -> None:
+        async def run_case() -> None:
+            async def fake_iter(*_args: object, **_kwargs: object):
+                if False:
+                    yield FinalAsrEvent({})
+
+            with patch("cccc.daemon.assistants.voice_final_asr.iter_final_asr_events", fake_iter):
+                text = await collect_final_asr_text(
+                    b"",
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                )
+            self.assertEqual(text, "")
+
+        asyncio.run(run_case())
+
+    def test_joins_chinese_segments_without_space(self) -> None:
+        async def run_case() -> None:
+            events = [
+                self._progress_event("segments_ready"),
+                self._final_event("今天苏州"),
+                self._progress_event("transcribing"),
+                self._final_event("天气怎么样"),
+            ]
+
+            async def fake_iter(*_args: object, **_kwargs: object):
+                for event in events:
+                    yield event
+
+            with patch("cccc.daemon.assistants.voice_final_asr.iter_final_asr_events", fake_iter):
+                text = await collect_final_asr_text(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                )
+            self.assertEqual(text, "今天苏州天气怎么样")
+
+        asyncio.run(run_case())
+
+    def test_joins_mixed_language_with_space(self) -> None:
+        async def run_case() -> None:
+            events = [
+                self._final_event("Open"),
+                self._final_event("the door"),
+            ]
+
+            async def fake_iter(*_args: object, **_kwargs: object):
+                for event in events:
+                    yield event
+
+            with patch("cccc.daemon.assistants.voice_final_asr.iter_final_asr_events", fake_iter):
+                text = await collect_final_asr_text(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                )
+            self.assertEqual(text, "Open the door")
+
+        asyncio.run(run_case())
+
+    def test_skips_empty_and_whitespace_finals(self) -> None:
+        async def run_case() -> None:
+            events = [
+                self._final_event(""),
+                self._final_event("   "),
+                self._final_event("你好"),
+            ]
+
+            async def fake_iter(*_args: object, **_kwargs: object):
+                for event in events:
+                    yield event
+
+            with patch("cccc.daemon.assistants.voice_final_asr.iter_final_asr_events", fake_iter):
+                text = await collect_final_asr_text(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                )
+            self.assertEqual(text, "你好")
+
+        asyncio.run(run_case())
+
+
+class BuildFinalAsrTextEventTests(unittest.TestCase):
+    def test_returns_none_when_collect_raises(self) -> None:
+        async def run_case() -> None:
+            with patch(
+                "cccc.daemon.assistants.voice_final_asr.collect_final_asr_text",
+                AsyncMock(side_effect=RuntimeError("boom")),
+            ):
+                event = await build_final_asr_text_event(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                    seq=42,
+                )
+            self.assertIsNone(event)
+
+        asyncio.run(run_case())
+
+    def test_returns_none_when_text_empty(self) -> None:
+        async def run_case() -> None:
+            with patch(
+                "cccc.daemon.assistants.voice_final_asr.collect_final_asr_text",
+                AsyncMock(return_value="   "),
+            ):
+                event = await build_final_asr_text_event(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                    seq=42,
+                )
+            self.assertIsNone(event)
+
+        asyncio.run(run_case())
+
+    def test_returns_event_payload_when_text_available(self) -> None:
+        async def run_case() -> None:
+            with patch(
+                "cccc.daemon.assistants.voice_final_asr.collect_final_asr_text",
+                AsyncMock(return_value="今天苏州天气怎么样"),
+            ):
+                event = await build_final_asr_text_event(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                    seq=42,
+                )
+            self.assertEqual(event, {
+                "type": "final_asr_text",
+                "ok": True,
+                "seq": 42,
+                "text": "今天苏州天气怎么样",
+                "source": "assistant_service_local_asr_final",
+                "model_id": "sense_voice",
+            })
+
+        asyncio.run(run_case())
 
 
 if __name__ == "__main__":

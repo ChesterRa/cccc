@@ -201,3 +201,70 @@ async def iter_final_asr_events(
                 "error": {"code": exc.code, "message": exc.message, "details": exc.details},
             }
         )
+
+
+def _is_cjk(char: str) -> bool:
+    if not char:
+        return False
+    return "぀" <= char <= "ヿ" or "㐀" <= char <= "鿿"
+
+
+def _append_final_chunk(buffer: str, chunk: str) -> str:
+    if not buffer:
+        return chunk
+    if not chunk:
+        return buffer
+    prev_last = buffer[-1]
+    next_first = chunk[0]
+    if _is_cjk(prev_last) and _is_cjk(next_first):
+        return f"{buffer}{chunk}"
+    if prev_last in ".!?;:,，。！？；：、":
+        return f"{buffer}{chunk}"
+    return f"{buffer} {chunk}"
+
+
+async def collect_final_asr_text(
+    pcm16_audio: bytes,
+    *,
+    selected_model_id: str,
+    sample_rate: int = 16000,
+) -> str:
+    text = ""
+    async for event in iter_final_asr_events(
+        pcm16_audio,
+        selected_model_id=selected_model_id,
+        sample_rate=sample_rate,
+    ):
+        chunk = (event.text or "").strip()
+        if not chunk:
+            continue
+        text = _append_final_chunk(text, chunk)
+    return text
+
+
+async def build_final_asr_text_event(
+    pcm16_audio: bytes,
+    *,
+    selected_model_id: str,
+    sample_rate: int = 16000,
+    seq: Any = None,
+) -> dict[str, Any] | None:
+    try:
+        text = await collect_final_asr_text(
+            pcm16_audio,
+            selected_model_id=selected_model_id,
+            sample_rate=sample_rate,
+        )
+    except Exception:
+        return None
+    text = (text or "").strip()
+    if not text:
+        return None
+    return {
+        "type": "final_asr_text",
+        "ok": True,
+        "seq": seq,
+        "text": text,
+        "source": _FINAL_ASR_SOURCE,
+        "model_id": str(selected_model_id or "").strip(),
+    }

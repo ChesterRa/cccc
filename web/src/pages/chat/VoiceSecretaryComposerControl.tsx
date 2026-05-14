@@ -743,6 +743,7 @@ export function VoiceSecretaryComposerControl({
   const serviceFinalTranscriptRef = useRef("");
   const serviceLatestPartialTranscriptRef = useRef("");
   const serviceCommittedTranscriptRef = useRef("");
+  const serviceFinalAsrTextRef = useRef("");
   const serviceAudioDurationMsRef = useRef(0);
   const serviceCommittedEndMsRef = useRef(0);
   const serviceFinalSpeakerSegmentsRef = useRef<Record<string, unknown>[]>([]);
@@ -1675,6 +1676,7 @@ export function VoiceSecretaryComposerControl({
     browserFinalTranscriptBufferRef.current = "";
     serviceLatestPartialTranscriptRef.current = "";
     serviceCommittedTranscriptRef.current = "";
+    serviceFinalAsrTextRef.current = "";
     serviceAudioResamplerRef.current = null;
     serviceAudioDurationMsRef.current = 0;
     serviceCommittedEndMsRef.current = 0;
@@ -2146,6 +2148,7 @@ export function VoiceSecretaryComposerControl({
     serviceFinalTranscriptRef.current = "";
     serviceLatestPartialTranscriptRef.current = "";
     serviceCommittedTranscriptRef.current = "";
+    serviceFinalAsrTextRef.current = "";
     serviceAudioPendingPcmRef.current = [];
     serviceAudioResamplerRef.current = null;
     serviceAudioDurationMsRef.current = 0;
@@ -2725,6 +2728,7 @@ export function VoiceSecretaryComposerControl({
       serviceFinalTranscriptRef.current = "";
       serviceLatestPartialTranscriptRef.current = "";
       serviceCommittedTranscriptRef.current = "";
+      serviceFinalAsrTextRef.current = "";
       serviceAudioPendingPcmRef.current = [];
       serviceAudioResamplerRef.current = new Pcm16Resampler(audioContext.sampleRate);
       serviceAudioDurationMsRef.current = 0;
@@ -2807,6 +2811,15 @@ export function VoiceSecretaryComposerControl({
             await handleServiceStreamingFinal(String(payload.text || ""));
             return;
           }
+          if (type === "final_asr_text") {
+            if (payload.ok !== false) {
+              const finalText = String(payload.text || "").trim();
+              if (finalText) {
+                serviceFinalAsrTextRef.current = finalText;
+              }
+            }
+            return;
+          }
           if (type === "diarization_started" || type === "diarization_status") {
             const status = String(payload.status || "").trim();
             if (status === "separating_speakers" && captureMode === "document") {
@@ -2847,16 +2860,19 @@ export function VoiceSecretaryComposerControl({
           }
           if (type === "closed") {
             await commitServiceLatestPartialTranscript();
+            const dispatchText = serviceFinalAsrTextRef.current
+              || serviceCommittedTranscriptRef.current
+              || serviceFinalTranscriptRef.current;
             const dispatchKind = voiceServiceStopDispatchKind({
               mode: captureMode,
-              transcriptText: serviceCommittedTranscriptRef.current || serviceFinalTranscriptRef.current,
+              transcriptText: dispatchText,
               pendingPromptRequestId: pendingPromptRequestIdRef.current,
               pendingAskRequestId: pendingAskRequestIdRef.current,
             });
             if (dispatchKind === "prompt") {
-              await requestPromptRefine(serviceCommittedTranscriptRef.current || serviceFinalTranscriptRef.current, "service_prompt_refine");
+              await requestPromptRefine(dispatchText, "service_prompt_refine");
             } else if (dispatchKind === "instruction") {
-              await sendInstructionTranscript(serviceCommittedTranscriptRef.current || serviceFinalTranscriptRef.current, {
+              await sendInstructionTranscript(dispatchText, {
                 triggerKind: "service_voice_instruction",
               });
             }

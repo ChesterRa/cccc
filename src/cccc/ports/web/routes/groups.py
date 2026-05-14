@@ -44,6 +44,7 @@ from ....daemon.assistants.voice_speaker_identity import (
     run_final_diarization_file,
     run_provisional_diarization_prefix,
 )
+from ....daemon.assistants.voice_final_asr import build_final_asr_text_event
 from ....daemon.assistants.voice_final_document_apply import apply_final_speaker_transcript_to_document
 from ....daemon.assistants.voice_speaker_transcripts import build_offline_speaker_transcript_segments
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
@@ -2361,19 +2362,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     streaming_diarization_seq = 0
                     streaming_stable_diarization_segments = []
                     streaming_stable_speaker_embeddings = []
-                    _write_voice_speaker_transcript_artifact(
-                        group_id,
-                        streaming_client_session_id,
-                        {
-                            "status": "recording",
-                            "sample_rate": streaming_sample_rate,
-                            "diarization_ready": streaming_diarization_ready,
-                            "segments": [],
-                            "speaker_transcript_segments": [],
-                            "speaker_transcript_error": None,
-                            "speaker_transcript_model_id": streaming_final_asr_model_id,
-                        },
-                    )
+                    if streaming_capture_mode == "document":
+                        _write_voice_speaker_transcript_artifact(
+                            group_id,
+                            streaming_client_session_id,
+                            {
+                                "status": "recording",
+                                "sample_rate": streaming_sample_rate,
+                                "diarization_ready": streaming_diarization_ready,
+                                "segments": [],
+                                "speaker_transcript_segments": [],
+                                "speaker_transcript_error": None,
+                                "speaker_transcript_model_id": streaming_final_asr_model_id,
+                            },
+                        )
                     _write_voice_meeting_session(
                         group_id,
                         streaming_client_session_id,
@@ -2412,7 +2414,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     try:
                         audio_base64 = str(payload.get("audio_base64") or payload.get("audio_b64") or "")
                         sample_rate = int(payload.get("sample_rate") or 16000)
-                        if sample_rate == 16000 and streaming_diarization_ready:
+                        if sample_rate == 16000:
                             try:
                                 pcm16_chunk = base64.b64decode(audio_base64, validate=True)
                                 append_streaming_pcm16(pcm16_chunk)
@@ -2561,7 +2563,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     with contextlib.suppress(asyncio.CancelledError):
                                         await streaming_diarization_task
                                 streaming_diarization_task = None
-                            if streaming_pcm16_path is not None and streaming_pcm16_bytes > 0 and streaming_diarization_ready:
+                            if (
+                                streaming_capture_mode == "document"
+                                and streaming_pcm16_path is not None
+                                and streaming_pcm16_bytes > 0
+                                and streaming_diarization_ready
+                            ):
                                 audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
                                 persisted_pcm16_path = _persist_voice_meeting_pcm16(
                                     group_id,
@@ -2605,7 +2612,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     group_id=group_id,
                                     session_id=streaming_client_session_id,
                                     pcm16_path=persisted_pcm16_path,
-                                    document_path=streaming_document_path if streaming_capture_mode == "document" else "",
+                                    document_path=streaming_document_path,
                                     selected_model_id=streaming_diarization_model_id,
                                     selected_asr_model_id=streaming_final_asr_model_id,
                                     sample_rate=streaming_sample_rate,
@@ -2613,6 +2620,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     language=streaming_language,
                                 ))
                             else:
+                                if (
+                                    streaming_capture_mode in {"instruction", "prompt"}
+                                    and streaming_pcm16_audio
+                                ):
+                                    event = await build_final_asr_text_event(
+                                        bytes(streaming_pcm16_audio),
+                                        selected_model_id=streaming_final_asr_model_id,
+                                        sample_rate=streaming_sample_rate,
+                                        seq=seq,
+                                    )
+                                    if event is not None:
+                                        await websocket.send_json(event)
                                 _write_voice_meeting_session(
                                     group_id,
                                     streaming_client_session_id,
