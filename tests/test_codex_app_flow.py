@@ -1414,6 +1414,94 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_bootstrap_control_text_passes_explicit_actor_id(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="codex-bootstrap", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            add_actor(group, actor_id="Development", title="Development", runtime="codex", runner="headless")
+            group.save()
+
+            session = CodexAppSession(
+                group_id=created.group_id,
+                actor_id="Development",
+                cwd=Path(home),
+                env={},
+            )
+
+            text = session._build_bootstrap_control_text()
+
+            self.assertIn("cccc_bootstrap", text)
+            self.assertIn('actor_id="Development"', text)
+            self.assertIn(f'group_id="{created.group_id}"', text)
+            self.assertIn("Pass actor_id explicitly", text)
+        finally:
+            cleanup()
+
+    def test_codex_bootstrap_control_failed_tool_call_finishes_turn(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="Development",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-bootstrap"
+            session._active_control_kind = "bootstrap"
+            session._active_payload = _PendingTurn(text="bootstrap", event_id="", control_kind="bootstrap")
+            session._session_state.status = "working"
+            session._session_state.current_task_id = "turn-bootstrap"
+
+            with (
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "item/completed",
+                    {
+                        "turnId": "turn-bootstrap",
+                        "item": {
+                            "type": "mcpToolCall",
+                            "id": "call-bootstrap",
+                            "server": "cccc",
+                            "tool": "cccc_bootstrap",
+                            "status": "failed",
+                            "result": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "missing_actor_id (set CCCC_ACTOR_ID env or pass actor_id)",
+                                    }
+                                ]
+                            },
+                        },
+                    },
+                )
+
+            done_set.assert_called_once()
+            self.assertEqual(session._session_state.status, "idle")
+            self.assertIsNone(session._session_state.current_task_id)
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.item.completed", event_types)
+            self.assertIn("headless.control.failed", event_types)
+            failed_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.failed")
+            self.assertEqual(failed_payload.get("status"), "failed")
+            self.assertEqual(str((failed_payload.get("error") or {}).get("message") or ""), "missing_actor_id (set CCCC_ACTOR_ID env or pass actor_id)")
+        finally:
+            cleanup()
+
     def test_codex_control_turn_emits_stalled_when_runtime_goes_quiet(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 

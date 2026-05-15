@@ -759,7 +759,92 @@ class CodexAppSession:
         prompt = render_system_prompt(group=group, actor=actor)
         if not prompt.strip():
             return ""
-        return render_headless_control_text(control_kind="bootstrap", body=prompt)
+        bootstrap_instruction = "\n".join(
+            [
+                "[CCCC] BOOTSTRAP TOOL CONTRACT:",
+                (
+                    "First call MCP tool "
+                    f'cccc_bootstrap(actor_id="{self.actor_id}", group_id="{self.group_id}", '
+                    'inbox_kind_filter="all", inbox_limit=10).'
+                ),
+                "Pass actor_id explicitly; do not rely on environment variables for startup/bootstrap.",
+                "If cccc_bootstrap fails, stop this bootstrap turn instead of continuing with normal work.",
+            ]
+        )
+        return render_headless_control_text(control_kind="bootstrap", body=f"{bootstrap_instruction}\n\n{prompt}")
+
+    @staticmethod
+    def _mcp_tool_call_failed(item: Dict[str, Any]) -> bool:
+        if str(item.get("type") or "").strip() != "mcpToolCall":
+            return False
+        status = str(item.get("status") or "").strip().lower()
+        return status in {"failed", "error", "cancelled"} or item.get("error") is not None
+
+    @staticmethod
+    def _item_error_message(item: Dict[str, Any], *, fallback: str) -> str:
+        raw_error = item.get("error")
+        if isinstance(raw_error, dict):
+            message = str(raw_error.get("message") or "").strip()
+            if message:
+                return message
+        elif raw_error:
+            message = str(raw_error).strip()
+            if message:
+                return message
+        result = item.get("result")
+        if isinstance(result, dict):
+            content = result.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = str(part.get("text") or "").strip()
+                    if text:
+                        return text
+            message = str(result.get("message") or "").strip()
+            if message:
+                return message
+        return fallback
+
+    def _fail_active_control_turn_from_item(
+        self,
+        *,
+        turn_id: str,
+        event_id: str,
+        control_kind: str,
+        item: Dict[str, Any],
+        now: str,
+    ) -> None:
+        message = self._item_error_message(item, fallback="bootstrap control tool failed")
+        with self._lock:
+            self._active_turn_id = ""
+            self._active_event_id = ""
+            self._active_control_kind = ""
+            self._active_payload = None
+            self._session_state.status = "idle"
+            self._session_state.current_task_id = None
+            self._session_state.updated_at = now
+        self._persist_state()
+        self._agent_message_phase_by_stream_id.clear()
+        self._item_snapshots_by_id.clear()
+        self._plan_activity_id = ""
+        self._emit(
+            "headless.control.failed",
+            {
+                "turn_id": turn_id,
+                "event_id": event_id,
+                "control_kind": control_kind,
+                "status": "failed",
+                "error": {"message": message},
+                "failed_item": {
+                    "id": str(item.get("id") or "").strip(),
+                    "server": str(item.get("server") or "").strip(),
+                    "tool": str(item.get("tool") or "").strip(),
+                    "status": str(item.get("status") or "").strip(),
+                },
+            },
+        )
+        self._turn_done.set()
 
     def _queue_control_turn(self, *, text: str, control_kind: str, event_id: str = "", ts: str = "") -> bool:
         if not self.is_running():
@@ -1543,7 +1628,16 @@ class CodexAppSession:
                 self._emit_item_activity(status="completed", turn_id=str(params.get("turnId") or ""), item=item)
                 return
             self._emit_item_activity(status="completed", turn_id=str(params.get("turnId") or ""), item=item)
-            self._emit("headless.item.completed", {"turn_id": str(params.get("turnId") or ""), "event_id": active_event_id, "stream_id": item_id, "item": item})
+            turn_id = str(params.get("turnId") or "")
+            self._emit("headless.item.completed", {"turn_id": turn_id, "event_id": active_event_id, "stream_id": item_id, "item": item})
+            if control_kind == "bootstrap" and self._mcp_tool_call_failed(item):
+                self._fail_active_control_turn_from_item(
+                    turn_id=turn_id,
+                    event_id=active_event_id,
+                    control_kind=control_kind,
+                    item=item,
+                    now=now,
+                )
             return
 
         if method == "turn/completed":
