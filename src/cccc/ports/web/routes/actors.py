@@ -8,7 +8,7 @@ import time
 import threading
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -41,6 +41,7 @@ from .groups import invalidate_context_read
 from ..schemas import (
     ActorCreateRequest,
     ActorProfileUpsertRequest,
+    ActorRestartRequest,
     ActorUpdateRequest,
     RouteContext,
     _normalize_command,
@@ -103,6 +104,27 @@ def _pid_matches_actor_context(pid: int, *, group_id: str, actor_id: str) -> boo
         pass
 
     return False
+
+
+def _pty_state_running(group_id: str, actor_id: str) -> bool:
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid:
+        return False
+    try:
+        state_doc = read_json(pty_state_path(gid, aid))
+        pid = int(state_doc.get("pid") or 0) if isinstance(state_doc, dict) else 0
+    except Exception:
+        return False
+    return bool(
+        isinstance(state_doc, dict)
+        and str(state_doc.get("kind") or "") == "pty"
+        and str(state_doc.get("group_id") or "") == gid
+        and str(state_doc.get("actor_id") or "") == aid
+        and pid > 0
+        and pid_is_alive(pid)
+        and _pid_matches_actor_context(pid, group_id=gid, actor_id=aid)
+    )
 
 
 async def invalidate_readonly_actor_list(group_id: str) -> None:
@@ -198,24 +220,10 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
             state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
             headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
             running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(gid, aid))
-        if not running and effective_runner != "headless" and not uses_codex_app_server_state:
+        if not running and effective_runner != "headless":
             running = bool(pty_runner.SUPERVISOR.actor_running(gid, aid))
             if not running:
-                try:
-                    state_doc = read_json(pty_state_path(gid, aid))
-                    pid = int(state_doc.get("pid") or 0) if isinstance(state_doc, dict) else 0
-                except Exception:
-                    state_doc = {}
-                    pid = 0
-                running = bool(
-                    isinstance(state_doc, dict)
-                    and str(state_doc.get("kind") or "") == "pty"
-                    and str(state_doc.get("group_id") or "") == gid
-                    and str(state_doc.get("actor_id") or "") == aid
-                    and pid > 0
-                    and pid_is_alive(pid)
-                    and _pid_matches_actor_context(pid, group_id=gid, actor_id=aid)
-                )
+                running = _pty_state_running(gid, aid)
             idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=gid, actor_id=aid) if running else None
         pty_terminal_text = ""
         if effective_runner == "pty" and running and not uses_codex_app_server_state:
@@ -802,14 +810,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "actor_stop", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @group_router.post("/actors/{actor_id}/restart")
-    async def actor_restart(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+    async def actor_restart(
+        request: Request,
+        group_id: str,
+        actor_id: str,
+        req: ActorRestartRequest | None = Body(default=None),
+        by: str = "user",
+    ) -> Dict[str, Any]:
         await invalidate_readonly_actor_list(group_id)
         if not await _developer_mode_enabled() and _is_internal_headless_runtime(await _actor_runtime_meta(group_id, actor_id)):
             raise _headless_error(source="actor_restart")
+        clear_session = bool(req.clear_session) if req is not None else False
         return await ctx.daemon(
             {
                 "op": "actor_restart",
-                "args": {"group_id": group_id, "actor_id": actor_id, "by": by, **_profile_auth_args(request)},
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "by": by,
+                    "clear_session": clear_session,
+                    **_profile_auth_args(request),
+                },
             }
         )
 

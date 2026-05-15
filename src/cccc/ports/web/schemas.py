@@ -133,6 +133,10 @@ class ActorUpdateRequest(BaseModel):
     profile_action: Optional[Literal["convert_to_custom"]] = None
 
 
+class ActorRestartRequest(BaseModel):
+    clear_session: bool = False
+
+
 class ActorProfileUpsertRequest(BaseModel):
     profile: Dict[str, Any] = Field(default_factory=dict)
     expected_revision: Optional[int] = None

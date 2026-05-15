@@ -31,12 +31,13 @@ export function useActorActions(groupId: string) {
           showError(`${resp.error.code}: ${resp.error.message}`);
           return;
         }
+        clearStreamingEventsForActor(actor.id, groupId);
         await Promise.all([refreshActors(), refreshGroups()]);
       } finally {
         setBusy("");
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups]
+    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor]
   );
 
   // Restart actor
@@ -59,6 +60,29 @@ export function useActorActions(groupId: string) {
       }
     },
     [groupId, setBusy, showError, refreshActors, refreshGroups]
+  );
+
+  const relaunchActorClearSession = useCallback(
+    async (actor: Actor) => {
+      if (!groupId || !actor) return;
+      setBusy(`actor-relaunch-clear-session:${actor.id}`);
+      try {
+        const resp = await api.restartActorWithClearSession(groupId, actor.id);
+        if (!resp.ok) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        clearStreamingEventsForActor(actor.id, groupId);
+        await Promise.all([refreshActors(), refreshGroups()]);
+        setTermEpochByActor((prev) => ({
+          ...prev,
+          [actor.id]: (prev[actor.id] || 0) + 1,
+        }));
+      } finally {
+        setBusy("");
+      }
+    },
+    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor]
   );
 
   // Edit actor (initialize form state and open modal).
@@ -135,6 +159,7 @@ export function useActorActions(groupId: string) {
     getTermEpoch,
     toggleActorEnabled,
     relaunchActor,
+    relaunchActorClearSession,
     editActor,
     removeActor,
     openActorInbox,

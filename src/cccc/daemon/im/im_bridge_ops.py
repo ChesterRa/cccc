@@ -2,9 +2,53 @@
 
 from __future__ import annotations
 
+import os
 import signal
 from pathlib import Path
 from typing import Callable, Dict, Optional
+
+from ...util.process import pid_is_alive
+
+
+def read_live_im_bridge_pid(pid_path: Path) -> Optional[int]:
+    """Return a live bridge pid from a pidfile, removing stale pidfiles."""
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except Exception:
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+    if pid <= 0:
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+    try:
+        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None
+    except (AttributeError, ChildProcessError):
+        pass
+    except Exception:
+        pass
+
+    if pid_is_alive(pid):
+        return pid
+
+    try:
+        pid_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return None
 
 
 def _proc_cccc_home(pid: int) -> Optional[Path]:

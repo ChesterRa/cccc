@@ -37,6 +37,46 @@ def _has_visible_terminal_output(text: str) -> bool:
     return False
 
 
+def _derive_pty_activity_state(
+    *,
+    idle_seconds: Optional[float],
+    pty_terminal_text: str,
+    updated_at: str,
+    active_task_id: str,
+    pty_stuck_idle_seconds: float,
+) -> Optional[Dict[str, Any]]:
+    idle = _safe_float(idle_seconds)
+    if idle is None:
+        return None
+    if idle < DEFAULT_PTY_WORKING_IDLE_SECONDS:
+        if _has_visible_terminal_output(pty_terminal_text):
+            return {
+                "effective_working_state": "working",
+                "effective_working_reason": "pty_no_prompt_recent_output",
+                "effective_working_updated_at": updated_at or None,
+                "effective_active_task_id": active_task_id or None,
+            }
+        return {
+            "effective_working_state": "waiting",
+            "effective_working_reason": "pty_no_prompt_waiting",
+            "effective_working_updated_at": updated_at or None,
+            "effective_active_task_id": active_task_id or None,
+        }
+    if idle < float(pty_stuck_idle_seconds):
+        return {
+            "effective_working_state": "waiting",
+            "effective_working_reason": "pty_no_prompt_waiting",
+            "effective_working_updated_at": updated_at or None,
+            "effective_active_task_id": active_task_id or None,
+        }
+    return {
+        "effective_working_state": "stuck",
+        "effective_working_reason": "pty_no_prompt_stuck",
+        "effective_working_updated_at": updated_at or None,
+        "effective_active_task_id": active_task_id or None,
+    }
+
+
 def derive_effective_working_state(
     *,
     running: bool,
@@ -84,35 +124,15 @@ def derive_effective_working_state(
             "effective_active_task_id": active_task_id or None,
         }
 
-    idle = _safe_float(idle_seconds)
-    if idle is not None:
-        if idle < DEFAULT_PTY_WORKING_IDLE_SECONDS:
-            if _has_visible_terminal_output(pty_terminal_text):
-                return {
-                    "effective_working_state": "working",
-                    "effective_working_reason": "pty_no_prompt_recent_output",
-                    "effective_working_updated_at": updated_at or None,
-                    "effective_active_task_id": active_task_id or None,
-                }
-            return {
-                "effective_working_state": "waiting",
-                "effective_working_reason": "pty_no_prompt_waiting",
-                "effective_working_updated_at": updated_at or None,
-                "effective_active_task_id": active_task_id or None,
-            }
-        if idle < float(pty_stuck_idle_seconds):
-            return {
-                "effective_working_state": "waiting",
-                "effective_working_reason": "pty_no_prompt_waiting",
-                "effective_working_updated_at": updated_at or None,
-                "effective_active_task_id": active_task_id or None,
-            }
-        return {
-            "effective_working_state": "stuck",
-            "effective_working_reason": "pty_no_prompt_stuck",
-            "effective_working_updated_at": updated_at or None,
-            "effective_active_task_id": active_task_id or None,
-        }
+    pty_activity_state = _derive_pty_activity_state(
+        idle_seconds=idle_seconds,
+        pty_terminal_text=pty_terminal_text,
+        updated_at=updated_at,
+        active_task_id=active_task_id,
+        pty_stuck_idle_seconds=pty_stuck_idle_seconds,
+    )
+    if pty_activity_state is not None:
+        return pty_activity_state
 
     return {
         "effective_working_state": "waiting",

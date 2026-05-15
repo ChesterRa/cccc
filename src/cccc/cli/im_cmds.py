@@ -3,7 +3,8 @@ from __future__ import annotations
 """IM bridge related CLI command handlers."""
 
 from .common import *  # noqa: F401,F403
-from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, resolve_background_python_argv, supervised_process_popen_kwargs
+from ..daemon.im.im_bridge_ops import read_live_im_bridge_pid
+from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, resolve_background_python_argv, supervised_process_popen_kwargs
 
 __all__ = [
     "cmd_im_set",
@@ -252,11 +253,7 @@ def _im_find_bridge_pid(group: Any) -> Optional[int]:
     pid_path = group.path / "state" / "im_bridge.pid"
     if not pid_path.exists():
         return None
-    try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
-        return pid if pid_is_alive(pid) else None
-    except ValueError:
-        return None
+    return read_live_im_bridge_pid(pid_path)
 
 def _im_find_bridge_pids_by_script(group_id: str) -> list[int]:
     """Find all bridge processes for a group by scanning /proc."""

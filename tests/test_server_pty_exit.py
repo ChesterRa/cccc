@@ -32,7 +32,7 @@ class TestServerPtyExit(unittest.TestCase):
         try:
             from cccc.daemon.runner_state_ops import pty_state_path, write_pty_state
             from cccc.daemon.server import _handle_pty_session_exit
-            from cccc.kernel.actors import add_actor, find_actor
+            from cccc.kernel.actors import add_actor, find_actor, update_actor
             from cccc.kernel.group import load_group
 
             create, _ = self._call("group_create", {"title": "pty-exit", "topic": "", "by": "user"})
@@ -42,6 +42,7 @@ class TestServerPtyExit(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
             add_actor(group, actor_id="peer1", runner="pty", runtime="codex", enabled=True)
+            update_actor(group, "peer1", {"runtime_state_source": "terminal"})
             group.doc["running"] = True
             group.save()
             write_pty_state(group_id, "peer1", pid=12345)
@@ -66,6 +67,48 @@ class TestServerPtyExit(unittest.TestCase):
             stop_events = [event for event in ledger_events if event.get("kind") == "actor.stop"]
             self.assertEqual(len(stop_events), 1)
             self.assertEqual(stop_events[0].get("by"), "system")
+        finally:
+            cleanup()
+
+    def test_codex_app_server_backed_pty_exit_does_not_disable_actor(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runner_state_ops import pty_state_path, write_pty_state
+            from cccc.daemon.server import _handle_pty_session_exit
+            from cccc.kernel.actors import add_actor, find_actor, update_actor
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call("group_create", {"title": "pty-app-server-exit", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            add_actor(group, actor_id="peer1", runner="pty", runtime="codex", enabled=True)
+            update_actor(group, "peer1", {"runtime_state_source": "app_server"})
+            group.doc["running"] = True
+            group.save()
+            write_pty_state(group_id, "peer1", pid=45678)
+
+            session = type("_Session", (), {"group_id": group_id, "actor_id": "peer1", "pid": 45678})()
+            _handle_pty_session_exit(session)  # type: ignore[arg-type]
+
+            reloaded = load_group(group_id)
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            actor = find_actor(reloaded, "peer1")
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertTrue(bool(actor.get("enabled")))
+            self.assertTrue(bool(reloaded.doc.get("running")))
+            self.assertFalse(pty_state_path(group_id, "peer1").exists())
+            ledger_events = [
+                json.loads(line)
+                for line in reloaded.ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            stop_events = [event for event in ledger_events if event.get("kind") == "actor.stop"]
+            self.assertEqual(stop_events, [])
         finally:
             cleanup()
 

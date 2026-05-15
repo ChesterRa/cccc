@@ -15,12 +15,14 @@ from ...kernel.runtime import runtime_start_preflight_error
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
-from ..runtime_session_ops import start_pty_actor_with_runtime_resume
+from ..runtime_session_ops import remove_runtime_session, start_pty_actor_with_runtime_resume
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
+from .runtime_session_clear import clear_running_pty_runtime_session
+from .web_model_browser_session import clear_web_model_chatgpt_browser_actor_runtime
 from ..pet.review_scheduler import request_pet_review
 
 
@@ -234,6 +236,7 @@ def handle_actor_restart(
     caller_context_explicit = "caller_id" in args or "is_admin" in args
     caller_id = str(args.get("caller_id") or "").strip()
     is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
+    clear_session = coerce_bool(args.get("clear_session"), default=False)
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
         actor = update_actor(group, actor_id, {"enabled": True})
@@ -246,6 +249,46 @@ def handle_actor_restart(
             caller_id=caller_id,
             is_admin=is_admin,
         )
+        runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
+        if clear_session and runner_effective != "headless" and clear_running_pty_runtime_session(
+            group_id=group.group_id,
+            actor_id=actor_id,
+            actor=actor,
+        ):
+            remove_runtime_session(group.group_id, actor_id)
+            clear_preamble_sent(group, actor_id)
+            throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
+            event = append_event(
+                group.ledger_path,
+                kind="actor.restart.clear_session",
+                group_id=group.group_id,
+                scope_key="",
+                by=by,
+                data={
+                    "actor_id": actor_id,
+                    "runner": str(actor.get("runner") or "pty"),
+                    "runner_effective": runner_effective,
+                    "clear_session": True,
+                    "session_clear_mode": "runtime_command",
+                },
+            )
+
+            from ...kernel.events import publish_event
+            publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id, "clear_session": True})
+            try:
+                request_pet_review(
+                    group.group_id,
+                    reason="actor_restart",
+                    source_event_id=str(event.get("id") or "").strip(),
+                    immediate=True,
+                )
+            except Exception:
+                pass
+            return DaemonResponse(ok=True, result={"actor": actor, "event": event})
+        if clear_session:
+            remove_runtime_session(group.group_id, actor_id)
+            if str(actor.get("runtime") or "").strip().lower() == "web_model":
+                clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=actor_id)
         _stop_actor_runtime_handles(
             group.group_id,
             actor_id,
@@ -431,13 +474,15 @@ def handle_actor_restart(
             pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    event_kind = "actor.restart.clear_session" if clear_session else "actor.restart"
     event = append_event(
         group.ledger_path,
-        kind="actor.restart",
+        kind=event_kind,
         group_id=group.group_id,
         scope_key="",
         by=by,
         data={
+            **({"clear_session": True} if clear_session else {}),
             "actor_id": actor_id,
             "runner": str(actor.get("runner") or "pty"),
             "runner_effective": runner_effective,
@@ -445,7 +490,7 @@ def handle_actor_restart(
     )
 
     from ...kernel.events import publish_event
-    publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id})
+    publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id, "clear_session": clear_session})
     try:
         request_pet_review(
             group.group_id,

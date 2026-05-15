@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -118,6 +119,34 @@ class TestProcessUtils(unittest.TestCase):
 
         self.assertTrue(ok)
         mock_windows_alive.assert_called_once_with(4321)
+
+    def test_pid_is_alive_posix_rejects_zombie_process(self) -> None:
+        from cccc.util import process as process_utils
+
+        with patch.object(process_utils.os, "name", "posix"), patch.object(
+            process_utils.os,
+            "kill",
+            return_value=None,
+        ), patch.object(
+            process_utils.Path,
+            "exists",
+            return_value=False,
+        ), patch.object(
+            process_utils.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout="Z\n"),
+        ) as mock_run:
+            ok = process_utils.pid_is_alive(4321)
+
+        self.assertFalse(ok)
+        mock_run.assert_called_once_with(
+            ["ps", "-o", "stat=", "-p", "4321"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=0.5,
+        )
 
     def test_terminate_pid_windows_include_group_uses_taskkill_tree(self) -> None:
         from cccc.util import process as process_utils

@@ -792,6 +792,10 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             runtime.selectors,
             "DefaultSelector",
             return_value=_FakeSelector(),
+        ), patch.object(
+            runtime.sys,
+            "platform",
+            "linux",
         ), patch.dict(runtime.os.environ, {}, clear=True):
             launched = runtime.launch_projected_browser_runtime(
                 profile_dir=runtime.Path("/tmp/projected-browser-test"),
@@ -830,6 +834,10 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             runtime.selectors,
             "DefaultSelector",
             return_value=_FakeSelector(),
+        ), patch.object(
+            runtime.sys,
+            "platform",
+            "linux",
         ), patch.dict(runtime.os.environ, {"DISPLAY": ":0"}, clear=True):
             launched = runtime.launch_projected_browser_runtime(
                 profile_dir=runtime.Path("/tmp/projected-browser-test"),

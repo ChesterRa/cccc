@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cccc.daemon.im.im_bridge_ops import cleanup_invalid_im_bridges, stop_all_im_bridges, stop_im_bridges_for_group
+from cccc.daemon.im.im_bridge_ops import (
+    cleanup_invalid_im_bridges,
+    read_live_im_bridge_pid,
+    stop_all_im_bridges,
+    stop_im_bridges_for_group,
+)
 
 
 class TestImBridgeOps(unittest.TestCase):
@@ -41,6 +46,35 @@ class TestImBridgeOps(unittest.TestCase):
                 best_effort_killpg=lambda _pid, _sig: None,
             )
             self.assertEqual(int(result.get("stale_pidfiles") or 0), 1)
+            self.assertFalse(pid_path.exists())
+
+    def test_read_live_pid_removes_dead_or_zombie_pidfile(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            pid_path = Path(td) / "im_bridge.pid"
+            pid_path.write_text("4321", encoding="utf-8")
+
+            with (
+                patch("cccc.daemon.im.im_bridge_ops.os.waitpid", side_effect=ChildProcessError()),
+                patch("cccc.daemon.im.im_bridge_ops.pid_is_alive", return_value=False),
+            ):
+                pid = read_live_im_bridge_pid(pid_path)
+
+            self.assertIsNone(pid)
+            self.assertFalse(pid_path.exists())
+
+    def test_read_live_pid_reaps_exited_child_pidfile(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            pid_path = Path(td) / "im_bridge.pid"
+            pid_path.write_text("4321", encoding="utf-8")
+
+            with patch("cccc.daemon.im.im_bridge_ops.os.waitpid", return_value=(4321, 0)):
+                pid = read_live_im_bridge_pid(pid_path)
+
+            self.assertIsNone(pid)
             self.assertFalse(pid_path.exists())
 
 

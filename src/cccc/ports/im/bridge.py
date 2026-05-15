@@ -58,6 +58,8 @@ def _is_env_var_name(value: str) -> bool:
 
 _PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
 _GENERIC_ATTACHMENT_FILENAMES = frozenset({"", "file", "unknown", "attachment"})
+_GENERIC_ATTACHMENT_BASENAME = "attachment"
+_UNINFORMATIVE_MIME_TYPES = frozenset({"application/octet-stream", "binary/octet-stream"})
 
 
 def _is_generic_attachment_filename(value: str) -> bool:
@@ -90,6 +92,43 @@ def _sniff_attachment_content_type(raw: bytes) -> Tuple[str, str]:
         return ("image/bmp", ".bmp")
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return ("image/webp", ".webp")
+    if head.startswith(b"%PDF-"):
+        return ("application/pdf", ".pdf")
+    if head.lstrip().startswith(b"{\\rtf"):
+        return ("application/rtf", ".rtf")
+    if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        sample = raw[:8192].lower()
+        if b"word/" in sample:
+            return (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".docx",
+            )
+        if b"xl/" in sample:
+            return (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".xlsx",
+            )
+        if b"ppt/" in sample:
+            return (
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".pptx",
+            )
+        return ("application/zip", ".zip")
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return ("application/x-7z-compressed", ".7z")
+    if head.startswith(b"Rar!\x1a\x07"):
+        return ("application/vnd.rar", ".rar")
+    if head.startswith(b"\x1f\x8b"):
+        return ("application/gzip", ".gz")
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        sample = raw[:8192].lower()
+        if b"worddocument" in sample:
+            return ("application/msword", ".doc")
+        if b"workbook" in sample:
+            return ("application/vnd.ms-excel", ".xls")
+        if b"powerpoint document" in sample:
+            return ("application/vnd.ms-powerpoint", ".ppt")
+        return ("application/vnd.ms-office", ".doc")
 
     try:
         text_head = raw[:512].decode("utf-8", errors="ignore").lstrip().lower()
@@ -122,7 +161,9 @@ def _normalize_inbound_attachment_metadata(
 
     sniffed_mime_type, sniffed_ext = _sniff_attachment_content_type(raw)
 
-    effective_mime_type = normalized_mime_type or sniffed_mime_type
+    effective_mime_type = normalized_mime_type
+    if not effective_mime_type or effective_mime_type in _UNINFORMATIVE_MIME_TYPES:
+        effective_mime_type = sniffed_mime_type or effective_mime_type
     effective_kind = normalized_kind
     if effective_mime_type.startswith("image/"):
         effective_kind = "image"
@@ -131,7 +172,7 @@ def _normalize_inbound_attachment_metadata(
 
     if _is_generic_attachment_filename(normalized_filename):
         inferred_ext = sniffed_ext or _guess_extension_from_mime_type(effective_mime_type)
-        normalized_filename = f"file{inferred_ext}" if inferred_ext else "file"
+        normalized_filename = f"{_GENERIC_ATTACHMENT_BASENAME}{inferred_ext}" if inferred_ext else _GENERIC_ATTACHMENT_BASENAME
 
     has_suffix = bool(Path(normalized_filename).suffix)
     if effective_kind == "image" and not has_suffix and sniffed_ext:

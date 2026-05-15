@@ -1,4 +1,5 @@
 from cccc.kernel.pty_terminal_state import derive_pty_terminal_override
+from cccc.kernel.working_state import derive_effective_working_state
 
 
 def test_codex_prompt_visible_is_idle() -> None:
@@ -75,3 +76,37 @@ Assistant:
 """
 
     assert derive_pty_terminal_override(runtime="claude", terminal_text=terminal_text) is None
+
+
+def test_app_server_headless_idle_ignores_pty_terminal_override() -> None:
+    state = derive_effective_working_state(
+        running=True,
+        effective_runner="headless",
+        runtime="codex",
+        headless_state={"status": "idle", "updated_at": "2026-05-14T00:00:00Z"},
+        pty_terminal_override={
+            "effective_working_state": "working",
+            "effective_working_reason": "pty_terminal_codex_working_banner",
+        },
+    )
+
+    assert state["effective_working_state"] == "idle"
+    assert state["effective_working_reason"] == "headless_idle"
+    assert state["effective_working_updated_at"] == "2026-05-14T00:00:00Z"
+
+
+def test_app_server_headless_working_wins_over_terminal_idle() -> None:
+    state = derive_effective_working_state(
+        running=True,
+        effective_runner="headless",
+        runtime="codex",
+        headless_state={"status": "working", "current_task_id": "turn-1"},
+        pty_terminal_override={
+            "effective_working_state": "idle",
+            "effective_working_reason": "pty_terminal_prompt_visible",
+        },
+    )
+
+    assert state["effective_working_state"] == "working"
+    assert state["effective_working_reason"] == "headless_working"
+    assert state["effective_active_task_id"] == "turn-1"

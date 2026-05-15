@@ -338,6 +338,233 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_restart_keeps_runtime_session(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-restart-session", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "".join(("p", "ty")),
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.daemon.runtime_session_ops import read_runtime_session, record_pty_runtime_session
+
+            record_pty_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="codex",
+                cwd=Path("."),
+                command=["codex"],
+                provider_session_id="019dbe1d-cd97-7d31-9ba6-212d3e57b15c",
+                captured_from="test",
+            )
+            from cccc.kernel.group import load_group
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            restart, _ = self._call("actor_restart", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+
+            self.assertEqual(
+                read_runtime_session(group_id, "peer1").get("provider_session_id"),
+                "019dbe1d-cd97-7d31-9ba6-212d3e57b15c",
+            )
+        finally:
+            cleanup()
+
+    def test_actor_restart_with_clear_session_removes_runtime_session_and_resets_web_model_binding(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-restart-clear-flag", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
+
+            record_headless_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="codex",
+                cwd=Path("."),
+                command=["codex"],
+                provider_thread_id="thread-old",
+            )
+            record_chatgpt_browser_state(
+                group_id,
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/old-chat",
+                    "bootstrap_seed_delivered_at": "2026-05-14T00:00:00Z",
+                    "bootstrap_seed_version": "old",
+                    "bootstrap_seed_digest": "old-digest",
+                    "bootstrap_seed_conversation_url": "https://chatgpt.com/c/old-chat",
+                    "last_turn_id": "old-turn",
+                    "last_event_ids": ["old-event"],
+                },
+            )
+
+            restart, _ = self._call(
+                "actor_restart",
+                {"group_id": group_id, "actor_id": "peer1", "by": "user", "clear_session": True},
+            )
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+
+            self.assertEqual(read_runtime_session(group_id, "peer1"), {})
+            state = read_chatgpt_browser_state(group_id, "peer1")
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("bootstrap_seed_delivered_at"), "")
+            self.assertEqual(state.get("bootstrap_seed_digest"), "")
+            self.assertEqual(state.get("last_turn_id"), "")
+            self.assertEqual(state.get("last_event_ids"), [])
+
+            event = (restart.result or {}).get("event") if isinstance(restart.result, dict) else {}
+            self.assertIsInstance(event, dict)
+            assert isinstance(event, dict)
+            self.assertEqual(str(event.get("kind") or ""), "actor.restart.clear_session")
+            self.assertTrue(bool((event.get("data") or {}).get("clear_session")))
+        finally:
+            cleanup()
+
+    def test_actor_restart_with_clear_session_writes_clear_to_running_supported_pty_runtime_and_removes_session(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-runtime-clear", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
+
+            record_headless_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="codex",
+                cwd=Path("."),
+                command=["codex"],
+                provider_thread_id="thread-old",
+            )
+
+            writes: list[bytes] = []
+            with patch("cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.daemon.actors.runtime_session_clear.pty_runner.SUPERVISOR.bracketed_paste_enabled",
+                return_value=False,
+            ), patch(
+                "cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.write_input",
+                side_effect=lambda **kwargs: writes.append(kwargs["data"]) or True,
+            ), patch("cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles") as stop_handles:
+                restart, _ = self._call(
+                    "actor_restart",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "clear_session": True},
+                )
+
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+            self.assertEqual(writes, [b"/clear", b"\r"])
+            stop_handles.assert_not_called()
+            self.assertEqual(read_runtime_session(group_id, "peer1"), {})
+            event = (restart.result or {}).get("event") if isinstance(restart.result, dict) else {}
+            self.assertEqual(str(event.get("kind") or ""), "actor.restart.clear_session")
+            self.assertEqual(str((event.get("data") or {}).get("session_clear_mode") or ""), "runtime_command")
+        finally:
+            cleanup()
+
+    def test_actor_restart_with_clear_session_supports_running_claude_pty_runtime(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-claude-runtime-clear", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "claude",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            writes: list[bytes] = []
+            with patch("cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.daemon.actors.runtime_session_clear.pty_runner.SUPERVISOR.bracketed_paste_enabled",
+                return_value=False,
+            ), patch(
+                "cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.write_input",
+                side_effect=lambda **kwargs: writes.append(kwargs["data"]) or True,
+            ), patch("cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles") as stop_handles:
+                restart, _ = self._call(
+                    "actor_restart",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "clear_session": True},
+                )
+
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+            self.assertEqual(writes, [b"/clear", b"\r"])
+            stop_handles.assert_not_called()
+            event = (restart.result or {}).get("event") if isinstance(restart.result, dict) else {}
+            self.assertEqual(str(event.get("kind") or ""), "actor.restart.clear_session")
+        finally:
+            cleanup()
+
     def test_actor_remove_stops_group_when_last_actor_removed(self) -> None:
         _, cleanup = self._with_home()
         try:

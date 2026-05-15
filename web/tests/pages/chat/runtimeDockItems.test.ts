@@ -791,7 +791,7 @@ describe("runtimeDockItems", () => {
     expect(getRuntimeRingTone(appServerPtyItem, true, "working")).toBe("active");
     expect(getRuntimeRingTone(appServerPtyItem, true, "waiting")).toBe("idle");
     expect(getRuntimeRingTone(appServerPtyItem, true, "stuck")).toBe("attention");
-    expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("idle");
+    expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("active");
     expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("idle");

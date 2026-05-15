@@ -114,6 +114,7 @@ export default function App() {
     getTermEpoch,
     toggleActorEnabled,
     relaunchActor,
+    relaunchActorClearSession,
     editActor,
     removeActor,
     openActorInbox,
@@ -433,6 +434,7 @@ export default function App() {
         getTermEpoch={getTermEpoch}
         onToggleActorEnabled={toggleActorEnabled}
         onRelaunchActor={relaunchActor}
+        onRelaunchActorClearSession={relaunchActorClearSession}
         onEditActor={editActor}
         onRemoveActor={removeActor}
         onOpenActorInbox={openActorInbox}

@@ -84,7 +84,7 @@ def _is_websocket_idle_timeout(exc: BaseException) -> bool:
     return "timed out" in message and "websocket" in name
 
 
-def _codex_remote_tui_command(base_command: list[str] | None, listen_url: str) -> list[str]:
+def _codex_remote_tui_command(base_command: list[str] | None, listen_url: str, thread_id: str = "") -> list[str]:
     command = list(base_command or [])
     if not command or Path(str(command[0] or "")).name != "codex":
         command = ["codex"]
@@ -131,6 +131,11 @@ def _codex_remote_tui_command(base_command: list[str] | None, listen_url: str) -
             i += 1
             continue
         break
+    thread_id = str(thread_id or "").strip()
+    if thread_id:
+        executable = filtered[0]
+        options = filtered[1:]
+        return [executable, "resume", *options, "--remote", str(listen_url), thread_id]
     filtered.extend(["--remote", str(listen_url)])
     return filtered
 
@@ -536,8 +541,8 @@ class CodexAppSession:
             env = os.environ.copy()
             env.update(self.env)
             env.setdefault("CCCC_HOME", str(ensure_home()))
-            env.setdefault("CCCC_GROUP_ID", self.group_id)
-            env.setdefault("CCCC_ACTOR_ID", self.actor_id)
+            env["CCCC_GROUP_ID"] = self.group_id
+            env["CCCC_ACTOR_ID"] = self.actor_id
             env = with_node_deprecation_warnings_suppressed(env)
             if not ensure_mcp_installed("codex", self.cwd, auto_mcp_runtimes=("codex",), env=env):
                 raise RuntimeError("failed to install MCP for runtime: codex")
@@ -606,6 +611,8 @@ class CodexAppSession:
             if resume_doc:
                 resume_params: Dict[str, Any] = {
                     "threadId": str(resume_doc.get("provider_thread_id") or "").strip(),
+                    "approvalPolicy": "never",
+                    "sandbox": "danger-full-access",
                     "personality": "pragmatic",
                 }
                 if self.model:
@@ -663,7 +670,7 @@ class CodexAppSession:
             if not self.start_remote_tui:
                 self._queue_bootstrap_control_turn()
             if self.start_remote_tui:
-                remote_command = _codex_remote_tui_command(self.remote_tui_base_command, self.listen_url)
+                remote_command = _codex_remote_tui_command(self.remote_tui_base_command, self.listen_url, thread_id)
                 self._pty_session = pty_runner.SUPERVISOR.start_actor(
                     group_id=self.group_id,
                     actor_id=self.actor_id,
@@ -935,6 +942,15 @@ class CodexAppSession:
                 self._handle_protocol_message(message)
         with self._lock:
             persist_actor_stopped = not self._stop_requested
+            stop_requested = bool(self._stop_requested)
+        if self.start_remote_tui and not stop_requested and self.remote_tui_pid() > 0:
+            try:
+                if pty_runner.SUPERVISOR.actor_running(group_id=self.group_id, actor_id=self.actor_id):
+                    with self._lock:
+                        self._ws = None
+                    return
+            except Exception:
+                pass
         self.stop(persist_actor_stopped=persist_actor_stopped)
 
     def _stderr_loop(self) -> None:
@@ -1143,6 +1159,33 @@ class CodexAppSession:
                 if self._active_stalled_emitted and self._session_state.status == "waiting":
                     self._session_state.status = "working"
                     self._session_state.updated_at = now
+        if method == "thread/status/changed":
+            thread_id = str(params.get("threadId") or "").strip()
+            status_doc = params.get("status") if isinstance(params.get("status"), dict) else {}
+            status_type = str((status_doc or {}).get("type") or "").strip()
+            active_flags = (status_doc or {}).get("activeFlags")
+            flags = {str(item or "").strip() for item in active_flags} if isinstance(active_flags, list) else set()
+            with self._lock:
+                if thread_id and thread_id != str(self._session_state.thread_id or "").strip():
+                    return
+                if status_type == "active":
+                    self._session_state.status = (
+                        "waiting"
+                        if flags.intersection({"waitingOnApproval", "waitingOnUserInput"})
+                        else "working"
+                    )
+                    self._session_state.current_task_id = thread_id or self._session_state.thread_id or None
+                elif status_type == "idle":
+                    self._session_state.status = "idle"
+                    self._session_state.current_task_id = None
+                elif status_type in {"notLoaded", "systemError"}:
+                    self._session_state.status = "waiting"
+                    self._session_state.current_task_id = thread_id or self._session_state.thread_id or None
+                else:
+                    return
+                self._session_state.updated_at = now
+            self._persist_state()
+            return
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             turn_id = str(turn.get("id") or "").strip()

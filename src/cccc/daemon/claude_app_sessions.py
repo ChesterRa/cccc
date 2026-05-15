@@ -525,8 +525,8 @@ class ClaudeAppSession:
             env = os.environ.copy()
             env.update(self.env)
             env.setdefault("CCCC_HOME", str(ensure_home()))
-            env.setdefault("CCCC_GROUP_ID", self.group_id)
-            env.setdefault("CCCC_ACTOR_ID", self.actor_id)
+            env["CCCC_GROUP_ID"] = self.group_id
+            env["CCCC_ACTOR_ID"] = self.actor_id
             env = with_node_deprecation_warnings_suppressed(env)
             if not ensure_mcp_installed("claude", self.cwd, auto_mcp_runtimes=("claude",), env=env):
                 raise RuntimeError("failed to install MCP for runtime: claude")

@@ -96,8 +96,30 @@ def remove_runtime_session(group_id: str, actor_id: str) -> None:
         pass
 
 
-def runtime_session_command_fingerprint(command: Iterable[str]) -> str:
+def _stable_runtime_command_argv(command: Iterable[str]) -> list[str]:
     argv = [str(item) for item in list(command or []) if str(item).strip()]
+    if len(argv) < 2 or Path(argv[0]).name != "codex" or argv[1] != "app-server":
+        return argv
+
+    stable: list[str] = []
+    skip_next = False
+    for item in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if item == "--listen":
+            stable.append(item)
+            skip_next = True
+            continue
+        if item.startswith("--listen="):
+            stable.append("--listen")
+            continue
+        stable.append(item)
+    return stable
+
+
+def runtime_session_command_fingerprint(command: Iterable[str]) -> str:
+    argv = _stable_runtime_command_argv(command)
     raw = json.dumps({"argv": argv}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

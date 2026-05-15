@@ -29,6 +29,7 @@ from ..kernel.settings import (
 )
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
 from ..kernel.messaging import disabled_recipient_actor_ids, enabled_recipient_actor_ids
+from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
@@ -608,6 +609,13 @@ def _handle_pty_session_exit(session: pty_runner.PtySession, *, persist_actor_st
         return
     if not removed_current_state:
         return
+    try:
+        group = load_group(session.group_id)
+        actor = find_actor(group, session.actor_id) if group is not None else None
+        if isinstance(actor, dict) and actor_uses_codex_app_server_state(actor):
+            return
+    except Exception:
+        pass
     persist_actor_process_exit_stopped(group_id=session.group_id, actor_id=session.actor_id, runner="pty")
 
 

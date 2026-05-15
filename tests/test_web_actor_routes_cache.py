@@ -668,6 +668,53 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_list_route_codex_pty_app_server_falls_back_to_pty_state_for_running(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runner_state_ops import write_pty_state
+            from cccc.kernel.actors import update_actor
+            from cccc.kernel.group import load_group
+
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            self._add_actor(group_id, runtime="codex")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            update_actor(group, "peer-1", {"runtime_state_source": "app_server"})  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+            write_pty_state(group_id, "peer-1", pid=43210)
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list), patch(
+                "cccc.ports.web.routes.actors.codex_app_supervisor.get_state",
+                return_value=None,
+            ), patch(
+                "cccc.ports.web.routes.actors.codex_app_supervisor.actor_running",
+                return_value=False,
+            ), patch(
+                "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.actor_running",
+                return_value=False,
+            ), patch(
+                "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.idle_seconds",
+                return_value=None,
+            ), patch(
+                "cccc.ports.web.routes.actors.pid_is_alive",
+                return_value=True,
+            ), patch(
+                "cccc.ports.web.routes.actors._pid_matches_actor_context",
+                return_value=True,
+            ):
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/actors")
+
+            self.assertEqual(resp.status_code, 200)
+            actor = resp.json()["result"]["actors"][0]
+            self.assertTrue(bool(actor["running"]))
+            self.assertEqual(actor["runner_effective"], "pty")
+            self.assertEqual(actor["effective_working_state"], "idle")
+            self.assertEqual(actor["effective_working_reason"], "headless_idle")
+        finally:
+            cleanup()
+
     def test_actor_list_route_disabled_codex_pty_app_server_actor_is_stopped(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -9,21 +9,12 @@ import sys
 import time
 from pathlib import Path
 
+from .im_bridge_ops import read_live_im_bridge_pid
 from ...kernel.group import load_group
 from ...util.conv import coerce_bool
 from ...util.process import resolve_background_python_argv, supervised_process_popen_kwargs
 
 logger = logging.getLogger("cccc.daemon.server")
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        if pid <= 0:
-            return False
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
 
 
 def autostart_enabled_im_bridges(home: Path) -> None:
@@ -46,16 +37,8 @@ def autostart_enabled_im_bridges(home: Path) -> None:
         pid_path = group.path / "state" / "im_bridge.pid"
 
         if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-            except Exception:
-                pid = 0
-            if pid > 0 and _pid_alive(pid):
+            if read_live_im_bridge_pid(pid_path) is not None:
                 continue
-            try:
-                pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
 
         state_dir = group.path / "state"
         try:

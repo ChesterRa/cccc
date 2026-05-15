@@ -268,6 +268,41 @@ def _windows_force_terminate_pid(pid: int) -> bool:
     return not pid_is_alive(target_pid)
 
 
+def _posix_pid_state(pid: int) -> str:
+    if os.name == "nt":
+        return ""
+    target_pid = int(pid or 0)
+    if target_pid <= 0:
+        return ""
+
+    proc_stat = Path("/proc") / str(target_pid) / "stat"
+    try:
+        raw = proc_stat.read_text(encoding="utf-8", errors="ignore").strip()
+        marker = ") "
+        if marker in raw:
+            rest = raw.split(marker, 1)[1].strip()
+            if rest:
+                return rest[0].upper()
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(target_pid)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=0.5,
+        )
+    except Exception:
+        return ""
+    if int(getattr(result, "returncode", 1) or 0) != 0:
+        return ""
+    stat = str(getattr(result, "stdout", "") or "").strip()
+    return stat[:1].upper() if stat else ""
+
+
 def pid_is_alive(pid: int) -> bool:
     """Best-effort cross-platform liveness check."""
     target_pid = int(pid or 0)
@@ -279,7 +314,7 @@ def pid_is_alive(pid: int) -> bool:
             return bool(windows_alive)
     try:
         os.kill(target_pid, 0)
-        return True
+        return _posix_pid_state(target_pid) != "Z"
     except Exception:
         return False
 

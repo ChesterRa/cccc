@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
-from ....daemon.im.im_bridge_ops import stop_im_bridges_for_group
+from ....daemon.im.im_bridge_ops import read_live_im_bridge_pid, stop_im_bridges_for_group
 from ....kernel.group import load_group
 from ....paths import ensure_home
 from ....ports.im.config_schema import canonicalize_im_config
@@ -281,27 +281,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         im_config = canonicalize_im_config(group.doc.get("im", {}))
         platform = im_config.get("platform") if im_config else None
 
-        # Check if running
         pid_path = group.path / "state" / "im_bridge.pid"
-        pid = None
-        running = False
-        if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-                # Reap if this process started the bridge and it already exited.
-                try:
-                    waited_pid, _ = os.waitpid(pid, os.WNOHANG)
-                    if waited_pid == pid:
-                        pid = None
-                        pid_path.unlink(missing_ok=True)
-                    else:
-                        running = pid_is_alive(pid)
-                except (AttributeError, ChildProcessError):
-                    running = pid_is_alive(pid)
-                if not running:
-                    pid = None
-            except ValueError:
-                pid = None
+        pid = read_live_im_bridge_pid(pid_path) if pid_path.exists() else None
+        running = pid is not None
 
         # Get subscriber count
         subscribers_path = group.path / "state" / "im_subscribers.json"
@@ -571,23 +553,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         # Check if already running
         pid_path = group.path / "state" / "im_bridge.pid"
         if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-                # If it's our child and already exited, reap and allow restart.
-                try:
-                    waited_pid, _ = os.waitpid(pid, os.WNOHANG)
-                    if waited_pid == pid:
-                        pid_path.unlink(missing_ok=True)
-                    else:
-                        if pid_is_alive(pid):
-                            return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
-                        pid_path.unlink(missing_ok=True)
-                except (AttributeError, ChildProcessError):
-                    if pid_is_alive(pid):
-                        return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
-                    pid_path.unlink(missing_ok=True)
-            except ValueError:
-                pass
+            pid = read_live_im_bridge_pid(pid_path)
+            if pid is not None:
+                return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
 
         # Check IM config
         im_cfg = canonicalize_im_config(group.doc.get("im", {}))

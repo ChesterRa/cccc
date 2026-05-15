@@ -27,6 +27,8 @@ export function getRuntimeRingTone(
     return "idle";
   }
 
+  if (actorState === "working") return "active";
+
   if (item.liveWorkCard?.phase === "pending") return "active";
   if (item.liveWorkCard?.phase === "streaming") return "active";
   return "idle";
