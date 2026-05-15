@@ -951,6 +951,7 @@ class CodexAppSession:
                     return
             except Exception:
                 pass
+            persist_actor_stopped = False
         self.stop(persist_actor_stopped=persist_actor_stopped)
 
     def _stderr_loop(self) -> None:

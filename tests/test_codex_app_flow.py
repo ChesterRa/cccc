@@ -4169,7 +4169,10 @@ class TestCodexAppFlow(unittest.TestCase):
             session._pty_session = _PtySession()
             session._running = True
 
-            with patch("cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.actor_running", return_value=True), patch.object(
+            with patch(
+                "cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.actor_running",
+                return_value=True,
+            ), patch.object(
                 session,
                 "stop",
             ) as stop:
@@ -4177,6 +4180,55 @@ class TestCodexAppFlow(unittest.TestCase):
 
             stop.assert_not_called()
             self.assertTrue(session.is_running())
+        finally:
+            cleanup()
+
+    def test_codex_pty_app_observer_websocket_close_does_not_persist_actor_stop(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+                listen_url="ws://127.0.0.1:12345",
+                transport="websocket",
+                persist_headless_state=False,
+                start_remote_tui=True,
+            )
+
+            class _Proc:
+                pid = os.getpid()
+
+                @staticmethod
+                def poll():
+                    return None
+
+            class _Ws:
+                @staticmethod
+                def recv():
+                    raise RuntimeError("observer websocket closed")
+
+            class _PtySession:
+                pid = 22222
+
+            session._proc = _Proc()
+            session._ws = _Ws()
+            session._pty_session = _PtySession()
+            session._running = True
+
+            with patch(
+                "cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.actor_running",
+                return_value=False,
+            ), patch.object(
+                session,
+                "stop",
+            ) as stop:
+                session._websocket_loop()
+
+            stop.assert_called_once_with(persist_actor_stopped=False)
         finally:
             cleanup()
 
