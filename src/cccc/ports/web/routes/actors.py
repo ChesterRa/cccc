@@ -197,6 +197,8 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 state = codex_app_supervisor.get_state(group_id=gid, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else headless_state)
                 running = bool(state is not None and codex_app_supervisor.actor_running(gid, aid))
+                if uses_codex_app_server_state and not running:
+                    uses_codex_app_server_state = False
             if running and not uses_codex_app_server_state:
                 effective_runner = "headless"
         if not running and runtime.lower() == "claude" and effective_runner == "headless":
@@ -226,7 +228,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 running = _pty_state_running(gid, aid)
             idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=gid, actor_id=aid) if running else None
         pty_terminal_text = ""
-        if effective_runner == "pty" and running and not uses_codex_app_server_state:
+        if effective_runner == "pty" and running and runtime.lower() != "codex":
             try:
                 pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
                     group_id=gid,
@@ -238,18 +240,16 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         actor["running"] = running
         actor["idle_seconds"] = idle_seconds
         actor["runner_effective"] = effective_runner
-        state_runner = "headless" if uses_codex_app_server_state else effective_runner
-        actor.update(
-            derive_effective_working_state(
-                running=running,
-                effective_runner=state_runner,
-                runtime=runtime,
-                idle_seconds=idle_seconds,
-                pty_terminal_text=pty_terminal_text,
-                agent_state=agent_state_by_id.get(aid),
-                headless_state=headless_state,
-            )
+        working_state = derive_effective_working_state(
+            running=running,
+            effective_runner="headless" if uses_codex_app_server_state else effective_runner,
+            runtime=runtime,
+            idle_seconds=idle_seconds,
+            pty_terminal_text=pty_terminal_text,
+            agent_state=agent_state_by_id.get(aid),
+            headless_state=headless_state,
         )
+        actor.update(working_state)
         if runtime.lower() == "web_model":
             decorate_web_model_queued_turn_info(actor, group, actor_id=aid, headless_state=headless_state)
 
@@ -820,7 +820,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         await invalidate_readonly_actor_list(group_id)
         if not await _developer_mode_enabled() and _is_internal_headless_runtime(await _actor_runtime_meta(group_id, actor_id)):
             raise _headless_error(source="actor_restart")
-        clear_session = bool(req.clear_session) if req is not None else False
+        fresh_session = bool(req.fresh_session) if req is not None else False
         return await ctx.daemon(
             {
                 "op": "actor_restart",
@@ -828,7 +828,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "group_id": group_id,
                     "actor_id": actor_id,
                     "by": by,
-                    "clear_session": clear_session,
+                    "fresh_session": fresh_session,
                     **_profile_auth_args(request),
                 },
             }

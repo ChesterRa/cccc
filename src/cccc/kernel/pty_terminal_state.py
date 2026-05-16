@@ -111,24 +111,7 @@ def derive_pty_terminal_override(*, runtime: str, terminal_text: str) -> Optiona
             }
         return None
 
-    tail_text = _tail_window(cleaned)
     if runtime_id == "codex":
-        prompt_offset = _last_terminal_prompt_offset(tail_text)
-        working_offset = _last_codex_working_banner_offset(tail_text)
-        if working_offset >= 0:
-            if prompt_offset > working_offset:
-                return {
-                    "effective_working_state": "idle",
-                    "effective_working_reason": "pty_terminal_prompt_visible",
-                }
-            return {
-                "effective_working_state": "working",
-                "effective_working_reason": "pty_terminal_codex_working_banner",
-            }
-        if _has_terminal_prompt_visible(cleaned):
-            return {
-                "effective_working_state": "idle",
-                "effective_working_reason": "pty_terminal_prompt_visible",
-            }
+        return None
 
     return None

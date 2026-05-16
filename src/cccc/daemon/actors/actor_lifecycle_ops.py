@@ -21,7 +21,6 @@ from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
-from .runtime_session_clear import clear_running_pty_runtime_session
 from .web_model_browser_session import clear_web_model_chatgpt_browser_actor_runtime
 from ..pet.review_scheduler import request_pet_review
 
@@ -236,7 +235,7 @@ def handle_actor_restart(
     caller_context_explicit = "caller_id" in args or "is_admin" in args
     caller_id = str(args.get("caller_id") or "").strip()
     is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
-    clear_session = coerce_bool(args.get("clear_session"), default=False)
+    fresh_session = coerce_bool(args.get("fresh_session"), default=False)
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
         actor = update_actor(group, actor_id, {"enabled": True})
@@ -249,43 +248,7 @@ def handle_actor_restart(
             caller_id=caller_id,
             is_admin=is_admin,
         )
-        runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
-        if clear_session and runner_effective != "headless" and clear_running_pty_runtime_session(
-            group_id=group.group_id,
-            actor_id=actor_id,
-            actor=actor,
-        ):
-            remove_runtime_session(group.group_id, actor_id)
-            clear_preamble_sent(group, actor_id)
-            throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
-            event = append_event(
-                group.ledger_path,
-                kind="actor.restart.clear_session",
-                group_id=group.group_id,
-                scope_key="",
-                by=by,
-                data={
-                    "actor_id": actor_id,
-                    "runner": str(actor.get("runner") or "pty"),
-                    "runner_effective": runner_effective,
-                    "clear_session": True,
-                    "session_clear_mode": "runtime_command",
-                },
-            )
-
-            from ...kernel.events import publish_event
-            publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id, "clear_session": True})
-            try:
-                request_pet_review(
-                    group.group_id,
-                    reason="actor_restart",
-                    source_event_id=str(event.get("id") or "").strip(),
-                    immediate=True,
-                )
-            except Exception:
-                pass
-            return DaemonResponse(ok=True, result={"actor": actor, "event": event})
-        if clear_session:
+        if fresh_session:
             remove_runtime_session(group.group_id, actor_id)
             if str(actor.get("runtime") or "").strip().lower() == "web_model":
                 clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=actor_id)
@@ -306,7 +269,11 @@ def handle_actor_restart(
         return _error("actor_restart_failed", msg)
 
     runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
-    if coerce_bool(group.doc.get("running"), default=False):
+    group_state = str(group.doc.get("state") or "").strip()
+    should_start_runtime = coerce_bool(group.doc.get("running"), default=False) or (
+        fresh_session and group_state != "paused"
+    )
+    if should_start_runtime:
         try:
             launch_spec = resolve_actor_launch_spec(
                 group,
@@ -413,6 +380,7 @@ def handle_actor_restart(
                 model=model_from_runtime_command(launch_spec["effective_command"]),
                 remote_tui_base_command=list(launch_spec["effective_command"]),
                 max_backlog_bytes=pty_backlog_bytes(),
+                fresh_session=fresh_session,
             )
             try:
                 write_pty_state(group.group_id, actor_id, pid=session.remote_tui_pid())
@@ -474,15 +442,14 @@ def handle_actor_restart(
             pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
-    event_kind = "actor.restart.clear_session" if clear_session else "actor.restart"
     event = append_event(
         group.ledger_path,
-        kind=event_kind,
+        kind="actor.restart",
         group_id=group.group_id,
         scope_key="",
         by=by,
         data={
-            **({"clear_session": True} if clear_session else {}),
+            **({"fresh_session": True} if fresh_session else {}),
             "actor_id": actor_id,
             "runner": str(actor.get("runner") or "pty"),
             "runner_effective": runner_effective,
@@ -490,7 +457,7 @@ def handle_actor_restart(
     )
 
     from ...kernel.events import publish_event
-    publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id, "clear_session": clear_session})
+    publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id, "fresh_session": fresh_session})
     try:
         request_pet_review(
             group.group_id,

@@ -38,7 +38,6 @@ EventKind = Literal[
     "actor.start",
     "actor.stop",
     "actor.restart",
-    "actor.restart.clear_session",
     "actor.remove",
     "actor.activity",
     "context.sync",
@@ -187,9 +186,8 @@ class ActorLifecycleData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ActorRestartClearSessionData(ActorLifecycleData):
-    clear_session: bool = True
-    session_clear_mode: Optional[str] = None
+class ActorRestartData(ActorLifecycleData):
+    fresh_session: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -274,8 +272,7 @@ _KIND_TO_MODEL = {
     "actor.set_role": ActorSetRoleData,
     "actor.start": ActorLifecycleData,
     "actor.stop": ActorLifecycleData,
-    "actor.restart": ActorLifecycleData,
-    "actor.restart.clear_session": ActorRestartClearSessionData,
+    "actor.restart": ActorRestartData,
     "actor.remove": ActorLifecycleData,
     "actor.activity": ActorActivityData,
     "context.sync": ContextSyncData,

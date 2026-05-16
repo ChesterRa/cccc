@@ -1,10 +1,11 @@
 // Actor action helpers extracted from ActorTab-related logic.
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useGroupStore, useUIStore, useModalStore, useInboxStore, useFormStore } from "../stores";
 import * as api from "../services/api";
 import type { Actor, SupportedRuntime } from "../types";
 import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
+import { beginActorAction, endActorAction } from "./actorActionInFlight";
 
 export function useActorActions(groupId: string) {
   const { refreshActors, refreshGroups, loadGroup, clearStreamingEventsForActor } = useGroupStore();
@@ -16,12 +17,15 @@ export function useActorActions(groupId: string) {
 
   // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
+  const actorActionInFlightRef = useRef<Set<string>>(new Set());
 
   // Start/stop actor
   const toggleActorEnabled = useCallback(
     async (actor: Actor) => {
       if (!actor || !groupId) return;
       const isRunning = actor.running ?? actor.enabled ?? false;
+      const actionKey = `actor-lifecycle:${actor.id}`;
+      if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
       setBusy(`actor-${isRunning ? "stop" : "start"}:${actor.id}`);
       try {
         const resp = isRunning
@@ -34,6 +38,7 @@ export function useActorActions(groupId: string) {
         clearStreamingEventsForActor(actor.id, groupId);
         await Promise.all([refreshActors(), refreshGroups()]);
       } finally {
+        endActorAction(actorActionInFlightRef, actionKey);
         setBusy("");
       }
     },
@@ -44,6 +49,8 @@ export function useActorActions(groupId: string) {
   const relaunchActor = useCallback(
     async (actor: Actor) => {
       if (!groupId || !actor) return;
+      const actionKey = `actor-lifecycle:${actor.id}`;
+      if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
       setBusy(`actor-relaunch:${actor.id}`);
       try {
         const resp = await api.restartActor(groupId, actor.id);
@@ -56,18 +63,21 @@ export function useActorActions(groupId: string) {
           [actor.id]: (prev[actor.id] || 0) + 1,
         }));
       } finally {
+        endActorAction(actorActionInFlightRef, actionKey);
         setBusy("");
       }
     },
     [groupId, setBusy, showError, refreshActors, refreshGroups]
   );
 
-  const relaunchActorClearSession = useCallback(
+  const relaunchActorFreshSession = useCallback(
     async (actor: Actor) => {
       if (!groupId || !actor) return;
-      setBusy(`actor-relaunch-clear-session:${actor.id}`);
+      const actionKey = `actor-lifecycle:${actor.id}`;
+      if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
+      setBusy(`actor-relaunch-fresh-session:${actor.id}`);
       try {
-        const resp = await api.restartActorWithClearSession(groupId, actor.id);
+        const resp = await api.restartActorFreshSession(groupId, actor.id);
         if (!resp.ok) {
           showError(`${resp.error.code}: ${resp.error.message}`);
           return;
@@ -79,6 +89,7 @@ export function useActorActions(groupId: string) {
           [actor.id]: (prev[actor.id] || 0) + 1,
         }));
       } finally {
+        endActorAction(actorActionInFlightRef, actionKey);
         setBusy("");
       }
     },
@@ -159,7 +170,7 @@ export function useActorActions(groupId: string) {
     getTermEpoch,
     toggleActorEnabled,
     relaunchActor,
-    relaunchActorClearSession,
+    relaunchActorFreshSession,
     editActor,
     removeActor,
     openActorInbox,

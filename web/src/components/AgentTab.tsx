@@ -17,13 +17,27 @@ import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
 import { supportsRuntimeNewSession } from "../utils/runtimeNewSession";
 import { copyTextToClipboard } from "../utils/copy";
+import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
+import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
 
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
 const EMPTY_HEADLESS_RAW_EVENTS: HeadlessStreamEvent[] = [];
+const STOPPED_TAIL_FETCH_DELAY_MS = 350;
 
 const copyToClipboard = copyTextToClipboard;
+
+export function shouldFetchStoppedTerminalTail(args: {
+  activated: boolean;
+  isRunning: boolean;
+  isHeadless: boolean;
+  groupId: string;
+  actorId: string;
+  isActorBusy: boolean;
+}): boolean {
+  return Boolean(args.activated && !args.isRunning && !args.isHeadless && args.groupId && args.actorId && !args.isActorBusy);
+}
 
 interface AgentTabProps {
   actor: Actor;
@@ -35,7 +49,7 @@ interface AgentTabProps {
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
-  onRelaunchClearSession: () => void;
+  onRelaunchFreshSession: () => void;
   onEdit: () => void;
   onRemove: () => void;
   onInbox: () => void;
@@ -56,7 +70,7 @@ export function AgentTab({
   onQuit,
   onLaunch,
   onRelaunch,
-  onRelaunchClearSession,
+  onRelaunchFreshSession,
   onEdit,
   onRemove,
   onInbox,
@@ -73,6 +87,7 @@ export function AgentTab({
   const isWebModel = String(actor.runtime || "").trim().toLowerCase() === "web_model";
   const canStartNewSession = supportsRuntimeNewSession(actor.runtime);
   const canControl = !readOnly;
+  const isBusy = busy.includes(actor.id);
   const latestHeadlessText = useGroupStore((state) => {
     const bucket = state.chatByGroup[String(groupId || "").trim()];
     if (!bucket) return "";
@@ -116,6 +131,8 @@ export function AgentTab({
   const [activated, setActivated] = useState(false);
   // Bumped to trigger a fresh WebSocket connection from the reconnect button
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
+  const [stoppedTerminalText, setStoppedTerminalText] = useState("");
+  const [stoppedTerminalLoading, setStoppedTerminalLoading] = useState(false);
 
   const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({ inFlight: false, lastAt: 0 });
 
@@ -132,6 +149,46 @@ export function AgentTab({
   useEffect(() => {
     if (isVisible) setActivated(true);
   }, [isVisible]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStoppedTerminalText("");
+    if (
+      !shouldFetchStoppedTerminalTail({
+        activated,
+        isRunning,
+        isHeadless,
+        groupId,
+        actorId: actor.id,
+        isActorBusy: isBusy,
+      })
+    ) {
+      setStoppedTerminalLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setStoppedTerminalLoading(true);
+    const timer = window.setTimeout(() => {
+      fetchTerminalTail(groupId, actor.id, 8000, true, true)
+        .then((resp) => {
+          if (cancelled) return;
+          setStoppedTerminalText(resp.ok ? getStoppedTerminalOutputText(resp.result.text || "") : "");
+        })
+        .catch(() => {
+          if (!cancelled) setStoppedTerminalText("");
+        })
+        .finally(() => {
+          if (!cancelled) setStoppedTerminalLoading(false);
+        });
+    }, STOPPED_TAIL_FETCH_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activated, actor.id, groupId, isBusy, isHeadless, isRunning, termEpoch]);
 
   useEffect(() => {
     if (!activated || observabilityLoaded) return;
@@ -180,6 +237,7 @@ export function AgentTab({
     if (workingState === "working") return t("working");
     return t("running");
   })();
+  const stoppedTerminalOutputText = getStoppedTerminalOutputText(stoppedTerminalText);
   const primaryActionButtonClass =
     "inline-flex items-center gap-1.5 rounded-xl border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92";
   const secondaryActionButtonClass =
@@ -403,7 +461,6 @@ export function AgentTab({
     return () => clearTimeout(t);
   }, [canControl, isVisible, isSmallScreen, terminalReady]);
 
-  const isBusy = busy.includes(actor.id);
   const stateHeadline = String(agentState?.hot?.focus || agentState?.hot?.next_action || "").trim() || t('noAgentStateYet');
   const stateTask = String(agentState?.hot?.active_task_id || "").trim();
   const blockerCount = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
@@ -627,7 +684,15 @@ export function AgentTab({
               ) : null}
             </div>
             <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
-              {t('noRecentTerminalOutput')}
+              {stoppedTerminalLoading ? (
+                t('loadingLastTerminalOutput')
+              ) : stoppedTerminalOutputText ? (
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-left font-mono text-xs leading-relaxed">
+                  {stoppedTerminalOutputText}
+                </pre>
+              ) : (
+                t('noRecentTerminalOutput')
+              )}
             </div>
           </div>
         )}
@@ -674,14 +739,14 @@ export function AgentTab({
               </button>
               {canStartNewSession ? (
                 <button
-                  onClick={onRelaunchClearSession}
+                  onClick={onRelaunchFreshSession}
                   disabled={isBusy}
                   className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                  title={t('relaunchClearSessionHint')}
-                  aria-label={t('relaunchClearSessionAgent')}
+                  title={t('relaunchFreshSessionHint')}
+                  aria-label={t('relaunchFreshSessionAgent')}
                 >
                   <RefreshIcon size={16} />
-                  {!isSmallScreen && t('relaunchClearSession')}
+                  {!isSmallScreen && t('relaunchFreshSession')}
                 </button>
               ) : null}
               <button

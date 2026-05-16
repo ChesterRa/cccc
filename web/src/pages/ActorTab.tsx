@@ -16,7 +16,7 @@ export interface ActorTabProps {
   readOnly?: boolean;
   onToggleEnabled: () => void;
   onRelaunch: () => void;
-  onRelaunchClearSession: () => void;
+  onRelaunchFreshSession: () => void;
   onEdit: () => void;
   onRemove: () => void;
   onInbox: () => void;
@@ -36,7 +36,7 @@ export function ActorTab({
   readOnly,
   onToggleEnabled,
   onRelaunch,
-  onRelaunchClearSession,
+  onRelaunchFreshSession,
   onEdit,
   onRemove,
   onInbox,
@@ -62,7 +62,7 @@ export function ActorTab({
         onQuit={onToggleEnabled}
         onLaunch={onToggleEnabled}
         onRelaunch={onRelaunch}
-        onRelaunchClearSession={onRelaunchClearSession}
+        onRelaunchFreshSession={onRelaunchFreshSession}
         onEdit={onEdit}
         onRemove={onRemove}
         onInbox={onInbox}

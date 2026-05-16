@@ -356,7 +356,7 @@ class TestActorLifecycleOps(unittest.TestCase):
                     "actor_id": "peer1",
                     "title": "Peer 1",
                     "runtime": "codex",
-                    "runner": "".join(("p", "ty")),
+                    "runner": "pty",
                     "by": "user",
                 },
             )
@@ -390,7 +390,7 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_actor_restart_with_clear_session_removes_runtime_session_and_resets_web_model_binding(self) -> None:
+    def test_actor_restart_with_fresh_session_removes_runtime_session_and_resets_web_model_binding(self) -> None:
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
         _, cleanup = self._with_home()
@@ -442,7 +442,7 @@ class TestActorLifecycleOps(unittest.TestCase):
 
             restart, _ = self._call(
                 "actor_restart",
-                {"group_id": group_id, "actor_id": "peer1", "by": "user", "clear_session": True},
+                {"group_id": group_id, "actor_id": "peer1", "by": "user", "fresh_session": True},
             )
             self.assertTrue(restart.ok, getattr(restart, "error", None))
 
@@ -457,12 +457,13 @@ class TestActorLifecycleOps(unittest.TestCase):
             event = (restart.result or {}).get("event") if isinstance(restart.result, dict) else {}
             self.assertIsInstance(event, dict)
             assert isinstance(event, dict)
-            self.assertEqual(str(event.get("kind") or ""), "actor.restart.clear_session")
-            self.assertTrue(bool((event.get("data") or {}).get("clear_session")))
+            self.assertEqual(str(event.get("kind") or ""), "actor.restart")
+            self.assertTrue(bool((event.get("data") or {}).get("fresh_session")))
+            self.assertNotIn("clear" + "_session", event.get("data") or {})
         finally:
             cleanup()
 
-    def test_actor_restart_with_clear_session_writes_clear_to_running_supported_pty_runtime_and_removes_session(self) -> None:
+    def test_actor_restart_with_fresh_session_rebuilds_running_pty_runtime_and_removes_session(self) -> None:
         _, cleanup = self._with_home()
         try:
             create, _ = self._call("group_create", {"title": "actor-runtime-clear", "topic": "", "by": "user"})
@@ -497,30 +498,28 @@ class TestActorLifecycleOps(unittest.TestCase):
                 provider_thread_id="thread-old",
             )
 
-            writes: list[bytes] = []
             with patch("cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
-                "cccc.daemon.actors.runtime_session_clear.pty_runner.SUPERVISOR.bracketed_paste_enabled",
-                return_value=False,
-            ), patch(
                 "cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.write_input",
-                side_effect=lambda **kwargs: writes.append(kwargs["data"]) or True,
-            ), patch("cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles") as stop_handles:
+                return_value=True,
+            ) as write_input, patch("cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles") as stop_handles:
                 restart, _ = self._call(
                     "actor_restart",
-                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "clear_session": True},
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "fresh_session": True},
                 )
 
             self.assertTrue(restart.ok, getattr(restart, "error", None))
-            self.assertEqual(writes, [b"/clear", b"\r"])
-            stop_handles.assert_not_called()
+            write_input.assert_not_called()
+            stop_handles.assert_called_once()
             self.assertEqual(read_runtime_session(group_id, "peer1"), {})
             event = (restart.result or {}).get("event") if isinstance(restart.result, dict) else {}
-            self.assertEqual(str(event.get("kind") or ""), "actor.restart.clear_session")
-            self.assertEqual(str((event.get("data") or {}).get("session_clear_mode") or ""), "runtime_command")
+            self.assertEqual(str(event.get("kind") or ""), "actor.restart")
+            self.assertTrue(bool((event.get("data") or {}).get("fresh_session")))
+            self.assertNotIn("session_clear_mode", event.get("data") or {})
+            self.assertNotIn("clear" + "_session", event.get("data") or {})
         finally:
             cleanup()
 
-    def test_actor_restart_with_clear_session_supports_running_claude_pty_runtime(self) -> None:
+    def test_actor_restart_with_fresh_session_rebuilds_running_claude_pty_runtime(self) -> None:
         _, cleanup = self._with_home()
         try:
             create, _ = self._call("group_create", {"title": "actor-claude-runtime-clear", "topic": "", "by": "user"})
@@ -544,24 +543,80 @@ class TestActorLifecycleOps(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            writes: list[bytes] = []
             with patch("cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
-                "cccc.daemon.actors.runtime_session_clear.pty_runner.SUPERVISOR.bracketed_paste_enabled",
-                return_value=False,
-            ), patch(
                 "cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.write_input",
-                side_effect=lambda **kwargs: writes.append(kwargs["data"]) or True,
-            ), patch("cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles") as stop_handles:
+                return_value=True,
+            ) as write_input, patch("cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles") as stop_handles:
                 restart, _ = self._call(
                     "actor_restart",
-                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "clear_session": True},
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "fresh_session": True},
                 )
 
             self.assertTrue(restart.ok, getattr(restart, "error", None))
-            self.assertEqual(writes, [b"/clear", b"\r"])
-            stop_handles.assert_not_called()
+            write_input.assert_not_called()
+            stop_handles.assert_called_once()
             event = (restart.result or {}).get("event") if isinstance(restart.result, dict) else {}
-            self.assertEqual(str(event.get("kind") or ""), "actor.restart.clear_session")
+            self.assertEqual(str(event.get("kind") or ""), "actor.restart")
+            self.assertTrue(bool((event.get("data") or {}).get("fresh_session")))
+            self.assertNotIn("clear" + "_session", event.get("data") or {})
+        finally:
+            cleanup()
+
+    def test_actor_restart_with_fresh_session_starts_stopped_group_runtime(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "stopped-clear-session", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["state"] = "stopped"
+            group.doc["running"] = False
+            group.save()
+
+            class _FakeCodexAppSession:
+                def remote_tui_pid(self) -> int:
+                    return 12345
+
+            with patch("cccc.daemon.server._ensure_mcp_installed", return_value=True), patch(
+                "cccc.daemon.actors.actor_lifecycle_ops.codex_app_supervisor.start_pty_app_actor",
+                return_value=_FakeCodexAppSession(),
+            ) as start_runtime:
+                restart, _ = self._call(
+                    "actor_restart",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user", "fresh_session": True},
+                )
+
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+            start_runtime.assert_called_once()
+            show, _ = self._call("group_show", {"group_id": group_id})
+            self.assertTrue(show.ok, getattr(show, "error", None))
+            group_doc = (show.result or {}).get("group") if isinstance(show.result, dict) else {}
+            self.assertIsInstance(group_doc, dict)
+            assert isinstance(group_doc, dict)
+            self.assertEqual(str(group_doc.get("state") or ""), "active")
+            self.assertTrue(bool(group_doc.get("running")))
         finally:
             cleanup()
 

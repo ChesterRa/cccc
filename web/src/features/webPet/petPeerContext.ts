@@ -360,11 +360,21 @@ export function buildPetPeerContext(
   };
 }
 
+export function shouldFetchPetPeerContext(input: {
+  groupId: string | null | undefined;
+  enabled?: boolean;
+}): boolean {
+  const groupId = String(input.groupId || "").trim();
+  return !!groupId && input.enabled !== false;
+}
+
 export function usePetPeerContext(input: {
   groupId: string | null | undefined;
+  enabled?: boolean;
   refreshToken?: number;
 }): PetPeerContext {
   const groupId = String(input.groupId || "").trim();
+  const enabled = input.enabled !== false;
   const refreshToken = Number(input.refreshToken || 0);
   const cachedContext = groupId ? (petPeerContextCache.get(groupId) ?? null) : null;
   const [state, setState] = useState<{
@@ -374,23 +384,16 @@ export function usePetPeerContext(input: {
   }>({
     groupId,
     rawContext: cachedContext,
-    status: groupId ? (cachedContext ? "loaded" : "loading") : "idle",
+    status: shouldFetchPetPeerContext({ groupId, enabled }) ? (cachedContext ? "loaded" : "loading") : "idle",
   });
 
   useEffect(() => {
-    if (!groupId) return;
+    if (!shouldFetchPetPeerContext({ groupId, enabled })) {
+      return;
+    }
 
     let cancelled = false;
     const cached = petPeerContextCache.get(groupId) ?? null;
-    // Synchronously update state.groupId so fetches do not create a transient
-    // state.groupId !== groupId phase that recreates objects on every render
-    // and cascades into VirtualMessageList refreshes.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional synchronous state-machine transition
-    setState({
-      groupId,
-      rawContext: cached,
-      status: cached ? "loaded" : "loading",
-    });
     const timeout = window.setTimeout(() => {
       void fetchPetPeerContext(groupId)
         .then((resp) => {
@@ -420,10 +423,18 @@ export function usePetPeerContext(input: {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [groupId, refreshToken]);
+  }, [enabled, groupId, refreshToken]);
 
-  if (!groupId || state.groupId !== groupId) {
-    return buildPetPeerContext(cachedContext, { status: !groupId ? "idle" : (cachedContext ? "loaded" : "loading") });
+  const canFetch = shouldFetchPetPeerContext({ groupId, enabled });
+  if (!canFetch || state.groupId !== groupId) {
+    return buildPetPeerContext(cachedContext, {
+      status: canFetch ? (cachedContext ? "loaded" : "loading") : "idle",
+    });
+  }
+  if (state.status === "idle") {
+    return buildPetPeerContext(cachedContext, {
+      status: cachedContext ? "loaded" : "loading",
+    });
   }
 
   return buildPetPeerContext(state.rawContext, { status: state.status });

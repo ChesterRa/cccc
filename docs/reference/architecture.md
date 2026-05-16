@@ -121,7 +121,7 @@ Default: `CCCC_HOME=~/.cccc`
 | `actor.set_role` | Set actor role |
 | `actor.start` | Start an actor runtime |
 | `actor.stop` | Stop an actor runtime |
-| `actor.restart` | Restart an actor runtime |
+| `actor.restart` | Restart an actor runtime; `data.fresh_session=true` means restart without resuming provider/runtime session state |
 | `actor.remove` | Remove an actor |
 | `actor.activity` | Runtime activity/status snapshot |
 | `context.sync` | Context/control-plane sync event |

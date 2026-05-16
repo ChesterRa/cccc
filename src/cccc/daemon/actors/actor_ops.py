@@ -69,6 +69,7 @@ def handle_actor_list(
         runner_kind = str(actor.get("runner") or "pty").strip()
         effective_runner = effective_runner_kind(runner_kind)
         runtime = str(actor.get("runtime") or "").strip()
+        uses_app_server_state = actor_uses_codex_app_server_state(actor)
         headless_state = None
         if not actor_runtime_enabled(actor):
             actor.update(disabled_actor_runtime_projection(effective_runner=effective_runner, runtime=runtime))
@@ -103,10 +104,12 @@ def handle_actor_list(
             if runtime.lower() == "web_model" and effective_runner == "headless":
                 headless_state = read_headless_state(group_id, aid)
                 running = bool(headless_state_running(group_id, aid))
-            elif actor_uses_codex_app_server_state(actor):
+            elif uses_app_server_state:
                 state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
                 running = bool(state is not None and codex_app_supervisor.actor_running(group_id, aid))
+                if not running:
+                    uses_app_server_state = False
             elif runtime.lower() == "codex" and effective_runner == "headless":
                 state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
@@ -119,10 +122,10 @@ def handle_actor_list(
                 state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
                 running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(group_id, aid))
-            else:
+            if not running and effective_runner != "headless":
                 running = bool(pty_runner.SUPERVISOR.actor_running(group_id, aid))
                 idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=aid) if running else None
-                if running:
+                if running and runtime.lower() != "codex":
                     try:
                         pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
                             group_id=group_id,
@@ -137,17 +140,16 @@ def handle_actor_list(
                 actor["runner_effective"] = effective_runner
             else:
                 actor.pop("runner_effective", None)
-            actor.update(
-                derive_effective_working_state(
-                    running=running,
-                    effective_runner="headless" if actor_uses_codex_app_server_state(actor) else effective_runner,
-                    runtime=runtime,
-                    idle_seconds=idle_seconds,
-                    pty_terminal_text=pty_terminal_text,
-                    agent_state=agent_state_by_id.get(aid),
-                    headless_state=headless_state,
-                )
+            working_state = derive_effective_working_state(
+                running=running,
+                effective_runner="headless" if uses_app_server_state else effective_runner,
+                runtime=runtime,
+                idle_seconds=idle_seconds,
+                pty_terminal_text=pty_terminal_text,
+                agent_state=agent_state_by_id.get(aid),
+                headless_state=headless_state,
             )
+            actor.update(working_state)
         if runtime.lower() == "web_model":
             decorate_web_model_queued_turn_info(actor, group, actor_id=aid, headless_state=headless_state)
     if include_unread:

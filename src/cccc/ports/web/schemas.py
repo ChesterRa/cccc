@@ -134,7 +134,9 @@ class ActorUpdateRequest(BaseModel):
 
 
 class ActorRestartRequest(BaseModel):
-    clear_session: bool = False
+    fresh_session: bool = False
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ActorProfileUpsertRequest(BaseModel):

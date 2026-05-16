@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildPetPeerContext } from "../../../src/features/webPet/petPeerContext";
+import { buildPetPeerContext, shouldFetchPetPeerContext } from "../../../src/features/webPet/petPeerContext";
 
 describe("petPeerContext", () => {
+  it("does not fetch pet context when the web pet is disabled", () => {
+    expect(shouldFetchPetPeerContext({ groupId: "g-demo", enabled: false })).toBe(false);
+    expect(shouldFetchPetPeerContext({ groupId: "g-demo", enabled: true })).toBe(true);
+    expect(shouldFetchPetPeerContext({ groupId: "", enabled: true })).toBe(false);
+  });
+
   it("maps pet decisions into reminders", () => {
     const context = buildPetPeerContext({
       decisions: [

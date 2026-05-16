@@ -338,6 +338,7 @@ def start_actor_activity_thread(
                             runtime = str(actor.get("runtime") or "").strip().lower()
                             runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
                             effective_runner = "headless" if runner_kind == "headless" else "pty"
+                            uses_app_server_state = actor_uses_codex_app_server_state(actor)
                             running = False
                             idle = None
                             headless_state = None
@@ -361,9 +362,11 @@ def start_actor_activity_thread(
                                             )
                                     except Exception:
                                         pass
-                            elif actor_uses_codex_app_server_state(actor):
+                            elif uses_app_server_state:
                                 headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))
+                                if not running:
+                                    uses_app_server_state = False
                             elif runtime == "codex" and effective_runner == "headless":
                                 headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))
@@ -379,7 +382,10 @@ def start_actor_activity_thread(
                                 idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid) if running else None
                             pty_terminal_override = None
                             pty_terminal_text = ""
-                            if effective_runner == "pty" and running and not actor_uses_codex_app_server_state(actor):
+                            if uses_app_server_state and not running and effective_runner == "pty":
+                                running = bool(pty_supervisor.actor_running(gid, aid))
+                                idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid) if running else None
+                            if effective_runner == "pty" and running and runtime != "codex":
                                 pty_signal = read_pty_activity_signal(pty_supervisor, group_id=gid, actor_id=aid)
                                 pty_terminal_override = pty_signal.terminal_override
                                 pty_terminal_text = pty_signal.terminal_text
@@ -391,19 +397,17 @@ def start_actor_activity_thread(
                                 "runner_effective": effective_runner,
                                 "idle_seconds": round(float(idle), 1) if idle is not None else None,
                             }
-                            state_runner = "headless" if actor_uses_codex_app_server_state(actor) else effective_runner
-                            payload.update(
-                                derive_effective_working_state(
-                                    running=running,
-                                    effective_runner=state_runner,
-                                    runtime=str(actor.get("runtime") or ""),
-                                    idle_seconds=idle,
-                                    pty_terminal_text=pty_terminal_text,
-                                    pty_terminal_override=pty_terminal_override,
-                                    agent_state=agent_state_by_id.get(aid),
-                                    headless_state=headless_state,
-                                )
+                            working_state = derive_effective_working_state(
+                                running=running,
+                                effective_runner="headless" if uses_app_server_state else effective_runner,
+                                runtime=str(actor.get("runtime") or ""),
+                                idle_seconds=idle,
+                                pty_terminal_text=pty_terminal_text,
+                                pty_terminal_override=pty_terminal_override,
+                                agent_state=agent_state_by_id.get(aid),
+                                headless_state=headless_state,
                             )
+                            payload.update(working_state)
                             actors_data.append(payload)
                             actors_snapshot[aid] = payload
                         replace_group_runtime(gid, actors_snapshot)

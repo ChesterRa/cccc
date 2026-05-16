@@ -19,6 +19,7 @@ import {
   apiForm,
   apiJson,
   ApiResponse,
+  capabilityStateRequestKey,
   clearContextRequest,
   contextRequestKey,
   FetchContextOptions,
@@ -266,14 +267,21 @@ export async function fetchGroupCapabilityState(
   actorId: string = "user",
   opts?: { capabilityId?: string; noCache?: boolean; signal?: AbortSignal },
 ) {
+  const gid = String(groupId || "").trim();
+  const aid = String(actorId || "user").trim() || "user";
+  const capabilityId = String(opts?.capabilityId || "").trim();
   const params = new URLSearchParams();
-  if (actorId) params.set("actor_id", actorId);
-  if (String(opts?.capabilityId || "").trim()) params.set("capability_id", String(opts?.capabilityId || "").trim());
+  params.set("actor_id", aid);
+  if (capabilityId) params.set("capability_id", capabilityId);
   if (opts?.noCache) params.set("_", String(Date.now()));
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  return apiJson<CapabilityStateResult>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/state${suffix}`, {
-    signal: opts?.signal,
-  });
+  const load = () => {
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return apiJson<CapabilityStateResult>(`/api/v1/groups/${encodeURIComponent(gid)}/capabilities/state${suffix}`, {
+      signal: opts?.signal,
+    });
+  };
+  if (opts?.signal) return load();
+  return reuseSharedReadRequest(capabilityStateRequestKey(gid, aid, capabilityId), load);
 }
 
 export async function enableGroupCapability(

@@ -111,13 +111,13 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             ["free", "standard", "optimization"],
         )
 
-    def test_actor_toolspec_does_not_expose_clear_session_restart_action(self) -> None:
+    def test_actor_toolspec_does_not_expose_legacy_session_restart_action(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_actor"), None)
         self.assertIsInstance(spec, dict)
         props = ((spec.get("inputSchema") or {}).get("properties") or {}) if isinstance(spec, dict) else {}
         action = props.get("action") if isinstance(props, dict) else {}
         self.assertIsInstance(action, dict)
-        removed_action = "restart" + "_clear_session"
+        removed_action = "restart" + "_clear" + "_session"
         self.assertNotIn(removed_action, action.get("enum") or [])
 
     def test_remote_runtime_repo_tools_are_split_by_write_risk(self) -> None:

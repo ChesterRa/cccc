@@ -710,8 +710,8 @@ class TestWebActorRoutesCache(unittest.TestCase):
             actor = resp.json()["result"]["actors"][0]
             self.assertTrue(bool(actor["running"]))
             self.assertEqual(actor["runner_effective"], "pty")
-            self.assertEqual(actor["effective_working_state"], "idle")
-            self.assertEqual(actor["effective_working_reason"], "headless_idle")
+            self.assertEqual(actor["effective_working_state"], "waiting")
+            self.assertEqual(actor["effective_working_reason"], "pty_running_state_unknown")
         finally:
             cleanup()
 

@@ -266,57 +266,6 @@ class TestQueryProjections(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-    def test_actor_projection_codex_pty_uses_terminal_heuristics(self) -> None:
-        from cccc.daemon.actors.actor_ops import handle_actor_list
-        from cccc.kernel.actors import add_actor
-        from cccc.kernel.context import ContextStorage
-        from cccc.kernel.group import create_group, load_group
-        from cccc.kernel.registry import load_registry
-
-        old_home = os.environ.get("CCCC_HOME")
-        try:
-            with tempfile.TemporaryDirectory() as td:
-                os.environ["CCCC_HOME"] = td
-                reg = load_registry()
-                gid = create_group(reg, title="proj", topic="").group_id
-                group = load_group(gid)
-                self.assertIsNotNone(group)
-                add_actor(
-                    group,
-                    actor_id="peer1",
-                    title="Peer One",
-                    runtime="codex",
-                    runner="pty",
-                    runtime_state_source="terminal",
-                )  # type: ignore[arg-type]
-                group.save()  # type: ignore[union-attr]
-
-                storage = ContextStorage(group)  # type: ignore[arg-type]
-                storage.update_agent_state("peer1", "Implement auth", active_task_id="T100")
-
-                with (
-                    patch("cccc.daemon.actors.actor_ops.pty_runner.SUPERVISOR.actor_running", return_value=True),
-                    patch("cccc.daemon.actors.actor_ops.pty_runner.SUPERVISOR.idle_seconds", return_value=12.0),
-                    patch(
-                        "cccc.daemon.actors.actor_ops.pty_runner.SUPERVISOR.tail_output",
-                        return_value="› Run /review on my current changes\n".encode("utf-8"),
-                    ),
-                ):
-                    resp = handle_actor_list({"group_id": gid, "include_unread": False}, effective_runner_kind=lambda _: "pty")
-
-                self.assertTrue(resp.ok, getattr(resp, "error", None))
-                actors = (resp.result or {}).get("actors", [])
-                self.assertEqual(actors[0]["runner"], "pty")
-                self.assertIsNone(actors[0].get("runner_effective"))
-                self.assertEqual(actors[0]["effective_working_state"], "idle")
-                self.assertEqual(actors[0]["effective_working_reason"], "pty_terminal_prompt_visible")
-
-        finally:
-            if old_home is None:
-                os.environ.pop("CCCC_HOME", None)
-            else:
-                os.environ["CCCC_HOME"] = old_home
-
     def test_actor_projection_marks_recent_running_pty_without_prompt_as_working(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
         from cccc.kernel.actors import add_actor

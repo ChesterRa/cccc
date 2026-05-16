@@ -216,12 +216,12 @@ export async function restartActor(groupId: string, actorId: string) {
   );
 }
 
-export async function restartActorWithClearSession(groupId: string, actorId: string) {
+export async function restartActorFreshSession(groupId: string, actorId: string) {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
-    { method: "POST", body: JSON.stringify({ clear_session: true }) },
+    { method: "POST", body: JSON.stringify({ fresh_session: true }) },
   );
 }
 

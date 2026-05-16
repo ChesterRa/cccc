@@ -44,6 +44,7 @@ from ...kernel.context import (
 from ...kernel.actors import get_effective_role, list_actors
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
+from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ...kernel.pet_actor import PET_ACTOR_ID
 from ...kernel.ledger import append_event
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
@@ -350,6 +351,7 @@ def _actor_runtime_state_to_dict(
     runner_kind = str(actor_doc.get("runner") or "pty").strip() or "pty"
     runtime = str(actor_doc.get("runtime") or "").strip() or "codex"
     effective_runner = "headless" if runner_kind == "headless" else "pty"
+    uses_app_server_state = actor_uses_codex_app_server_state(actor_doc)
     snap = runtime_snapshot_by_id.get(actor_id) if isinstance(runtime_snapshot_by_id.get(actor_id), dict) else {}
     running = bool(snap.get("running")) if snap else False
     idle_seconds = snap.get("idle_seconds") if snap else None
@@ -385,39 +387,46 @@ def _actor_runtime_state_to_dict(
             running = bool(claude_app_supervisor.actor_running(group_id, actor_id))
         else:
             running = bool(headless_runner.SUPERVISOR.actor_running(group_id=group_id, actor_id=actor_id))
-    else:
+    if effective_runner != "headless" and uses_app_server_state:
+        state = codex_app_supervisor.get_state(group_id=group_id, actor_id=actor_id)
+        headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
+        running = bool(state is not None and codex_app_supervisor.actor_running(group_id, actor_id))
+        if not running:
+            uses_app_server_state = False
+
+    if effective_runner != "headless" and not uses_app_server_state:
         running = bool(pty_runner.SUPERVISOR.actor_running(group_id=group_id, actor_id=actor_id))
         try:
             idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=actor_id)
         except Exception:
             idle_seconds = None
-        try:
-            raw_tail = pty_runner.SUPERVISOR.tail_output(
-                group_id=group_id,
-                actor_id=actor_id,
-                max_bytes=12_000,
-            )
-            if isinstance(raw_tail, bytes):
-                pty_terminal_text = raw_tail.decode("utf-8", errors="replace")
-            elif isinstance(raw_tail, str):
-                pty_terminal_text = raw_tail
-        except Exception:
-            pty_terminal_text = ""
+        if runtime.lower() != "codex":
+            try:
+                raw_tail = pty_runner.SUPERVISOR.tail_output(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    max_bytes=12_000,
+                )
+                if isinstance(raw_tail, bytes):
+                    pty_terminal_text = raw_tail.decode("utf-8", errors="replace")
+                elif isinstance(raw_tail, str):
+                    pty_terminal_text = raw_tail
+            except Exception:
+                pty_terminal_text = ""
 
     result["runner_effective"] = effective_runner
     result["running"] = bool(running)
     result["idle_seconds"] = idle_seconds
-    result.update(
-        derive_effective_working_state(
-            running=bool(running),
-            effective_runner=effective_runner,
-            runtime=runtime,
-            idle_seconds=idle_seconds,
-            pty_terminal_text=pty_terminal_text,
-            agent_state=agent_state_by_id.get(actor_id),
-            headless_state=headless_state,
-        )
+    working_state = derive_effective_working_state(
+        running=bool(running),
+        effective_runner="headless" if uses_app_server_state else effective_runner,
+        runtime=runtime,
+        idle_seconds=idle_seconds,
+        pty_terminal_text=pty_terminal_text,
+        agent_state=agent_state_by_id.get(actor_id),
+        headless_state=headless_state,
     )
+    result.update(working_state)
     return result
 
 

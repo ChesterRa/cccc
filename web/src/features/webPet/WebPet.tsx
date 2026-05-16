@@ -152,7 +152,22 @@ export function WebPet({
   const groupSettings = isSelectedGroup ? selectedGroupSettings : remoteState.groupSettings;
   const groupContext = isSelectedGroup ? selectedGroupContext : remoteState.groupContext;
   const events = isSelectedGroup ? selectedEvents : remoteState.events;
-  const petContext = usePetPeerContext({ groupId, refreshToken: petContextRefreshToken });
+  const desktopPetEnabled = (() => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return false;
+    if (groupSettings) {
+      return Boolean(groupSettings.desktop_pet_enabled);
+    }
+    if (Object.prototype.hasOwnProperty.call(lastKnownDesktopPetEnabledByGroup, gid)) {
+      return Boolean(lastKnownDesktopPetEnabledByGroup[gid]);
+    }
+    return desktopPetVisibilityFallbackRef.current;
+  })();
+  const petContext = usePetPeerContext({
+    groupId,
+    enabled: desktopPetEnabled,
+    refreshToken: petContextRefreshToken,
+  });
   const petContextRefreshMarker = useMemo(
     () => getLatestPetContextRefreshMarker(events),
     [events],
@@ -511,18 +526,6 @@ export function WebPet({
     latestPetContextRefreshMarkerRef.current = "";
     reviewSessionRef.current += 1;
   }, [groupId]);
-
-  const desktopPetEnabled = (() => {
-    const gid = String(groupId || "").trim();
-    if (!gid) return false;
-    if (groupSettings) {
-      return Boolean(groupSettings.desktop_pet_enabled);
-    }
-    if (Object.prototype.hasOwnProperty.call(lastKnownDesktopPetEnabledByGroup, gid)) {
-      return Boolean(lastKnownDesktopPetEnabledByGroup[gid]);
-    }
-    return desktopPetVisibilityFallbackRef.current;
-  })();
 
   if (!groupId || !desktopPetEnabled) {
     return null;

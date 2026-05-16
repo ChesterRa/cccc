@@ -3436,78 +3436,6 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_actor_activity_thread_uses_pty_tail_prompt_when_override_missing(self) -> None:
-        from cccc.daemon.serve_ops import start_actor_activity_thread
-        from cccc.kernel.actors import add_actor
-        from cccc.kernel.group import create_group, load_group
-        from cccc.kernel.registry import load_registry
-
-        home, cleanup = self._with_home()
-        try:
-            reg = load_registry()
-            created = create_group(reg, title="pty-tail-activity", topic="")
-            group = load_group(created.group_id)
-            self.assertIsNotNone(group)
-            add_actor(
-                group,
-                actor_id="peer1",
-                title="Peer 1",
-                runtime="codex",
-                runner="pty",
-                runtime_state_source="terminal",
-            )  # type: ignore[arg-type]
-            group.save()  # type: ignore[union-attr]
-
-            published: list[dict] = []
-
-            class _PtySupervisor:
-                terminal_override_calls = 0
-
-                @staticmethod
-                def actor_running(_group_id: str, _actor_id: str) -> bool:
-                    return True
-
-                @staticmethod
-                def idle_seconds(*, group_id: str, actor_id: str) -> float:
-                    return 600.0
-
-                @staticmethod
-                def terminal_override(*, group_id: str, actor_id: str):
-                    return None
-
-                @staticmethod
-                def tail_output(*, group_id: str, actor_id: str, max_bytes: int) -> bytes:
-                    return "previous output\n› \n".encode("utf-8")
-
-            class _Broadcaster:
-                def publish(self, event: dict) -> None:
-                    published.append(event)
-
-            stop_event = threading.Event()
-            thread = start_actor_activity_thread(
-                stop_event=stop_event,
-                home=Path(home),
-                pty_supervisor=_PtySupervisor(),
-                headless_supervisor=object(),
-                codex_supervisor=object(),
-                event_broadcaster=_Broadcaster(),
-                load_group=load_group,
-                interval_seconds=1.0,
-            )
-            try:
-                time.sleep(0.25)
-                actor_events = [event for event in published if str(event.get("kind") or "") == "actor.activity"]
-                self.assertTrue(actor_events)
-                actors = ((actor_events[-1].get("data") or {}).get("actors") or [])
-                self.assertEqual(len(actors), 1)
-                self.assertEqual(str(actors[0].get("effective_working_state") or ""), "idle")
-                self.assertEqual(str(actors[0].get("effective_working_reason") or ""), "pty_terminal_prompt_visible")
-            finally:
-                stop_event.set()
-                thread.join(timeout=1.0)
-        finally:
-            cleanup()
-
     def test_actor_activity_thread_uses_codex_app_server_state_for_pty_app_server_actor(self) -> None:
         from cccc.daemon.serve_ops import start_actor_activity_thread
         from cccc.kernel.actors import add_actor, update_actor
@@ -3542,7 +3470,7 @@ class TestCodexAppFlow(unittest.TestCase):
                     cls.terminal_override_calls += 1
                     return {
                         "effective_working_state": "idle",
-                        "effective_working_reason": "pty_terminal_prompt_visible",
+                        "effective_working_reason": "unused_terminal_override",
                     }
 
             class _CodexSupervisor:
@@ -3714,7 +3642,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_codex_thread_status_notification_marks_remote_tui_active(self) -> None:
+    def test_codex_thread_status_notification_does_not_mark_active_as_working(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
 
         home, cleanup = self._with_home()
@@ -3729,8 +3657,8 @@ class TestCodexAppFlow(unittest.TestCase):
                 {"threadId": "thread-1", "status": {"type": "active", "activeFlags": []}},
             )
 
-            self.assertEqual(str(session._session_state.status or ""), "working")
-            self.assertEqual(str(session._session_state.current_task_id or ""), "thread-1")
+            self.assertEqual(str(session._session_state.status or ""), "idle")
+            self.assertIsNone(session._session_state.current_task_id)
 
             session._handle_notification(
                 "thread/status/changed",
@@ -4189,6 +4117,113 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(started_pty[0]["runtime"], "codex")
         finally:
             manager.stop_actor(group_id="g_test", actor_id="peer1")
+            cleanup()
+
+    def test_codex_pty_app_fresh_session_does_not_resume_thread(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSessionManager
+
+        home, cleanup = self._with_home()
+        try:
+            manager = CodexAppSessionManager()
+            requests: list[tuple[str, dict]] = []
+            started_pty: list[dict] = []
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            class FakeWs:
+                def send(self, data):
+                    return None
+
+                def recv(self):
+                    time.sleep(1)
+                    return ""
+
+                def close(self):
+                    return None
+
+            def fake_request(self, method: str, params: dict, *, timeout: float):
+                requests.append((method, params))
+                if method == "initialize":
+                    return {}
+                raise AssertionError(f"fresh PTY app session should not pre-create thread: {method}")
+
+            def fake_start_actor(**kwargs):
+                started_pty.append(dict(kwargs))
+
+                class _PtySession:
+                    pid = 22222
+
+                    def is_running(self):
+                        return True
+
+                return _PtySession()
+
+            with patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()) as popen, patch(
+                "cccc.daemon.codex_app_sessions.threading.Thread", FakeThread
+            ), patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True), patch(
+                "cccc.daemon.codex_app_sessions._connect_websocket", return_value=FakeWs()
+            ), patch(
+                "cccc.daemon.codex_app_sessions._codex_cli_available", return_value=True
+            ), patch(
+                "cccc.daemon.codex_app_sessions.CodexAppSession._request", fake_request
+            ), patch(
+                "cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.start_actor", side_effect=fake_start_actor
+            ):
+                manager.start_pty_app_actor(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    cwd=Path(home),
+                    env={},
+                    remote_tui_base_command=["codex", "--search"],
+                    fresh_session=True,
+                )
+
+            command = list(popen.call_args.args[0])
+            self.assertEqual([item[0] for item in requests], ["initialize"])
+            self.assertEqual(started_pty[0]["command"], ["codex", "--search", "--remote", command[3]])
+        finally:
+            manager.stop_actor(group_id="g_test", actor_id="peer1")
+            cleanup()
+
+    def test_codex_pty_app_session_adopts_thread_from_status_notification(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(group_id="g_test", actor_id="peer1", cwd=Path(home), env={})
+            session._running = True
+            session._session_state.status = "idle"
+
+            session._handle_notification(
+                "thread/status/changed",
+                {"threadId": "thread-from-tui", "status": {"type": "active", "activeFlags": []}},
+            )
+
+            self.assertEqual(str(session._session_state.thread_id or ""), "thread-from-tui")
+            self.assertEqual(str(session._session_state.status or ""), "idle")
+            self.assertIsNone(session._session_state.current_task_id)
+        finally:
             cleanup()
 
     def test_codex_pty_app_remote_tui_exit_stops_app_server_session(self) -> None:

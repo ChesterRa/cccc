@@ -24,12 +24,7 @@ from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .mcp_install import ensure_mcp_installed
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
-from .runtime_session_ops import (
-    mark_runtime_session_resume_failed,
-    prepare_headless_runtime_resume,
-    record_headless_runtime_session,
-    runtime_resume_enabled,
-)
+from .codex_app_thread_ops import start_codex_app_thread
 from ..util.fs import atomic_write_json
 from ..util.node_env import with_node_deprecation_warnings_suppressed
 from ..util.process import pid_is_alive
@@ -255,6 +250,7 @@ class CodexAppSession:
         start_remote_tui: bool = False,
         remote_tui_base_command: Optional[list[str]] = None,
         max_backlog_bytes: int = 2_000_000,
+        fresh_session: bool = False,
     ) -> None:
         self.group_id = str(group_id or "").strip()
         self.actor_id = str(actor_id or "").strip()
@@ -267,6 +263,7 @@ class CodexAppSession:
         self.start_remote_tui = bool(start_remote_tui)
         self.remote_tui_base_command = list(remote_tui_base_command or [])
         self.max_backlog_bytes = int(max_backlog_bytes or 0) or 2_000_000
+        self.fresh_session = bool(fresh_session)
         self._proc: Optional[subprocess.Popen[str]] = None
         self._ws: Any = None
         self._pty_session: Any = None
@@ -591,82 +588,25 @@ class CodexAppSession:
                 },
                 timeout=10.0,
             )
-            thread_params: Dict[str, Any] = {
-                "cwd": str(self.cwd),
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
-                "personality": "pragmatic",
-            }
-            if self.model:
-                thread_params["model"] = self.model
-            resume_doc = prepare_headless_runtime_resume(
-                group_id=self.group_id,
-                actor_id=self.actor_id,
-                runtime="codex",
-                cwd=self.cwd,
-                command=self._runtime_command,
-                model=self.model,
-            )
+            thread_id = ""
             resumed = False
-            if resume_doc:
-                resume_params: Dict[str, Any] = {
-                    "threadId": str(resume_doc.get("provider_thread_id") or "").strip(),
-                    "approvalPolicy": "never",
-                    "sandbox": "danger-full-access",
-                    "personality": "pragmatic",
-                }
-                if self.model:
-                    resume_params["model"] = self.model
-                try:
-                    thread_resp = self._request(
-                        "thread/resume",
-                        resume_params,
-                        timeout=20.0,
-                    )
-                    resumed = True
-                except Exception as exc:
-                    mark_runtime_session_resume_failed(
-                        group_id=self.group_id,
-                        actor_id=self.actor_id,
-                        error=str(exc),
-                    )
-                    thread_resp = self._request(
-                        "thread/start",
-                        thread_params,
-                        timeout=20.0,
-                    )
-            else:
-                thread_resp = self._request(
-                    "thread/start",
-                    thread_params,
-                    timeout=20.0,
+            if not self.start_remote_tui or not self.fresh_session:
+                thread_id, resumed = start_codex_app_thread(
+                    request=self._request,
+                    group_id=self.group_id,
+                    actor_id=self.actor_id,
+                    cwd=self.cwd,
+                    command=self._runtime_command,
+                    model=self.model,
+                    fresh_session=self.fresh_session,
                 )
-            thread = thread_resp.get("thread") if isinstance(thread_resp, dict) else {}
-            thread_id = str((thread or {}).get("id") or "").strip()
-            if not thread_id:
-                raise RuntimeError("codex app-server returned empty thread id")
             with self._lock:
                 self._session_state.thread_id = thread_id
                 self._session_state.status = "idle"
                 self._session_state.updated_at = utc_now_iso()
             self._persist_state()
-            if runtime_resume_enabled():
-                try:
-                    record_headless_runtime_session(
-                        group_id=self.group_id,
-                        actor_id=self.actor_id,
-                        runtime="codex",
-                        cwd=self.cwd,
-                        model=self.model,
-                        command=self._runtime_command,
-                        provider_thread_id=thread_id,
-                        status="usable",
-                        captured_from="app_server_thread_resume" if resumed else "app_server_thread_start",
-                        resume_eligible=True,
-                    )
-                except Exception:
-                    pass
-            self._emit("headless.thread.resumed" if resumed else "headless.thread.started", {"thread_id": thread_id})
+            if thread_id:
+                self._emit("headless.thread.resumed" if resumed else "headless.thread.started", {"thread_id": thread_id})
             if not self.start_remote_tui:
                 self._queue_bootstrap_control_turn()
             if self.start_remote_tui:
@@ -1252,15 +1192,19 @@ class CodexAppSession:
             active_flags = (status_doc or {}).get("activeFlags")
             flags = {str(item or "").strip() for item in active_flags} if isinstance(active_flags, list) else set()
             with self._lock:
-                if thread_id and thread_id != str(self._session_state.thread_id or "").strip():
+                current_thread_id = str(self._session_state.thread_id or "").strip()
+                if thread_id and current_thread_id and thread_id != current_thread_id:
                     return
+                if thread_id and not current_thread_id:
+                    self._session_state.thread_id = thread_id
                 if status_type == "active":
                     self._session_state.status = (
                         "waiting"
                         if flags.intersection({"waitingOnApproval", "waitingOnUserInput"})
-                        else "working"
+                        else self._session_state.status or "idle"
                     )
-                    self._session_state.current_task_id = thread_id or self._session_state.thread_id or None
+                    if flags.intersection({"waitingOnApproval", "waitingOnUserInput"}):
+                        self._session_state.current_task_id = thread_id or self._session_state.thread_id or None
                 elif status_type == "idle":
                     self._session_state.status = "idle"
                     self._session_state.current_task_id = None
@@ -1275,7 +1219,10 @@ class CodexAppSession:
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             turn_id = str(turn.get("id") or "").strip()
+            thread_id = str(turn.get("threadId") or params.get("threadId") or "").strip()
             with self._lock:
+                if thread_id and not str(self._session_state.thread_id or "").strip():
+                    self._session_state.thread_id = thread_id
                 self._active_turn_id = turn_id
                 if not control_kind:
                     self._session_state.status = "working"
@@ -1864,6 +1811,7 @@ class CodexAppSessionManager:
         model: str = "",
         remote_tui_base_command: Optional[list[str]] = None,
         max_backlog_bytes: int = 2_000_000,
+        fresh_session: bool = False,
     ) -> CodexAppSession:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
@@ -1886,6 +1834,7 @@ class CodexAppSessionManager:
                 start_remote_tui=True,
                 remote_tui_base_command=remote_tui_base_command,
                 max_backlog_bytes=max_backlog_bytes,
+                fresh_session=fresh_session,
             )
             self._sessions[key] = session
         try:
