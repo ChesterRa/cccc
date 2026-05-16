@@ -414,6 +414,209 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_recording_lease_blocks_other_group_until_release(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_a = self._create_group()
+            group_b = self._create_group()
+            self._enable_voice_secretary(group_a)
+            self._enable_voice_secretary(group_b)
+
+            acquire_a, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_a,
+                    "action": "acquire",
+                    "owner_id": "owner-a",
+                    "capture_mode": "prompt",
+                    "recognition_backend": "browser_asr",
+                    "ttl_seconds": 30,
+                },
+            )
+            self.assertTrue(acquire_a.ok, getattr(acquire_a, "error", None))
+            self.assertTrue(bool((acquire_a.result or {}).get("acquired")))
+            lease = (acquire_a.result or {}).get("lease") or {}
+            self.assertEqual(lease.get("group_id"), group_a)
+            self.assertEqual(lease.get("owner_id"), "owner-a")
+            lease_id = str((acquire_a.result or {}).get("lease_id") or "")
+            self.assertTrue(lease_id)
+
+            acquire_b, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_b,
+                    "action": "acquire",
+                    "owner_id": "owner-b",
+                    "capture_mode": "document",
+                    "recognition_backend": "assistant_service_local_asr",
+                },
+            )
+            self.assertFalse(acquire_b.ok)
+            self.assertEqual(getattr(acquire_b.error, "code", ""), "assistant_voice_recording_busy")
+            active = (getattr(acquire_b.error, "details", {}) or {}).get("active_lease") or {}
+            self.assertEqual(active.get("group_id"), group_a)
+            self.assertEqual(active.get("owner_id"), "owner-a")
+
+            release_a, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_a, "action": "release", "owner_id": "owner-a", "lease_id": lease_id},
+            )
+            self.assertTrue(release_a.ok, getattr(release_a, "error", None))
+            self.assertTrue(bool((release_a.result or {}).get("released")))
+
+            acquire_b_after_release, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_b,
+                    "action": "acquire",
+                    "owner_id": "owner-b",
+                    "capture_mode": "document",
+                    "recognition_backend": "assistant_service_local_asr",
+                },
+            )
+            self.assertTrue(acquire_b_after_release.ok, getattr(acquire_b_after_release, "error", None))
+            self.assertTrue(bool((acquire_b_after_release.result or {}).get("acquired")))
+            self.assertEqual(((acquire_b_after_release.result or {}).get("lease") or {}).get("group_id"), group_b)
+        finally:
+            cleanup()
+
+    def test_voice_recording_release_requires_matching_lease_id(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_a = self._create_group()
+            group_b = self._create_group()
+            self._enable_voice_secretary(group_a)
+            self._enable_voice_secretary(group_b)
+
+            first, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_a, "action": "acquire", "owner_id": "owner-a", "ttl_seconds": 30},
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            first_lease_id = str((first.result or {}).get("lease_id") or "")
+            self.assertTrue(first_lease_id)
+
+            second, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_a, "action": "acquire", "owner_id": "owner-a", "ttl_seconds": 30},
+            )
+            self.assertFalse(second.ok)
+            self.assertEqual(getattr(second.error, "code", ""), "assistant_voice_recording_busy")
+
+            stale_release, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_a,
+                    "action": "release",
+                    "owner_id": "owner-a",
+                    "lease_id": f"{first_lease_id}-stale",
+                },
+            )
+            self.assertTrue(stale_release.ok, getattr(stale_release, "error", None))
+            self.assertFalse(bool((stale_release.result or {}).get("released")))
+            self.assertTrue(bool((stale_release.result or {}).get("lost")))
+
+            acquire_b, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_b, "action": "acquire", "owner_id": "owner-b"},
+            )
+            self.assertFalse(acquire_b.ok)
+            self.assertEqual(getattr(acquire_b.error, "code", ""), "assistant_voice_recording_busy")
+        finally:
+            cleanup()
+
+    def test_voice_recording_stale_heartbeat_does_not_recreate_released_lease(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_a = self._create_group()
+            group_b = self._create_group()
+            self._enable_voice_secretary(group_a)
+            self._enable_voice_secretary(group_b)
+
+            acquire_a, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_a, "action": "acquire", "owner_id": "owner-a", "ttl_seconds": 30},
+            )
+            self.assertTrue(acquire_a.ok, getattr(acquire_a, "error", None))
+            lease_id = str((acquire_a.result or {}).get("lease_id") or "")
+            self.assertTrue(lease_id)
+
+            release_a, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_a, "action": "release", "owner_id": "owner-a", "lease_id": lease_id},
+            )
+            self.assertTrue(release_a.ok, getattr(release_a, "error", None))
+            self.assertTrue(bool((release_a.result or {}).get("released")))
+
+            stale_heartbeat, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_a,
+                    "action": "heartbeat",
+                    "owner_id": "owner-a",
+                    "lease_id": lease_id,
+                    "ttl_seconds": 30,
+                },
+            )
+            self.assertTrue(stale_heartbeat.ok, getattr(stale_heartbeat, "error", None))
+            self.assertTrue(bool((stale_heartbeat.result or {}).get("lost")))
+            self.assertFalse(bool((stale_heartbeat.result or {}).get("acquired")))
+            self.assertFalse(bool((stale_heartbeat.result or {}).get("lease")))
+
+            acquire_b, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_b, "action": "acquire", "owner_id": "owner-b"},
+            )
+            self.assertTrue(acquire_b.ok, getattr(acquire_b, "error", None))
+            self.assertEqual(((acquire_b.result or {}).get("lease") or {}).get("group_id"), group_b)
+        finally:
+            cleanup()
+
+    def test_voice_recording_lease_expires_and_state_reports_active_lease(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_a = self._create_group()
+            group_b = self._create_group()
+            self._enable_voice_secretary(group_a)
+            self._enable_voice_secretary(group_b)
+
+            acquire_a, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_a,
+                    "action": "acquire",
+                    "owner_id": "owner-a",
+                    "capture_mode": "instruction",
+                    "recognition_backend": "browser_asr",
+                    "ttl_seconds": 30,
+                },
+            )
+            self.assertTrue(acquire_a.ok, getattr(acquire_a, "error", None))
+
+            state, _ = self._call("assistant_state", {"group_id": group_a, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertEqual(((state.result or {}).get("recording_lease") or {}).get("group_id"), group_a)
+
+            lease_path = Path(home) / "state" / "voice_secretary_recording_lease.json"
+            payload = json.loads(lease_path.read_text(encoding="utf-8"))
+            payload["lease"]["expires_at_ms"] = 1
+            lease_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            acquire_b, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_b,
+                    "action": "acquire",
+                    "owner_id": "owner-b",
+                    "capture_mode": "document",
+                    "recognition_backend": "browser_asr",
+                },
+            )
+            self.assertTrue(acquire_b.ok, getattr(acquire_b, "error", None))
+            self.assertEqual(((acquire_b.result or {}).get("lease") or {}).get("group_id"), group_b)
+        finally:
+            cleanup()
+
     def test_voice_document_list_does_not_flush_stale_session_windows(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -3119,7 +3322,91 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_voice_secretary_retries_delivered_but_unread_input(self) -> None:
+    def test_voice_secretary_completed_envelope_advances_read_cursor(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.codex_app_sessions import _voice_secretary_control_completion_state
+            from cccc.paths import ensure_home
+            from cccc.util.fs import atomic_write_json, read_json
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            create, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "create_new": True,
+                    "title": "Meeting Notes",
+                },
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            document = (create.result or {}).get("document") if isinstance(create.result, dict) else {}
+            document_path = str(document.get("document_path") or "")
+            self.assertTrue(document_path)
+            before_documents = {
+                document_path: {
+                    "updated_at": str(document.get("updated_at") or ""),
+                    "content_sha256": str(document.get("content_sha256") or ""),
+                    "content_chars": int(document.get("content_chars") or 0),
+                    "revision_count": int(document.get("revision_count") or 0),
+                }
+            }
+            state_path = ensure_home() / "voice-secretary" / group_id / "input_state.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                state_path,
+                {
+                    "schema": 1,
+                    "group_id": group_id,
+                    "latest_seq": 8,
+                    "secretary_delivery_cursor": 8,
+                    "secretary_read_cursor": 0,
+                    "last_notify_at": "2000-01-01T00:00:00+00:00",
+                    "retry_count": 2,
+                },
+                indent=2,
+            )
+            snapshot = {
+                "kind": "voice_secretary_input",
+                "before_latest_seq": 8,
+                "before_secretary_read_cursor": 8,
+                "input_envelope_delivered": True,
+                "delivery_id": f"voice-input:{group_id}:7-8",
+                "input_target_kinds": ["document"],
+                "document_paths": [document_path],
+                "before_voice_documents": before_documents,
+            }
+
+            save, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "document_path": document_path,
+                    "content": "# Meeting Notes\n\n- 已按 envelope 生成文档。\n",
+                },
+            )
+            self.assertTrue(save.ok, getattr(save, "error", None))
+
+            completed, diagnostics = _voice_secretary_control_completion_state(group_id=group_id, snapshot=snapshot)
+            self.assertTrue(completed, diagnostics)
+            self.assertEqual(diagnostics.get("missing"), [])
+
+            updated_state = read_json(state_path)
+            self.assertIsInstance(updated_state, dict)
+            self.assertEqual(updated_state.get("secretary_read_cursor"), 8)
+            self.assertEqual(updated_state.get("secretary_delivery_cursor"), 8)
+            self.assertEqual(updated_state.get("last_notify_at"), "")
+            self.assertEqual(updated_state.get("retry_count"), 0)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_does_not_retry_delivered_input_without_read_cursor(self) -> None:
         home, cleanup = self._with_home()
         try:
             from cccc.daemon.assistants import assistant_ops
@@ -3180,12 +3467,11 @@ class TestAssistantOps(unittest.TestCase):
                 if event.get("kind") == "system.notify"
                 and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
             ]
-            self.assertEqual(len(after_events), 2)
-            envelope = (((after_events[-1].get("data") or {}).get("context") or {}).get("input_envelope") or {})
-            self.assertEqual(envelope.get("seq_start"), 1)
-            self.assertEqual(envelope.get("seq_end"), 1)
+            self.assertEqual(len(after_events), 1)
             retry_state = assistant_ops._load_voice_input_state(group)
-            self.assertEqual(retry_state.get("retry_count"), 1)
+            self.assertEqual(retry_state.get("retry_count"), 0)
+            self.assertEqual(retry_state.get("secretary_delivery_cursor"), 1)
+            self.assertEqual(retry_state.get("secretary_read_cursor"), 0)
         finally:
             cleanup()
 

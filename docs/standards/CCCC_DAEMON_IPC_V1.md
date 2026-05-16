@@ -1561,6 +1561,58 @@ Result:
 }
 ```
 
+#### `assistant_voice_recording_lease`
+
+Acquire, refresh, release, or inspect the daemon-owned Voice Secretary recording
+lease. Web clients may keep a local browser lock for fast UX debouncing, but the
+daemon lease is the final cross-tab / cross-browser / cross-device guard that
+prevents two Voice Secretary recording streams from running at the same time.
+The lease is TTL-based so a crashed tab or disconnected browser eventually
+expires without manual cleanup.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  action: "acquire" | "heartbeat" | "release" | "status"
+  owner_id?: string        // required for acquire/heartbeat/release
+  lease_id?: string        // returned by acquire; required to refresh/release that acquisition
+  ttl_seconds?: number     // default 30; bounded by the daemon
+  capture_mode?: string
+  recognition_backend?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  action: string
+  acquired: boolean
+  released: boolean
+  lost: boolean
+  lease_id?: string        // only returned to the acquiring/refreshing owner
+  lease?: {
+    owner_id: string
+    group_id: string
+    group_title?: string
+    capture_mode?: string
+    recognition_backend?: string
+    by?: string
+    created_at?: string
+    updated_at?: string
+    expires_at?: string
+  }
+}
+```
+
+If another live lease exists, `acquire` / `heartbeat` returns
+`assistant_voice_recording_busy` with `details.active_lease`.
+`heartbeat` only refreshes the matching active `owner_id` + `lease_id`; it never
+creates a new lease. Stale `heartbeat` / `release` requests return `lost` or
+`released=false` without modifying a newer lease.
+
 #### `assistant_voice_transcript_append`
 
 Append a stable transcript segment for Voice Secretary. Web/browser ASR and

@@ -170,36 +170,6 @@ describe("api.fetchActors", () => {
   });
 });
 
-describe("api.restartActorFreshSession", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    fetchMock.mockReset();
-    sessionStorageMock.clear();
-  });
-
-  afterEach(async () => {
-    const api = await import("../../src/services/api");
-    api.clearAuthToken();
-  });
-
-  it("uses the restart endpoint with a fresh-session body", async () => {
-    fetchMock.mockResolvedValue({
-      status: 200,
-      ok: true,
-      text: async () => JSON.stringify({ ok: true, result: {} }),
-    });
-
-    const api = await import("../../src/services/api");
-    const resp = await api.restartActorFreshSession("g-demo", "peer-1");
-
-    expect(resp.ok).toBe(true);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/groups/g-demo/actors/peer-1/restart?by=user",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ fresh_session: true }) }),
-    );
-  });
-});
-
 describe("api.fetchPresentation", () => {
   beforeEach(() => {
     vi.resetModules();

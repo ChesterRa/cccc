@@ -228,6 +228,85 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_claude_headless_shutdown_stdout_close_does_not_persist_actor_stop(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, ClaudeAppSessionManager
+
+        home, cleanup = self._with_home()
+        try:
+            manager = ClaudeAppSessionManager()
+            session = ClaudeAppSession(
+                group_id="g_claude_shutdown",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+
+            class FakeProc:
+                pid = os.getpid()
+                stdin = io.StringIO()
+                stdout = io.StringIO("")
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+            session._proc = FakeProc()
+            session._running = True
+            manager._sessions[("g_claude_shutdown", "peer1")] = session
+
+            with patch("cccc.daemon.claude_app_sessions.persist_actor_process_exit_stopped") as persist_stopped:
+                manager.begin_shutdown()
+                session._stdout_loop()
+
+            persist_stopped.assert_not_called()
+            self.assertFalse(session.is_running())
+        finally:
+            cleanup()
+
+    def test_claude_headless_print_mode_stdout_close_does_not_persist_actor_stop(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_claude_print_mode",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+
+            class FakeProc:
+                pid = os.getpid()
+                stdin = io.StringIO()
+                stdout = io.StringIO("")
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+            session._proc = FakeProc()
+            session._running = True
+
+            with patch("cccc.daemon.claude_app_sessions.persist_actor_process_exit_stopped") as persist_stopped:
+                session._stdout_loop()
+
+            persist_stopped.assert_not_called()
+            self.assertFalse(session.is_running())
+        finally:
+            cleanup()
+
     def test_claude_headless_resume_exit_falls_back_without_poisoning_turn_queue(self) -> None:
         from cccc.daemon.claude_app_sessions import ClaudeAppSession
         from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
@@ -4119,93 +4198,6 @@ class TestCodexAppFlow(unittest.TestCase):
             manager.stop_actor(group_id="g_test", actor_id="peer1")
             cleanup()
 
-    def test_codex_pty_app_fresh_session_does_not_resume_thread(self) -> None:
-        from cccc.daemon.codex_app_sessions import CodexAppSessionManager
-
-        home, cleanup = self._with_home()
-        try:
-            manager = CodexAppSessionManager()
-            requests: list[tuple[str, dict]] = []
-            started_pty: list[dict] = []
-
-            class FakeProc:
-                pid = 12345
-                stdin = io.StringIO()
-                stdout = io.StringIO()
-                stderr = io.StringIO()
-
-                def poll(self):
-                    return None
-
-                def terminate(self):
-                    return None
-
-                def wait(self, timeout=None):
-                    return 0
-
-            class FakeThread:
-                def __init__(self, *args, **kwargs):
-                    self.args = args
-                    self.kwargs = kwargs
-
-                def start(self):
-                    return None
-
-            class FakeWs:
-                def send(self, data):
-                    return None
-
-                def recv(self):
-                    time.sleep(1)
-                    return ""
-
-                def close(self):
-                    return None
-
-            def fake_request(self, method: str, params: dict, *, timeout: float):
-                requests.append((method, params))
-                if method == "initialize":
-                    return {}
-                raise AssertionError(f"fresh PTY app session should not pre-create thread: {method}")
-
-            def fake_start_actor(**kwargs):
-                started_pty.append(dict(kwargs))
-
-                class _PtySession:
-                    pid = 22222
-
-                    def is_running(self):
-                        return True
-
-                return _PtySession()
-
-            with patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()) as popen, patch(
-                "cccc.daemon.codex_app_sessions.threading.Thread", FakeThread
-            ), patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True), patch(
-                "cccc.daemon.codex_app_sessions._connect_websocket", return_value=FakeWs()
-            ), patch(
-                "cccc.daemon.codex_app_sessions._codex_cli_available", return_value=True
-            ), patch(
-                "cccc.daemon.codex_app_sessions.CodexAppSession._request", fake_request
-            ), patch(
-                "cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.start_actor", side_effect=fake_start_actor
-            ):
-                manager.start_pty_app_actor(
-                    group_id="g_test",
-                    actor_id="peer1",
-                    cwd=Path(home),
-                    env={},
-                    remote_tui_base_command=["codex", "--search"],
-                    fresh_session=True,
-                )
-
-            command = list(popen.call_args.args[0])
-            self.assertEqual([item[0] for item in requests], ["initialize"])
-            self.assertEqual(started_pty[0]["command"], ["codex", "--search", "--remote", command[3]])
-        finally:
-            manager.stop_actor(group_id="g_test", actor_id="peer1")
-            cleanup()
-
     def test_codex_pty_app_session_adopts_thread_from_status_notification(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
 
@@ -4352,6 +4344,47 @@ class TestCodexAppFlow(unittest.TestCase):
                 session._websocket_loop()
 
             stop.assert_called_once_with(persist_actor_stopped=False)
+        finally:
+            cleanup()
+
+    def test_codex_app_shutdown_stdout_close_does_not_persist_actor_stop(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, CodexAppSessionManager
+
+        home, cleanup = self._with_home()
+        try:
+            manager = CodexAppSessionManager()
+            session = CodexAppSession(
+                group_id="g_codex_shutdown",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+
+            class FakeProc:
+                pid = os.getpid()
+                stdin = io.StringIO()
+                stdout = io.StringIO("")
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+            session._proc = FakeProc()
+            session._running = True
+            manager._sessions[("g_codex_shutdown", "peer1")] = session
+
+            with patch("cccc.daemon.codex_app_sessions.persist_actor_process_exit_stopped") as persist_stopped:
+                manager.begin_shutdown()
+                session._stdout_loop()
+
+            persist_stopped.assert_not_called()
+            self.assertFalse(session.is_running())
         finally:
             cleanup()
 

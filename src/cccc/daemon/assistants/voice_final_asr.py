@@ -16,6 +16,7 @@ _FINAL_ASR_SOURCE = "assistant_service_local_asr_final"
 _FINAL_ASR_PAD_MS = 240
 _FINAL_ASR_MERGE_GAP_MS = 1200
 _FINAL_ASR_MAX_SEGMENT_MS = 60000
+_CJK_NO_SPACE_PUNCTUATION = "，。！？；：、"
 
 
 @dataclass(frozen=True)
@@ -218,7 +219,7 @@ def _append_final_chunk(buffer: str, chunk: str) -> str:
     next_first = chunk[0]
     if _is_cjk(prev_last) and _is_cjk(next_first):
         return f"{buffer}{chunk}"
-    if prev_last in ".!?;:,，。！？；：、":
+    if prev_last in _CJK_NO_SPACE_PUNCTUATION:
         return f"{buffer}{chunk}"
     return f"{buffer} {chunk}"
 

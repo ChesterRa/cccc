@@ -514,6 +514,7 @@ def cleanup_after_stop(
     stop_event: threading.Event,
     home: Path,
     best_effort_killpg: Callable[[int, Any], Any],
+    runtime_session_shutdown_start: Callable[[], Any] = lambda: None,
     im_stop_all: Callable[..., Any],
     codex_stop_all: Callable[[], Any],
     claude_stop_all: Callable[[], Any] = lambda: None,
@@ -526,6 +527,10 @@ def cleanup_after_stop(
     lock_handle: Any,
 ) -> None:
     stop_event.set()
+    try:
+        runtime_session_shutdown_start()
+    except Exception:
+        pass
     try:
         im_stop_all(home, best_effort_killpg=best_effort_killpg)
     except Exception:

@@ -70,32 +70,6 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, refreshActors, refreshGroups]
   );
 
-  const relaunchActorFreshSession = useCallback(
-    async (actor: Actor) => {
-      if (!groupId || !actor) return;
-      const actionKey = `actor-lifecycle:${actor.id}`;
-      if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
-      setBusy(`actor-relaunch-fresh-session:${actor.id}`);
-      try {
-        const resp = await api.restartActorFreshSession(groupId, actor.id);
-        if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
-          return;
-        }
-        clearStreamingEventsForActor(actor.id, groupId);
-        await Promise.all([refreshActors(), refreshGroups()]);
-        setTermEpochByActor((prev) => ({
-          ...prev,
-          [actor.id]: (prev[actor.id] || 0) + 1,
-        }));
-      } finally {
-        endActorAction(actorActionInFlightRef, actionKey);
-        setBusy("");
-      }
-    },
-    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor]
-  );
-
   // Edit actor (initialize form state and open modal).
   const editActor = useCallback(
     (actor: Actor) => {
@@ -170,7 +144,6 @@ export function useActorActions(groupId: string) {
     getTermEpoch,
     toggleActorEnabled,
     relaunchActor,
-    relaunchActorFreshSession,
     editActor,
     removeActor,
     openActorInbox,

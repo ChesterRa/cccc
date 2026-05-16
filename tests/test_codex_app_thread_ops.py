@@ -22,53 +22,7 @@ class TestCodexAppThreadOps(unittest.TestCase):
 
         return td, cleanup
 
-    def test_fresh_session_skips_recorded_codex_thread_resume(self) -> None:
-        from cccc.daemon.codex_app_thread_ops import start_codex_app_thread
-        from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
-
-        home, cleanup = self._with_home()
-        try:
-            cwd = Path(home)
-            command = ["codex", "app-server", "--listen", "stdio://"]
-            record_headless_runtime_session(
-                group_id="g_codex_fresh",
-                actor_id="peer1",
-                runtime="codex",
-                cwd=cwd,
-                command=command,
-                provider_thread_id="thr_existing",
-                status="usable",
-                captured_from="app_server_thread_start",
-                resume_eligible=True,
-            )
-            calls: list[tuple[str, dict]] = []
-
-            def request(method: str, params: dict, *, timeout: float):
-                calls.append((method, dict(params or {})))
-                if method == "thread/start":
-                    return {"thread": {"id": "thr_fresh"}}
-                raise AssertionError(f"unexpected request: {method}")
-
-            thread_id, resumed = start_codex_app_thread(
-                request=request,
-                group_id="g_codex_fresh",
-                actor_id="peer1",
-                cwd=cwd,
-                command=command,
-                model="",
-                fresh_session=True,
-            )
-
-            self.assertEqual(thread_id, "thr_fresh")
-            self.assertFalse(resumed)
-            self.assertEqual([call[0] for call in calls], ["thread/start"])
-            stored = read_runtime_session("g_codex_fresh", "peer1")
-            self.assertEqual(stored.get("provider_thread_id"), "thr_fresh")
-            self.assertEqual(stored.get("captured_from"), "app_server_thread_start")
-        finally:
-            cleanup()
-
-    def test_existing_codex_thread_still_resumes_without_fresh_session(self) -> None:
+    def test_existing_codex_thread_resumes(self) -> None:
         from cccc.daemon.codex_app_thread_ops import start_codex_app_thread
         from cccc.daemon.runtime_session_ops import read_runtime_session, record_headless_runtime_session
 
@@ -102,7 +56,6 @@ class TestCodexAppThreadOps(unittest.TestCase):
                 cwd=cwd,
                 command=command,
                 model="",
-                fresh_session=False,
             )
 
             self.assertEqual(thread_id, "thr_existing")

@@ -796,6 +796,29 @@ export type AssistantStateResult = {
   service_runtime?: AssistantServiceRuntime;
   service_runtimes?: AssistantServiceRuntime[];
   service_runtimes_by_id?: Record<string, AssistantServiceRuntime>;
+  recording_lease?: AssistantVoiceRecordingLease;
+};
+
+export type AssistantVoiceRecordingLease = {
+  owner_id: string;
+  group_id: string;
+  group_title?: string;
+  capture_mode?: string;
+  recognition_backend?: string;
+  by?: string;
+  created_at?: string;
+  updated_at?: string;
+  expires_at?: string;
+};
+
+export type AssistantVoiceRecordingLeaseResult = {
+  group_id: string;
+  action: string;
+  acquired?: boolean;
+  released?: boolean;
+  lost?: boolean;
+  leaseId?: string;
+  lease?: AssistantVoiceRecordingLease;
 };
 
 export type AssistantVoiceTrigger = {

@@ -134,8 +134,6 @@ class ActorUpdateRequest(BaseModel):
 
 
 class ActorRestartRequest(BaseModel):
-    fresh_session: bool = False
-
     model_config = ConfigDict(extra="forbid")
 
 
@@ -271,6 +269,16 @@ class AssistantVoiceRuntimeInstallRequest(BaseModel):
 
 class AssistantVoiceRuntimeRemoveRequest(BaseModel):
     runtime_id: str = Field(default="")
+    by: str = Field(default="user")
+
+
+class AssistantVoiceRecordingLeaseRequest(BaseModel):
+    action: Literal["acquire", "heartbeat", "release", "status"] = Field(default="status")
+    owner_id: str = Field(default="")
+    lease_id: str = Field(default="")
+    ttl_seconds: int = Field(default=30)
+    capture_mode: str = Field(default="")
+    recognition_backend: str = Field(default="")
     by: str = Field(default="user")
 
 

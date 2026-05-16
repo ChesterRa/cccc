@@ -342,7 +342,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
             cwd = home / "repo"
             cwd.mkdir()
 
-            class FreshSession:
+            class FallbackSession:
                 pid = 123
 
             calls: list[list[str]] = []
@@ -350,7 +350,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
 
             def fake_start_actor(**kwargs):
                 calls.append(list(kwargs.get("command") or []))
-                return FreshSession()
+                return FallbackSession()
 
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
@@ -370,7 +370,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
                 )
 
-            self.assertIsInstance(session, FreshSession)
+            self.assertIsInstance(session, FallbackSession)
             self.assertEqual(calls, [["codex", "-c", "shell_environment_policy.inherit=all"]])
             self.assertEqual(len(scheduled), 1)
             self.assertEqual(scheduled[0]["group_id"], "g1")
@@ -547,7 +547,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 captured_from="test",
             )
 
-            class FreshSession:
+            class FallbackSession:
                 pid = 123
 
             calls: list[list[str]] = []
@@ -556,9 +556,9 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 calls.append(list(kwargs.get("command") or []))
                 if len(calls) == 1:
                     raise RuntimeError("resume id not found")
-                return FreshSession()
+                return FallbackSession()
 
-            with patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="new-session-id"), patch(
+            with patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="generated-session-id"), patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
             ):
@@ -573,16 +573,16 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
                 )
 
-            self.assertIsInstance(session, FreshSession)
+            self.assertIsInstance(session, FallbackSession)
             self.assertEqual(calls[0], ["claude", "--resume", "old-session-id"])
-            self.assertEqual(calls[1], ["claude", "--session-id", "new-session-id"])
+            self.assertEqual(calls[1], ["claude", "--session-id", "generated-session-id"])
             stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("provider_session_id"), "new-session-id")
+            self.assertEqual(stored.get("provider_session_id"), "generated-session-id")
             self.assertEqual(stored.get("captured_from"), "claude_generated_session_id")
         finally:
             cleanup()
 
-    def test_resume_reject_fresh_fallback_failure_marks_generated_session_failed(self) -> None:
+    def test_resume_reject_initial_fallback_failure_marks_generated_session_failed(self) -> None:
         home, cleanup = self._with_home()
         try:
             from cccc.daemon.runtime_session_ops import (
@@ -614,7 +614,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     return ResumeSession()
                 raise RuntimeError("fresh start failed")
 
-            with patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="new-session-id"), patch(
+            with patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="generated-session-id"), patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
             ), patch(
@@ -639,9 +639,9 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     )
 
             self.assertEqual(calls[0], ["claude", "--resume", "old-session-id"])
-            self.assertEqual(calls[1], ["claude", "--session-id", "new-session-id"])
+            self.assertEqual(calls[1], ["claude", "--session-id", "generated-session-id"])
             stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("provider_session_id"), "new-session-id")
+            self.assertEqual(stored.get("provider_session_id"), "generated-session-id")
             self.assertEqual(stored.get("status"), "resume_failed")
             self.assertFalse(bool(stored.get("resume_eligible")))
             self.assertIn("fresh fallback failed", str(stored.get("last_resume_error") or ""))
@@ -672,7 +672,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
             class ResumeSession:
                 pid = 111
 
-            class FreshSession:
+            class FallbackSession:
                 pid = 222
 
             calls: list[list[str]] = []
@@ -681,7 +681,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
 
             def fake_start_actor(**kwargs):
                 calls.append(list(kwargs.get("command") or []))
-                return ResumeSession() if len(calls) == 1 else FreshSession()
+                return ResumeSession() if len(calls) == 1 else FallbackSession()
 
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
@@ -710,7 +710,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
                 )
 
-            self.assertIsInstance(session, FreshSession)
+            self.assertIsInstance(session, FallbackSession)
             self.assertEqual(calls[0], ["codex", "resume", "019dbe1d-cd97-7d31-9ba6-212d3e57b15c"])
             self.assertEqual(calls[1], ["codex"])
             self.assertEqual(stopped, [("g1", "peer1")])

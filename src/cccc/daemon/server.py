@@ -1230,6 +1230,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         stop_event=stop_event,
         home=p.home,
         best_effort_killpg=_best_effort_killpg,
+        runtime_session_shutdown_start=lambda: (
+            codex_app_supervisor.begin_shutdown(),
+            claude_app_supervisor.begin_shutdown(),
+        ),
         im_stop_all=im_stop_all,
         codex_stop_all=codex_app_supervisor.stop_all,
         claude_stop_all=claude_app_supervisor.stop_all,

@@ -4,8 +4,8 @@ Manages Claude Code CLI subprocesses in stream-json mode (bidirectional NDJSON
 over stdio), mapping streaming events to headless-compatible events for the
 existing frontend streaming pipeline.
 
-Architecture mirrors ``codex_app_sessions.py``: one long-lived subprocess per
-actor, stdin for user messages, stdout for NDJSON event stream.
+Claude ``-p``/stream-json processes can exit after completing a print-mode turn,
+so actor enablement is tracked separately from the transient subprocess.
 """
 from __future__ import annotations
 
@@ -195,6 +195,11 @@ class ClaudeAppSession:
         self._active_payload: Optional[_PendingTurn] = None
 
     # ── state persistence ───────────────────────────────────────────────
+
+    def request_stop(self) -> None:
+        """Mark this session as intentionally stopping before transports close."""
+        with self._lock:
+            self._stop_requested = True
 
     def _persist_state(self) -> None:
         with self._lock:
@@ -674,6 +679,7 @@ class ClaudeAppSession:
         with self._lock:
             proc = self._proc
             was_running = self._running
+            was_stop_requested = self._stop_requested
             self._stop_requested = True
             self._running = False
             self._proc = None
@@ -709,7 +715,7 @@ class ClaudeAppSession:
                 except Exception:
                     pass
         self._emit("headless.session.stopped", {})
-        if persist_actor_stopped:
+        if persist_actor_stopped and not was_stop_requested:
             persist_actor_process_exit_stopped(group_id=self.group_id, actor_id=self.actor_id, runner="headless")
 
     def is_running(self) -> bool:
@@ -984,9 +990,11 @@ class ClaudeAppSession:
         except Exception:
             logger.exception("claude stdout loop failed: %s/%s", self.group_id, self.actor_id)
         finally:
-            with self._lock:
-                persist_actor_stopped = not self._stop_requested
-            self.stop(persist_actor_stopped=persist_actor_stopped)
+            # Claude -p is a print-mode transport and may close stdout after a
+            # completed turn.  Treat that as a transient process end, not as a
+            # durable actor stop; otherwise autostarted headless actors become
+            # permanently disabled after a successful bootstrap.
+            self.stop(persist_actor_stopped=False)
 
     def _stderr_loop(self) -> None:
         proc = self._proc
@@ -1875,6 +1883,8 @@ class ClaudeAppSessionManager:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             session = self._sessions.pop(key, None)
+            if session is not None:
+                session.request_stop()
         if session is not None:
             session.stop()
 
@@ -1885,13 +1895,23 @@ class ClaudeAppSessionManager:
         with self._lock:
             keys = [key for key in self._sessions if key[0] == gid]
             sessions = [self._sessions.pop(key) for key in keys]
+            for session in sessions:
+                session.request_stop()
         for session in sessions:
             session.stop()
+
+    def begin_shutdown(self) -> None:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            for session in sessions:
+                session.request_stop()
 
     def stop_all(self) -> None:
         with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()
+            for session in sessions:
+                session.request_stop()
         for session in sessions:
             session.stop()
 

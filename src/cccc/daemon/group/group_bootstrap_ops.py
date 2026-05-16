@@ -10,14 +10,24 @@ from ...kernel.group import attach_scope_to_group, create_group, ensure_group_fo
 from ...kernel.ledger import append_event
 from ...kernel.registry import load_registry
 from ...kernel.scope import detect_scope
+from ...paths import ensure_home
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
 
+def _is_exact_cccc_home_path(path: Path) -> bool:
+    try:
+        return path.expanduser().resolve() == ensure_home().resolve()
+    except Exception:
+        return False
+
+
 def handle_attach(args: Dict[str, Any]) -> DaemonResponse:
     path = Path(str(args.get("path") or "."))
+    if _is_exact_cccc_home_path(path):
+        return _error("invalid_scope_path", "workspace scope must be a project directory, not CCCC_HOME")
     if not path.exists():
         try:
             path.mkdir(parents=True, exist_ok=True)

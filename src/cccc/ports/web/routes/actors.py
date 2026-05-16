@@ -820,7 +820,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         await invalidate_readonly_actor_list(group_id)
         if not await _developer_mode_enabled() and _is_internal_headless_runtime(await _actor_runtime_meta(group_id, actor_id)):
             raise _headless_error(source="actor_restart")
-        fresh_session = bool(req.fresh_session) if req is not None else False
         return await ctx.daemon(
             {
                 "op": "actor_restart",
@@ -828,7 +827,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "group_id": group_id,
                     "actor_id": actor_id,
                     "by": by,
-                    "fresh_session": fresh_session,
                     **_profile_auth_args(request),
                 },
             }

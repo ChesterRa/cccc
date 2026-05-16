@@ -365,6 +365,9 @@ export function AssistantsTab({
   const { t } = useTranslation("settings");
   const loadSeq = useRef(0);
   const visibleLoadCount = useRef(0);
+  const groupIdRef = useRef("");
+  groupIdRef.current = String(groupId || "").trim();
+  const isCurrentGroup = useCallback((gid: string) => String(gid || "").trim() === groupIdRef.current, []);
 
   const [assistantState, setAssistantState] = useState<AssistantStateResult | null>(null);
   const [loadBusy, setLoadBusy] = useState(false);
@@ -382,6 +385,7 @@ export function AssistantsTab({
   const [localAsrMaintenanceBusy, setLocalAsrMaintenanceBusy] = useState(false);
 
   const [assistantHelpPrompt, setAssistantHelpPrompt] = useState<GroupPromptInfo | null>(null);
+  const [assistantHelpPromptGroupId, setAssistantHelpPromptGroupId] = useState("");
   const [petPersonaDraft, setPetPersonaDraft] = useState("");
   const [voiceSecretaryGuidanceDraft, setVoiceSecretaryGuidanceDraft] = useState("");
   const [assistantPromptBusy, setAssistantPromptBusy] = useState(false);
@@ -399,6 +403,7 @@ export function AssistantsTab({
     [assistantState],
   );
   const effectivePetEnabled = Boolean(petAssistant?.enabled ?? petEnabled);
+  const activeAssistantHelpPrompt = assistantHelpPromptGroupId === groupIdRef.current ? assistantHelpPrompt : null;
 
   const syncVoiceDraft = useCallback((state: AssistantStateResult | null) => {
     const voice = findAssistant(state, "voice_secretary");
@@ -421,6 +426,29 @@ export function AssistantsTab({
     ));
   }, []);
 
+  useEffect(() => {
+    loadSeq.current += 1;
+    visibleLoadCount.current = 0;
+    setLoadBusy(false);
+    setVoiceSaveBusy(false);
+    setPetSaveBusy(false);
+    setServiceRuntimeInstallBusy(false);
+    setDiarizationModelInstallBusy(false);
+    setLocalAsrMaintenanceBusy(false);
+    setAssistantState(null);
+    syncVoiceDraft(null);
+    setError("");
+    setNotice("");
+    setAssistantHelpPrompt(null);
+    setAssistantHelpPromptGroupId("");
+    setPetPersonaDraft("");
+    setVoiceSecretaryGuidanceDraft("");
+    setAssistantPromptBusy(false);
+    setAssistantPromptError("");
+    setAssistantPromptNotice("");
+    setAssistantPromptFeedbackBlock("");
+  }, [groupId, syncVoiceDraft]);
+
   const loadAssistants = useCallback(async (opts?: { quiet?: boolean }) => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
@@ -433,7 +461,7 @@ export function AssistantsTab({
     setError("");
     try {
       const resp = await api.fetchAssistantState(gid);
-      if (seq !== loadSeq.current) return;
+      if (!isCurrentGroup(gid) || seq !== loadSeq.current) return;
       if (!resp.ok) {
         setAssistantState(null);
         setError(resp.error?.message || t("assistants.loadFailed"));
@@ -442,51 +470,57 @@ export function AssistantsTab({
       setAssistantState(resp.result);
       syncVoiceDraft(resp.result);
     } catch {
-      if (seq === loadSeq.current) {
+      if (isCurrentGroup(gid) && seq === loadSeq.current) {
         setAssistantState(null);
         setError(t("assistants.loadFailed"));
       }
     } finally {
-      if (showBusy) {
+      if (isCurrentGroup(gid) && showBusy) {
         visibleLoadCount.current = Math.max(0, visibleLoadCount.current - 1);
         if (visibleLoadCount.current === 0) setLoadBusy(false);
       }
     }
-  }, [groupId, syncVoiceDraft, t]);
+  }, [groupId, isCurrentGroup, syncVoiceDraft, t]);
 
   const loadAssistantGuidance = useCallback(async (opts?: { force?: boolean }) => {
     const gid = String(groupId || "").trim();
     if (!gid) return null;
-    if (!opts?.force && assistantHelpPrompt) return assistantHelpPrompt;
+    if (!opts?.force && assistantHelpPrompt && assistantHelpPromptGroupId === gid) return assistantHelpPrompt;
     setAssistantPromptBusy(true);
     setAssistantPromptError("");
     setAssistantPromptFeedbackBlock("");
     try {
       const resp = await api.fetchGroupPrompts(gid);
+      if (!isCurrentGroup(gid)) return null;
       if (!resp.ok) {
         setAssistantHelpPrompt(null);
+        setAssistantHelpPromptGroupId("");
         setAssistantPromptError(resp.error?.message || t("assistants.assistantGuidanceLoadFailed"));
         return null;
       }
       const nextHelp = resp.result?.help ?? null;
       if (!nextHelp) {
         setAssistantHelpPrompt(null);
+        setAssistantHelpPromptGroupId("");
         setAssistantPromptError(t("assistants.assistantGuidanceLoadFailed"));
         return null;
       }
       const parsed = parseHelpMarkdown(String(nextHelp.content || ""));
       setAssistantHelpPrompt(nextHelp);
+      setAssistantHelpPromptGroupId(gid);
       setPetPersonaDraft(resolvePetPersonaDraft(parsed.pet));
       setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(parsed.voiceSecretary));
       return nextHelp;
     } catch {
+      if (!isCurrentGroup(gid)) return null;
       setAssistantHelpPrompt(null);
+      setAssistantHelpPromptGroupId("");
       setAssistantPromptError(t("assistants.assistantGuidanceLoadFailed"));
       return null;
     } finally {
-      setAssistantPromptBusy(false);
+      if (isCurrentGroup(gid)) setAssistantPromptBusy(false);
     }
-  }, [assistantHelpPrompt, groupId, t]);
+  }, [assistantHelpPrompt, assistantHelpPromptGroupId, groupId, isCurrentGroup, t]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -537,6 +571,7 @@ export function AssistantsTab({
         },
         by: "user",
       });
+      if (!isCurrentGroup(gid)) return false;
       if (!resp.ok) {
         setError(resp.error?.message || t("assistants.saveFailed"));
         return false;
@@ -549,10 +584,11 @@ export function AssistantsTab({
       await loadAssistants({ quiet: true });
       return true;
     } catch {
+      if (!isCurrentGroup(gid)) return false;
       setError(t("assistants.saveFailed"));
       return false;
     } finally {
-      setVoiceSaveBusy(false);
+      if (isCurrentGroup(gid)) setVoiceSaveBusy(false);
     }
   };
 
@@ -572,20 +608,24 @@ export function AssistantsTab({
   };
 
   const toggleVoiceEnabled = async (nextEnabled: boolean) => {
+    const gid = String(groupId || "").trim();
     const previous = voiceEnabled;
     setVoiceEnabled(nextEnabled);
     const ok = await saveVoiceSettings({ enabled: nextEnabled });
+    if (!isCurrentGroup(gid)) return;
     if (!ok) setVoiceEnabled(previous);
   };
 
   const togglePet = async (nextEnabled?: boolean) => {
     if (!onUpdatePetEnabled) return;
+    const gid = String(groupId || "").trim();
     setPetSaveBusy(true);
     setError("");
     setNotice("");
     const requestedEnabled = typeof nextEnabled === "boolean" ? nextEnabled : !effectivePetEnabled;
     try {
       const ok = await onUpdatePetEnabled(requestedEnabled);
+      if (!isCurrentGroup(gid)) return;
       if (ok === false) {
         setError(t("assistants.petSaveFailed"));
         return;
@@ -593,9 +633,10 @@ export function AssistantsTab({
       setNotice(requestedEnabled ? t("assistants.petEnabled") : t("assistants.petDisabled"));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.petSaveFailed"));
     } finally {
-      setPetSaveBusy(false);
+      if (isCurrentGroup(gid)) setPetSaveBusy(false);
     }
   };
 
@@ -607,7 +648,8 @@ export function AssistantsTab({
     setAssistantPromptNotice("");
     setAssistantPromptFeedbackBlock(block);
     try {
-      const currentHelp = assistantHelpPrompt ?? await loadAssistantGuidance({ force: true });
+      const currentHelp = activeAssistantHelpPrompt ?? await loadAssistantGuidance({ force: true });
+      if (!isCurrentGroup(gid)) return;
       if (!currentHelp) return;
       setAssistantPromptFeedbackBlock(block);
       const currentContent = String(currentHelp.content || "");
@@ -621,6 +663,7 @@ export function AssistantsTab({
         editorMode: "structured",
         changedBlocks: [block],
       });
+      if (!isCurrentGroup(gid)) return;
       if (!resp.ok) {
         setAssistantPromptError(resp.error?.message || t("assistants.assistantGuidanceSaveFailed"));
         return;
@@ -628,20 +671,22 @@ export function AssistantsTab({
       const nextHelp = resp.result;
       const nextParsed = parseHelpMarkdown(String(nextHelp.content || ""));
       setAssistantHelpPrompt(nextHelp);
+      setAssistantHelpPromptGroupId(gid);
       setPetPersonaDraft(resolvePetPersonaDraft(nextParsed.pet));
       setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(nextParsed.voiceSecretary));
       setAssistantPromptNotice(
         block === "pet" ? t("assistants.petPersonaSaved") : t("assistants.voiceGuidanceSaved"),
       );
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setAssistantPromptError(t("assistants.assistantGuidanceSaveFailed"));
     } finally {
-      setAssistantPromptBusy(false);
+      if (isCurrentGroup(gid)) setAssistantPromptBusy(false);
     }
   };
 
   const discardPetPersona = () => {
-    const saved = assistantHelpPrompt ? parseHelpMarkdown(String(assistantHelpPrompt.content || "")).pet : "";
+    const saved = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")).pet : "";
     setPetPersonaDraft(resolvePetPersonaDraft(saved));
     setAssistantPromptError("");
     setAssistantPromptNotice("");
@@ -649,7 +694,7 @@ export function AssistantsTab({
   };
 
   const discardVoiceSecretaryGuidance = () => {
-    const saved = assistantHelpPrompt ? parseHelpMarkdown(String(assistantHelpPrompt.content || "")).voiceSecretary : "";
+    const saved = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")).voiceSecretary : "";
     setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(saved));
     setAssistantPromptError("");
     setAssistantPromptNotice("");
@@ -762,6 +807,7 @@ export function AssistantsTab({
       by: "user",
       background: true,
     });
+    if (!isCurrentGroup(gid)) return false;
     if (!resp.ok) {
       setError(resp.error?.message || t("assistants.streamingAsrModelInstallFailed", { defaultValue: "Failed to install ASR model." }));
       return false;
@@ -777,6 +823,7 @@ export function AssistantsTab({
     setNotice("");
     try {
       const saved = await saveVoiceSettings({ backend: "assistant_service_local_asr" });
+      if (!isCurrentGroup(gid)) return;
       if (!saved) return;
       if (!streamingRuntimeReady) {
         const runtimeResp = await api.installVoiceAssistantRuntime(gid, {
@@ -784,6 +831,7 @@ export function AssistantsTab({
           by: "user",
           background: true,
         });
+        if (!isCurrentGroup(gid)) return;
         if (!runtimeResp.ok) {
           setError(runtimeResp.error?.message || t("assistants.streamingRuntimeInstallFailed"));
           return;
@@ -800,9 +848,10 @@ export function AssistantsTab({
       setNotice(t("assistants.localAsrInstallStarted", { defaultValue: "Local ASR setup started." }));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.localAsrInstallFailed", { defaultValue: "Failed to install local ASR." }));
     } finally {
-      setServiceRuntimeInstallBusy(false);
+      if (isCurrentGroup(gid)) setServiceRuntimeInstallBusy(false);
     }
   };
 
@@ -814,12 +863,14 @@ export function AssistantsTab({
     setNotice("");
     try {
       const saved = await saveVoiceSettings({ backend: "assistant_service_local_asr" });
+      if (!isCurrentGroup(gid)) return;
       if (!saved) return;
       const resp = await api.installVoiceAssistantModel(gid, {
         modelId: DIARIZATION_MODEL_ID,
         by: "user",
         background: true,
       });
+      if (!isCurrentGroup(gid)) return;
       if (!resp.ok) {
         setError(resp.error?.message || t("assistants.diarizationModelInstallFailed", { defaultValue: "Failed to install speaker diarization model." }));
         return;
@@ -827,9 +878,10 @@ export function AssistantsTab({
       setNotice(t("assistants.diarizationModelInstallStarted", { defaultValue: "Speaker diarization model download started." }));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.diarizationModelInstallFailed", { defaultValue: "Failed to install speaker diarization model." }));
     } finally {
-      setDiarizationModelInstallBusy(false);
+      if (isCurrentGroup(gid)) setDiarizationModelInstallBusy(false);
     }
   };
 
@@ -846,6 +898,7 @@ export function AssistantsTab({
           modelId,
           by: "user",
         });
+        if (!isCurrentGroup(gid)) return;
         if (!modelResp.ok) {
           setError(modelResp.error?.message || t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }));
           return;
@@ -855,6 +908,7 @@ export function AssistantsTab({
         runtimeId: STREAMING_ASR_RUNTIME_ID,
         by: "user",
       });
+      if (!isCurrentGroup(gid)) return;
       if (!runtimeResp.ok) {
         setError(runtimeResp.error?.message || t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }));
         return;
@@ -862,9 +916,10 @@ export function AssistantsTab({
       setNotice(t("assistants.localAsrRemoved", { defaultValue: "Local ASR cache removed." }));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }));
     } finally {
-      setLocalAsrMaintenanceBusy(false);
+      if (isCurrentGroup(gid)) setLocalAsrMaintenanceBusy(false);
     }
   };
 
@@ -878,23 +933,27 @@ export function AssistantsTab({
     try {
       for (const modelId of localAsrModelIds) {
         const modelRemove = await api.removeVoiceAssistantModel(gid, { modelId, by: "user" });
+        if (!isCurrentGroup(gid)) return;
         if (!modelRemove.ok) {
           setError(modelRemove.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
           return;
         }
       }
       const runtimeRemove = await api.removeVoiceAssistantRuntime(gid, { runtimeId: STREAMING_ASR_RUNTIME_ID, by: "user" });
+      if (!isCurrentGroup(gid)) return;
       if (!runtimeRemove.ok) {
         setError(runtimeRemove.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
         return;
       }
       const runtimeInstall = await api.installVoiceAssistantRuntime(gid, { runtimeId: STREAMING_ASR_RUNTIME_ID, by: "user", background: true });
+      if (!isCurrentGroup(gid)) return;
       if (!runtimeInstall.ok) {
         setError(runtimeInstall.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
         return;
       }
       for (const modelId of localAsrModelIds) {
         const modelInstall = await api.installVoiceAssistantModel(gid, { modelId, by: "user", background: true });
+        if (!isCurrentGroup(gid)) return;
         if (!modelInstall.ok) {
           setError(modelInstall.error?.message || t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
           return;
@@ -903,9 +962,10 @@ export function AssistantsTab({
       setNotice(t("assistants.localAsrReinstallStarted", { defaultValue: "Local ASR reinstall started." }));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.localAsrReinstallFailed", { defaultValue: "Failed to reinstall local ASR." }));
     } finally {
-      setLocalAsrMaintenanceBusy(false);
+      if (isCurrentGroup(gid)) setLocalAsrMaintenanceBusy(false);
     }
   };
 
@@ -921,6 +981,7 @@ export function AssistantsTab({
         modelId: DIARIZATION_MODEL_ID,
         by: "user",
       });
+      if (!isCurrentGroup(gid)) return;
       if (!resp.ok) {
         setError(resp.error?.message || t("assistants.diarizationModelRemoveFailed", { defaultValue: "Failed to remove speaker-label model." }));
         return;
@@ -928,9 +989,10 @@ export function AssistantsTab({
       setNotice(t("assistants.diarizationModelRemoved", { defaultValue: "Speaker-label model removed." }));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.diarizationModelRemoveFailed", { defaultValue: "Failed to remove speaker-label model." }));
     } finally {
-      setDiarizationModelInstallBusy(false);
+      if (isCurrentGroup(gid)) setDiarizationModelInstallBusy(false);
     }
   };
 
@@ -943,11 +1005,13 @@ export function AssistantsTab({
     setNotice("");
     try {
       const removeResp = await api.removeVoiceAssistantModel(gid, { modelId: DIARIZATION_MODEL_ID, by: "user" });
+      if (!isCurrentGroup(gid)) return;
       if (!removeResp.ok) {
         setError(removeResp.error?.message || t("assistants.diarizationModelReinstallFailed", { defaultValue: "Failed to reinstall speaker-label model." }));
         return;
       }
       const installResp = await api.installVoiceAssistantModel(gid, { modelId: DIARIZATION_MODEL_ID, by: "user", background: true });
+      if (!isCurrentGroup(gid)) return;
       if (!installResp.ok) {
         setError(installResp.error?.message || t("assistants.diarizationModelReinstallFailed", { defaultValue: "Failed to reinstall speaker-label model." }));
         return;
@@ -955,9 +1019,10 @@ export function AssistantsTab({
       setNotice(t("assistants.diarizationModelReinstallStarted", { defaultValue: "Speaker-label model reinstall started." }));
       await loadAssistants({ quiet: true });
     } catch {
+      if (!isCurrentGroup(gid)) return;
       setError(t("assistants.diarizationModelReinstallFailed", { defaultValue: "Failed to reinstall speaker-label model." }));
     } finally {
-      setDiarizationModelInstallBusy(false);
+      if (isCurrentGroup(gid)) setDiarizationModelInstallBusy(false);
     }
   };
 
@@ -979,19 +1044,19 @@ export function AssistantsTab({
       </div>
     );
   }
-  const parsedHelp = assistantHelpPrompt ? parseHelpMarkdown(String(assistantHelpPrompt.content || "")) : null;
+  const parsedHelp = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")) : null;
   const savedPetPersona = parsedHelp?.pet || "";
   const savedVoiceSecretaryGuidance = parsedHelp?.voiceSecretary || "";
   const hasPetPersonaUnsaved = promptDraftDirty(
     savedPetPersona,
     petPersonaDraft,
-    assistantHelpPrompt !== null,
+    activeAssistantHelpPrompt !== null,
     resolvePetPersonaDraft(""),
   );
   const hasVoiceGuidanceUnsaved = promptDraftDirty(
     savedVoiceSecretaryGuidance,
     voiceSecretaryGuidanceDraft,
-    assistantHelpPrompt !== null,
+    activeAssistantHelpPrompt !== null,
     resolveVoiceSecretaryGuidanceDraft(""),
   );
   const showBrowserTranscriptBatching = recognitionBackend === "browser_asr";
@@ -1001,7 +1066,7 @@ export function AssistantsTab({
       isDark={isDark}
       title={t("assistants.voiceGuidanceTitle")}
       hint={t("assistants.voiceGuidanceHint")}
-      path={assistantHelpPrompt?.path || undefined}
+      path={activeAssistantHelpPrompt?.path || undefined}
       value={voiceSecretaryGuidanceDraft}
       placeholder={t("assistants.voiceGuidancePlaceholder")}
       busy={assistantPromptBusy}
@@ -1030,7 +1095,7 @@ export function AssistantsTab({
       isDark={isDark}
       title={t("assistants.petPersonaTitle")}
       hint={t("assistants.petPersonaHint")}
-      path={assistantHelpPrompt?.path || undefined}
+      path={activeAssistantHelpPrompt?.path || undefined}
       value={petPersonaDraft}
       placeholder={t("assistants.petPersonaPlaceholder")}
       busy={assistantPromptBusy}

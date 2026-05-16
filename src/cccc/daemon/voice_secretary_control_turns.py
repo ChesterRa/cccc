@@ -8,7 +8,7 @@ from typing import Any, Dict
 from ..kernel.group import load_group
 from ..kernel.inbox import find_event
 from ..paths import ensure_home
-from ..util.fs import read_json
+from ..util.fs import atomic_write_json, read_json
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,36 @@ def _input_state(group_id: str) -> Dict[str, int]:
         "latest_seq": max(0, int(payload.get("latest_seq") or 0)),
         "secretary_read_cursor": max(read_cursor, delivery_cursor),
     }
+
+
+def _mark_input_envelope_consumed(group_id: str, snapshot: Dict[str, Any]) -> None:
+    if str((snapshot or {}).get("kind") or "").strip() != "voice_secretary_input":
+        return
+    if not bool((snapshot or {}).get("input_envelope_delivered")):
+        return
+    target_cursor = max(0, int((snapshot or {}).get("before_secretary_read_cursor") or 0))
+    if target_cursor <= 0:
+        return
+    normalized_group_id = str(group_id or "").strip()
+    if not normalized_group_id:
+        return
+    path = ensure_home() / "voice-secretary" / normalized_group_id / "input_state.json"
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return
+    current_read_cursor = max(0, int(payload.get("secretary_read_cursor") or 0))
+    if target_cursor <= current_read_cursor:
+        return
+    payload["schema"] = int(payload.get("schema") or 1)
+    payload["group_id"] = str(payload.get("group_id") or normalized_group_id)
+    payload["secretary_read_cursor"] = target_cursor
+    payload["secretary_delivery_cursor"] = max(target_cursor, int(payload.get("secretary_delivery_cursor") or 0))
+    latest_seq = max(0, int(payload.get("latest_seq") or 0))
+    if target_cursor >= latest_seq:
+        payload["last_notify_at"] = ""
+        payload["retry_count"] = 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(path, payload, indent=2)
 
 
 def _prompt_draft_state(group_id: str, *, request_ids: list[str]) -> Dict[str, Dict[str, Any]]:
@@ -484,7 +514,13 @@ def control_completion_state(
             repaired = {}
         if isinstance(repaired, dict) and repaired.get("completed_request_ids"):
             diagnostics = get_diagnostics(group_id=group_id, snapshot=snapshot)
-    return not bool(diagnostics.get("missing") if isinstance(diagnostics, dict) else []), diagnostics
+    complete = not bool(diagnostics.get("missing") if isinstance(diagnostics, dict) else [])
+    if complete:
+        try:
+            _mark_input_envelope_consumed(group_id, snapshot)
+        except Exception:
+            logger.exception("voice-secretary input envelope cursor update failed: %s", group_id)
+    return complete, diagnostics
 
 
 def repair_control_text(*, text: str, diagnostics: Dict[str, Any]) -> str:

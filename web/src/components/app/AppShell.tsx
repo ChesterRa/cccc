@@ -74,7 +74,6 @@ type AppShellProps = {
   getTermEpoch: (actorId: string) => number;
   onToggleActorEnabled: (actor: Actor) => void;
   onRelaunchActor: (actor: Actor) => void;
-  onRelaunchActorFreshSession: (actor: Actor) => void;
   onEditActor: (actor: Actor) => void;
   onRemoveActor: (actor: Actor, activeTab: string) => void;
   onOpenActorInbox: (actor: Actor) => void;
@@ -182,7 +181,6 @@ export function AppShell({
   getTermEpoch,
   onToggleActorEnabled,
   onRelaunchActor,
-  onRelaunchActorFreshSession,
   onEditActor,
   onRemoveActor,
   onOpenActorInbox,
@@ -360,7 +358,6 @@ export function AppShell({
                       readOnly={webReadOnly}
                       onToggleEnabled={() => actor && onToggleActorEnabled(actor)}
                       onRelaunch={() => actor && onRelaunchActor(actor)}
-                      onRelaunchFreshSession={() => actor && onRelaunchActorFreshSession(actor)}
                       onEdit={() => actor && onEditActor(actor)}
                       onRemove={() => actor && onRemoveActor(actor, activeTab)}
                       onInbox={() => actor && onOpenActorInbox(actor)}

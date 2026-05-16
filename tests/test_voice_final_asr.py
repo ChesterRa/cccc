@@ -178,6 +178,27 @@ class CollectFinalAsrTextTests(unittest.TestCase):
 
         asyncio.run(run_case())
 
+    def test_preserves_space_after_ascii_sentence_punctuation(self) -> None:
+        async def run_case() -> None:
+            events = [
+                self._final_event("Hello."),
+                self._final_event("How are you?"),
+            ]
+
+            async def fake_iter(*_args: object, **_kwargs: object):
+                for event in events:
+                    yield event
+
+            with patch("cccc.daemon.assistants.voice_final_asr.iter_final_asr_events", fake_iter):
+                text = await collect_final_asr_text(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                )
+            self.assertEqual(text, "Hello. How are you?")
+
+        asyncio.run(run_case())
+
     def test_skips_empty_and_whitespace_finals(self) -> None:
         async def run_case() -> None:
             events = [

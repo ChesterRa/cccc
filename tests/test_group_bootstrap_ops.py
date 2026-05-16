@@ -40,6 +40,20 @@ class TestGroupBootstrapOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_attach_rejects_exact_cccc_home_as_workspace_scope(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "bootstrap", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": home, "by": "user"})
+            self.assertFalse(attach.ok)
+            self.assertEqual(getattr(attach.error, "code", ""), "invalid_scope_path")
+        finally:
+            cleanup()
+
     def test_unknown_op_returns_none(self) -> None:
         from cccc.daemon.group.group_bootstrap_ops import try_handle_group_bootstrap_op
 

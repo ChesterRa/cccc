@@ -75,6 +75,7 @@ _VOICE_MODEL_INSTALL_LOCK = threading.Lock()
 _VOICE_MODEL_INSTALL_THREADS: Dict[str, threading.Thread] = {}
 _VOICE_RUNTIME_INSTALL_LOCK = threading.Lock()
 _VOICE_RUNTIME_INSTALL_THREADS: Dict[str, threading.Thread] = {}
+_VOICE_RECORDING_LEASE_LOCK = threading.Lock()
 
 
 ASSISTANT_ID_PET = "pet"
@@ -100,6 +101,9 @@ _DEFAULT_AUTO_DOCUMENT_MIN_WINDOW_SEGMENTS = 3
 _DEFAULT_VOICE_DOCUMENT_DIR = "docs/voice-secretary"
 _VOICE_INPUT_NUDGE_RETRY_SECONDS = (180, 360, 720)
 _VOICE_PENDING_PROMPT_DRAFT_STALE_SECONDS = 1_800
+_VOICE_RECORDING_LEASE_DEFAULT_TTL_SECONDS = 30
+_VOICE_RECORDING_LEASE_MIN_TTL_SECONDS = 5
+_VOICE_RECORDING_LEASE_MAX_TTL_SECONDS = 120
 _VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = 8
 _VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = 300
 _VOICE_IDLE_REVIEW_STOP_TRIGGER_KINDS = {"push_to_talk_stop"}
@@ -244,6 +248,10 @@ def _state_path(group: Group):
     return group.path / "state" / _STATE_FILENAME
 
 
+def _voice_recording_lease_path() -> Path:
+    return ensure_home() / "state" / "voice_secretary_recording_lease.json"
+
+
 def _load_runtime_state(group: Group) -> Dict[str, Any]:
     payload = read_json(_state_path(group))
     if not isinstance(payload, dict) or int(payload.get("schema") or 0) != _STATE_SCHEMA:
@@ -295,6 +303,124 @@ def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
     }
     _state_path(group).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(_state_path(group), normalized, indent=2)
+
+
+def _voice_recording_epoch_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _voice_recording_iso_from_epoch_ms(value: int) -> str:
+    try:
+        return datetime.fromtimestamp(max(0, int(value)) / 1000.0, tz=timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def _voice_recording_lease_ttl_seconds(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        parsed = _VOICE_RECORDING_LEASE_DEFAULT_TTL_SECONDS
+    return min(max(_VOICE_RECORDING_LEASE_MIN_TTL_SECONDS, parsed), _VOICE_RECORDING_LEASE_MAX_TTL_SECONDS)
+
+
+def _empty_voice_recording_lease_doc() -> Dict[str, Any]:
+    return {"schema": 1, "kind": "voice_secretary_recording_lease", "lease": {}}
+
+
+def _load_voice_recording_lease_doc() -> Dict[str, Any]:
+    payload = read_json(_voice_recording_lease_path())
+    if not isinstance(payload, dict) or int(payload.get("schema") or 0) != 1:
+        return _empty_voice_recording_lease_doc()
+    lease = payload.get("lease") if isinstance(payload.get("lease"), dict) else {}
+    return {"schema": 1, "kind": "voice_secretary_recording_lease", "lease": dict(lease)}
+
+
+def _save_voice_recording_lease_doc(payload: Dict[str, Any]) -> None:
+    path = _voice_recording_lease_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lease = payload.get("lease") if isinstance(payload.get("lease"), dict) else {}
+    atomic_write_json(
+        path,
+        {"schema": 1, "kind": "voice_secretary_recording_lease", "lease": dict(lease)},
+        indent=2,
+    )
+
+
+def _public_voice_recording_lease(lease: Dict[str, Any]) -> Dict[str, Any]:
+    owner_id = str(lease.get("owner_id") or "").strip()
+    group_id = str(lease.get("group_id") or "").strip()
+    if not owner_id or not group_id:
+        return {}
+    return {
+        key: value
+        for key, value in {
+            "owner_id": owner_id,
+            "group_id": group_id,
+            "group_title": str(lease.get("group_title") or "").strip(),
+            "capture_mode": str(lease.get("capture_mode") or "").strip(),
+            "recognition_backend": str(lease.get("recognition_backend") or "").strip(),
+            "by": str(lease.get("by") or "").strip(),
+            "created_at": str(lease.get("created_at") or "").strip(),
+            "updated_at": str(lease.get("updated_at") or "").strip(),
+            "expires_at": str(lease.get("expires_at") or "").strip(),
+        }.items()
+        if value not in ("", None)
+    }
+
+
+def _voice_recording_lease_matches(lease: Dict[str, Any], *, owner_id: str, lease_id: str) -> bool:
+    if str(lease.get("owner_id") or "").strip() != owner_id:
+        return False
+    active_lease_id = str(lease.get("lease_id") or "").strip()
+    # Allow legacy lease files created before lease_id existed to be released by
+    # their owner, but require exact tokens for all new acquisitions.
+    if not active_lease_id:
+        return not str(lease_id or "").strip()
+    return active_lease_id == str(lease_id or "").strip()
+
+
+def _active_voice_recording_lease_locked(*, now_ms: Optional[int] = None) -> Dict[str, Any]:
+    now_ms = _voice_recording_epoch_ms() if now_ms is None else int(now_ms)
+    doc = _load_voice_recording_lease_doc()
+    lease = doc.get("lease") if isinstance(doc.get("lease"), dict) else {}
+    if not lease:
+        return {}
+    expires_at_ms = int(lease.get("expires_at_ms") or 0)
+    if expires_at_ms <= now_ms:
+        _save_voice_recording_lease_doc(_empty_voice_recording_lease_doc())
+        return {}
+    return dict(lease)
+
+
+def _voice_recording_lease_result(
+    *,
+    group_id: str,
+    action: str,
+    lease: Dict[str, Any],
+    acquired: bool = False,
+    released: bool = False,
+    lost: bool = False,
+    include_lease_id: bool = False,
+) -> Dict[str, Any]:
+    result = {
+        "group_id": group_id,
+        "action": action,
+        "acquired": bool(acquired),
+        "released": bool(released),
+        "lost": bool(lost),
+        "lease": _public_voice_recording_lease(lease),
+    }
+    if include_lease_id:
+        lease_id = str(lease.get("lease_id") or "").strip()
+        if lease_id:
+            result["lease_id"] = lease_id
+    return result
+
+
+def _current_public_voice_recording_lease() -> Dict[str, Any]:
+    with _VOICE_RECORDING_LEASE_LOCK:
+        return _public_voice_recording_lease(_active_voice_recording_lease_locked())
 
 
 def _stored_assistant_settings(group: Group, assistant_id: str) -> Dict[str, Any]:
@@ -1395,10 +1521,6 @@ def _voice_input_delivery_cursor(state: Dict[str, Any]) -> int:
     )
 
 
-def _voice_input_read_cursor(state: Dict[str, Any]) -> int:
-    return max(0, int(state.get("secretary_read_cursor") or 0))
-
-
 def _voice_input_timing_public(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         key: value
@@ -2090,13 +2212,8 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
         return {}
     state = _load_voice_input_state(group)
     delivery_cursor = _voice_input_delivery_cursor(state)
-    latest_seq = int(state.get("latest_seq") or 0)
-    read_cursor = _voice_input_read_cursor(state)
-    if latest_seq <= delivery_cursor:
-        if reason != "new_input" and read_cursor < latest_seq:
-            delivery_cursor = read_cursor
-        else:
-            return {}
+    if int(state.get("latest_seq") or 0) <= delivery_cursor:
+        return {}
     now = utc_now_iso()
     preview = _peek_voice_input_batch(group, after_seq=delivery_cursor)
     envelope = _voice_input_envelope_from_preview(group, preview=preview, reason=reason, created_at=now)
@@ -2123,7 +2240,8 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
     state["last_notify_emitted_at"] = now
     state["last_input_envelope_at"] = now
     state["last_input_envelope_id"] = str(envelope.get("delivery_id") or "")
-    if _voice_input_read_cursor(state) >= latest_seq:
+    latest_seq = int(state.get("latest_seq") or 0)
+    if _voice_input_delivery_cursor(state) >= latest_seq:
         state["last_notify_at"] = ""
         state["retry_count"] = 0
     elif reason != "new_input":
@@ -2136,7 +2254,7 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
 
 def _maybe_emit_voice_input_retry_notify(group: Group) -> None:
     state = _load_voice_input_state(group)
-    if int(state.get("latest_seq") or 0) <= _voice_input_read_cursor(state):
+    if int(state.get("latest_seq") or 0) <= _voice_input_delivery_cursor(state):
         return
     retry_count = int(state.get("retry_count") or 0)
     if retry_count >= len(_VOICE_INPUT_NUDGE_RETRY_SECONDS):
@@ -3175,6 +3293,11 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
         service_models = list_voice_models() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
         service_runtimes = list_voice_runtime_statuses() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
         service_runtime = get_voice_runtime_status() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
+        recording_lease = (
+            _current_public_voice_recording_lease()
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else {}
+        )
         return DaemonResponse(
             ok=True,
             result={
@@ -3197,6 +3320,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
                 "service_runtime": service_runtime,
                 "service_runtimes": service_runtimes,
                 "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
+                "recording_lease": recording_lease,
             },
         )
     assistants = [
@@ -3213,6 +3337,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     service_models = list_voice_models()
     service_runtimes = list_voice_runtime_statuses()
     service_runtime = get_voice_runtime_status()
+    recording_lease = _current_public_voice_recording_lease()
     return DaemonResponse(
         ok=True,
         result={
@@ -3236,6 +3361,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             "service_runtime": service_runtime,
             "service_runtimes": service_runtimes,
             "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
+            "recording_lease": recording_lease,
         },
     )
 
@@ -3717,6 +3843,125 @@ def _set_voice_assistant_runtime(group: Group, *, lifecycle: str, health: Dict[s
     assistants[ASSISTANT_ID_VOICE_SECRETARY] = entry
     _save_runtime_state(group, state)
     return _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY, runtime_state=state)
+
+
+def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    action = str(args.get("action") or "status").strip().lower()
+    owner_id = str(args.get("owner_id") or "").strip()
+    lease_id = str(args.get("lease_id") or "").strip()
+    capture_mode = str(args.get("capture_mode") or "").strip()
+    recognition_backend = str(args.get("recognition_backend") or "").strip()
+    ttl_seconds = _voice_recording_lease_ttl_seconds(args.get("ttl_seconds"))
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if action not in {"acquire", "heartbeat", "release", "status"}:
+        return _error("invalid_voice_recording_lease_action", "action must be acquire|heartbeat|release|status")
+    if action in {"acquire", "heartbeat", "release"} and not owner_id:
+        return _error("missing_owner_id", "missing owner_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        _require_status_permission(group, assistant_id=ASSISTANT_ID_VOICE_SECRETARY, by=by)
+    except Exception as exc:
+        return _error("assistant_voice_recording_lease_failed", str(exc))
+
+    assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
+    if not bool(assistant.get("enabled")) and action in {"acquire", "heartbeat"}:
+        return _error("assistant_disabled", "voice_secretary is disabled")
+
+    with _VOICE_RECORDING_LEASE_LOCK:
+        now_ms = _voice_recording_epoch_ms()
+        active = _active_voice_recording_lease_locked(now_ms=now_ms)
+        if action == "status":
+            return DaemonResponse(
+                ok=True,
+                result=_voice_recording_lease_result(group_id=group.group_id, action=action, lease=active),
+            )
+
+        if action == "release":
+            if active and _voice_recording_lease_matches(active, owner_id=owner_id, lease_id=lease_id):
+                _save_voice_recording_lease_doc(_empty_voice_recording_lease_doc())
+                return DaemonResponse(
+                    ok=True,
+                    result=_voice_recording_lease_result(
+                        group_id=group.group_id,
+                        action=action,
+                        lease={},
+                        released=True,
+                    ),
+                )
+            return DaemonResponse(
+                ok=True,
+                result=_voice_recording_lease_result(
+                    group_id=group.group_id,
+                    action=action,
+                    lease=active,
+                    released=False,
+                    lost=not bool(active) or str(active.get("owner_id") or "").strip() == owner_id,
+                ),
+            )
+
+        if action == "acquire" and active:
+            public_active = _public_voice_recording_lease(active)
+            return _error(
+                "assistant_voice_recording_busy",
+                "voice secretary recording is already active",
+                details={"active_lease": public_active},
+            )
+
+        if active and str(active.get("owner_id") or "") != owner_id:
+            public_active = _public_voice_recording_lease(active)
+            return _error(
+                "assistant_voice_recording_busy",
+                "voice secretary recording is already active",
+                details={"active_lease": public_active},
+            )
+
+        if action == "heartbeat":
+            if not active or not _voice_recording_lease_matches(active, owner_id=owner_id, lease_id=lease_id):
+                return DaemonResponse(
+                    ok=True,
+                    result=_voice_recording_lease_result(
+                        group_id=group.group_id,
+                        action=action,
+                        lease=active,
+                        acquired=False,
+                        lost=True,
+                    ),
+                )
+
+        created_at = str(active.get("created_at") or "") if active and action == "heartbeat" else ""
+        if not created_at:
+            created_at = utc_now_iso()
+        expires_at_ms = now_ms + ttl_seconds * 1000
+        next_lease_id = str(active.get("lease_id") or "").strip() if active and action == "heartbeat" else f"vrl_{uuid.uuid4().hex}"
+        next_lease = {
+            "lease_id": next_lease_id,
+            "owner_id": owner_id,
+            "group_id": group.group_id,
+            "group_title": str(group.doc.get("title") or group.group_id),
+            "capture_mode": capture_mode,
+            "recognition_backend": recognition_backend,
+            "by": by,
+            "created_at": created_at,
+            "updated_at": utc_now_iso(),
+            "expires_at": _voice_recording_iso_from_epoch_ms(expires_at_ms),
+            "expires_at_ms": expires_at_ms,
+        }
+        _save_voice_recording_lease_doc({"schema": 1, "lease": next_lease})
+        return DaemonResponse(
+            ok=True,
+            result=_voice_recording_lease_result(
+                group_id=group.group_id,
+                action=action,
+                lease=next_lease,
+                acquired=True,
+                include_lease_id=True,
+            ),
+        )
 
 
 def handle_assistant_voice_transcribe(args: Dict[str, Any]) -> DaemonResponse:
@@ -5425,6 +5670,8 @@ def try_handle_assistant_op(
         return handle_assistant_voice_runtime_install(args)
     if op == "assistant_voice_runtime_remove":
         return handle_assistant_voice_runtime_remove(args)
+    if op == "assistant_voice_recording_lease":
+        return handle_assistant_voice_recording_lease(args)
     if op == "assistant_voice_transcript_append":
         return handle_assistant_voice_transcript_append(
             args,

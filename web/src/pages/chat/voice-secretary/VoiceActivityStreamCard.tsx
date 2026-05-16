@@ -5,7 +5,6 @@ import type { VoiceStreamCaptureMode } from "./voiceStreamModel";
 type VoiceActivityStreamCardProps = {
   item: VoiceActivityStreamItem;
   isDark: boolean;
-  isLive: boolean;
   t: (key: string, opts?: Record<string, unknown>) => string;
   voiceModeLabel: (mode: VoiceStreamCaptureMode) => string;
   formatTime: (value: number) => string;
@@ -15,7 +14,6 @@ type VoiceActivityStreamCardProps = {
 export function VoiceActivityStreamCard({
   item,
   isDark,
-  isLive,
   t,
   voiceModeLabel,
   formatTime,
@@ -38,9 +36,7 @@ export function VoiceActivityStreamCard({
             isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-white text-cyan-800",
           )}
         >
-          {isLive
-            ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
-            : t("voiceSecretaryTranscriptHeard", { defaultValue: "Heard" })}
+          {t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })}
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
           <span className="min-w-0 truncate">{voiceModeLabel(item.mode)}</span>

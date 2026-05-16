@@ -51,21 +51,18 @@ def start_codex_app_thread(
     cwd: Path,
     command: Iterable[str],
     model: str = "",
-    fresh_session: bool = False,
 ) -> Tuple[str, bool]:
     model = str(model or "").strip()
     command_list = [str(item) for item in list(command or []) if str(item).strip()]
     thread_params = _thread_start_params(cwd=cwd, model=model)
-    resume_doc: Dict[str, Any] = {}
-    if not fresh_session:
-        resume_doc = prepare_headless_runtime_resume(
-            group_id=group_id,
-            actor_id=actor_id,
-            runtime="codex",
-            cwd=cwd,
-            command=command_list,
-            model=model,
-        )
+    resume_doc = prepare_headless_runtime_resume(
+        group_id=group_id,
+        actor_id=actor_id,
+        runtime="codex",
+        cwd=cwd,
+        command=command_list,
+        model=model,
+    )
 
     resumed = False
     if resume_doc:

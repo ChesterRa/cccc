@@ -9,6 +9,8 @@ import type {
   AssistantVoiceMeetingSession,
   AssistantVoicePromptDraft,
   AssistantVoicePromptDraftMutationResult,
+  AssistantVoiceRecordingLease,
+  AssistantVoiceRecordingLeaseResult,
   AssistantVoiceTranscriptSegmentResult,
   AssistantVoiceTranscriptionResult,
   BuiltinAssistant,
@@ -157,6 +159,25 @@ function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFe
     created_at: asOptionalString(record.created_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
     cleared_at: asOptionalString(record.cleared_at) || undefined,
+  };
+}
+
+function normalizeAssistantVoiceRecordingLease(value: unknown): AssistantVoiceRecordingLease | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const ownerId = asString(record.owner_id).trim();
+  const groupId = asString(record.group_id).trim();
+  if (!ownerId || !groupId) return undefined;
+  return {
+    owner_id: ownerId,
+    group_id: groupId,
+    group_title: asOptionalString(record.group_title) || undefined,
+    capture_mode: asOptionalString(record.capture_mode) || undefined,
+    recognition_backend: asOptionalString(record.recognition_backend) || undefined,
+    by: asOptionalString(record.by) || undefined,
+    created_at: asOptionalString(record.created_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    expires_at: asOptionalString(record.expires_at) || undefined,
   };
 }
 
@@ -384,6 +405,7 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     service_runtime: primaryServiceRuntime,
     service_runtimes: Object.values(serviceRuntimesById).sort((a, b) => a.runtime_id.localeCompare(b.runtime_id)),
     service_runtimes_by_id: serviceRuntimesById,
+    recording_lease: normalizeAssistantVoiceRecordingLease(record.recording_lease),
   };
 }
 
@@ -435,6 +457,19 @@ function normalizeAssistantMutationResult(groupId: string, result: unknown): Ass
     group_id: asString(record.group_id).trim() || groupId,
     assistant: normalizeBuiltinAssistant(record.assistant) || undefined,
     event: record.event,
+  };
+}
+
+function normalizeAssistantVoiceRecordingLeaseResult(groupId: string, result: unknown): AssistantVoiceRecordingLeaseResult {
+  const record = asRecord(result) ?? {};
+  return {
+    group_id: asString(record.group_id).trim() || groupId,
+    action: asString(record.action).trim(),
+    acquired: Boolean(record.acquired),
+    released: Boolean(record.released),
+    lost: Boolean(record.lost),
+    leaseId: asOptionalString(record.lease_id) || undefined,
+    lease: normalizeAssistantVoiceRecordingLease(record.lease),
   };
 }
 
@@ -598,6 +633,38 @@ export async function transcribeVoiceAssistantAudio(
   clearAssistantStateRequest(gid);
   if (!resp.ok) return resp as ApiResponse<AssistantVoiceTranscriptionResult>;
   return { ok: true, result: normalizeAssistantVoiceTranscriptionResult(gid, resp.result) };
+}
+
+export async function updateVoiceAssistantRecordingLease(
+  groupId: string,
+  payload: {
+    action: "acquire" | "heartbeat" | "release" | "status";
+    ownerId?: string;
+    leaseId?: string;
+    ttlSeconds?: number;
+    captureMode?: string;
+    recognitionBackend?: string;
+    by?: string;
+  },
+): Promise<ApiResponse<AssistantVoiceRecordingLeaseResult>> {
+  const gid = String(groupId || "").trim();
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/recording_lease`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        action: payload.action,
+        owner_id: String(payload.ownerId || "").trim(),
+        lease_id: String(payload.leaseId || "").trim(),
+        ttl_seconds: Number.isFinite(Number(payload.ttlSeconds)) ? Math.round(Number(payload.ttlSeconds)) : 30,
+        capture_mode: String(payload.captureMode || "").trim(),
+        recognition_backend: String(payload.recognitionBackend || "").trim(),
+        by: String(payload.by || "user").trim() || "user",
+      }),
+    },
+  );
+  if (!resp.ok) return resp as ApiResponse<AssistantVoiceRecordingLeaseResult>;
+  return { ok: true, result: normalizeAssistantVoiceRecordingLeaseResult(gid, resp.result) };
 }
 
 export async function fetchLatestVoiceAssistantMeetingSession(

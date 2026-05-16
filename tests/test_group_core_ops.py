@@ -89,6 +89,20 @@ class TestGroupCoreOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_use_rejects_exact_cccc_home_as_workspace_scope(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "g1", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            use_resp, _ = self._call("group_use", {"group_id": group_id, "path": home, "by": "user"})
+            self.assertFalse(use_resp.ok)
+            self.assertEqual(getattr(use_resp.error, "code", ""), "invalid_scope_path")
+        finally:
+            cleanup()
+
     def test_group_delete_clears_active_and_removes_group(self) -> None:
         from cccc.kernel.active import load_active, set_active_group_id
         from cccc.kernel.group import load_group

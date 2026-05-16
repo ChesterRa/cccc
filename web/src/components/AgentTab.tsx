@@ -15,7 +15,6 @@ import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, Termin
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
-import { supportsRuntimeNewSession } from "../utils/runtimeNewSession";
 import { copyTextToClipboard } from "../utils/copy";
 import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
@@ -49,7 +48,6 @@ interface AgentTabProps {
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
-  onRelaunchFreshSession: () => void;
   onEdit: () => void;
   onRemove: () => void;
   onInbox: () => void;
@@ -70,7 +68,6 @@ export function AgentTab({
   onQuit,
   onLaunch,
   onRelaunch,
-  onRelaunchFreshSession,
   onEdit,
   onRemove,
   onInbox,
@@ -85,7 +82,6 @@ export function AgentTab({
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = String(actor.runtime || "").trim().toLowerCase() === "web_model";
-  const canStartNewSession = supportsRuntimeNewSession(actor.runtime);
   const canControl = !readOnly;
   const isBusy = busy.includes(actor.id);
   const latestHeadlessText = useGroupStore((state) => {
@@ -737,18 +733,6 @@ export function AgentTab({
                 <RefreshIcon size={16} />
                 {!isSmallScreen && t('relaunch')}
               </button>
-              {canStartNewSession ? (
-                <button
-                  onClick={onRelaunchFreshSession}
-                  disabled={isBusy}
-                  className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                  title={t('relaunchFreshSessionHint')}
-                  aria-label={t('relaunchFreshSessionAgent')}
-                >
-                  <RefreshIcon size={16} />
-                  {!isSmallScreen && t('relaunchFreshSession')}
-                </button>
-              ) : null}
               <button
                 onClick={onEdit}
                 disabled={isBusy}

@@ -186,12 +186,6 @@ class ActorLifecycleData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ActorRestartData(ActorLifecycleData):
-    fresh_session: bool = False
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ActorActivityData(BaseModel):
     """Periodic runtime status snapshot for running actors."""
     actors: List[Dict[str, Any]] = Field(default_factory=list)
@@ -272,7 +266,7 @@ _KIND_TO_MODEL = {
     "actor.set_role": ActorSetRoleData,
     "actor.start": ActorLifecycleData,
     "actor.stop": ActorLifecycleData,
-    "actor.restart": ActorRestartData,
+    "actor.restart": ActorLifecycleData,
     "actor.remove": ActorLifecycleData,
     "actor.activity": ActorActivityData,
     "context.sync": ContextSyncData,

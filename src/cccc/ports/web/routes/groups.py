@@ -91,6 +91,7 @@ from ..schemas import (
     AssistantVoiceInputRequest,
     AssistantVoiceModelInstallRequest,
     AssistantVoiceModelRemoveRequest,
+    AssistantVoiceRecordingLeaseRequest,
     AssistantVoiceRuntimeInstallRequest,
     AssistantVoiceRuntimeRemoveRequest,
     AssistantVoicePromptDraftAckRequest,
@@ -2219,6 +2220,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "audio_base64": req.audio_base64,
                     "mime_type": req.mime_type,
                     "language": req.language,
+                    "by": req.by,
+                },
+            }
+        )
+
+    @group_router.post("/assistants/voice_secretary/recording_lease")
+    async def group_voice_secretary_recording_lease_update(
+        group_id: str,
+        req: AssistantVoiceRecordingLeaseRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_recording_lease",
+                "args": {
+                    "group_id": group_id,
+                    "action": req.action,
+                    "owner_id": req.owner_id,
+                    "lease_id": req.lease_id,
+                    "ttl_seconds": req.ttl_seconds,
+                    "capture_mode": req.capture_mode,
+                    "recognition_backend": req.recognition_backend,
                     "by": req.by,
                 },
             }

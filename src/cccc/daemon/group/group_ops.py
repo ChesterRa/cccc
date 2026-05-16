@@ -17,10 +17,18 @@ from ...kernel.registry import load_registry
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...kernel.scope import detect_scope
+from ...paths import ensure_home
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _is_exact_cccc_home_path(path: Path) -> bool:
+    try:
+        return path.expanduser().resolve() == ensure_home().resolve()
+    except Exception:
+        return False
 
 
 def _redact_group_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -147,6 +155,8 @@ def handle_group_use(args: Dict[str, Any]) -> DaemonResponse:
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     path = Path(str(args.get("path") or "."))
+    if _is_exact_cccc_home_path(path):
+        return _error("invalid_scope_path", "workspace scope must be a project directory, not CCCC_HOME")
     scope = detect_scope(path)
     reg = load_registry()
     try:

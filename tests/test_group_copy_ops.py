@@ -101,6 +101,17 @@ class TestGroupCopyOps(unittest.TestCase):
                 group.ledger_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
                 (group.path / "state" / "read_cursors.json").parent.mkdir(parents=True, exist_ok=True)
                 (group.path / "state" / "read_cursors.json").write_text('{"peer1":"evt1"}', encoding="utf-8")
+                (group.path / "state" / "assistants.json").write_text(
+                    json.dumps(
+                        {
+                            "voice-secretary": {
+                                "document_path": "/old/home/docs/voice-secretary/notes.md",
+                                "document_workspace_root": "/old/home",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
                 (group.path / "state" / "unread_index.json").write_text('{"derived":true}', encoding="utf-8")
                 (group.path / "state" / "preamble_sent.json").write_text('{"peer1":"yes"}', encoding="utf-8")
                 (group.path / "state" / "runners" / "pty").mkdir(parents=True, exist_ok=True)
@@ -128,6 +139,7 @@ class TestGroupCopyOps(unittest.TestCase):
                     self.assertIn("group/state/read_cursors.json", names)
                     self.assertIn("group/state/ledger/snapshot.latest.json", names)
                     self.assertIn("group/state/blobs/blob.txt", names)
+                    self.assertNotIn("group/state/assistants.json", names)
                     self.assertNotIn("group/state/unread_index.json", names)
                     self.assertNotIn("group/state/preamble_sent.json", names)
                     self.assertNotIn("group/state/runners/pty/peer1.json", names)
@@ -169,6 +181,17 @@ class TestGroupCopyOps(unittest.TestCase):
                 group = load_group(group_id)
                 self.assertIsNotNone(group)
                 assert group is not None
+                doc = dict(group.doc)
+                actors = doc.get("actors") if isinstance(doc.get("actors"), list) else []
+                self.assertTrue(actors)
+                actors[0]["default_scope_key"] = scope_key
+                (group.path / "group.yaml").write_text(
+                    yaml.safe_dump(doc, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
                 event = {
                     "id": "evt1",
                     "kind": "chat.message",
@@ -179,6 +202,17 @@ class TestGroupCopyOps(unittest.TestCase):
                 group.ledger_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
                 (group.path / "state").mkdir(parents=True, exist_ok=True)
                 (group.path / "state" / "read_cursors.json").write_text('{"peer1":"evt1"}', encoding="utf-8")
+                (group.path / "state" / "assistants.json").write_text(
+                    json.dumps(
+                        {
+                            "voice-secretary": {
+                                "document_path": "/old/home/docs/voice-secretary/notes.md",
+                                "document_workspace_root": "/old/home",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
                 (group.path / "state" / "preamble_sent.json").write_text('{"peer1":"yes"}', encoding="utf-8")
 
                 package = self._package_bytes(group_id)
@@ -202,7 +236,9 @@ class TestGroupCopyOps(unittest.TestCase):
                 actors = imported.doc.get("actors") if isinstance(imported.doc.get("actors"), list) else []
                 self.assertEqual(actors[0].get("env"), {})
                 self.assertNotIn("profile_id", actors[0])
+                self.assertEqual(str(actors[0].get("default_scope_key") or ""), str(imported.doc.get("active_scope_key") or ""))
                 self.assertTrue((imported.path / "state" / "read_cursors.json").exists())
+                self.assertFalse((imported.path / "state" / "assistants.json").exists())
                 self.assertFalse((imported.path / "state" / "preamble_sent.json").exists())
 
                 imported_events = imported.ledger_path.read_text(encoding="utf-8").splitlines()
@@ -212,6 +248,26 @@ class TestGroupCopyOps(unittest.TestCase):
 
                 reg = load_registry()
                 self.assertEqual(reg.defaults.get(scope_key), group_id)
+        finally:
+            cleanup()
+
+    def test_import_rejects_cccc_home_as_workspace_root(self) -> None:
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                package_b64 = base64.b64encode(self._package_bytes(group_id)).decode("ascii")
+                import_resp, _ = self._call(
+                    "group_copy_import",
+                    {
+                        "package_b64": package_b64,
+                        "workspace_root": os.environ["CCCC_HOME"],
+                        "by": "user",
+                    },
+                )
+                self.assertFalse(import_resp.ok)
+                self.assertEqual(getattr(import_resp.error, "code", ""), "group_copy_import_failed")
+                self.assertIn("not CCCC_HOME", getattr(import_resp.error, "message", ""))
         finally:
             cleanup()
 

@@ -250,7 +250,6 @@ class CodexAppSession:
         start_remote_tui: bool = False,
         remote_tui_base_command: Optional[list[str]] = None,
         max_backlog_bytes: int = 2_000_000,
-        fresh_session: bool = False,
     ) -> None:
         self.group_id = str(group_id or "").strip()
         self.actor_id = str(actor_id or "").strip()
@@ -263,7 +262,6 @@ class CodexAppSession:
         self.start_remote_tui = bool(start_remote_tui)
         self.remote_tui_base_command = list(remote_tui_base_command or [])
         self.max_backlog_bytes = int(max_backlog_bytes or 0) or 2_000_000
-        self.fresh_session = bool(fresh_session)
         self._proc: Optional[subprocess.Popen[str]] = None
         self._ws: Any = None
         self._pty_session: Any = None
@@ -289,6 +287,11 @@ class CodexAppSession:
         self._last_turn_event_monotonic = 0.0
         self._active_stalled_emitted = False
         self._runtime_command: list[str] = []
+
+    def request_stop(self) -> None:
+        """Mark this session as intentionally stopping before transports close."""
+        with self._lock:
+            self._stop_requested = True
 
     def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
         stream_id = str(item_id or "").strip()
@@ -588,18 +591,14 @@ class CodexAppSession:
                 },
                 timeout=10.0,
             )
-            thread_id = ""
-            resumed = False
-            if not self.start_remote_tui or not self.fresh_session:
-                thread_id, resumed = start_codex_app_thread(
-                    request=self._request,
-                    group_id=self.group_id,
-                    actor_id=self.actor_id,
-                    cwd=self.cwd,
-                    command=self._runtime_command,
-                    model=self.model,
-                    fresh_session=self.fresh_session,
-                )
+            thread_id, resumed = start_codex_app_thread(
+                request=self._request,
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                cwd=self.cwd,
+                command=self._runtime_command,
+                model=self.model,
+            )
             with self._lock:
                 self._session_state.thread_id = thread_id
                 self._session_state.status = "idle"
@@ -629,6 +628,7 @@ class CodexAppSession:
         with self._lock:
             proc = self._proc
             ws = self._ws
+            was_stop_requested = self._stop_requested
             self._stop_requested = True
             self._running = False
             self._proc = None
@@ -669,7 +669,7 @@ class CodexAppSession:
                 except Exception:
                     pass
         self._emit("headless.session.stopped", {})
-        if persist_actor_stopped:
+        if persist_actor_stopped and not was_stop_requested:
             persist_actor_process_exit_stopped(group_id=self.group_id, actor_id=self.actor_id, runner="headless")
 
     def is_running(self) -> bool:
@@ -1704,6 +1704,9 @@ class _FallbackCodexAppSession:
         self._session_state.updated_at = utc_now_iso()
         self._persist_state()
 
+    def request_stop(self) -> None:
+        return None
+
     def is_running(self) -> bool:
         return bool(self._running)
 
@@ -1811,7 +1814,6 @@ class CodexAppSessionManager:
         model: str = "",
         remote_tui_base_command: Optional[list[str]] = None,
         max_backlog_bytes: int = 2_000_000,
-        fresh_session: bool = False,
     ) -> CodexAppSession:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
@@ -1834,7 +1836,6 @@ class CodexAppSessionManager:
                 start_remote_tui=True,
                 remote_tui_base_command=remote_tui_base_command,
                 max_backlog_bytes=max_backlog_bytes,
-                fresh_session=fresh_session,
             )
             self._sessions[key] = session
         try:
@@ -1850,6 +1851,8 @@ class CodexAppSessionManager:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             session = self._sessions.pop(key, None)
+            if session is not None:
+                session.request_stop()
         if session is not None:
             session.stop()
 
@@ -1860,13 +1863,23 @@ class CodexAppSessionManager:
         with self._lock:
             keys = [key for key in self._sessions if key[0] == gid]
             sessions = [self._sessions.pop(key) for key in keys]
+            for session in sessions:
+                session.request_stop()
         for session in sessions:
             session.stop()
+
+    def begin_shutdown(self) -> None:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            for session in sessions:
+                session.request_stop()
 
     def stop_all(self) -> None:
         with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()
+            for session in sessions:
+                session.request_stop()
         for session in sessions:
             session.stop()
 

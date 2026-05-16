@@ -79,6 +79,10 @@ _RESET_FILE_NAMES = {
     "unread_index.json",
 }
 
+_RESET_RELPATHS = {
+    "state/assistants.json",
+}
+
 _LEDGER_CACHE_NAMES = {
     "index.sqlite3",
     "ledger.lock",
@@ -286,6 +290,8 @@ def _should_exclude_group_relpath(rel: str, *, is_dir: bool = False) -> bool:
     name = parts[-1] if parts else ""
     if not parts:
         return False
+    if PurePosixPath(rel).as_posix().casefold() in _RESET_RELPATHS:
+        return True
     if name in _RESET_FILE_NAMES:
         return True
     if name.endswith("~") or name.endswith(".tmp"):
@@ -591,6 +597,27 @@ def _choose_scope_for_workspace(
     return scope_key, scope_entry, scope_key != old_scope_key
 
 
+def _is_exact_cccc_home_path(value: str) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    try:
+        return Path(raw).expanduser().resolve() == ensure_home().resolve()
+    except Exception:
+        return False
+
+
+def _rewrite_actor_scope_references(doc: Dict[str, Any], *, old_scope_key: str, new_scope_key: str) -> None:
+    if not old_scope_key or not new_scope_key or old_scope_key == new_scope_key:
+        return
+    actors = doc.get("actors") if isinstance(doc.get("actors"), list) else []
+    for actor in actors:
+        if not isinstance(actor, dict):
+            continue
+        if str(actor.get("default_scope_key") or "").strip() == old_scope_key:
+            actor["default_scope_key"] = new_scope_key
+
+
 def _apply_workspace_remap(
     doc: Dict[str, Any],
     *,
@@ -626,6 +653,7 @@ def _apply_workspace_remap(
         out_scopes.insert(0, dict(new_entry))
     doc["scopes"] = out_scopes
     doc["active_scope_key"] = new_scope_key
+    _rewrite_actor_scope_references(doc, old_scope_key=old_active_key, new_scope_key=new_scope_key)
     return old_active_key, new_scope_key
 
 
@@ -745,9 +773,13 @@ def group_copy_import(args: Dict[str, Any]) -> DaemonResponse:
         doc["state"] = "idle"
         _sanitize_import_actor_profiles(doc)
 
+        effective_workspace_root = workspace_root or _primary_workspace_root(doc)
+        if _is_exact_cccc_home_path(effective_workspace_root):
+            raise ValueError("workspace_root must be a project directory, not CCCC_HOME")
+
         old_active_scope_key, new_active_scope_key = _apply_workspace_remap(
             doc,
-            workspace_root=workspace_root or _primary_workspace_root(doc),
+            workspace_root=effective_workspace_root,
             final_group_id=final_group_id,
             force_new_scope_identity=bool(conflict),
         )
