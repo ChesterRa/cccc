@@ -37,9 +37,7 @@ void useBrandingStore.getState().refreshBranding();
 const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <AuthGate>
-      {isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}
-    </AuthGate>
-  </React.StrictMode>,
+  <AuthGate>
+    {isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}
+  </AuthGate>,
 );

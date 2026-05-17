@@ -59,7 +59,7 @@ class TestBridgeStreamForwarding(unittest.TestCase):
         from cccc.ports.im.bridge import IMBridge
 
         old_home = os.environ.get("CCCC_HOME")
-        td_ctx = tempfile.TemporaryDirectory()
+        td_ctx = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         td = td_ctx.__enter__()
         os.environ["CCCC_HOME"] = td
 

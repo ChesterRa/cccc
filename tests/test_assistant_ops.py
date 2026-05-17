@@ -414,6 +414,72 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_status_view_omits_heavy_document_and_model_payloads(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            state, _ = self._call(
+                "assistant_state",
+                {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "view": "voice_status",
+                },
+            )
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            result = state.result or {}
+            self.assertEqual(result.get("group_id"), group_id)
+            self.assertEqual((result.get("assistant") or {}).get("assistant_id"), "voice_secretary")
+            self.assertIn("service_runtime", result)
+            self.assertIn("service_runtimes_by_id", result)
+            self.assertIn("prompt_draft", result)
+            self.assertIn("ask_requests", result)
+            self.assertIn("recording_lease", result)
+            self.assertNotIn("documents", result)
+            self.assertNotIn("documents_by_id", result)
+            self.assertNotIn("documents_by_path", result)
+            self.assertNotIn("service_models", result)
+            self.assertNotIn("service_models_by_id", result)
+        finally:
+            cleanup()
+
+    def test_voice_workspace_view_keeps_documents_but_omits_model_payloads(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            docs_dir = repo / "docs" / "voice-secretary"
+            docs_dir.mkdir(parents=True)
+            (docs_dir / "workspace.md").write_text("# Workspace\n\nLarge body.\n", encoding="utf-8")
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            state, _ = self._call(
+                "assistant_state",
+                {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "view": "voice_workspace",
+                },
+            )
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            result = state.result or {}
+            self.assertIn("documents", result)
+            self.assertTrue(result.get("documents"))
+            self.assertNotIn("content", result["documents"][0])
+            self.assertIn("documents_by_id", result)
+            self.assertIn("documents_by_path", result)
+            self.assertIn("service_runtime", result)
+            self.assertIn("service_runtimes_by_id", result)
+            self.assertNotIn("service_models", result)
+            self.assertNotIn("service_models_by_id", result)
+        finally:
+            cleanup()
+
     def test_voice_recording_lease_blocks_other_group_until_release(self) -> None:
         _, cleanup = self._with_home()
         try:

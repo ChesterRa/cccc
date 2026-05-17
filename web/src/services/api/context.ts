@@ -265,7 +265,7 @@ export async function blockCapabilityGlobal(capabilityId: string, blocked: boole
 export async function fetchGroupCapabilityState(
   groupId: string,
   actorId: string = "user",
-  opts?: { capabilityId?: string; noCache?: boolean; signal?: AbortSignal },
+  opts?: { capabilityId?: string; noCache?: boolean; signal?: AbortSignal; view?: string },
 ) {
   const gid = String(groupId || "").trim();
   const aid = String(actorId || "user").trim() || "user";
@@ -273,6 +273,8 @@ export async function fetchGroupCapabilityState(
   const params = new URLSearchParams();
   params.set("actor_id", aid);
   if (capabilityId) params.set("capability_id", capabilityId);
+  const view = String(opts?.view || "").trim();
+  if (view) params.set("view", view);
   if (opts?.noCache) params.set("_", String(Date.now()));
   const load = () => {
     const suffix = params.toString() ? `?${params.toString()}` : "";
@@ -281,7 +283,21 @@ export async function fetchGroupCapabilityState(
     });
   };
   if (opts?.signal) return load();
-  return reuseSharedReadRequest(capabilityStateRequestKey(gid, aid, capabilityId), load);
+  if (opts?.noCache) {
+    return reuseSharedReadRequest(`${capabilityStateRequestKey(gid, aid, capabilityId, view)}:no-cache`, load);
+  }
+  return reuseSharedReadRequest(capabilityStateRequestKey(gid, aid, capabilityId, view), load);
+}
+
+export async function fetchSlashCommandCapabilityState(
+  groupId: string,
+  actorId: string = "user",
+  opts?: { noCache?: boolean; signal?: AbortSignal },
+) {
+  return fetchGroupCapabilityState(groupId, actorId, {
+    ...opts,
+    view: "slash_commands",
+  });
 }
 
 export async function enableGroupCapability(

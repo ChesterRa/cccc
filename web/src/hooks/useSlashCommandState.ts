@@ -28,7 +28,7 @@ export function useSlashCommandState(selectedGroupId: string) {
     const gid = selectedGid;
     if (!gid) return;
     try {
-      const stateResp = await api.fetchGroupCapabilityState(gid, "user", { noCache: true });
+      const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
       setSlashCommands(cacheSlashCommands(gid, buildSlashCommands({
         state: stateResp.ok ? stateResp.result : null,
       })));
@@ -46,7 +46,7 @@ export function useSlashCommandState(selectedGroupId: string) {
     queueMicrotask(() => {
       if (!cancelled) setSlashCommands(cachedSlashCommands(gid));
     });
-    void api.fetchGroupCapabilityState(gid, "user").then((stateResp) => {
+    void api.fetchSlashCommandCapabilityState(gid, "user").then((stateResp) => {
       if (cancelled) return;
       setSlashCommands(cacheSlashCommands(gid, buildSlashCommands({
         state: stateResp.ok ? stateResp.result : null,

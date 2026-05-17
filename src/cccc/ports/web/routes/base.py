@@ -1630,7 +1630,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/capabilities/state")
-    async def capability_state(group_id: str, actor_id: str = "user", capability_id: str = "") -> Dict[str, Any]:
+    async def capability_state(group_id: str, actor_id: str = "user", capability_id: str = "", view: str = "") -> Dict[str, Any]:
         """Get caller-effective capability state and visible/dynamic tools for a group."""
         return await ctx.daemon(
             {
@@ -1640,6 +1640,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "by": "user",
                     "actor_id": str(actor_id or "user").strip() or "user",
                     "capability_id": str(capability_id or "").strip(),
+                    "view": str(view or "").strip(),
                 },
             }
         )

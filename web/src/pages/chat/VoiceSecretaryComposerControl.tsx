@@ -26,7 +26,9 @@ import {
   clearVoiceAssistantAskRequests,
   fetchLatestVoiceAssistantMeetingSession,
   fetchVoiceAssistantMeetingSession,
-  fetchAssistant,
+  fetchVoiceAssistantDocumentContent,
+  fetchVoiceAssistantStatus,
+  fetchVoiceAssistantWorkspace,
   saveVoiceAssistantDocument,
   sendVoiceAssistantDocumentInstruction,
   updateVoiceAssistantRecordingLease,
@@ -80,6 +82,7 @@ import {
   upsertLiveVoiceTranscriptItem,
 } from "./voice-secretary/voiceStreamModel";
 import { resolveVoiceServiceReadiness } from "./voice-secretary/voiceServiceReadiness";
+import { documentContentLoadingMatches, documentNeedsContentLoad } from "./voice-secretary/documentContentLoad";
 
 type VoiceSecretaryComposerControlProps = {
   isDark: boolean;
@@ -869,6 +872,7 @@ export function VoiceSecretaryComposerControl({
   const [documentBaseContent, setDocumentBaseContent] = useState("");
   const [documentEditing, setDocumentEditing] = useState(false);
   const [documentRemoteChanged, setDocumentRemoteChanged] = useState(false);
+  const [documentContentLoadingPath, setDocumentContentLoadingPath] = useState("");
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [newDocumentTitleDraft, setNewDocumentTitleDraft] = useState("");
   const [documentInstruction, setDocumentInstruction] = useState("");
@@ -967,6 +971,7 @@ export function VoiceSecretaryComposerControl({
     documentTitleDraft.trim() ||
     t("voiceSecretaryWorkdocTitle", { defaultValue: "Voice Secretary workdoc" });
   const documentHasUnsavedEdits = documentDraft !== documentBaseContent;
+  const documentContentLoading = documentContentLoadingMatches(documentContentLoadingPath, activeDocumentWritePath);
   const assistantEnabled = !!assistant?.enabled;
   const recognitionBackend = String(assistant?.config?.recognition_backend || "browser_asr").trim();
   const rawConfiguredRecognitionLanguage = String(assistant?.config?.recognition_language || "mixed").trim() || "mixed";
@@ -1341,7 +1346,7 @@ export function VoiceSecretaryComposerControl({
     if (!quiet) setLoading(true);
     try {
       const promptRequestId = String(pendingPromptRequestIdRef.current || "").trim();
-      const resp = await fetchAssistant(gid, "voice_secretary", { promptRequestId });
+      const resp = await fetchVoiceAssistantWorkspace(gid, { promptRequestId });
       if (!isCurrentGroup(gid) || seq !== refreshSeq.current) return;
       if (!resp.ok) {
         if (!quiet) showError(resp.error.message);
@@ -1368,7 +1373,7 @@ export function VoiceSecretaryComposerControl({
           setPendingAskRequestId("");
         }
       }
-      const nextDocuments = resp.result.documents || [];
+      let nextDocuments = resp.result.documents || [];
       const previousDocumentSignatures = documentUpdatedSignatureByPathRef.current;
       const nextDocumentSignatures = new Map<string, string>();
       nextDocuments.forEach((document) => {
@@ -1419,10 +1424,26 @@ export function VoiceSecretaryComposerControl({
       const currentViewedPath = String(viewedDocumentPathRef.current || "").trim();
       const currentViewedDocument = findVoiceDocument(nextDocuments, currentViewedPath);
       const serverViewedDocument = findVoiceDocument(nextDocuments, serverViewedPath);
-      const nextActiveDocument = currentViewedDocument || serverViewedDocument || nextDocuments[0] || null;
+      let nextActiveDocument = currentViewedDocument || serverViewedDocument || nextDocuments[0] || null;
       const nextViewedPath = voiceDocumentPath(nextActiveDocument);
       setViewedDocumentPath(nextViewedPath);
       if (nextActiveDocument) {
+        if (nextViewedPath && documentNeedsContentLoad(nextActiveDocument)) {
+          setDocumentContentLoadingPath(nextViewedPath);
+          try {
+            const docResp = await fetchVoiceAssistantDocumentContent(gid, nextViewedPath);
+            if (!isCurrentGroup(gid) || seq !== refreshSeq.current) return;
+            if (docResp.ok && docResp.result.document) {
+              nextActiveDocument = docResp.result.document;
+              nextDocuments = nextDocuments.map((document) => (
+                voiceDocumentMatches(document, nextViewedPath) ? docResp.result.document! : document
+              ));
+              setDocuments(nextDocuments);
+            }
+          } finally {
+            if (isCurrentGroup(gid) && seq === refreshSeq.current) setDocumentContentLoadingPath("");
+          }
+        }
         const serverTitle = String(nextActiveDocument.title || "");
         const serverContent = String(nextActiveDocument.content || "");
         const localDirty = documentDraftRef.current !== documentBaseContentRef.current;
@@ -1543,7 +1564,7 @@ export function VoiceSecretaryComposerControl({
       const requestId = String(pendingPromptRequestIdRef.current || pendingPromptRequestId || "").trim();
       const gid = String(selectedGroupId || "").trim();
       if (!gid || !requestId || !isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current)) return;
-      void fetchAssistant(gid, "voice_secretary", { promptRequestId: requestId }).then((resp) => {
+      void fetchVoiceAssistantStatus(gid, { promptRequestId: requestId }).then((resp) => {
         if (!isCurrentGroup(gid)) return;
         if (!resp.ok) return;
         const promptDraft = resp.result.prompt_draft || null;
@@ -2747,7 +2768,7 @@ export function VoiceSecretaryComposerControl({
     const shouldRefreshReadiness = gid
       && Date.now() - serviceReadinessCheckedAtRef.current > VOICE_SERVICE_READINESS_RECHECK_MS;
     if (shouldBlockForReadiness) {
-      const resp = await fetchAssistant(gid, "voice_secretary");
+      const resp = await fetchVoiceAssistantStatus(gid);
       if (!isCurrentGroup(gid)) return;
       if (resp.ok) {
         serviceReadinessCheckedAtRef.current = Date.now();
@@ -3504,7 +3525,24 @@ export function VoiceSecretaryComposerControl({
       if (!confirmed) return;
     }
     setViewedDocumentPath(nextPath);
-    loadDocumentDraft(document);
+    let nextDocument = document;
+    if (documentNeedsContentLoad(document)) {
+      const gid = String(selectedGroupId || "").trim();
+      setDocumentContentLoadingPath(nextPath);
+      try {
+        const resp = gid ? await fetchVoiceAssistantDocumentContent(gid, nextPath) : null;
+        if (!isCurrentGroup(gid)) return;
+        if (resp?.ok && resp.result.document) {
+          nextDocument = resp.result.document;
+          setDocuments((prev) => prev.map((item) => (
+            voiceDocumentMatches(item, nextPath) ? nextDocument : item
+          )));
+        }
+      } finally {
+        if (isCurrentGroup(gid)) setDocumentContentLoadingPath("");
+      }
+    }
+    loadDocumentDraft(nextDocument);
     setDocumentEditing(false);
     setCreatingDocument(false);
     setNewDocumentTitleDraft("");
@@ -3512,7 +3550,9 @@ export function VoiceSecretaryComposerControl({
     activeDocumentWritePath,
     viewedDocumentPath,
     documentHasUnsavedEdits,
+    isCurrentGroup,
     loadDocumentDraft,
+    selectedGroupId,
     t,
   ]);
 
@@ -4355,6 +4395,7 @@ export function VoiceSecretaryComposerControl({
               documentDraft={documentDraft}
               documentEditing={documentEditing}
               documentHasUnsavedEdits={documentHasUnsavedEdits}
+              documentLoading={documentContentLoading}
               documentRemoteChanged={documentRemoteChanged}
               isDark={isDark}
               recording={recording}

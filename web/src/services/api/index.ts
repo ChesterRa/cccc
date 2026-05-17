@@ -1,5 +1,6 @@
 export * from "./base";
 export * from "./groups";
+export * from "./voiceSecretary";
 export * from "./actors";
 export * from "./context";
 export * from "./system";

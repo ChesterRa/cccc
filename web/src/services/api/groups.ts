@@ -540,19 +540,41 @@ export async function fetchAssistantState(groupId: string): Promise<ApiResponse<
 export async function fetchAssistant(
   groupId: string,
   assistantId: string,
-  opts?: { promptRequestId?: string },
+  opts?: { promptRequestId?: string; view?: string },
 ): Promise<ApiResponse<AssistantStateResult>> {
   const gid = String(groupId || "").trim();
   const aid = String(assistantId || "").trim();
   const params = new URLSearchParams();
   const promptRequestId = String(opts?.promptRequestId || "").trim();
   if (promptRequestId) params.set("prompt_request_id", promptRequestId);
+  const view = String(opts?.view || "").trim();
+  if (view) params.set("view", view);
   const query = params.toString();
   const resp = await apiJson<unknown>(
     `/api/v1/groups/${encodeURIComponent(gid)}/assistants/${encodeURIComponent(aid)}${query ? `?${query}` : ""}`,
   );
   if (!resp.ok) return resp as ApiResponse<AssistantStateResult>;
   return { ok: true, result: normalizeAssistantStateResult(gid, resp.result) };
+}
+
+export async function fetchVoiceAssistantStatus(
+  groupId: string,
+  opts?: { promptRequestId?: string },
+): Promise<ApiResponse<AssistantStateResult>> {
+  return fetchAssistant(groupId, "voice_secretary", {
+    promptRequestId: opts?.promptRequestId,
+    view: "voice_status",
+  });
+}
+
+export async function fetchVoiceAssistantWorkspace(
+  groupId: string,
+  opts?: { promptRequestId?: string },
+): Promise<ApiResponse<AssistantStateResult>> {
+  return fetchAssistant(groupId, "voice_secretary", {
+    promptRequestId: opts?.promptRequestId,
+    view: "voice_workspace",
+  });
 }
 
 export async function updateAssistantSettings(

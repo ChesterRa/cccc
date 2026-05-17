@@ -2140,7 +2140,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "assistant_state", "args": {"group_id": group_id}})
 
     @group_router.get("/assistants/{assistant_id}")
-    async def group_assistant_get(group_id: str, assistant_id: str, prompt_request_id: str = "") -> Dict[str, Any]:
+    async def group_assistant_get(
+        group_id: str,
+        assistant_id: str,
+        prompt_request_id: str = "",
+        view: str = "",
+    ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
                 "op": "assistant_state",
@@ -2148,6 +2153,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "group_id": group_id,
                     "assistant_id": str(assistant_id or "").strip(),
                     "prompt_request_id": str(prompt_request_id or "").strip(),
+                    "view": str(view or "").strip(),
                 },
             }
         )
@@ -2909,13 +2915,24 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/assistants/voice_secretary/documents")
-    async def group_voice_secretary_documents_get(group_id: str, include_archived: bool = False) -> Dict[str, Any]:
+    async def group_voice_secretary_documents_get(
+        group_id: str,
+        include_archived: bool = False,
+        include_content: bool = True,
+        include_documents_by_id: bool = True,
+        include_documents_by_path: bool = True,
+        document_path: str = "",
+    ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
                 "op": "assistant_voice_document_list",
                 "args": {
                     "group_id": group_id,
                     "include_archived": bool(include_archived),
+                    "include_content": bool(include_content),
+                    "include_documents_by_id": bool(include_documents_by_id),
+                    "include_documents_by_path": bool(include_documents_by_path),
+                    "document_path": str(document_path or "").strip(),
                 },
             }
         )

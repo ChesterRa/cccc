@@ -16,6 +16,7 @@ type VoiceSecretaryWorkspacePanelProps = {
   documentDraft: string;
   documentEditing: boolean;
   documentHasUnsavedEdits: boolean;
+  documentLoading: boolean;
   documentRemoteChanged: boolean;
   isDark: boolean;
   recording: boolean;
@@ -44,6 +45,7 @@ export function VoiceSecretaryWorkspacePanel({
   documentDraft,
   documentEditing,
   documentHasUnsavedEdits,
+  documentLoading,
   documentRemoteChanged,
   isDark,
   recording,
@@ -171,7 +173,7 @@ export function VoiceSecretaryWorkspacePanel({
                 isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
               )}
               onClick={onLoadLatestDocument}
-              disabled={!activeDocumentPath}
+              disabled={!activeDocumentPath || documentLoading}
               title={t("voiceSecretaryLoadLatestDocumentHint", {
                 defaultValue: "Load the latest document from the daemon. Unsaved local edits in this panel will be replaced.",
               })}
@@ -187,7 +189,7 @@ export function VoiceSecretaryWorkspacePanel({
                 isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
               )}
               onClick={onSaveDocument}
-              disabled={!!actionBusy}
+              disabled={!!actionBusy || documentLoading}
             >
               {actionBusy === "save_doc"
                 ? t("voiceSecretarySavingDocument", { defaultValue: "Saving..." })
@@ -199,7 +201,7 @@ export function VoiceSecretaryWorkspacePanel({
               <button
                 type="button"
                 onClick={onDownloadDocument}
-                disabled={!activeDocumentPath}
+                disabled={!activeDocumentPath || documentLoading}
                 className={classNames(
                   "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
                   isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
@@ -210,8 +212,9 @@ export function VoiceSecretaryWorkspacePanel({
               <button
                 type="button"
                 onClick={onToggleDocumentEditing}
+                disabled={documentLoading}
                 className={classNames(
-                  "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
+                  "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
                   isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
                 )}
               >
@@ -254,6 +257,8 @@ export function VoiceSecretaryWorkspacePanel({
             defaultValue: "Transcript and Voice Secretary edits will appear here.",
           })}
           isDark={isDark}
+          loading={documentLoading}
+          loadingLabel={t("voiceSecretaryDocumentLoading", { defaultValue: "Loading document content..." })}
           minHeightClassName="min-h-[280px] lg:min-h-0"
           onEditValueChange={onEditDocumentChange}
         />

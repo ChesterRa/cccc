@@ -3564,6 +3564,55 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_capability_state_slash_view_omits_capsule_text(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "scope": "session",
+                    "capability_id": "skill:cccc:install",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            with patch(
+                "cccc.daemon.ops.capability_ops._search._render_source_states",
+                side_effect=AssertionError("slash command state must not render full source states"),
+            ):
+                state_resp, _ = self._call(
+                    "capability_state",
+                    {"group_id": gid, "actor_id": "peer-1", "by": "peer-1", "view": "slash_commands"},
+                )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            self.assertEqual(str(state.get("view") or ""), "slash_commands")
+            active_capsule_skills = (
+                state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            )
+            install_row = next(
+                (
+                    item
+                    for item in active_capsule_skills
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "skill:cccc:install"
+                ),
+                {},
+            )
+            self.assertEqual(str(install_row.get("name") or ""), "install")
+            self.assertIn("capsule_preview", install_row)
+            self.assertNotIn("capsule_text", install_row)
+            self.assertNotIn("visible_tools", state)
+            self.assertNotIn("external_binding_states", state)
+        finally:
+            cleanup()
+
     def test_capability_overview_includes_recent_success_entry(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 

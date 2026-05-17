@@ -7,6 +7,8 @@ type MarkdownDocumentSurfaceProps = {
   content: string;
   error?: string;
   emptyLabel?: string;
+  loading?: boolean;
+  loadingLabel?: string;
   className?: string;
   previewClassName?: string;
   minHeightClassName?: string;
@@ -22,6 +24,8 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   content,
   error,
   emptyLabel,
+  loading,
+  loadingLabel,
   className,
   previewClassName,
   minHeightClassName = "min-h-[180px]",
@@ -46,6 +50,31 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
     >
       {error ? (
         <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{error}</div>
+      ) : loading ? (
+        <div
+          className={classNames(
+            "flex h-full min-h-[220px] flex-col justify-center gap-4 px-3",
+            isDark ? "text-slate-400" : "text-gray-500",
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="space-y-3">
+            {[0, 1, 2, 3].map((row) => (
+              <div
+                key={row}
+                className={classNames(
+                  "h-3 animate-pulse rounded-full",
+                  row === 0 ? "w-5/6" : row === 1 ? "w-2/3" : row === 2 ? "w-3/4" : "w-1/2",
+                  isDark ? "bg-white/10" : "bg-black/10",
+                )}
+              />
+            ))}
+          </div>
+          <div className="text-center text-sm font-medium">
+            {loadingLabel || "Loading document..."}
+          </div>
+        </div>
       ) : editing ? (
         <textarea
           value={value}

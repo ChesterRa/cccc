@@ -41,6 +41,7 @@ from .voice_secretary_runtime_ops import (
     sync_voice_secretary_actor_from_foreman,
     voice_secretary_runtime_changed,
 )
+from .assistant_state_views import assistant_state_view, is_voice_status_view, is_voice_workspace_view
 from .voice_prompt_refine import build_voice_prompt_refine_input_text
 from .voice_models import (
     VoiceModelError,
@@ -3262,6 +3263,7 @@ def _infer_voice_transcript_intent(text: Any, trigger: Optional[Dict[str, Any]] 
 def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     assistant_id = _normalize_assistant_id(args.get("assistant_id"))
+    view = str(args.get("view") or "").strip()
     prompt_request_id = str(args.get("prompt_request_id") or args.get("request_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -3275,7 +3277,21 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
         if assistant_id not in _ASSISTANT_DEFAULTS:
             return _error("assistant_not_found", f"assistant not found: {assistant_id}")
         assistant = _effective_assistant(group, assistant_id, runtime_state=runtime_state)
-        documents = _retained_voice_documents(group) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        compact_voice_status = assistant_id == ASSISTANT_ID_VOICE_SECRETARY and is_voice_status_view(view)
+        skip_voice_models = assistant_id == ASSISTANT_ID_VOICE_SECRETARY and (
+            compact_voice_status or is_voice_workspace_view(view)
+        )
+        include_voice_document_content = not (
+            assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            and (compact_voice_status or is_voice_workspace_view(view))
+        )
+        documents = (
+            []
+            if compact_voice_status
+            else _retained_voice_documents(group, include_content=include_voice_document_content)
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else []
+        )
         document_index = _load_voice_documents_index(group) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
         active_document_id, active_record = (
             _active_voice_document_from_index(group, document_index)
@@ -3290,7 +3306,13 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             else {}
         )
         ask_requests = _voice_ask_requests_public(runtime_state) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
-        service_models = list_voice_models() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
+        service_models = (
+            []
+            if skip_voice_models
+            else list_voice_models()
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else []
+        )
         service_runtimes = list_voice_runtime_statuses() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
         service_runtime = get_voice_runtime_status() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
         recording_lease = (
@@ -3298,31 +3320,29 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
             else {}
         )
-        return DaemonResponse(
-            ok=True,
-            result={
-                "group_id": group.group_id,
-                "assistant": assistant,
-                "documents": documents,
-                "documents_by_id": {str(item.get("document_id")): item for item in documents},
-                "documents_by_path": {str(item.get("document_path")): item for item in documents if str(item.get("document_path") or "").strip()},
-                "active_document_id": active_document_id,
-                "capture_target_document_id": active_document_id,
-                "active_document_path": active_document_path,
-                "capture_target_document_path": active_document_path,
-                "new_input_available": int(input_state.get("latest_seq") or 0) > _voice_input_delivery_cursor(input_state),
-                "input_timing": _voice_input_timing_public(input_state),
-                "prompt_draft": prompt_draft,
-                "ask_requests": ask_requests,
-                "latest_ask_request": ask_requests[0] if ask_requests else {},
-                "service_models": service_models,
-                "service_models_by_id": {str(item.get("model_id")): item for item in service_models},
-                "service_runtime": service_runtime,
-                "service_runtimes": service_runtimes,
-                "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
-                "recording_lease": recording_lease,
-            },
-        )
+        result = {
+            "group_id": group.group_id,
+            "assistant": assistant,
+            "documents": documents,
+            "documents_by_id": {str(item.get("document_id")): item for item in documents},
+            "documents_by_path": {str(item.get("document_path")): item for item in documents if str(item.get("document_path") or "").strip()},
+            "active_document_id": active_document_id,
+            "capture_target_document_id": active_document_id,
+            "active_document_path": active_document_path,
+            "capture_target_document_path": active_document_path,
+            "new_input_available": int(input_state.get("latest_seq") or 0) > _voice_input_delivery_cursor(input_state),
+            "input_timing": _voice_input_timing_public(input_state),
+            "prompt_draft": prompt_draft,
+            "ask_requests": ask_requests,
+            "latest_ask_request": ask_requests[0] if ask_requests else {},
+            "service_models": service_models,
+            "service_models_by_id": {str(item.get("model_id")): item for item in service_models},
+            "service_runtime": service_runtime,
+            "service_runtimes": service_runtimes,
+            "service_runtimes_by_id": {str(item.get("runtime_id")): item for item in service_runtimes},
+            "recording_lease": recording_lease,
+        }
+        return DaemonResponse(ok=True, result=assistant_state_view(result, view))
     assistants = [
         _effective_assistant(group, item, runtime_state=runtime_state)
         for item in sorted(_ASSISTANT_DEFAULTS.keys())

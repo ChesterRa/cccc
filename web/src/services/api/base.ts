@@ -239,12 +239,13 @@ export function contextRequestKey(groupId: string, detail: ContextDetailLevel): 
   return `context:${String(groupId || "").trim()}:${detail}`;
 }
 
-export function capabilityStateRequestKey(groupId: string, actorId: string, capabilityId: string = ""): string {
+export function capabilityStateRequestKey(groupId: string, actorId: string, capabilityId: string = "", view: string = ""): string {
   return [
     "capability-state",
     String(groupId || "").trim(),
     String(actorId || "user").trim() || "user",
     String(capabilityId || "").trim(),
+    String(view || "").trim(),
   ].join(":");
 }
 
