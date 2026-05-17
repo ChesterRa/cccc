@@ -1,7 +1,7 @@
 // useChatTab - Encapsulates ChatTab business logic and state.
 // Reduces prop drilling by providing state from stores and computed values directly.
 
-import { useEffect, useMemo, useCallback, useRef, useState } from "react";
+import { useMemo, useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useGroupStore,
@@ -956,7 +956,7 @@ export function useChatTab({
     t,
   });
 
-  const { slashCommands, refreshSlashCommands, tryExecuteSlashCommand } = useSlashCommands({
+  const { slashCommands, tryExecuteSlashCommand } = useSlashCommands({
     selectedGroupId,
     clearComposer,
     restoreComposerText: setComposerText,
@@ -1058,20 +1058,6 @@ export function useChatTab({
     () => events.some(isFormalChatMessageEvent) || outboxEntries.length > 0,
     [events, outboxEntries]
   );
-  const latestFormalChatEventKey = useMemo(() => {
-    for (let idx = events.length - 1; idx >= 0; idx -= 1) {
-      const event = events[idx];
-      if (!isFormalChatMessageEvent(event)) continue;
-      return `${String(event.id || "")}:${String(event.ts || "")}:${String(event.by || "")}`;
-    }
-    return "";
-  }, [events]);
-
-  useEffect(() => {
-    if (!latestFormalChatEventKey) return;
-    void refreshSlashCommands();
-  }, [latestFormalChatEventKey, refreshSlashCommands]);
-
   const chatInitialScrollAnchorId = useMemo(() => {
     if (inChatWindow) return undefined;
     const snapshot = scrollSnapshot;

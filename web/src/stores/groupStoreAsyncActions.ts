@@ -223,7 +223,7 @@ export function createGroupStoreAsyncActions(
       if (refreshActorsInFlight.has(inFlightKey)) return;
       refreshActorsInFlight.add(inFlightKey);
       try {
-        const resp = await api.fetchActors(gid, false, { noCache: true }, { includeInternal: true });
+        const resp = await api.fetchActors(gid, false, undefined, { includeInternal: true });
         if (!resp.ok) return;
         if (!isLatestGroupRequestEpoch(internalActorsRequestEpochByGroup, gid, epoch)) return;
         const nextActors = splitFetchedActors(resp.result.actors || []).internalRuntimeActors;
