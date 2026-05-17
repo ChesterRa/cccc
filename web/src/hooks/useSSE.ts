@@ -37,6 +37,7 @@ import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/p
 import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
+import { createSseConnectionRegistry } from "./sseConnectionRegistry";
 import i18n from "../i18n";
 
 // Re-export for backward compatibility
@@ -214,6 +215,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const headlessEventSourceRef = useRef<EventSource | null>(null);
+  const sseRegistryRef = useRef(createSseConnectionRegistry<EventSource>());
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
   const reconnectDelayRef = useRef<number>(1000);
@@ -823,27 +825,36 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     flushPendingHeadlessMessages(groupId);
   }
 
+  function closeLedgerStream() {
+    sseRegistryRef.current.close("ledger");
+    eventSourceRef.current = null;
+  }
+
+  function closeHeadlessStream() {
+    sseRegistryRef.current.close("headless");
+    headlessEventSourceRef.current = null;
+  }
+
   function connectHeadlessStream(groupId: string, options?: { replay?: boolean }) {
     if (headlessReconnectTimerRef.current) {
       window.clearTimeout(headlessReconnectTimerRef.current);
       headlessReconnectTimerRef.current = null;
     }
-    if (headlessEventSourceRef.current) {
-      headlessEventSourceRef.current.close();
-      headlessEventSourceRef.current = null;
-    }
+    closeHeadlessStream();
 
     const replay = options?.replay !== false;
     const params = new URLSearchParams();
     if (!replay) params.set("replay", "0");
     const headlessPath = `/api/v1/groups/${encodeURIComponent(groupId)}/headless/stream${params.toString() ? `?${params.toString()}` : ""}`;
     const headlessEs = new EventSource(api.withAuthToken(headlessPath));
+    const headlessToken = sseRegistryRef.current.set("headless", groupId, headlessEs);
     headlessEs.onopen = () => {
+      if (!sseRegistryRef.current.isCurrent(headlessToken)) return;
       headlessReconnectDelayRef.current = 1000;
     };
     headlessEs.onerror = () => {
-      headlessEs.close();
-      headlessEventSourceRef.current = null;
+      if (!sseRegistryRef.current.isCurrent(headlessToken)) return;
+      closeHeadlessStream();
       if (headlessReconnectTimerRef.current) {
         window.clearTimeout(headlessReconnectTimerRef.current);
       }
@@ -857,6 +868,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       headlessReconnectDelayRef.current = Math.min(delay * 2, 30000);
     };
     headlessEs.addEventListener("headless", (e) => {
+      if (!sseRegistryRef.current.isCurrent(headlessToken)) return;
       const msg = e as MessageEvent;
       try {
         handleHeadlessEvent(groupId, JSON.parse(String(msg.data || "{}")) as HeadlessStreamEvent);
@@ -896,14 +908,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(headlessReconnectTimerRef.current);
       headlessReconnectTimerRef.current = null;
     }
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    if (headlessEventSourceRef.current) {
-      headlessEventSourceRef.current.close();
-      headlessEventSourceRef.current = null;
-    }
+    closeLedgerStream();
+    closeHeadlessStream();
 
     if (!shouldStartGroupStreams(document.hidden)) {
       needsVisibilityCatchupRef.current = true;
@@ -913,10 +919,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
     setSSEStatus("connecting");
     const es = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`));
+    const ledgerToken = sseRegistryRef.current.set("ledger", groupId, es);
 
     const isReconnect = hasConnectedOnceRef.current || needsVisibilityCatchupRef.current;
 
     es.onopen = () => {
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       reconnectDelayRef.current = 1000;
       setSSEStatus("connected");
       hasConnectedOnceRef.current = true;
@@ -930,8 +938,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     };
 
     es.onerror = () => {
-      es.close();
-      eventSourceRef.current = null;
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      closeLedgerStream();
       setSSEStatus("disconnected");
 
       const delay = reconnectDelayRef.current;
@@ -946,6 +954,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     };
 
     es.addEventListener("ledger", (e) => {
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       const msg = e as MessageEvent;
       try {
         const ev = JSON.parse(String(msg.data || "{}"));
@@ -1142,14 +1151,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(headlessReconnectTimerRef.current);
       headlessReconnectTimerRef.current = null;
     }
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    if (headlessEventSourceRef.current) {
-      headlessEventSourceRef.current.close();
-      headlessEventSourceRef.current = null;
-    }
+    closeLedgerStream();
+    closeHeadlessStream();
     const flushBeforeClearing = options?.resetConnected === false;
     if (pendingHeadlessMessageFlushRef.current != null) {
       window.cancelAnimationFrame(pendingHeadlessMessageFlushRef.current);

@@ -14,7 +14,16 @@ import {
 import { getEffectiveComposerDestGroupId, isComposerGroupSettled } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
-import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment, Task } from "../types";
+import type {
+  Actor,
+  LedgerEvent,
+  ChatMessageData,
+  MessageRef,
+  OptimisticAttachment,
+  PresentationMessageRef,
+  ReplyTarget,
+  Task,
+} from "../types";
 import * as api from "../services/api";
 import { buildReplyComposerState } from "../utils/chatReply";
 import {
@@ -640,6 +649,64 @@ interface UseChatTabOptions {
 
 type ChatEmptyState = "ready" | "hydrating" | "business_empty";
 
+export type FailedSendComposerSnapshot = {
+  originGroupId: string;
+  composerText: string;
+  composerFiles: File[];
+  toText: string;
+  replyTarget: ReplyTarget;
+  quotedPresentationRef: PresentationMessageRef | null;
+  priority: "normal" | "attention";
+  replyRequired: boolean;
+};
+
+type FailedSendComposerRestoreActions = Pick<
+  ReturnType<typeof useComposerStore.getState>,
+  | "setComposerText"
+  | "setComposerFiles"
+  | "setToText"
+  | "setReplyTarget"
+  | "setQuotedPresentationRef"
+  | "setPriority"
+  | "setReplyRequired"
+  | "upsertDraft"
+>;
+
+export function restoreFailedSendComposerState(
+  snapshot: FailedSendComposerSnapshot,
+  actions?: FailedSendComposerRestoreActions,
+): void {
+  const originGroupId = String(snapshot.originGroupId || "").trim();
+  if (!originGroupId) return;
+
+  const composerState = useComposerStore.getState();
+  const restoreActions = actions || composerState;
+  const currentSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
+  const currentActiveGroupId = String(composerState.activeGroupId || "").trim();
+  const stillOnOriginGroup = currentSelectedGroupId === originGroupId && currentActiveGroupId === originGroupId;
+
+  if (stillOnOriginGroup) {
+    restoreActions.setComposerText(snapshot.composerText);
+    restoreActions.setComposerFiles(snapshot.composerFiles);
+    restoreActions.setReplyTarget(snapshot.replyTarget);
+    restoreActions.setQuotedPresentationRef(snapshot.quotedPresentationRef);
+    restoreActions.setPriority(snapshot.priority);
+    restoreActions.setReplyRequired(snapshot.replyRequired);
+    restoreActions.setToText(snapshot.toText);
+    return;
+  }
+
+  restoreActions.upsertDraft(originGroupId, () => ({
+    composerText: snapshot.composerText,
+    composerFiles: snapshot.composerFiles,
+    toText: snapshot.toText,
+    replyTarget: snapshot.replyTarget,
+    quotedPresentationRef: snapshot.quotedPresentationRef,
+    priority: snapshot.priority,
+    replyRequired: snapshot.replyRequired,
+  }));
+}
+
 export type ComposerSendRoutingSnapshot = {
   selectedGroupId: string;
   destGroupId: string;
@@ -754,6 +821,7 @@ export function useChatTab({
     setPriority,
     setReplyRequired,
     setDestGroupId,
+    upsertDraft,
     clearDraft,
     clearComposer,
   } = useComposerStore();
@@ -1148,6 +1216,7 @@ export function useChatTab({
       destGroupId: composerStateSnapshot.destGroupId,
     });
     if (!routingSnapshot.composerGroupSettled) return;
+    const originGroupId = routingSnapshot.selectedGroupId;
 
     const txt = String(composerStateSnapshot.composerText || "").trim();
     const composerFilesSnapshot = composerStateSnapshot.composerFiles.slice();
@@ -1223,13 +1292,28 @@ export function useChatTab({
     };
 
     const restoreComposerState = () => {
-      setComposerText(txt);
-      setComposerFiles(composerFilesSnapshot);
-      setReplyTarget(replyTargetSnapshot);
-      setQuotedPresentationRef(quotedPresentationRefSnapshot);
-      setPriority(prioritySnapshot);
-      setReplyRequired(replyRequiredSnapshot);
-      setToText(toTextSnapshot);
+      restoreFailedSendComposerState(
+        {
+          originGroupId,
+          composerText: txt,
+          composerFiles: composerFilesSnapshot,
+          toText: toTextSnapshot,
+          replyTarget: replyTargetSnapshot,
+          quotedPresentationRef: quotedPresentationRefSnapshot,
+          priority: prioritySnapshot,
+          replyRequired: replyRequiredSnapshot,
+        },
+        {
+          setComposerText,
+          setComposerFiles,
+          setReplyTarget,
+          setQuotedPresentationRef,
+          setPriority,
+          setReplyRequired,
+          setToText,
+          upsertDraft,
+        },
+      );
     };
 
     const applyImmediateComposerFeedback = () => {
@@ -1412,6 +1496,7 @@ export function useChatTab({
     setReplyRequired,
     setToText,
     setDestGroupId,
+    upsertDraft,
     clearDraft,
     closeChatWindow,
     fileInputRef,

@@ -32,9 +32,16 @@ import {
   dedupeStreamingEvents,
   mergeVisibleChatMessages,
   parseComposerRecipientTokens,
+  restoreFailedSendComposerState,
   sortChatMessages,
   shouldRestoreDetachedScrollSnapshot,
 } from "../../src/hooks/useChatTab";
+import {
+  useComposerStore,
+} from "../../src/stores/useComposerStore";
+import {
+  useGroupStore,
+} from "../../src/stores/useGroupStore";
 import {
   formatSendMessageError,
   getGroupSendBlockedMessage,
@@ -47,6 +54,23 @@ import type { LedgerEvent } from "../../src/types";
 void localStorageMock;
 
 const t = (key: string, options?: Record<string, unknown>) => String(options?.defaultValue || key);
+
+const resetComposerAndGroupSelection = () => {
+  useGroupStore.setState({ selectedGroupId: "" });
+  useComposerStore.setState({
+    activeGroupId: "",
+    composerText: "",
+    composerFiles: [],
+    toText: "",
+    replyTarget: null,
+    quotedPresentationRef: null,
+    priority: "normal",
+    replyRequired: false,
+    destGroupId: "",
+    drafts: {},
+    normalToTextByGroup: {},
+  });
+};
 
 function makeStreamingEvent({
   id,
@@ -209,6 +233,74 @@ describe("buildComposerSendRoutingSnapshot", () => {
       destGroupId: "g-dst",
       composerGroupSettled: true,
       isCrossGroup: true,
+    });
+  });
+});
+
+describe("restoreFailedSendComposerState", () => {
+  it("restores the current composer when the failed send still belongs to the selected group", () => {
+    resetComposerAndGroupSelection();
+    useGroupStore.setState({ selectedGroupId: "g-a" });
+    useComposerStore.getState().switchGroup(null, "g-a");
+    useComposerStore.getState().setComposerText("");
+
+    restoreFailedSendComposerState({
+      originGroupId: "g-a",
+      composerText: "failed message",
+      composerFiles: [],
+      toText: "@foreman",
+      replyTarget: { eventId: "evt-1", by: "peer-1", text: "prior" },
+      quotedPresentationRef: null,
+      priority: "attention",
+      replyRequired: true,
+    });
+
+    const state = useComposerStore.getState();
+    expect(state.composerText).toBe("failed message");
+    expect(state.activeGroupId).toBe("g-a");
+    expect(state.toText).toBe("@foreman");
+    expect(state.replyTarget).toMatchObject({ eventId: "evt-1" });
+    expect(state.priority).toBe("attention");
+    expect(state.replyRequired).toBe(true);
+  });
+
+  it("stores the failed send as the origin group draft when selection moved away", () => {
+    resetComposerAndGroupSelection();
+    const file = new File(["hello"], "hello.txt", { type: "text/plain" });
+    useGroupStore.setState({ selectedGroupId: "g-b" });
+    useComposerStore.getState().switchGroup(null, "g-b");
+    useComposerStore.getState().setComposerText("current b text");
+
+    restoreFailedSendComposerState({
+      originGroupId: "g-a",
+      composerText: "failed a message",
+      composerFiles: [file],
+      toText: "@foreman",
+      replyTarget: { eventId: "evt-a", by: "peer-a", text: "prior a" },
+      quotedPresentationRef: {
+        kind: "presentation_ref",
+        slot_id: "slot-1",
+        title: "Deck",
+      },
+      priority: "attention",
+      replyRequired: true,
+    });
+
+    const state = useComposerStore.getState();
+    expect(state.activeGroupId).toBe("g-b");
+    expect(state.composerText).toBe("current b text");
+    expect(state.drafts["g-a"]).toMatchObject({
+      composerText: "failed a message",
+      composerFiles: [file],
+      toText: "@foreman",
+      replyTarget: { eventId: "evt-a", by: "peer-a", text: "prior a" },
+      quotedPresentationRef: {
+        kind: "presentation_ref",
+        slot_id: "slot-1",
+        title: "Deck",
+      },
+      priority: "attention",
+      replyRequired: true,
     });
   });
 });
