@@ -287,8 +287,6 @@
   "voiceSecretaryActivityFeedCount": "最近 {{count}} 件",
   "voiceSecretaryActivityFeedEmpty": "ライブ文字起こし、待機中の依頼、返信がここに表示されます。",
   "voiceSecretaryTranscriptHeard": "認識済み",
-  "voiceSecretaryDocumentActivityQueued": "待機中",
-  "voiceSecretaryDocumentActivityUpdated": "更新済み",
   "voiceSecretaryClearRequests": "クリア",
   "voiceSecretaryClearingRequests": "クリア中…",
   "voiceSecretaryClearRequestsTitle": "表示中の依頼履歴をクリアします。新しい返信は再び表示されます。",

@@ -110,6 +110,9 @@ function secretsPlaceholderForRuntime(runtime: SupportedRuntime): string {
   if (runtime === "gemini") {
     return 'GOOGLE_API_KEY="..."';
   }
+  if (runtime === "hermes") {
+    return "# Configure Hermes providers, OAuth, and tools in your Hermes profile.";
+  }
   return 'ANTHROPIC_AUTH_TOKEN="..."\nANTHROPIC_BASE_URL="..."';
 }
 

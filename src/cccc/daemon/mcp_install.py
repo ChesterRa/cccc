@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+from ..kernel.hermes_runtime import hermes_runtime_status, prepare_hermes_runtime
 from ..kernel.runtime import get_cccc_mcp_stdio_command
 from ..util.conv import coerce_bool
 from ..util.fs import read_json
@@ -128,6 +129,24 @@ def _home_dir(env: Dict[str, str] | None) -> Path:
     return Path.home()
 
 
+def _cccc_home_dir(env: Dict[str, str] | None) -> Path | None:
+    raw = ""
+    if isinstance(env, dict):
+        raw = str(env.get("CCCC_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return None
+
+
+def _hermes_home_override(env: Dict[str, str] | None) -> Path | None:
+    raw = ""
+    if isinstance(env, dict):
+        raw = str(env.get("HERMES_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return None
+
+
 def _kimi_share_dir(env: Dict[str, str] | None) -> Path:
     raw = ""
     if isinstance(env, dict):
@@ -153,6 +172,8 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
         return ["neovate", "mcp", "add", "-g", "cccc", *cccc_cmd]
     if runtime == "gemini":
         return ["gemini", "mcp", "add", "-s", "user", "cccc", *cccc_cmd]
+    if runtime == "hermes":
+        return ["cccc", "runtime", "hermes", "prepare", "--yes"]
     if runtime == "kimi":
         return ["kimi", "mcp", "add", "--transport", "stdio", "cccc", "--", *cccc_cmd]
     return None
@@ -279,6 +300,15 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
     if runtime == "gemini":
         return _json_mcp_state((_home_dir(env) / ".gemini" / "settings.json",), expected_cmd)
 
+    if runtime == "hermes":
+        status = hermes_runtime_status(
+            home=_cccc_home_dir(env),
+            include_version=False,
+            hermes_home_override=_hermes_home_override(env),
+        )
+        mcp = status.get("mcp") if isinstance(status.get("mcp"), dict) else {}
+        return str(mcp.get("status") or "missing")
+
     if runtime == "kimi":
         return _json_mcp_state((_kimi_share_dir(env) / "mcp.json",), expected_cmd)
 
@@ -304,6 +334,21 @@ def ensure_mcp_installed(
 ) -> bool:
     if runtime not in auto_mcp_runtimes:
         return True
+    if runtime == "hermes":
+        try:
+            state = _runtime_mcp_state(runtime, env=env)
+            if state == "ready":
+                return True
+            result = prepare_hermes_runtime(
+                home=_cccc_home_dir(env),
+                cwd=cwd,
+                auto_enable_tools=True,
+                force_mcp=(state == "stale"),
+                hermes_home_override=_hermes_home_override(env),
+            )
+            return bool(result.get("ok")) and _runtime_mcp_state(runtime, env=env) == "ready"
+        except Exception:
+            return False
     try:
         state = _runtime_mcp_state(runtime, env=env)
         if state == "ready":

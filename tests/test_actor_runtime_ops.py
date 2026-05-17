@@ -6,6 +6,99 @@ from unittest.mock import patch
 
 
 class TestActorRuntimeOps(unittest.TestCase):
+    def test_resolve_launch_spec_uses_user_hermes_home_by_default(self) -> None:
+        import os
+
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        old_home = os.environ.get("CCCC_HOME")
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["CCCC_HOME"] = td
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "hermes-1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "hermes",
+                            "command": ["hermes", "--tui", "--yolo"],
+                            "env": {"A": "1"},
+                        }
+                    ],
+                },
+            )
+            try:
+                spec = resolve_actor_launch_spec(
+                    group,
+                    "hermes-1",
+                    command=[],
+                    env={},
+                    runner="pty",
+                    runtime="hermes",
+                    find_scope_url=lambda _group, _scope_key: td,
+                    effective_runner_kind=lambda runner: runner,
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    supported_runtimes=("hermes",),
+                )
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+
+        self.assertEqual(spec["merged_env"]["A"], "1")
+        self.assertNotIn("HERMES_HOME", spec["merged_env"])
+
+    def test_resolve_launch_spec_preserves_explicit_hermes_profile(self) -> None:
+        import os
+
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        old_home = os.environ.get("CCCC_HOME")
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["CCCC_HOME"] = td
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "hermes-1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "hermes",
+                            "command": ["hermes", "--profile", "other", "--tui", "--yolo"],
+                            "env": {"A": "1"},
+                        }
+                    ],
+                },
+            )
+            try:
+                spec = resolve_actor_launch_spec(
+                    group,
+                    "hermes-1",
+                    command=[],
+                    env={},
+                    runner="pty",
+                    runtime="hermes",
+                    find_scope_url=lambda _group, _scope_key: td,
+                    effective_runner_kind=lambda runner: runner,
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    supported_runtimes=("hermes",),
+                )
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+
+        self.assertEqual(spec["merged_env"]["A"], "1")
+        self.assertNotIn("HERMES_HOME", spec["merged_env"])
+        self.assertEqual(spec["effective_command"], ["hermes", "--profile", "other", "--tui", "--yolo"])
+
     def test_web_model_actor_start_schedules_chatgpt_browser_warmup(self) -> None:
         from cccc.daemon.actors import actor_runtime_ops
 

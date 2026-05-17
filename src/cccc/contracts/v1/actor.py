@@ -21,6 +21,7 @@ AgentRuntime = Literal[
     "codex",
     "droid",
     "gemini",
+    "hermes",
     "kimi",
     "neovate",
     "web_model",

@@ -20,6 +20,7 @@ from .ops.maintenance_ops import try_handle_maintenance_op
 from .ops.diagnostics_ops import try_handle_diagnostics_op
 from .ops.daemon_core_ops import try_handle_daemon_core_op
 from .ops.remote_access_ops import try_handle_remote_access_op
+from .ops.hermes_runtime_ops import try_handle_hermes_runtime_op
 from .messaging.chat_ops import try_handle_chat_op
 from .messaging.system_notify_ops import try_handle_system_notify_op
 from .group.group_state_ops import try_handle_group_state_op
@@ -141,6 +142,10 @@ def dispatch_request(
     )
     if diagnostics_resp is not None:
         return diagnostics_resp, False
+
+    hermes_runtime_resp = try_handle_hermes_runtime_op(op, args)
+    if hermes_runtime_resp is not None:
+        return hermes_runtime_resp, False
 
     group_bootstrap_resp = try_handle_group_bootstrap_op(op, args)
     if group_bootstrap_resp is not None:

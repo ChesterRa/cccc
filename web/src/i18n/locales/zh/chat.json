@@ -287,8 +287,6 @@
   "voiceSecretaryActivityFeedCount": "最近 {{count}} 条",
   "voiceSecretaryActivityFeedEmpty": "实时转写、已排队请求和回复会显示在这里。",
   "voiceSecretaryTranscriptHeard": "已识别",
-  "voiceSecretaryDocumentActivityQueued": "已排队",
-  "voiceSecretaryDocumentActivityUpdated": "已更新",
   "voiceSecretaryClearRequests": "清空",
   "voiceSecretaryClearingRequests": "清空中…",
   "voiceSecretaryClearRequestsTitle": "清空当前请求列表；新的回复仍会显示。",

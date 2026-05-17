@@ -287,8 +287,6 @@
   "voiceSecretaryActivityFeedCount": "{{count}} recent",
   "voiceSecretaryActivityFeedEmpty": "Live transcript, queued requests, and replies will appear here.",
   "voiceSecretaryTranscriptHeard": "Heard",
-  "voiceSecretaryDocumentActivityQueued": "Queued",
-  "voiceSecretaryDocumentActivityUpdated": "Updated",
   "voiceSecretaryClearRequests": "Clear",
   "voiceSecretaryClearingRequests": "Clearing...",
   "voiceSecretaryClearRequestsTitle": "Clear visible request history. New replies can still appear.",

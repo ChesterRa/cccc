@@ -22,6 +22,15 @@ class TestMcpInstall(unittest.TestCase):
                 self.assertTrue(ok)
                 mock_run.assert_not_called()
 
+    def test_build_mcp_add_command_hermes_uses_safe_prepare_wrapper(self) -> None:
+        from cccc.daemon.mcp_install import build_mcp_add_command
+
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertEqual(
+                build_mcp_add_command("hermes"),
+                ["cccc", "runtime", "hermes", "prepare", "--yes"],
+            )
+
     def test_is_mcp_installed_kimi_reads_config_and_validates_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
@@ -234,6 +243,61 @@ class TestMcpInstall(unittest.TestCase):
                         timeout=30,
                         env={**os.environ, **env},
                     )
+
+    def test_ensure_mcp_installed_hermes_prepares_default_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td) / "repo"
+            cwd.mkdir()
+            cccc_home = Path(td) / "cccc-home"
+            env = {"CCCC_HOME": str(cccc_home)}
+            calls = []
+
+            def fake_state(runtime, *, env=None):
+                calls.append(("state", runtime, dict(env or {})))
+                return "missing" if len(calls) == 1 else "ready"
+
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=fake_state), patch(
+                "cccc.daemon.mcp_install.prepare_hermes_runtime",
+                return_value={"ok": True},
+            ) as prepare:
+                ok = ensure_mcp_installed("hermes", cwd, auto_mcp_runtimes=("hermes",), env=env)
+
+            self.assertTrue(ok)
+            prepare.assert_called_once_with(
+                home=cccc_home.resolve(),
+                cwd=cwd,
+                auto_enable_tools=True,
+                force_mcp=False,
+                hermes_home_override=None,
+            )
+
+    def test_ensure_mcp_installed_hermes_respects_explicit_hermes_home(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td) / "repo"
+            cwd.mkdir()
+            cccc_home = Path(td) / "cccc-home"
+            hermes_home = Path(td) / "hermes-home"
+            env = {"CCCC_HOME": str(cccc_home), "HERMES_HOME": str(hermes_home)}
+            calls = []
+
+            def fake_state(runtime, *, env=None):
+                calls.append(("state", runtime, dict(env or {})))
+                return "missing" if len(calls) == 1 else "ready"
+
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=fake_state), patch(
+                "cccc.daemon.mcp_install.prepare_hermes_runtime",
+                return_value={"ok": True},
+            ) as prepare:
+                ok = ensure_mcp_installed("hermes", cwd, auto_mcp_runtimes=("hermes",), env=env)
+
+            self.assertTrue(ok)
+            prepare.assert_called_once_with(
+                home=cccc_home.resolve(),
+                cwd=cwd,
+                auto_enable_tools=True,
+                force_mcp=False,
+                hermes_home_override=hermes_home,
+            )
 
     def test_ensure_mcp_installed_returns_false_when_initial_probe_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as td:

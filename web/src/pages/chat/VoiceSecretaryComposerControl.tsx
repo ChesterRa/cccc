@@ -58,7 +58,6 @@ import {
   hasFinalAskReply,
   isActiveAskFeedbackStatus,
   nextUncommittedServiceTranscriptText,
-  stripUncertainSpeakerPrefix,
   voiceReplyDismissKey,
 } from "./voice-secretary/voiceComposerUtils";
 import {
@@ -162,33 +161,9 @@ type VoiceCaptureChannelMessage = {
   sentAt?: number;
 };
 
-type VoiceDocumentActivityStatus = "queued" | "updated";
-
-type VoiceDocumentActivityItem = {
-  id: string;
-  status: VoiceDocumentActivityStatus;
-  documentTitle?: string;
-  documentPath?: string;
-  preview?: string;
-  mode: VoiceSecretaryCaptureMode;
-  createdAt: number;
-};
-
 type VoiceActivityFeedItem =
   | { kind: "ask"; id: string; sortAt: number; item: AssistantVoiceAskFeedback }
-  | { kind: "document"; id: string; sortAt: number; item: VoiceDocumentActivityItem }
   | { kind: "prompt"; id: string; sortAt: number; status: "waiting" | "ready"; text: string };
-
-type AssistantVoiceDocumentLedgerData = {
-  action?: unknown;
-  document_path?: unknown;
-  input_kind?: unknown;
-  input_preview?: unknown;
-  request_id?: unknown;
-  status?: unknown;
-  title?: unknown;
-  workspace_path?: unknown;
-};
 
 type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
 type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue;
@@ -214,7 +189,6 @@ const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed
 const VOICE_PROMPT_REQUEST_STALE_MS = 90_000;
 const VOICE_PROMPT_DRAFT_POLL_MS = 2_000;
 const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 60_000;
-const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 60_000;
 const VOICE_ACTIVITY_FEED_LIMIT = 10;
 const VOICE_SERVICE_READINESS_RECHECK_MS = 30_000;
 const STREAMING_ASR_RUNTIME_ID = "sherpa_onnx_streaming";
@@ -806,7 +780,6 @@ export function VoiceSecretaryComposerControl({
   const voiceStreamItemIdRef = useRef("");
   const liveTranscriptPreviewRef = useRef<VoiceTranscriptPreview | null>(null);
   const archivedDocumentIdsRef = useRef<Set<string>>(new Set());
-  const documentUpdatedSignatureByPathRef = useRef<Map<string, string>>(new Map());
   const selectedGroupIdRef = useRef("");
   selectedGroupIdRef.current = String(selectedGroupId || "").trim();
   const isCurrentGroup = useCallback((gid: string) => String(gid || "").trim() === selectedGroupIdRef.current, []);
@@ -892,7 +865,6 @@ export function VoiceSecretaryComposerControl({
   const [liveTranscriptPreview, setLiveTranscriptPreview] = useState<VoiceTranscriptPreview | null>(null);
   const [voiceTranscriptItems, setVoiceTranscriptItems] = useState<VoiceTranscriptItem[]>([]);
   const [voiceWorkspaceView, setVoiceWorkspaceView] = useState<"document" | "transcript">("document");
-  const [documentActivityItems, setDocumentActivityItems] = useState<VoiceDocumentActivityItem[]>([]);
   const [activityClockMs, setActivityClockMs] = useState(() => Date.now());
   const [voiceReplyBubbleRequestId, setVoiceReplyBubbleRequestId] = useState("");
   const [copiedVoiceReplyRequestId, setCopiedVoiceReplyRequestId] = useState("");
@@ -1180,53 +1152,6 @@ export function VoiceSecretaryComposerControl({
     setDocumentDraft(value);
   }, []);
 
-  const pushDocumentActivity = useCallback((
-    item: Omit<VoiceDocumentActivityItem, "id" | "createdAt" | "mode"> & {
-      createdAt?: number;
-      mode?: VoiceSecretaryCaptureMode;
-    },
-  ) => {
-    const createdAt = item.createdAt || Date.now();
-    const id = `doc-activity-${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setDocumentActivityItems((prev) => {
-      const nextPath = String(item.documentPath || "").trim();
-      const nextPreview = normalizeBrowserTranscriptChunk(String(item.preview || ""));
-      const duplicate = prev.some((existing) => (
-        existing.status === item.status
-        && String(existing.documentPath || "").trim() === nextPath
-        && (
-          normalizeBrowserTranscriptChunk(String(existing.preview || "")) === nextPreview
-          || (item.status === "updated" && !nextPreview)
-        )
-        && Math.abs(existing.createdAt - createdAt) <= 3000
-      ));
-      if (duplicate) return prev;
-      return [{
-        id,
-        status: item.status,
-        documentTitle: item.documentTitle,
-        documentPath: item.documentPath,
-        preview: item.preview,
-        mode: item.mode || "document",
-        createdAt,
-      },
-      ...prev].slice(0, 20);
-    });
-    setActivityClockMs(createdAt);
-  }, []);
-
-  const pushDocumentUpdatedActivity = useCallback((
-    item: Omit<VoiceDocumentActivityItem, "id" | "createdAt" | "mode" | "status"> & {
-      createdAt?: number;
-      mode?: VoiceSecretaryCaptureMode;
-    },
-  ) => {
-    pushDocumentActivity({
-      ...item,
-      status: "updated",
-    });
-  }, [pushDocumentActivity]);
-
   const clearLiveTranscriptPreview = useCallback(() => {
     liveTranscriptPreviewRef.current = null;
     voiceStreamItemIdRef.current = "";
@@ -1374,28 +1299,6 @@ export function VoiceSecretaryComposerControl({
         }
       }
       let nextDocuments = resp.result.documents || [];
-      const previousDocumentSignatures = documentUpdatedSignatureByPathRef.current;
-      const nextDocumentSignatures = new Map<string, string>();
-      nextDocuments.forEach((document) => {
-        const docKey = voiceDocumentPath(document);
-        if (!docKey) return;
-        const signature = [
-          String(document.updated_at || ""),
-          String(document.content_sha256 || ""),
-          String(document.revision_count || ""),
-          String(document.content_chars || ""),
-        ].join(":");
-        if (!signature.replace(/:/g, "")) return;
-        const previousSignature = previousDocumentSignatures.get(docKey);
-        if (previousSignature && previousSignature !== signature) {
-          pushDocumentUpdatedActivity({
-            documentTitle: String(document.title || "").trim(),
-            documentPath: docKey,
-          });
-        }
-        nextDocumentSignatures.set(docKey, signature);
-      });
-      documentUpdatedSignatureByPathRef.current = nextDocumentSignatures;
       setDocuments(nextDocuments);
       const serverCaptureTargetPath = resolveVoiceDocumentPath(nextDocuments, String(
         resp.result.capture_target_document_path ||
@@ -1463,7 +1366,7 @@ export function VoiceSecretaryComposerControl({
     } finally {
       if (isCurrentGroup(gid) && seq === refreshSeq.current && !quiet) setLoading(false);
     }
-  }, [isCurrentGroup, loadDocumentDraft, pushDocumentUpdatedActivity, selectedGroupId, showError]);
+  }, [isCurrentGroup, loadDocumentDraft, selectedGroupId, showError]);
 
   useEffect(() => {
     if (!open) return;
@@ -1517,27 +1420,11 @@ export function VoiceSecretaryComposerControl({
         }
       }
     }
-    const data = dataRecord as AssistantVoiceDocumentLedgerData | null;
-    if (kind === "assistant.voice.document" && data) {
-      const action = String(data.action || "").trim();
-      const inputPreview = String(data.input_preview || "").trim();
-      if (action === "input_appended" && inputPreview) {
-        const createdAt = assistantVoiceTimestampMs(String(latestVoiceLedgerEvent.ts || "")) || Date.now();
-        pushDocumentUpdatedActivity({
-          documentTitle: String(data.title || "").trim(),
-          documentPath: String(data.document_path || data.workspace_path || "").trim(),
-          preview: inputPreview,
-          createdAt,
-          mode: "document",
-        });
-      }
-    }
   }, [
     latestVoiceLedgerEvent,
     open,
     pendingAskRequestId,
     pendingPromptRequestId,
-    pushDocumentUpdatedActivity,
     refreshAssistant,
     restoreLatestVoiceMeetingSession,
     captureMode,
@@ -1588,8 +1475,7 @@ export function VoiceSecretaryComposerControl({
     const hasVisibleTranscript = liveTranscriptPreview
       ? recording || Date.now() - liveTranscriptPreview.updatedAt < VOICE_LIVE_TRANSCRIPT_VISIBLE_MS
       : false;
-    const hasVisibleDocumentActivity = documentActivityItems.some((item) => Date.now() - item.createdAt < VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS);
-    if (!hasActiveAsk && !hasVisibleTranscript && !hasVisibleDocumentActivity && !pendingPromptRequestId) return undefined;
+    if (!hasActiveAsk && !hasVisibleTranscript && !pendingPromptRequestId) return undefined;
     if (typeof window === "undefined") return undefined;
     const timer = window.setInterval(() => {
       setActivityClockMs(Date.now());
@@ -1597,7 +1483,7 @@ export function VoiceSecretaryComposerControl({
     return () => {
       window.clearInterval(timer);
     };
-  }, [askFeedbackItems, documentActivityItems, liveTranscriptPreview, pendingPromptRequestId, recording]);
+  }, [askFeedbackItems, liveTranscriptPreview, pendingPromptRequestId, recording]);
 
   const acknowledgePromptDraft = useCallback(async (
     draft: AssistantVoicePromptDraft,
@@ -1740,9 +1626,7 @@ export function VoiceSecretaryComposerControl({
     }
     setVoiceWorkspaceView("document");
     voiceStreamItemIdRef.current = "";
-    setDocumentActivityItems([]);
     setActivityClockMs(Date.now());
-    documentUpdatedSignatureByPathRef.current = new Map();
     setVoiceReplyBubbleRequestId("");
     setCopiedVoiceReplyRequestId("");
     if (!keepActiveRecording) {
@@ -3239,18 +3123,15 @@ export function VoiceSecretaryComposerControl({
       liveTranscriptPreviewRef.current = null;
       setLiveTranscriptPreview(null);
       voiceStreamItemIdRef.current = "";
-      setDocumentActivityItems([]);
       return;
     }
-    if (!askFeedbackItems.length && !documentActivityItems.length && !liveTranscriptPreview) return;
+    if (!askFeedbackItems.length && !liveTranscriptPreview) return;
     const previousItems = askFeedbackItems;
     const previousLiveTranscriptPreview = liveTranscriptPreview;
-    const previousDocumentActivityItems = documentActivityItems;
     setAskFeedbackItems([]);
     liveTranscriptPreviewRef.current = null;
     setLiveTranscriptPreview(null);
     voiceStreamItemIdRef.current = "";
-    setDocumentActivityItems([]);
     if (voiceReplyBubbleRequestId) {
       setVoiceReplyBubbleRequestId("");
     }
@@ -3263,7 +3144,6 @@ export function VoiceSecretaryComposerControl({
         setAskFeedbackItems(previousItems);
         liveTranscriptPreviewRef.current = previousLiveTranscriptPreview;
         setLiveTranscriptPreview(previousLiveTranscriptPreview);
-        setDocumentActivityItems(previousDocumentActivityItems);
         showError(resp.error.message);
         return;
       }
@@ -3283,14 +3163,12 @@ export function VoiceSecretaryComposerControl({
       setAskFeedbackItems(previousItems);
       liveTranscriptPreviewRef.current = previousLiveTranscriptPreview;
       setLiveTranscriptPreview(previousLiveTranscriptPreview);
-      setDocumentActivityItems(previousDocumentActivityItems);
       showError(t("voiceSecretaryClearRequestsFailed", { defaultValue: "Failed to clear Voice Secretary requests." }));
     } finally {
       if (isCurrentGroup(gid)) setActionBusy("");
     }
   }, [
     askFeedbackItems,
-    documentActivityItems,
     liveTranscriptPreview,
     isCurrentGroup,
     selectedGroupId,
@@ -3728,10 +3606,6 @@ export function VoiceSecretaryComposerControl({
   const voiceModeLabel = useCallback((mode: VoiceSecretaryCaptureMode) => {
     return assistantRowModeOptions.find((option) => option.key === mode)?.label || mode;
   }, [assistantRowModeOptions]);
-  const documentActivityStatusLabel = useCallback((status: VoiceDocumentActivityStatus) => {
-    if (status === "updated") return t("voiceSecretaryDocumentActivityUpdated", { defaultValue: "Updated" });
-    return t("voiceSecretaryDocumentActivityQueued", { defaultValue: "Queued" });
-  }, [t]);
   const currentLiveTranscript = liveTranscriptPreview
     && (recording || activityClockMs - liveTranscriptPreview.updatedAt <= VOICE_LIVE_TRANSCRIPT_VISIBLE_MS)
     ? liveTranscriptPreview
@@ -3747,14 +3621,6 @@ export function VoiceSecretaryComposerControl({
   const liveTranscriptSummaryText = currentLiveTranscript
     && liveTranscriptSummaryPreview
     ? `${voiceModeLabel(currentLiveTranscript.mode)} · ${liveTranscriptSummaryPreview}`
-    : "";
-  const recentDocumentActivity = documentActivityItems.find(
-    (item) => activityClockMs - item.createdAt <= VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS,
-  ) || null;
-  const documentActivitySummaryText = recentDocumentActivity
-    ? `${documentActivityStatusLabel(recentDocumentActivity.status)} · ${
-      recentDocumentActivity.documentTitle || recentDocumentActivity.documentPath || voiceModeLabel(recentDocumentActivity.mode)
-    }`
     : "";
   const promptOptimizePending = Boolean(pendingPromptRequestId && !pendingPromptDraft);
   const canOptimizeComposerPrompt = captureMode === "prompt" && !!composerText.trim() && !promptOptimizePending && !pendingPromptDraft;
@@ -3784,7 +3650,6 @@ export function VoiceSecretaryComposerControl({
     ? askFeedbackItems.find((item) => item.request_id === pendingAskRequestId) || null
     : askFeedbackItems.find((item) => isActiveAskFeedbackStatus(item.status)) || null;
   const canClearAskFeedbackHistory = askFeedbackItems.length > 0
-    || documentActivityItems.length > 0
     || !!liveTranscriptPreview;
   const pendingAskFeedbackStatus = pendingAskFeedback
     ? displayAskFeedbackStatus(pendingAskFeedback, askFeedbackClockMs)
@@ -3813,13 +3678,6 @@ export function VoiceSecretaryComposerControl({
       && !(pendingAskFeedback && pendingAskFeedbackSummaryText)
       && liveTranscriptSummaryText,
   );
-  const showDocumentActivitySummary = Boolean(
-    !pendingPromptDraft
-      && !promptDraftWaiting
-      && !(pendingAskFeedback && pendingAskFeedbackSummaryText)
-      && !showLiveTranscriptSummary
-      && documentActivitySummaryText,
-  );
   const activityFeedItems = useMemo<VoiceActivityFeedItem[]>(() => {
     const items: VoiceActivityFeedItem[] = [];
     if (pendingPromptRequestId || pendingPromptDraft) {
@@ -3840,19 +3698,10 @@ export function VoiceSecretaryComposerControl({
         item,
       });
     });
-    documentActivityItems.forEach((item) => {
-      items.push({
-        kind: "document",
-        id: item.id,
-        sortAt: item.createdAt,
-        item,
-      });
-    });
     return newestVoiceActivityItemsFirst(items, VOICE_ACTIVITY_FEED_LIMIT);
   }, [
     activityClockMs,
     askFeedbackItems,
-    documentActivityItems,
     pendingPromptDraft,
     pendingPromptRequestId,
     promptDraftWaitingTitle,
@@ -4566,54 +4415,6 @@ export function VoiceSecretaryComposerControl({
                         </div>
                       );
                     }
-                    if (feedItem.kind === "document") {
-                      const item = feedItem.item;
-                      const title = String(item.documentTitle || item.documentPath || "").trim();
-                      const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
-                      const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
-                      return (
-                        <div
-                          key={feedItem.id}
-                          className={classNames(
-                            "rounded-2xl border px-2.5 py-2",
-                            isDark ? "border-white/10 bg-black/10" : "border-black/[0.08] bg-[rgb(248,248,248)]",
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={classNames(
-                              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                              item.status === "updated"
-                                ? isDark ? "bg-emerald-400/14 text-emerald-100" : "bg-emerald-50 text-emerald-800"
-                                : isDark ? "bg-cyan-400/14 text-cyan-100" : "bg-cyan-50 text-cyan-800",
-                            )}>
-                              {documentActivityStatusLabel(item.status)}
-                            </span>
-                            <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-                              <span className="min-w-0 truncate">{voiceModeLabel(item.mode)}</span>
-                              {timeLabel ? (
-                                <time
-                                  className="shrink-0 tabular-nums"
-                                  dateTime={new Date(feedItem.sortAt).toISOString()}
-                                  title={fullTimeLabel}
-                                >
-                                  {timeLabel}
-                                </time>
-                              ) : null}
-                            </span>
-                          </div>
-                          {item.preview ? (
-                            <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-300" : "text-gray-700")}>
-                              {stripUncertainSpeakerPrefix(item.preview)}
-                            </div>
-                          ) : null}
-                          {title ? (
-                            <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
-                              {title}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    }
                     const item = feedItem.item;
                     const displayStatus = displayAskFeedbackStatus(item, askFeedbackClockMs);
                     const requestPreview = String(item.request_preview || item.request_text || "").trim();
@@ -5190,22 +4991,6 @@ export function VoiceSecretaryComposerControl({
                 style={TWO_LINE_STATUS_STYLE}
               >
                 {liveTranscriptSummaryText}
-              </span>
-            </div>
-          ) : null}
-          {showDocumentActivitySummary ? (
-            <div
-              className={classNames(
-                "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
-                isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
-              )}
-              aria-live="polite"
-            >
-              <span
-                className="min-w-0 whitespace-normal break-words font-semibold leading-4"
-                style={TWO_LINE_STATUS_STYLE}
-              >
-                {documentActivitySummaryText}
               </span>
             </div>
           ) : null}

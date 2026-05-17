@@ -180,7 +180,8 @@ def resolve_actor_launch_spec(
     if launch_config["runtime"] not in supported_runtimes:
         raise ValueError(f"unsupported runtime: {launch_config['runtime']}")
 
-    effective_command = normalize_runtime_command(launch_config["runtime"], list(launch_config["command"] or []))
+    runtime = str(launch_config["runtime"] or "").strip()
+    effective_command = normalize_runtime_command(runtime, list(launch_config["command"] or []))
     return {
         **launch_config,
         "scope_key": scope_key,

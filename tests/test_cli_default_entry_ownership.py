@@ -152,6 +152,35 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_same_home_daemon_pids_falls_back_to_lock_holders_when_proc_missing(self) -> None:
+        from cccc.cli import common
+
+        home, cleanup = self._with_home()
+        try:
+            daemon_dir = home / "daemon"
+            daemon_dir.mkdir(parents=True, exist_ok=True)
+            lock_path = daemon_dir / "ccccd.lock"
+            lock_path.write_text("", encoding="utf-8")
+
+            with patch.object(common, "ensure_home", return_value=home), patch.object(common.Path, "is_dir", return_value=False), patch.object(
+                common.shutil, "which", return_value="/usr/sbin/lsof"
+            ), patch.object(
+                common.subprocess,
+                "run",
+                return_value=unittest.mock.Mock(returncode=0, stdout="2468\n9753\n2468\n", stderr=""),
+            ) as mock_run:
+                pids = common._same_home_daemon_pids(home)
+
+            self.assertEqual(pids, [2468, 9753])
+            mock_run.assert_called_once_with(
+                ["lsof", "-t", str(lock_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            cleanup()
+
     def test_default_entry_ctrl_c_while_waiting_for_web_child_stops_web_and_daemon(self) -> None:
         from cccc.cli import common
 

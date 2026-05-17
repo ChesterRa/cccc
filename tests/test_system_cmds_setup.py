@@ -27,7 +27,7 @@ class TestSystemCmdsSetup(unittest.TestCase):
         mock_ensure.assert_called_once_with(
             "codex",
             Path(".").resolve(),
-            auto_mcp_runtimes=("claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi"),
+            auto_mcp_runtimes=("claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "hermes", "kimi"),
         )
         payload = mock_print.call_args.args[0]
         self.assertTrue(bool(payload.get("ok")))

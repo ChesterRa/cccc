@@ -67,6 +67,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "gemini mcp add -s user {name} {cmd}",
     },
+    "hermes": {
+        "display_name": "Hermes Agent",
+        "command": "hermes",
+        "capabilities": "MCP; MCP setup: auto; provider auth/tools use the user's Hermes profile by default",
+        "mcp_add_pattern": "cccc runtime hermes prepare --yes",
+    },
     "kimi": {
         "display_name": "Kimi CLI",
         "command": "kimi",
@@ -94,7 +100,7 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
 }
 
 # First-class supported runtimes (CCCC manages startup defaults + MCP wiring)
-PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi", "web_model"]
+PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "hermes", "kimi", "web_model"]
 def detect_runtime(name: str) -> RuntimeInfo:
     """Detect if a specific runtime is available on the system."""
     config = KNOWN_RUNTIMES.get(name)
@@ -156,7 +162,7 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, neovate, gemini, kimi).
+        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, neovate, gemini, hermes, kimi).
                      If False, check all configured runtimes (including custom).
     
     Returns:
@@ -194,12 +200,33 @@ def get_cccc_mcp_stdio_command() -> List[str]:
     candidates: List[Path] = []
     is_windows = sys.platform.startswith("win")
     try:
-        bin_dir = Path(sys.executable).resolve().parent
+        # Prefer the entrypoint next to the active interpreter path before resolving
+        # symlinks. uv/venv Python executables often resolve outside the venv, while
+        # console scripts such as `cccc` live in the unresolved venv bin directory.
+        bin_dirs: List[Path] = [Path(sys.executable).parent]
+        try:
+            prefix_bin = Path(sys.prefix) / ("Scripts" if is_windows else "bin")
+            bin_dirs.append(prefix_bin)
+        except Exception:
+            pass
+        try:
+            bin_dirs.append(Path(sys.executable).resolve().parent)
+        except Exception:
+            pass
         names = ["cccc.exe", "cccc.cmd", "cccc.bat", "cccc", "cccc-script.py"] if is_windows else ["cccc"]
-        for name in names:
-            candidate = bin_dir / name
-            if candidate.exists():
-                candidates.append(candidate)
+        seen_dirs: set[str] = set()
+        for bin_dir in bin_dirs:
+            try:
+                key = str(bin_dir.resolve())
+            except Exception:
+                key = str(bin_dir)
+            if not key or key in seen_dirs:
+                continue
+            seen_dirs.add(key)
+            for name in names:
+                candidate = bin_dir / name
+                if candidate.exists():
+                    candidates.append(candidate)
     except Exception:
         pass
     for raw in (shutil.which("cccc"), shutil.which("cccc.exe") if is_windows else None):
@@ -229,6 +256,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
         "droid": ["droid", "--auto", "high"],
         "gemini": ["gemini", "--yolo"],
+        "hermes": ["hermes", "--tui", "--yolo"],
         "kimi": ["kimi", "--yolo"],
         "neovate": ["neovate"],
         "custom": [],

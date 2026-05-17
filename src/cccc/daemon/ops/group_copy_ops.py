@@ -66,6 +66,7 @@ _RUNTIME_DIR_PARTS = {
     "claude",
     "codex",
     "headless",
+    "hermes",
     "playwright",
     "projections",
     "pty",

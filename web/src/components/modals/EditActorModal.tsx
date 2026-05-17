@@ -91,6 +91,10 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: 'GOOGLE_API_KEY="..."',
     unset: "GOOGLE_API_KEY",
   },
+  hermes: {
+    set: "# Configure Hermes providers, OAuth, and tools in your Hermes profile.",
+    unset: "",
+  },
 };
 
 const DEFAULT_SECRETS_PLACEHOLDER = {

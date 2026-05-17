@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add.add_argument("--title", default="", help="Display title (optional)")
     p_actor_add.add_argument(
         "--runtime",
-        choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi", "custom"],
+        choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "hermes", "kimi", "custom"],
         default="codex",
         help="Agent runtime (auto-sets command if not provided)",
     )
@@ -177,7 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/command/env/scope/enabled/runtime)")
     p_actor_update.add_argument("actor_id", help="Actor id")
     p_actor_update.add_argument("--title", default=None, help="New title")
-    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi", "custom"], default=None, help="New runtime")
+    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "hermes", "kimi", "custom"], default=None, help="New runtime")
     p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
     p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
@@ -380,7 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup = sub.add_parser("setup", help="Setup MCP for agent runtimes (configure MCP, print guidance)")
     p_setup.add_argument(
         "--runtime",
-        choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi", "custom"],
+        choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "hermes", "kimi", "custom"],
         default="",
         help="Target runtime (default: all supported runtimes)",
     )
@@ -407,6 +407,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_runtime_list = runtime_sub.add_parser("list", help="List available agent runtimes")
     p_runtime_list.add_argument("--all", action="store_true", help="Show all known runtimes (not just primary ones)")
     p_runtime_list.set_defaults(func=cmd_runtime_list)
+
+    p_runtime_hermes = runtime_sub.add_parser("hermes", help="Probe or prepare Hermes runtime MCP wiring")
+    hermes_sub = p_runtime_hermes.add_subparsers(dest="hermes_action", required=True)
+    p_runtime_hermes_status = hermes_sub.add_parser("status", help="Show Hermes runtime setup status")
+    p_runtime_hermes_status.set_defaults(func=cmd_runtime_hermes)
+    p_runtime_hermes_prepare = hermes_sub.add_parser("prepare", help="Configure CCCC MCP in the selected Hermes profile")
+    p_runtime_hermes_prepare.add_argument("--path", default=".", help="Project path for Hermes MCP discovery (default: current directory)")
+    p_runtime_hermes_prepare.add_argument("--yes", action="store_true", help="Enable all discovered CCCC MCP tools during Hermes setup")
+    p_runtime_hermes_prepare.add_argument("--force", action="store_true", help="Re-run Hermes MCP setup even when config already looks ready")
+    p_runtime_hermes_prepare.set_defaults(func=cmd_runtime_hermes)
+    p_runtime_hermes_mcp_test = hermes_sub.add_parser("mcp-test", help="Run Hermes MCP test with CCCC actor env")
+    p_runtime_hermes_mcp_test.add_argument("--path", default=".", help="Project path for the MCP test (default: current directory)")
+    p_runtime_hermes_mcp_test.add_argument("--group-id", default="g_probe", help="CCCC_GROUP_ID for test subprocess")
+    p_runtime_hermes_mcp_test.add_argument("--actor-id", default="hermes-probe", help="CCCC_ACTOR_ID for test subprocess")
+    p_runtime_hermes_mcp_test.set_defaults(func=cmd_runtime_hermes)
 
     p_space = sub.add_parser("space", help="Manage Group Space provider-backed shared memory")
     space_sub = p_space.add_subparsers(dest="action", required=True)

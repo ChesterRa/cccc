@@ -398,7 +398,7 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
         runtime = patch.get("runtime")
         if runtime is None:
             item["runtime"] = "codex"
-        elif runtime in ("amp", "auggie", "claude", "codex", "droid", "gemini", "kimi", "neovate", "web_model", "custom"):
+        elif runtime in ("amp", "auggie", "claude", "codex", "droid", "gemini", "hermes", "kimi", "neovate", "web_model", "custom"):
             item["runtime"] = runtime
         else:
             raise ValueError("invalid runtime")

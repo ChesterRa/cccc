@@ -2139,6 +2139,87 @@ Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 
+#### `runtime_hermes_status`
+
+Return Hermes runtime setup diagnostics for the selected user Hermes profile.
+
+Args:
+```ts
+{}
+```
+
+Result:
+```ts
+{
+  runtime: "hermes"
+  setup_ready: boolean
+  auth_ready: boolean
+  launch_ready: boolean
+  hermes_cli: { available: boolean; path?: string; version?: string }
+  hermes_home: string
+  profile: { name: "default"; dir: string; exists: boolean; config_path: string; config_exists: boolean }
+  mcp: Record<string, unknown>
+  auth: Record<string, unknown>
+  phase0_gates: Array<Record<string, unknown>>
+  issues: string[]
+}
+```
+
+Notes:
+- CCCC does not create or select a separate Hermes profile.
+- `HERMES_HOME`, when supplied by the user, is treated as ordinary runtime environment.
+- `mcp.env` must persist `${CCCC_HOME}`, `${CCCC_GROUP_ID}`, and `${CCCC_ACTOR_ID}` placeholders so each actor process resolves its own CCCC identity.
+
+#### `runtime_hermes_prepare`
+
+Configure the `cccc` MCP server in the selected Hermes profile through Hermes' official MCP setup flow.
+
+Args:
+```ts
+{
+  cwd?: string
+  auto_enable_tools?: boolean // alias: yes
+  force_mcp?: boolean         // alias: force
+}
+```
+
+Result:
+```ts
+{
+  ok: boolean
+  commands_run?: Array<Record<string, unknown>>
+  status: Record<string, unknown>
+  error?: { code: string; message: string }
+}
+```
+
+Notes:
+- Setup MAY invoke `hermes mcp add cccc ...` and answer Hermes' discovery prompt only when `auto_enable_tools`/`yes` is true.
+- Discovery uses concrete CCCC env values, then CCCC normalizes saved Hermes MCP env back to actor-time placeholders.
+
+#### `runtime_hermes_mcp_test`
+
+Run Hermes' MCP test command for the configured `cccc` server with probe CCCC actor env.
+
+Args:
+```ts
+{
+  cwd?: string
+  group_id?: string
+  actor_id?: string
+}
+```
+
+Result:
+```ts
+{
+  ok: boolean
+  argv: string[]
+  result?: { returncode: number; stdout: string; stderr: string }
+  error?: { code: string; message: string }
+}
+```
+
 #### `actor_env_private_keys`
 
 List configured **private** env keys for an actor (keys only; never returns values).
