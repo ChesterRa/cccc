@@ -17,6 +17,7 @@ from ....daemon.codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ....daemon.actors.web_model_runtime_ops import decorate_web_model_queued_turn_info
 from ....daemon.context.context_ops import _agent_state_to_dict
+from ....daemon.runtime_session_ops import read_runtime_session
 from ....daemon.runner_state_ops import headless_state_path, headless_state_running, pty_state_path, read_headless_state
 from ....kernel.group import load_group
 from ....kernel.actors import find_actor
@@ -62,6 +63,34 @@ _READONLY_ACTOR_GENERATION: Dict[str, int] = {}
 _READONLY_ACTOR_CACHE_LOCK = threading.Lock()
 _READONLY_ACTOR_TTL_S = 0.8
 _STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude", "web_model"})
+
+
+def _decorate_actor_runtime_session(group_id: str, actor: Dict[str, Any]) -> None:
+    gid = str(group_id or "").strip()
+    aid = str(actor.get("id") or "").strip()
+    if not gid or not aid:
+        return
+    try:
+        doc = read_runtime_session(gid, aid)
+    except Exception:
+        return
+    if not isinstance(doc, dict) or not doc:
+        return
+    status = str(doc.get("status") or "").strip()
+    if status:
+        actor["runtime_session_status"] = status
+    resume_eligible = doc.get("resume_eligible")
+    if isinstance(resume_eligible, bool):
+        actor["runtime_session_resume_eligible"] = resume_eligible
+    last_resume_error = str(doc.get("last_resume_error") or "").strip()
+    if last_resume_error:
+        actor["runtime_session_last_resume_error"] = last_resume_error
+
+
+def _build_actor_web_result(group_id: str, actor: Dict[str, Any]) -> Dict[str, Any]:
+    out = build_actor_web_payload(group_id, actor)
+    _decorate_actor_runtime_session(group_id, out)
+    return out
 
 
 def _pid_matches_actor_context(pid: int, *, group_id: str, actor_id: str) -> bool:
@@ -510,10 +539,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return resp
         actor = result.get("actor")
         if isinstance(actor, dict):
-            result["actor"] = build_actor_web_payload(group_id, actor)
+            result["actor"] = _build_actor_web_result(group_id, actor)
         actors = result.get("actors")
         if isinstance(actors, list):
-            result["actors"] = [build_actor_web_payload(group_id, item) for item in actors if isinstance(item, dict)]
+            result["actors"] = [_build_actor_web_result(group_id, item) for item in actors if isinstance(item, dict)]
         return resp
 
     async def _actor_profile_upsert_impl(

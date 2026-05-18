@@ -144,4 +144,51 @@ describe("buildHeadlessRawTraceEntries", () => {
     expect(groups[1]).toMatchObject({ kind: "event" });
     expect(groups[1]?.kind === "event" ? groups[1].entry.tone : "").toBe("error");
   });
+
+  it("renders Codex resume failure as a visible state event", () => {
+    const entries = buildHeadlessRawTraceEntries([
+      {
+        actor_id: "coder",
+        type: "headless.thread.resume_failed",
+        ts: "2026-04-23T10:00:00Z",
+        data: {
+          thread_id: "thr-stale",
+          status: "failed",
+          error: "thread not found",
+        },
+      },
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "event",
+      badge: "STATE",
+      tone: "warning",
+      title: "Resume failed",
+    });
+    expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toEqual([
+      "thread: thr-stale",
+      "thread not found",
+    ]);
+  });
+
+  it("renders Claude session resume failure as a visible state event", () => {
+    const entries = buildHeadlessRawTraceEntries([
+      {
+        actor_id: "coder",
+        type: "headless.session.resume_failed",
+        ts: "2026-04-23T10:00:00Z",
+        data: { error: "No conversation found" },
+      },
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "event",
+      badge: "STATE",
+      tone: "warning",
+      title: "Resume failed",
+    });
+    expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toEqual(["No conversation found"]);
+  });
 });

@@ -498,6 +498,35 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_list_route_projects_runtime_session_resume_failure(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import write_runtime_session
+
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            self._add_actor(group_id, runtime="codex")
+            write_runtime_session(
+                group_id,
+                "peer-1",
+                {
+                    "status": "resume_failed",
+                    "resume_eligible": False,
+                    "last_resume_error": "thread not found",
+                },
+            )
+
+            with self._client() as client:
+                resp = client.get(f"/api/v1/groups/{group_id}/actors")
+
+            self.assertEqual(resp.status_code, 200)
+            actor = resp.json()["result"]["actors"][0]
+            self.assertEqual(actor["runtime_session_status"], "resume_failed")
+            self.assertFalse(bool(actor["runtime_session_resume_eligible"]))
+            self.assertEqual(actor["runtime_session_last_resume_error"], "thread not found")
+        finally:
+            cleanup()
+
     def test_actor_list_route_local_fallback_reports_web_model_queued_count(self) -> None:
         _, cleanup = self._with_home()
         try:

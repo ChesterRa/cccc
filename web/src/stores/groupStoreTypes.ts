@@ -95,6 +95,9 @@ export interface GroupState {
     effective_working_reason?: string;
     effective_working_updated_at?: string | null;
     effective_active_task_id?: string | null;
+    runtime_session_status?: string | null;
+    runtime_session_resume_eligible?: boolean | null;
+    runtime_session_last_resume_error?: string | null;
   }>) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;

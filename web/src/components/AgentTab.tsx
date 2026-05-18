@@ -11,7 +11,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
-import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
+import { AlertIcon, StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
@@ -26,6 +26,10 @@ const EMPTY_HEADLESS_RAW_EVENTS: HeadlessStreamEvent[] = [];
 const STOPPED_TAIL_FETCH_DELAY_MS = 350;
 
 const copyToClipboard = copyTextToClipboard;
+
+export function actorHasRuntimeResumeFailure(actor: Pick<Actor, "runtime_session_status">): boolean {
+  return String(actor.runtime_session_status || "").trim().toLowerCase() === "resume_failed";
+}
 
 export function shouldFetchStoppedTerminalTail(args: {
   activated: boolean;
@@ -82,6 +86,8 @@ export function AgentTab({
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = String(actor.runtime || "").trim().toLowerCase() === "web_model";
+  const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
+  const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
   const isBusy = busy.includes(actor.id);
   const latestHeadlessText = useGroupStore((state) => {
@@ -234,6 +240,33 @@ export function AgentTab({
     return t("running");
   })();
   const stoppedTerminalOutputText = getStoppedTerminalOutputText(stoppedTerminalText);
+  const resumeFailureNotice = hasRuntimeResumeFailure ? (
+    <div
+      className={classNames(
+        "flex w-full max-w-xl flex-col items-center rounded-lg border px-4 py-4 text-center",
+        "border-amber-500/30 bg-amber-500/10 text-amber-700",
+        "dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100"
+      )}
+    >
+      <AlertIcon size={40} />
+      <div className="mt-3 text-lg font-semibold text-[var(--color-text-primary)]">
+        {t('runtimeResumeFailedTitle')}
+      </div>
+      <div className="mt-2 max-w-md text-sm leading-relaxed text-[var(--color-text-secondary)]">
+        {t('runtimeResumeFailedDescription')}
+      </div>
+      {runtimeResumeError ? (
+        <pre
+          className={classNames(
+            "mt-3 max-h-28 w-full overflow-auto whitespace-pre-wrap break-words rounded-md border px-3 py-2 text-left font-mono text-xs leading-relaxed",
+            "border-amber-500/25 bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"
+          )}
+        >
+          {runtimeResumeError}
+        </pre>
+      ) : null}
+    </div>
+  ) : null;
   const primaryActionButtonClass =
     "inline-flex items-center gap-1.5 rounded-xl border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92";
   const secondaryActionButtonClass =
@@ -608,15 +641,21 @@ export function AgentTab({
               ) : null}
               {!isWebModel ? (
                 <div className="min-h-0 flex-1">
-                  <HeadlessRuntimePanel
-                    actorId={actor.id}
-                    previewSessions={headlessPreviewSessions}
-                    fallbackText={latestHeadlessText}
-                    fallbackActivities={latestHeadlessActivities}
-                    rawEvents={rawHeadlessEvents}
-                    emptyLabel={t('noStreamingOutputYet', { defaultValue: 'There is no streaming output to show yet.' })}
-                    isDark={isDark}
-                  />
+                  {resumeFailureNotice && !isRunning ? (
+                    <div className="flex h-full min-h-[420px] items-center justify-center">
+                      {resumeFailureNotice}
+                    </div>
+                  ) : (
+                    <HeadlessRuntimePanel
+                      actorId={actor.id}
+                      previewSessions={headlessPreviewSessions}
+                      fallbackText={latestHeadlessText}
+                      fallbackActivities={latestHeadlessActivities}
+                      rawEvents={rawHeadlessEvents}
+                      emptyLabel={t('noStreamingOutputYet', { defaultValue: 'There is no streaming output to show yet.' })}
+                      isDark={isDark}
+                    />
+                  )}
                 </div>
               ) : null}
             </div>
@@ -662,11 +701,17 @@ export function AgentTab({
           // Stopped agent
           <div className={classNames("flex flex-col items-center h-full p-8 overflow-y-auto", "text-[var(--color-text-tertiary)]")}>
             <div className="flex flex-col items-center flex-shrink-0">
-              <div className="mb-4"><TerminalIcon size={48} /></div>
-              <div className="text-lg font-medium mb-2">{t('agentNotRunning')}</div>
-              <div className="text-sm text-center max-w-md mb-4">
-                {t('agentStoppedDescription')}
-              </div>
+              {resumeFailureNotice ? (
+                <div className="mb-4">{resumeFailureNotice}</div>
+              ) : (
+                <>
+                  <div className="mb-4"><TerminalIcon size={48} /></div>
+                  <div className="text-lg font-medium mb-2">{t('agentNotRunning')}</div>
+                  <div className="text-sm text-center max-w-md mb-4">
+                    {t('agentStoppedDescription')}
+                  </div>
+                </>
+              )}
               {canControl ? (
                 <button
                   onClick={onLaunch}

@@ -357,6 +357,50 @@ def record_headless_runtime_session(
     return payload
 
 
+def record_codex_app_thread_runtime_session(
+    *,
+    group_id: str,
+    actor_id: str,
+    cwd: Path | str,
+    command: Iterable[str] = (),
+    model: str = "",
+    provider_thread_id: str = "",
+    runner: str = "headless",
+    status: str = "usable",
+    captured_from: str = "app_server_thread_start",
+    resume_eligible: bool = True,
+    last_resume_error: str = "",
+) -> Dict[str, Any]:
+    now = utc_now_iso()
+    runner_kind = str(runner or "headless").strip().lower() or "headless"
+    if runner_kind not in {"pty", "headless"}:
+        runner_kind = "headless"
+    payload: Dict[str, Any] = {
+        "v": 1,
+        "kind": "runtime_session",
+        "group_id": str(group_id),
+        "actor_id": str(actor_id),
+        "runtime": "codex",
+        "runner": runner_kind,
+        "workspace_path": _workspace_path(cwd),
+        "command_fingerprint": runtime_session_command_fingerprint(command),
+        "model": str(model or "").strip(),
+        "provider_session_id": "",
+        "provider_thread_id": str(provider_thread_id or "").strip(),
+        "resume_command_hint": "",
+        "captured_from": str(captured_from or "app_server_thread_start"),
+        "status": str(status or "usable").strip() or "usable",
+        "resume_eligible": bool(resume_eligible),
+        "last_seen_at": now,
+        "last_resume_attempt_at": "",
+        "last_resume_error": str(last_resume_error or "").strip(),
+        "failure_count": 0,
+        "updated_at": now,
+    }
+    write_runtime_session(str(group_id), str(actor_id), payload)
+    return payload
+
+
 def _runtime_resume_disabled() -> bool:
     return str(os.environ.get("CCCC_RUNTIME_RESUME", "")).strip().lower() in _NO_RESUME_ENV_VALUES
 
@@ -476,12 +520,18 @@ def prepare_headless_runtime_resume(
     runtime_norm = str(runtime or "").strip().lower()
     if runtime_norm not in {"claude", "codex"}:
         return {}
+    if runtime_norm == "codex":
+        return prepare_codex_app_thread_resume(
+            group_id=group_id,
+            actor_id=actor_id,
+            cwd=cwd,
+            command=command,
+            model=model,
+        )
     doc = read_runtime_session(group_id, actor_id)
     if not doc:
         return {}
     if str(doc.get("runtime") or "").strip().lower() != runtime_norm:
-        return {}
-    if str(doc.get("runner") or "").strip().lower() != "headless":
         return {}
     if str(doc.get("status") or "").strip().lower() != "usable":
         return {}
@@ -498,9 +548,47 @@ def prepare_headless_runtime_resume(
     if runtime_norm == "claude":
         if not str(doc.get("provider_session_id") or "").strip():
             return {}
-    else:
-        if not str(doc.get("provider_thread_id") or "").strip():
+        if str(doc.get("provider_thread_id") or "").strip():
             return {}
+
+    next_doc = dict(doc)
+    next_doc["last_resume_attempt_at"] = utc_now_iso()
+    next_doc["updated_at"] = utc_now_iso()
+    write_runtime_session(group_id, actor_id, next_doc)
+    return next_doc
+
+
+def prepare_codex_app_thread_resume(
+    *,
+    group_id: str,
+    actor_id: str,
+    cwd: Path,
+    command: Iterable[str],
+    model: str = "",
+) -> Dict[str, Any]:
+    if _runtime_resume_disabled():
+        return {}
+    doc = read_runtime_session(group_id, actor_id)
+    if not doc:
+        return {}
+    if str(doc.get("runtime") or "").strip().lower() != "codex":
+        return {}
+    if str(doc.get("status") or "").strip().lower() != "usable":
+        return {}
+    if not bool(doc.get("resume_eligible")):
+        return {}
+    if str(doc.get("workspace_path") or "") != _workspace_path(cwd):
+        return {}
+    if str(doc.get("command_fingerprint") or "") != runtime_session_command_fingerprint(command):
+        return {}
+    expected_model = str(model or _model_from_command(command) or "").strip()
+    saved_model = str(doc.get("model") or "").strip()
+    if saved_model != expected_model:
+        return {}
+    if not str(doc.get("provider_thread_id") or "").strip():
+        return {}
+    if str(doc.get("provider_session_id") or "").strip():
+        return {}
 
     next_doc = dict(doc)
     next_doc["last_resume_attempt_at"] = utc_now_iso()
@@ -694,8 +782,6 @@ def prepare_pty_resume_command(
         return command, None
     if str(doc.get("runtime") or "").strip().lower() != runtime_norm:
         return command, None
-    if str(doc.get("runner") or "").strip().lower() != "pty":
-        return command, None
     if str(doc.get("status") or "").strip().lower() != "usable":
         return command, None
     if not bool(doc.get("resume_eligible")):
@@ -711,6 +797,8 @@ def prepare_pty_resume_command(
 
     session_id = str(doc.get("provider_session_id") or "").strip()
     if not session_id:
+        return command, None
+    if str(doc.get("provider_thread_id") or "").strip():
         return command, None
 
     if runtime_norm == "claude":
@@ -832,6 +920,11 @@ def _schedule_pty_resume_failure_monitor(
                     actor_id=actor_id,
                     error="provider reported resume failure",
                 )
+                try:
+                    if _pty_state_pid_status(group_id, actor_id, expected_pid) == "match":
+                        pty_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
+                except Exception:
+                    pass
                 return
             try:
                 running = bool(pty_runner.SUPERVISOR.actor_running(group_id, actor_id))
@@ -850,6 +943,10 @@ def _schedule_pty_resume_failure_monitor(
                         else "provider resume process exited early"
                     ),
                 )
+                try:
+                    pty_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
+                except Exception:
+                    pass
                 return
             time.sleep(0.25)
 
@@ -860,72 +957,17 @@ def _schedule_pty_resume_failure_monitor(
     ).start()
 
 
-def _start_fresh_pty_actor_after_resume_failure(
+def _abort_pty_actor_after_resume_failure(
     *,
     group_id: str,
     actor_id: str,
-    cwd: Path,
-    base_cmd: list[str],
-    env: Dict[str, str],
-    runtime: str,
-    max_backlog_bytes: int,
-    runtime_start_preflight_error: Callable[..., str],
     error: str,
-) -> Any:
+) -> None:
     mark_runtime_session_resume_failed(group_id=group_id, actor_id=actor_id, error=error)
     try:
         pty_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
     except Exception:
         pass
-    fallback_doc: Optional[Dict[str, Any]] = None
-    fallback_cmd, fallback_doc = prepare_initial_pty_session_command(
-        group_id=group_id,
-        actor_id=actor_id,
-        runtime=runtime,
-        cwd=cwd,
-        base_command=base_cmd,
-        env=env,
-        max_backlog_bytes=max_backlog_bytes,
-    )
-    runtime_error = runtime_start_preflight_error(runtime, fallback_cmd, runner="pty")
-    if runtime_error:
-        if fallback_doc:
-            mark_runtime_session_resume_failed(
-                group_id=group_id,
-                actor_id=actor_id,
-                error=f"fresh fallback failed after resume rejection: {runtime_error}",
-            )
-        raise RuntimeError(runtime_error)
-    try:
-        session = pty_runner.SUPERVISOR.start_actor(
-            group_id=group_id,
-            actor_id=actor_id,
-            cwd=cwd,
-            command=fallback_cmd,
-            env=env,
-            runtime=runtime,
-            max_backlog_bytes=max_backlog_bytes,
-        )
-    except Exception as exc:
-        if fallback_doc:
-            mark_runtime_session_resume_failed(
-                group_id=group_id,
-                actor_id=actor_id,
-                error=f"fresh fallback failed after resume rejection: {exc}",
-            )
-        raise
-    try:
-        setattr(session, "_cccc_base_command", tuple(base_cmd))
-    except Exception:
-        pass
-    if str(runtime or "").strip().lower() == "codex":
-        _schedule_codex_pty_status_capture(
-            group_id=group_id,
-            actor_id=actor_id,
-            cwd=cwd,
-            base_command=base_cmd,
-        )
-    return session
 
 
 def start_pty_actor_with_runtime_resume(
@@ -991,7 +1033,13 @@ def start_pty_actor_with_runtime_resume(
 
     runtime_error = runtime_start_preflight_error(runtime, launch_cmd, runner="pty")
     if runtime_error:
-        if initial_doc:
+        if resume_doc:
+            mark_runtime_session_resume_failed(
+                group_id=group_id,
+                actor_id=actor_id,
+                error=f"runtime resume launch rejected: {runtime_error}",
+            )
+        elif initial_doc:
             mark_runtime_session_resume_failed(
                 group_id=group_id,
                 actor_id=actor_id,
@@ -1021,17 +1069,12 @@ def start_pty_actor_with_runtime_resume(
                 timeout_seconds=verify_timeout,
             )
             if resume_error:
-                return _start_fresh_pty_actor_after_resume_failure(
+                _abort_pty_actor_after_resume_failure(
                     group_id=group_id,
                     actor_id=actor_id,
-                    cwd=cwd,
-                    base_cmd=base_cmd,
-                    env=env,
-                    runtime=runtime,
-                    max_backlog_bytes=max_backlog_bytes,
-                    runtime_start_preflight_error=runtime_start_preflight_error,
                     error=resume_error,
                 )
+                raise RuntimeError(resume_error)
             _schedule_pty_resume_failure_monitor(
                 group_id=group_id,
                 actor_id=actor_id,
@@ -1051,17 +1094,14 @@ def start_pty_actor_with_runtime_resume(
         if not active_doc:
             raise
         if resume_doc:
-            return _start_fresh_pty_actor_after_resume_failure(
-                group_id=group_id,
-                actor_id=actor_id,
-                cwd=cwd,
-                env=env,
-                runtime=runtime,
-                base_cmd=base_cmd,
-                max_backlog_bytes=max_backlog_bytes,
-                runtime_start_preflight_error=runtime_start_preflight_error,
-                error=str(exc),
-            )
+            status = str((read_runtime_session(group_id, actor_id) or {}).get("status") or "").strip().lower()
+            if status != "resume_failed":
+                _abort_pty_actor_after_resume_failure(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    error=str(exc),
+                )
+            raise RuntimeError(str(exc)) from exc
         mark_runtime_session_resume_failed(group_id=group_id, actor_id=actor_id, error=str(exc))
         fallback_cmd = base_cmd
         runtime_error = runtime_start_preflight_error(runtime, fallback_cmd, runner="pty")

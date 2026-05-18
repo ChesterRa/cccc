@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Tuple
+from typing import Any, Callable, Dict, Iterable, NamedTuple
 
 from .runtime_session_ops import (
     mark_runtime_session_resume_failed,
-    prepare_headless_runtime_resume,
-    record_headless_runtime_session,
+    prepare_codex_app_thread_resume,
+    record_codex_app_thread_runtime_session,
     runtime_resume_enabled,
 )
 
 
 CodexThreadRequest = Callable[..., Dict[str, Any]]
+
+
+class CodexThreadStartResult(NamedTuple):
+    thread_id: str
+    resumed: bool
 
 
 def _thread_start_params(*, cwd: Path, model: str) -> Dict[str, Any]:
@@ -51,14 +56,14 @@ def start_codex_app_thread(
     cwd: Path,
     command: Iterable[str],
     model: str = "",
-) -> Tuple[str, bool]:
+    runner: str = "headless",
+) -> CodexThreadStartResult:
     model = str(model or "").strip()
     command_list = [str(item) for item in list(command or []) if str(item).strip()]
     thread_params = _thread_start_params(cwd=cwd, model=model)
-    resume_doc = prepare_headless_runtime_resume(
+    resume_doc = prepare_codex_app_thread_resume(
         group_id=group_id,
         actor_id=actor_id,
-        runtime="codex",
         cwd=cwd,
         command=command_list,
         model=model,
@@ -66,13 +71,14 @@ def start_codex_app_thread(
 
     resumed = False
     if resume_doc:
-        resume_params = _thread_resume_params(thread_id=str(resume_doc.get("provider_thread_id") or ""), model=model)
+        resume_thread_id = str(resume_doc.get("provider_thread_id") or "").strip()
+        resume_params = _thread_resume_params(thread_id=resume_thread_id, model=model)
         try:
             thread_resp = request("thread/resume", resume_params, timeout=20.0)
             resumed = True
         except Exception as exc:
             mark_runtime_session_resume_failed(group_id=group_id, actor_id=actor_id, error=str(exc))
-            thread_resp = request("thread/start", thread_params, timeout=20.0)
+            raise RuntimeError(f"codex app-server resume failed for thread {resume_thread_id}: {exc}") from exc
     else:
         thread_resp = request("thread/start", thread_params, timeout=20.0)
 
@@ -82,18 +88,21 @@ def start_codex_app_thread(
 
     if runtime_resume_enabled():
         try:
-            record_headless_runtime_session(
+            record_codex_app_thread_runtime_session(
                 group_id=group_id,
                 actor_id=actor_id,
-                runtime="codex",
                 cwd=cwd,
                 model=model,
                 command=command_list,
                 provider_thread_id=thread_id,
+                runner=runner,
                 status="usable",
                 captured_from="app_server_thread_resume" if resumed else "app_server_thread_start",
                 resume_eligible=True,
             )
         except Exception:
             pass
-    return thread_id, resumed
+    return CodexThreadStartResult(
+        thread_id=thread_id,
+        resumed=resumed,
+    )

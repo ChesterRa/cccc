@@ -127,6 +127,9 @@ type ActorActivityUpdate = {
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;
   effective_active_task_id?: string | null;
+  runtime_session_status?: string | null;
+  runtime_session_resume_eligible?: boolean | null;
+  runtime_session_last_resume_error?: string | null;
 };
 
 export function computeGroupRuntimeFromActorActivityUpdate(
@@ -547,11 +550,28 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         schedulePendingHeadlessActivityFlush();
       }
 
-      if (eventType === "headless.thread.started") {
+      if (eventType === "headless.thread.resume_failed" || eventType === "headless.session.resume_failed") {
+        const resumeError = String(data.error || data.message || data.detail || "").trim();
+        updateHeadlessActorRuntime({
+          id: actorId,
+          running: false,
+          idle_seconds: null,
+          effective_working_state: "blocked",
+          effective_working_reason: "headless_runtime_resume_failed",
+          effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+          effective_active_task_id: null,
+          runtime_session_status: "resume_failed",
+          runtime_session_resume_eligible: false,
+          runtime_session_last_resume_error: resumeError || null,
+        });
+        return;
+      }
+
+      if (eventType === "headless.thread.started" || eventType === "headless.thread.resumed") {
         const threadId = typeof data.thread_id === "string" ? data.thread_id.trim() : "";
         const actorKey = headlessActorKey(groupId, actorId);
         const previousThreadId = String(headlessThreadIdByActorRef.current.get(actorKey) || "").trim();
-        if (threadId && threadId !== previousThreadId) {
+        if (eventType === "headless.thread.started" && threadId && threadId !== previousThreadId) {
           clearHeadlessLiveOutput(groupId, actorId);
         }
         if (threadId) {
@@ -562,9 +582,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           running: true,
           idle_seconds: null,
           effective_working_state: "idle",
-          effective_working_reason: "headless_thread_started",
+          effective_working_reason: eventType === "headless.thread.resumed" ? "headless_thread_resumed" : "headless_thread_started",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
+          runtime_session_status: "usable",
+          runtime_session_resume_eligible: true,
+          runtime_session_last_resume_error: null,
         });
         return;
       }

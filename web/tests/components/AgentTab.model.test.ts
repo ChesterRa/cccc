@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldFetchStoppedTerminalTail } from "../../src/components/AgentTab";
+import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "../../src/components/AgentTab";
 
 describe("AgentTab stopped terminal tail model", () => {
+  it("detects persisted runtime resume failures from actor state", () => {
+    expect(actorHasRuntimeResumeFailure({ runtime_session_status: "resume_failed" })).toBe(true);
+    expect(actorHasRuntimeResumeFailure({ runtime_session_status: "usable" })).toBe(false);
+  });
+
   it("does not fetch stopped terminal output while the actor has an in-flight lifecycle action", () => {
     expect(
       shouldFetchStoppedTerminalTail({

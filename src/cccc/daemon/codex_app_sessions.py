@@ -79,7 +79,7 @@ def _is_websocket_idle_timeout(exc: BaseException) -> bool:
     return "timed out" in message and "websocket" in name
 
 
-def _codex_remote_tui_command(base_command: list[str] | None, listen_url: str, thread_id: str = "") -> list[str]:
+def _codex_remote_tui_command(base_command: list[str] | None, listen_url: str) -> list[str]:
     command = list(base_command or [])
     if not command or Path(str(command[0] or "")).name != "codex":
         command = ["codex"]
@@ -126,11 +126,6 @@ def _codex_remote_tui_command(base_command: list[str] | None, listen_url: str, t
             i += 1
             continue
         break
-    thread_id = str(thread_id or "").strip()
-    if thread_id:
-        executable = filtered[0]
-        options = filtered[1:]
-        return [executable, "resume", *options, "--remote", str(listen_url), thread_id]
     filtered.extend(["--remote", str(listen_url)])
     return filtered
 
@@ -591,14 +586,17 @@ class CodexAppSession:
                 },
                 timeout=10.0,
             )
-            thread_id, resumed = start_codex_app_thread(
+            thread_result = start_codex_app_thread(
                 request=self._request,
                 group_id=self.group_id,
                 actor_id=self.actor_id,
                 cwd=self.cwd,
                 command=self._runtime_command,
                 model=self.model,
+                runner="pty" if self.start_remote_tui else "headless",
             )
+            thread_id = thread_result.thread_id
+            resumed = thread_result.resumed
             with self._lock:
                 self._session_state.thread_id = thread_id
                 self._session_state.status = "idle"
@@ -609,16 +607,7 @@ class CodexAppSession:
             if not self.start_remote_tui:
                 self._queue_bootstrap_control_turn()
             if self.start_remote_tui:
-                remote_command = _codex_remote_tui_command(self.remote_tui_base_command, self.listen_url, thread_id)
-                self._pty_session = pty_runner.SUPERVISOR.start_actor(
-                    group_id=self.group_id,
-                    actor_id=self.actor_id,
-                    cwd=self.cwd,
-                    command=remote_command,
-                    env=env,
-                    runtime="codex",
-                    max_backlog_bytes=self.max_backlog_bytes,
-                )
+                self._start_remote_tui(env=env)
             self._turn_thread.start()
         except Exception:
             self.stop()
@@ -677,6 +666,21 @@ class CodexAppSession:
             proc = self._proc
             return bool(self._running and proc is not None and proc.poll() is None)
 
+    def remote_tui_running(self) -> bool:
+        if not self.start_remote_tui or self.remote_tui_pid() <= 0:
+            return False
+        try:
+            return bool(pty_runner.SUPERVISOR.actor_running(group_id=self.group_id, actor_id=self.actor_id))
+        except Exception:
+            return False
+
+    def actor_running(self) -> bool:
+        if not self.is_running():
+            return False
+        if self.start_remote_tui:
+            return self.remote_tui_running()
+        return True
+
     def state(self) -> Dict[str, Any]:
         with self._lock:
             return self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id)
@@ -684,6 +688,31 @@ class CodexAppSession:
     def remote_tui_pid(self) -> int:
         session = self._pty_session
         return int(getattr(session, "pid", 0) or 0)
+
+    def handle_remote_tui_exit(self, *, pid: int = 0) -> bool:
+        if not self.start_remote_tui:
+            return False
+        current_pid = self.remote_tui_pid()
+        if pid > 0 and current_pid > 0 and int(pid) != current_pid:
+            return False
+        if not self.is_running():
+            return False
+        self.stop(persist_actor_stopped=False)
+        return True
+
+    def _start_remote_tui(self, *, env: Dict[str, str]) -> Any:
+        remote_command = _codex_remote_tui_command(self.remote_tui_base_command, self.listen_url)
+        session = pty_runner.SUPERVISOR.start_actor(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            cwd=self.cwd,
+            command=remote_command,
+            env=env,
+            runtime="codex",
+            max_backlog_bytes=self.max_backlog_bytes,
+        )
+        self._pty_session = session
+        return session
 
     def _control_turn_kind(self) -> str:
         with self._lock:
@@ -1757,6 +1786,14 @@ class _FallbackCodexAppSession:
         return True
 
 
+def _manager_session_running(session: Any) -> bool:
+    actor_running = getattr(session, "actor_running", None)
+    if callable(actor_running):
+        return bool(actor_running())
+    is_running = getattr(session, "is_running", None)
+    return bool(callable(is_running) and is_running())
+
+
 class CodexAppSessionManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -1818,9 +1855,20 @@ class CodexAppSessionManager:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
             raise ValueError("missing group_id/actor_id")
+        stale_session: Any = None
         with self._lock:
             session = self._sessions.get(key)
-            if session is not None and session.is_running():
+            if isinstance(session, CodexAppSession) and session.actor_running():
+                return session
+            if session is not None:
+                stale_session = session
+                self._sessions.pop(key, None)
+                session.request_stop()
+        if stale_session is not None:
+            stale_session.stop()
+        with self._lock:
+            session = self._sessions.get(key)
+            if isinstance(session, CodexAppSession) and session.actor_running():
                 return session
             if not _codex_cli_available(env):
                 raise RuntimeError("codex CLI not found")
@@ -1856,6 +1904,14 @@ class CodexAppSessionManager:
         if session is not None:
             session.stop()
 
+    def handle_remote_tui_exit(self, *, group_id: str, actor_id: str, pid: int = 0) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        if isinstance(session, CodexAppSession):
+            return bool(session.handle_remote_tui_exit(pid=int(pid or 0)))
+        return False
+
     def stop_group(self, *, group_id: str) -> None:
         gid = str(group_id or "").strip()
         if not gid:
@@ -1887,7 +1943,7 @@ class CodexAppSessionManager:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             session = self._sessions.get(key)
-        return bool(session and session.is_running())
+        return bool(session and _manager_session_running(session))
 
     def group_running(self, group_id: str) -> bool:
         gid = str(group_id or "").strip()
@@ -1895,7 +1951,7 @@ class CodexAppSessionManager:
             return False
         with self._lock:
             sessions = [session for (session_gid, _), session in self._sessions.items() if session_gid == gid]
-        return any(session.is_running() for session in sessions)
+        return any(_manager_session_running(session) for session in sessions)
 
     def get_state(self, *, group_id: str, actor_id: str) -> Optional[Dict[str, Any]]:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())

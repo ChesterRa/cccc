@@ -23,6 +23,8 @@
   "statusWithValue": "ステータス： {{value}}",
   "agentNotRunning": "エージェントは稼働していません",
   "agentStoppedDescription": "このエージェントは現在停止しています。",
+  "runtimeResumeFailedTitle": "再開に失敗しました",
+  "runtimeResumeFailedDescription": "保存済みのランタイムセッションを再開できませんでした。もう一度 Launch を押すと新しいセッションを開始します。",
   "lastTerminalOutput": "最後のターミナル出力",
   "launchAgent": "エージェントを起動",
   "launching": "起動中…",

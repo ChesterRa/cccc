@@ -141,11 +141,24 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
     if (errorText) detailLines.push(errorText);
     tone = isFailed ? "error" : isQueued ? "warning" : isStarted ? "info" : "success";
     live = !eventType.endsWith(".completed") && !eventType.endsWith(".failed");
-  } else if (eventType === "headless.thread.started" || eventType === "headless.session.stopped") {
+  } else if (
+    eventType === "headless.thread.started"
+    || eventType === "headless.thread.resumed"
+    || eventType === "headless.thread.resume_failed"
+    || eventType === "headless.session.resume_failed"
+    || eventType === "headless.remote_tui.start_failed"
+    || eventType === "headless.session.stopped"
+  ) {
     badge = "STATE";
-    title = eventType === "headless.thread.started" ? "Thread started" : "Session stopped";
+    if (eventType === "headless.thread.started") title = "Thread started";
+    else if (eventType === "headless.thread.resumed") title = "Thread resumed";
+    else if (eventType === "headless.thread.resume_failed" || eventType === "headless.session.resume_failed") title = "Resume failed";
+    else if (eventType === "headless.remote_tui.start_failed") title = "Terminal start failed";
+    else title = "Session stopped";
     if (normalizeText(data.thread_id)) detailLines.push(`thread: ${normalizeText(data.thread_id)}`);
-    tone = eventType === "headless.session.stopped" ? "warning" : "info";
+    const errorText = extractErrorText(data);
+    if (errorText) detailLines.push(errorText);
+    tone = eventType === "headless.thread.resume_failed" || eventType === "headless.session.resume_failed" || eventType === "headless.session.stopped" || eventType === "headless.remote_tui.start_failed" ? "warning" : "info";
   } else if (eventType === "headless.item.started") {
     badge = "ITEM";
     const item = data.item && typeof data.item === "object" ? data.item as Record<string, unknown> : {};

@@ -7,6 +7,13 @@ import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
 import { beginActorAction, endActorAction } from "./actorActionInFlight";
 
+function latestActorHasResumeFailure(actorId: string): boolean {
+  const aid = String(actorId || "").trim();
+  if (!aid) return false;
+  const latest = useGroupStore.getState().actors.find((item) => String(item.id || "").trim() === aid);
+  return String(latest?.runtime_session_status || "").trim().toLowerCase() === "resume_failed";
+}
+
 export function useActorActions(groupId: string) {
   const { refreshActors, refreshGroups, loadGroup, clearStreamingEventsForActor } = useGroupStore();
   const { setBusy, setActiveTab, showError } = useUIStore();
@@ -32,7 +39,10 @@ export function useActorActions(groupId: string) {
           ? await api.stopActor(groupId, actor.id)
           : await api.startActor(groupId, actor.id);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          await Promise.all([refreshActors(), refreshGroups()]);
+          if (isRunning || !latestActorHasResumeFailure(actor.id)) {
+            showError(`${resp.error.code}: ${resp.error.message}`);
+          }
           return;
         }
         clearStreamingEventsForActor(actor.id, groupId);
@@ -55,9 +65,13 @@ export function useActorActions(groupId: string) {
       try {
         const resp = await api.restartActor(groupId, actor.id);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          await Promise.all([refreshActors(), refreshGroups()]);
+          if (!latestActorHasResumeFailure(actor.id)) {
+            showError(`${resp.error.code}: ${resp.error.message}`);
+          }
+        } else {
+          await Promise.all([refreshActors(), refreshGroups()]);
         }
-        await Promise.all([refreshActors(), refreshGroups()]);
         setTermEpochByActor((prev) => ({
           ...prev,
           [actor.id]: (prev[actor.id] || 0) + 1,

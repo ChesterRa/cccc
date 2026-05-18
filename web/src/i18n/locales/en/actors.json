@@ -23,6 +23,8 @@
   "statusWithValue": "Status: {{value}}",
   "agentNotRunning": "Agent Not Running",
   "agentStoppedDescription": "This agent is currently stopped.",
+  "runtimeResumeFailedTitle": "Resume failed",
+  "runtimeResumeFailedDescription": "The saved runtime session could not be resumed. Click Launch again to start a new session.",
   "lastTerminalOutput": "Last terminal output",
   "launchAgent": "Launch Agent",
   "launching": "Launching...",

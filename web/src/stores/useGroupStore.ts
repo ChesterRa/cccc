@@ -539,6 +539,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         let changed = false;
         const next = actors.map((a) => {
           const u = updateById.get(String(a.id || "").trim());
+          const hasRuntimeSessionStatus = !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_status");
+          const hasRuntimeSessionResumeEligible = !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_resume_eligible");
+          const hasRuntimeSessionLastResumeError = !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_last_resume_error");
           if (
             u && (
               a.idle_seconds !== (u.idle_seconds ?? null)
@@ -547,6 +550,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               || a.effective_working_reason !== u.effective_working_reason
               || a.effective_working_updated_at !== (u.effective_working_updated_at ?? null)
               || a.effective_active_task_id !== (u.effective_active_task_id ?? null)
+              || (hasRuntimeSessionStatus && (a.runtime_session_status ?? null) !== (u.runtime_session_status ?? null))
+              || (hasRuntimeSessionResumeEligible && (a.runtime_session_resume_eligible ?? null) !== (u.runtime_session_resume_eligible ?? null))
+              || (hasRuntimeSessionLastResumeError && (a.runtime_session_last_resume_error ?? null) !== (u.runtime_session_last_resume_error ?? null))
             )
           ) {
             changed = true;
@@ -558,6 +564,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               effective_working_reason: u.effective_working_reason,
               effective_working_updated_at: u.effective_working_updated_at ?? null,
               effective_active_task_id: u.effective_active_task_id ?? null,
+              ...(hasRuntimeSessionStatus ? { runtime_session_status: u.runtime_session_status ?? null } : {}),
+              ...(hasRuntimeSessionResumeEligible ? { runtime_session_resume_eligible: u.runtime_session_resume_eligible ?? null } : {}),
+              ...(hasRuntimeSessionLastResumeError ? { runtime_session_last_resume_error: u.runtime_session_last_resume_error ?? null } : {}),
               web_model_queued_count: String(a.runtime || "").trim().toLowerCase() === "web_model"
                 && String(u.effective_working_state || "").trim().toLowerCase() !== "working"
                   ? 0

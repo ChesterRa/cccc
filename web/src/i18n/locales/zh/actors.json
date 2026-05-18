@@ -23,6 +23,8 @@
   "statusWithValue": "状态：{{value}}",
   "agentNotRunning": "智能体未运行",
   "agentStoppedDescription": "该智能体当前已停止。",
+  "runtimeResumeFailedTitle": "恢复会话失败",
+  "runtimeResumeFailedDescription": "已保存的 runtime 会话无法恢复。请再次点击启动按钮来创建一个新会话。",
   "lastTerminalOutput": "最近终端输出",
   "launchAgent": "启动智能体",
   "launching": "启动中…",

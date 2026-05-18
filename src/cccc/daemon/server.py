@@ -605,7 +605,7 @@ def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
 def _handle_pty_session_exit(session: pty_runner.PtySession, *, persist_actor_stopped: bool = True) -> None:
     """Persist user-visible PTY exits as stopped so daemon autostart does not resurrect them."""
     removed_current_state = bool(_remove_pty_state_if_pid(session.group_id, session.actor_id, pid=session.pid))
-    stop_codex_app_server_for_pty_actor_if_needed(group_id=session.group_id, actor_id=session.actor_id)
+    stop_codex_app_server_for_pty_actor_if_needed(group_id=session.group_id, actor_id=session.actor_id, pid=session.pid)
     if not persist_actor_stopped:
         return
     if not removed_current_state:
@@ -758,6 +758,24 @@ def _start_actor_process(
     )
 
 
+def _auto_wake_actor_running(wake_group: Any, actor_id: str) -> bool:
+    actor = find_actor(wake_group, actor_id)
+    actor_doc = actor if isinstance(actor, dict) else {}
+    runtime = str(actor_doc.get("runtime") or "").strip().lower()
+    runner_effective = _effective_runner_kind(str(actor_doc.get("runner") or "pty"))
+    if actor_uses_codex_app_server_state(actor_doc):
+        return bool(codex_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "codex" and runner_effective == "headless":
+        return bool(codex_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "claude" and runner_effective == "headless":
+        return bool(claude_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "web_model" and runner_effective == "headless":
+        return bool(_headless_state_running(wake_group.group_id, actor_id))
+    if runner_effective == "headless":
+        return bool(headless_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id))
+    return bool(pty_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id))
+
+
 def _request_dispatch_deps() -> RequestDispatchDeps:
     global _REQUEST_DISPATCH_DEPS
     if _REQUEST_DISPATCH_DEPS is not None:
@@ -838,33 +856,7 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             enabled_recipient_actor_ids=enabled_recipient_actor_ids,
             find_actor=find_actor,
             coerce_bool=coerce_bool,
-            is_actor_running=lambda wake_group, actor_id: (
-                (
-                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() == "codex"
-                    and _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
-                    and codex_app_supervisor.actor_running(wake_group.group_id, actor_id)
-                )
-                or (
-                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() == "claude"
-                    and _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
-                    and claude_app_supervisor.actor_running(wake_group.group_id, actor_id)
-                )
-                or (
-                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() == "web_model"
-                    and _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
-                    and _headless_state_running(wake_group.group_id, actor_id)
-                )
-                or (
-                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() != "web_model"
-                    and
-                    _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
-                    and headless_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id)
-                )
-                or (
-                    _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "pty"
-                    and pty_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id)
-                )
-            ),
+            is_actor_running=_auto_wake_actor_running,
             start_actor_process=_start_actor_process,
             update_actor=update_actor,
             runner_stop_actor=runner_stop_actor,

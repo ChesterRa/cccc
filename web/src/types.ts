@@ -237,6 +237,9 @@ export type Actor = {
   runner_effective?: string;
   runtime?: string;
   runtime_state_source?: "terminal" | "app_server" | string;
+  runtime_session_status?: string | null;
+  runtime_session_resume_eligible?: boolean | null;
+  runtime_session_last_resume_error?: string | null;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
   profile_scope?: "global" | "user";
