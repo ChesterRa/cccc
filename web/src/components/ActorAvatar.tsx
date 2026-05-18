@@ -79,7 +79,9 @@ export const ActorAvatar = memo(function ActorAvatar({
       ) : usesInlineClaudeLogo ? (
         <ClaudeLogo className="h-3/5 w-3/5" />
       ) : logoSrc ? (
-        <img src={logoSrc} alt="" className="h-full w-full object-cover" />
+        <span className="flex h-full w-full items-center justify-center bg-white">
+          <img src={logoSrc} alt="" className="h-full w-full object-contain" />
+        </span>
       ) : (
         fallbackText
       )}

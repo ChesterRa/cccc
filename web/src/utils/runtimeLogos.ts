@@ -9,9 +9,10 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   codex: "logos/codex.png",
   droid: "logos/droid.png",
   gemini: "logos/gemini.png",
+  hermes: "logos/hermes.svg",
   kimi: "logos/kimi.png",
   neovate: "logos/neovate.png",
-  web_model: "logo.png",
+  web_model: "logos/codex.png",
 };
 
 function normalizeRuntime(runtime: string | null | undefined): RuntimeLogoRuntime {

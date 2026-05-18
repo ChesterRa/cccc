@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.18] — 2026-05-18
+
+### Added
+- **Hermes runtime support** across CLI, daemon IPC, actor startup, MCP setup, runtime selectors, Web runtime display, and tests. Hermes uses the selected user Hermes home/profile, with explicit `HERMES_HOME` respected as a normal user override.
+- **Hermes runtime diagnostics and setup commands**, including status, prepare, and MCP test operations that validate the Hermes CLI, auth/config state, launch readiness, and actor-scoped CCCC MCP environment placeholders.
+- **Daemon-owned Voice Secretary recording leases** so browser recording is guarded across tabs, browsers, and devices with TTL-based recovery.
+- **View-aware Voice Secretary state and document content APIs** so the Web workspace can load compact status snapshots or document content explicitly instead of over-fetching full assistant state.
+- **Codex app thread resume/start support** for app-server backed sessions, giving Codex runtime sessions a clearer provider thread lifecycle.
+
+### Changed
+- **Voice Secretary ASR and document flow** now emits final ASR text, merges CJK transcript chunks more naturally, and uses tighter notification cursors so fresh input is delivered without stale or duplicate nudges.
+- **Codex and runtime session restart behavior** is more conservative around observer disconnects, bootstrap-control failures, explicit fresh-session requests, and stale provider session metadata.
+- **Web chat synchronization** now uses a shared SSE connection registry, better request freshness guards, and composer-state recovery after failed sends.
+- **Runtime avatars** now treat provider logos as branded assets on a stable light logo plate; ChatGPT Web Model reuses the Codex logo and Hermes has a dedicated logo asset.
+- **Voice Secretary Web surfaces** have a quieter activity stream, clearer document loading, and less transient process noise.
+
+### Fixed
+- Fixed projected browser launch compatibility on macOS.
+- Fixed Codex PTY actors being stopped accidentally when an observer-side connection closes.
+- Fixed Codex restart/session edge cases that could leave app-server state, PTY state, or saved session metadata out of sync.
+- Fixed unnecessary slash-command refresh work after formal event updates.
+- Fixed IM sender identity and mention propagation paths, with additional WeCom adapter hardening.
+
 ## [0.4.17] — 2026-05-14
 
 ### Added
