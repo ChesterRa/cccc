@@ -201,7 +201,7 @@ class TestActorLifecycleOps(unittest.TestCase):
             group.doc["running"] = True
             group.save()
 
-            with patch("cccc.daemon.server._ensure_mcp_installed", return_value=True), patch(
+            with patch("cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True), patch(
                 "cccc.daemon.actors.actor_lifecycle_ops.codex_app_supervisor.start_pty_app_actor",
                 side_effect=RuntimeError("codex app-server resume failed"),
             ):
