@@ -105,6 +105,7 @@ from .messaging.delivery import (
     THROTTLE,
 )
 from .messaging.chat_support_ops import auto_wake_recipients, normalize_attachments
+from .messaging.message_request_lanes import MessageRequestLanes
 from .ops.execution_queues import DaemonRequestExecutionQueue, GroupSpaceSyncRunQueue
 from .ops.socket_special_ops import try_handle_socket_special_op
 from .ops.socket_accept_ops import handle_incoming_connection
@@ -250,9 +251,9 @@ def _request_queue_for(
     req: Any,
     *,
     read_queue: DaemonRequestExecutionQueue,
-    fast_queue: DaemonRequestExecutionQueue,
+    message_lanes: Any,
     slow_queue: DaemonRequestExecutionQueue,
-) -> DaemonRequestExecutionQueue:
+) -> Any:
     op = str(getattr(req, "op", "") or "").strip()
     args = getattr(req, "args", None)
     if should_use_read_queue(op, args):
@@ -265,7 +266,7 @@ def _request_queue_for(
                 state_at_accept = get_group_state(group)
                 if isinstance(args, dict):
                     args["__group_state_at_accept"] = state_at_accept
-        return fast_queue
+        return message_lanes
     return slow_queue
 
 
@@ -1107,7 +1108,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             logger=logger,
             on_should_exit=stop_event.set,
         )
-        fast_request_queue = DaemonRequestExecutionQueue(
+        message_request_lanes = MessageRequestLanes(
             stop_event=stop_event,
             handle_request=handle_request,
             send_json=_send_json,
@@ -1124,7 +1125,6 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             on_should_exit=stop_event.set,
         )
         start_request_execution_thread(request_queue=request_queue, name="cccc-request-worker-slow")
-        start_request_execution_thread(request_queue=fast_request_queue, name="cccc-request-worker-fast")
         start_request_execution_thread(request_queue=read_request_queue, name="cccc-request-worker-read-1")
         start_request_execution_thread(request_queue=read_request_queue, name="cccc-request-worker-read-2")
 
@@ -1179,7 +1179,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                 schedule_request=lambda req, conn: _request_queue_for(
                     req,
                     read_queue=read_request_queue,
-                    fast_queue=fast_request_queue,
+                    message_lanes=message_request_lanes,
                     slow_queue=request_queue,
                 ).submit(conn=conn, req=req),
                 logger=logger,
