@@ -4254,7 +4254,7 @@ class TestCodexAppFlow(unittest.TestCase):
             manager.stop_actor(group_id="g_test", actor_id="peer1")
             cleanup()
 
-    def test_codex_pty_app_missing_resume_starts_fresh_thread_and_remote_tui(self) -> None:
+    def test_codex_pty_app_missing_resume_records_fresh_thread_from_remote_tui_status(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session
 
@@ -4349,6 +4349,20 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(stored.get("status"), "resume_failed")
             self.assertFalse(bool(stored.get("resume_eligible")))
             self.assertEqual([item[0] for item in emitted], [])
+
+            session._handle_notification(
+                "thread/status/changed",
+                {"threadId": "thr-fresh", "status": {"type": "idle", "activeFlags": []}},
+            )
+
+            self.assertEqual(str(session._session_state.thread_id or ""), "thr-fresh")
+            stored = read_runtime_session("g_test", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr-fresh")
+            self.assertEqual(stored.get("runner"), "pty")
+            self.assertEqual(stored.get("captured_from"), "app_server_remote_tui_status")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
         finally:
             if session is not None:
                 session.stop()
@@ -4557,6 +4571,20 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(stored.get("provider_thread_id"), "thr-bootstrap-stale")
             self.assertEqual(stored.get("status"), "resume_failed")
             self.assertFalse(bool(stored.get("resume_eligible")))
+
+            session._handle_notification(
+                "turn/started",
+                {"turn": {"id": "turn-fresh", "threadId": "thr-fresh-after-stale"}},
+            )
+
+            self.assertEqual(str(session._session_state.thread_id or ""), "thr-fresh-after-stale")
+            stored = read_runtime_session("g_test", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr-fresh-after-stale")
+            self.assertEqual(stored.get("runner"), "pty")
+            self.assertEqual(stored.get("captured_from"), "app_server_remote_tui_turn_started")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
         finally:
             if session is not None:
                 session.stop()
@@ -4726,6 +4754,57 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(str(session._session_state.thread_id or ""), "thread-from-tui")
             self.assertEqual(str(session._session_state.status or ""), "idle")
             self.assertIsNone(session._session_state.current_task_id)
+        finally:
+            cleanup()
+
+    def test_codex_pty_app_records_thread_started_notification(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.daemon.runtime_session_ops import (
+            mark_runtime_session_resume_failed,
+            read_runtime_session,
+            record_codex_app_thread_runtime_session,
+        )
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            command = ["codex", "app-server", "--listen", "ws://127.0.0.1:12345"]
+            record_codex_app_thread_runtime_session(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                command=command,
+                provider_thread_id="thr-stale",
+                runner="pty",
+                status="usable",
+                captured_from="app_server_thread_start",
+                resume_eligible=True,
+            )
+            mark_runtime_session_resume_failed(group_id="g_test", actor_id="peer1", error="thread not found")
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+                listen_url="ws://127.0.0.1:12345",
+                transport="websocket",
+                persist_headless_state=False,
+                start_remote_tui=True,
+                remote_tui_base_command=["codex"],
+            )
+            session._running = True
+            session._runtime_command = command
+
+            session._handle_notification("thread/started", {"thread": {"id": "thr-fresh-started"}})
+
+            self.assertEqual(str(session._session_state.thread_id or ""), "thr-fresh-started")
+            stored = read_runtime_session("g_test", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr-fresh-started")
+            self.assertEqual(stored.get("runner"), "pty")
+            self.assertEqual(stored.get("captured_from"), "app_server_remote_tui_thread_started")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
         finally:
             cleanup()
 

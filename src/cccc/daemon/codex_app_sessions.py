@@ -26,6 +26,7 @@ from .mcp_install import ensure_mcp_installed
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from .codex_app_thread_ops import prepare_codex_app_tui_resume, start_codex_app_thread
+from .runtime_session_ops import record_codex_app_thread_runtime_session, runtime_resume_enabled
 from ..util.fs import atomic_write_json
 from ..util.node_env import with_node_deprecation_warnings_suppressed
 from ..util.process import pid_is_alive, resolve_subprocess_argv, terminate_pid
@@ -410,6 +411,33 @@ class CodexAppSession:
                 **state,
             },
         )
+
+    def _record_remote_tui_thread_runtime_session(self, thread_id: str, *, captured_from: str) -> None:
+        thread_id = str(thread_id or "").strip()
+        if not thread_id or not self.start_remote_tui or not runtime_resume_enabled():
+            return
+        command = list(self._runtime_command or ["codex", "app-server", "--listen", self.listen_url])
+        try:
+            record_codex_app_thread_runtime_session(
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                cwd=self.cwd,
+                command=command,
+                model=self.model,
+                provider_thread_id=thread_id,
+                runner="pty",
+                status="usable",
+                captured_from=captured_from,
+                resume_eligible=True,
+            )
+        except Exception:
+            logger.debug(
+                "failed to record remote TUI codex thread: group=%s actor=%s thread=%s",
+                self.group_id,
+                self.actor_id,
+                thread_id,
+                exc_info=True,
+            )
 
     def _emit_activity(
         self,
@@ -1336,6 +1364,22 @@ class CodexAppSession:
                     return
                 self._session_state.updated_at = now
             self._persist_state()
+            self._record_remote_tui_thread_runtime_session(thread_id, captured_from="app_server_remote_tui_status")
+            return
+        if method == "thread/started":
+            thread = params.get("thread") if isinstance(params.get("thread"), dict) else {}
+            thread_id = str((thread or {}).get("id") or "").strip()
+            if not thread_id:
+                return
+            with self._lock:
+                current_thread_id = str(self._session_state.thread_id or "").strip()
+                if current_thread_id and current_thread_id != thread_id and not self.start_remote_tui:
+                    return
+                self._session_state.thread_id = thread_id
+                self._session_state.status = self._session_state.status or "idle"
+                self._session_state.updated_at = now
+            self._persist_state()
+            self._record_remote_tui_thread_runtime_session(thread_id, captured_from="app_server_remote_tui_thread_started")
             return
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
@@ -1350,6 +1394,7 @@ class CodexAppSession:
                 self._session_state.current_task_id = turn_id or None
                 self._session_state.updated_at = now
             self._persist_state()
+            self._record_remote_tui_thread_runtime_session(thread_id, captured_from="app_server_remote_tui_turn_started")
             self._item_snapshots_by_id.clear()
             self._plan_activity_id = ""
             if control_kind:

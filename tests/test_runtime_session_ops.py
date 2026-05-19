@@ -558,10 +558,11 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     raise RuntimeError("resume id not found")
                 return FreshSession()
 
+            new_session_id = "a3df810a-6a19-48e8-b75b-772d3ee65721"
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
-            ):
+            ), patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value=new_session_id):
                 session = start_pty_actor_with_runtime_resume(
                     group_id="g1",
                     actor_id="peer1",
@@ -574,8 +575,84 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 )
 
             self.assertIsInstance(session, FreshSession)
-            self.assertEqual(calls, [["claude", "--resume", "old-session-id"], ["claude"]])
-            self.assertEqual(read_runtime_session("g1", "peer1"), {})
+            self.assertEqual(
+                calls,
+                [["claude", "--resume", "old-session-id"], ["claude", "--session-id", new_session_id]],
+            )
+            stored = read_runtime_session("g1", "peer1")
+            self.assertEqual(stored.get("runtime"), "claude")
+            self.assertEqual(stored.get("provider_session_id"), new_session_id)
+            self.assertEqual(stored.get("captured_from"), "claude_generated_session_id")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
+        finally:
+            cleanup()
+
+    def test_gemini_resume_failure_fallback_generates_new_durable_session(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import (
+                read_runtime_session,
+                record_pty_runtime_session,
+                start_pty_actor_with_runtime_resume,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            record_pty_runtime_session(
+                group_id="g1",
+                actor_id="peer1",
+                runtime="gemini",
+                cwd=cwd,
+                command=["gemini", "--yolo"],
+                provider_session_id="old-gemini-session-id",
+                captured_from="gemini_generated_session_id",
+            )
+
+            calls: list[list[str]] = []
+
+            class FreshSession:
+                pid = 222
+
+            def fake_start_actor(**kwargs):
+                calls.append(list(kwargs.get("command") or []))
+                if len(calls) == 1:
+                    raise RuntimeError("resume session not found")
+                return FreshSession()
+
+            new_session_id = "42e9ef0c-3b75-43a0-9056-eef13dd1061d"
+            with patch(
+                "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
+                side_effect=fake_start_actor,
+            ), patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value=new_session_id):
+                session = start_pty_actor_with_runtime_resume(
+                    group_id="g1",
+                    actor_id="peer1",
+                    cwd=cwd,
+                    base_command=["gemini", "--yolo"],
+                    env={},
+                    runtime="gemini",
+                    max_backlog_bytes=1000,
+                    runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
+                )
+
+            self.assertIsInstance(session, FreshSession)
+            self.assertEqual(
+                calls,
+                [
+                    ["gemini", "--resume", "old-gemini-session-id", "--yolo"],
+                    ["gemini", "--session-id", new_session_id, "--yolo"],
+                ],
+            )
+            stored = read_runtime_session("g1", "peer1")
+            self.assertEqual(stored.get("runtime"), "gemini")
+            self.assertEqual(stored.get("provider_session_id"), new_session_id)
+            self.assertEqual(stored.get("resume_command_hint"), f"gemini --resume {new_session_id}")
+            self.assertEqual(stored.get("captured_from"), "gemini_generated_session_id")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
         finally:
             cleanup()
 
@@ -612,6 +689,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 calls.append(list(kwargs.get("command") or []))
                 return ResumeSession() if len(calls) == 1 else FreshSession()
 
+            new_session_id = "a3df810a-6a19-48e8-b75b-772d3ee65721"
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
@@ -623,7 +701,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 return_value=b"No conversation found for resume id",
             ), patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.stop_actor",
-            ):
+            ), patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value=new_session_id):
                 session = start_pty_actor_with_runtime_resume(
                     group_id="g1",
                     actor_id="peer1",
@@ -636,8 +714,17 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 )
 
             self.assertIsInstance(session, FreshSession)
-            self.assertEqual(calls, [["claude", "--resume", "old-session-id"], ["claude"]])
-            self.assertEqual(read_runtime_session("g1", "peer1"), {})
+            self.assertEqual(
+                calls,
+                [["claude", "--resume", "old-session-id"], ["claude", "--session-id", new_session_id]],
+            )
+            stored = read_runtime_session("g1", "peer1")
+            self.assertEqual(stored.get("runtime"), "claude")
+            self.assertEqual(stored.get("provider_session_id"), new_session_id)
+            self.assertEqual(stored.get("captured_from"), "claude_generated_session_id")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
         finally:
             cleanup()
 

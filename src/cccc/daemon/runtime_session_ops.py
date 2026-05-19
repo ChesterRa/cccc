@@ -982,26 +982,56 @@ def _start_fresh_pty_actor_after_resume_failure(
     runtime_start_preflight_error: Callable[..., str],
     cause: Optional[BaseException] = None,
 ) -> Any:
-    runtime_error = runtime_start_preflight_error(runtime, base_command, runner="pty")
+    runtime_norm = str(runtime or "").strip().lower()
+    fresh_command = list(base_command)
+    fresh_doc: Optional[Dict[str, Any]] = None
+    if runtime_norm in {"claude", "gemini"}:
+        fresh_command, fresh_doc = prepare_initial_pty_session_command(
+            group_id=group_id,
+            actor_id=actor_id,
+            runtime=runtime,
+            cwd=cwd,
+            base_command=base_command,
+            env=env,
+            max_backlog_bytes=max_backlog_bytes,
+        )
+
+    runtime_error = runtime_start_preflight_error(runtime, fresh_command, runner="pty")
     if runtime_error:
+        if fresh_doc:
+            mark_runtime_session_resume_failed(
+                group_id=group_id,
+                actor_id=actor_id,
+                error=f"fresh runtime session launch rejected: {runtime_error}",
+            )
         if cause is not None:
             raise RuntimeError(runtime_error) from cause
         raise RuntimeError(runtime_error)
-    session = pty_runner.SUPERVISOR.start_actor(
-        group_id=group_id,
-        actor_id=actor_id,
-        cwd=cwd,
-        command=base_command,
-        env=env,
-        runtime=runtime,
-        max_backlog_bytes=max_backlog_bytes,
-    )
+    try:
+        session = pty_runner.SUPERVISOR.start_actor(
+            group_id=group_id,
+            actor_id=actor_id,
+            cwd=cwd,
+            command=fresh_command,
+            env=env,
+            runtime=runtime,
+            max_backlog_bytes=max_backlog_bytes,
+        )
+    except Exception as exc:
+        if fresh_doc:
+            mark_runtime_session_resume_failed(
+                group_id=group_id,
+                actor_id=actor_id,
+                error=f"fresh runtime session launch failed: {exc}",
+            )
+        raise
     try:
         setattr(session, "_cccc_base_command", tuple(base_command))
     except Exception:
         pass
-    remove_runtime_session(group_id, actor_id)
-    if str(runtime or "").strip().lower() == "codex":
+    if not fresh_doc:
+        remove_runtime_session(group_id, actor_id)
+    if runtime_norm == "codex":
         _schedule_codex_pty_status_capture(
             group_id=group_id,
             actor_id=actor_id,
