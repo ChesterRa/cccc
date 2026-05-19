@@ -1428,47 +1428,48 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             dynamic_tool_dropped = len(dynamic_tools) - max_dynamic_tools_visible
             dynamic_tools = dynamic_tools[:max_dynamic_tools_visible]
 
-        visible_tools = sorted(
-            set(
-                resolve_visible_tool_names(
-                    builtin_enabled,
-                    actor_role=actor_role,
-                    is_pet=actor_is_pet,
-                    is_voice_secretary=actor_is_voice_secretary,
-                    is_web_model=actor_is_web_model,
-                )
-            )
-            | {str(x.get("name") or "").strip() for x in dynamic_tools if isinstance(x, dict)}
-        )
-
         hidden_capabilities: List[Dict[str, Any]] = []
-        for cap_id in all_builtin_pack_ids():
-            if cap_id in builtin_enabled:
-                continue
-            block_entry = blocked_caps.get(cap_id) if isinstance(blocked_caps.get(cap_id), dict) else None
-            if isinstance(block_entry, dict):
-                scope_token = str(block_entry.get("scope") or "group").strip().lower()
-                reason_token = "blocked_by_global_policy" if scope_token == "global" else "blocked_by_group_policy"
-                row = {"capability_id": cap_id, "reason": reason_token, "policy_level": "blocked"}
-                reason_text = str(block_entry.get("reason") or "").strip()
-                if reason_text:
-                    row["blocked_reason"] = reason_text
-                hidden_capabilities.append(row)
-                continue
-            level = _effective_policy_level(
-                policy,
-                capability_id=cap_id,
-                kind="mcp_toolpack",
-                source_id="cccc_builtin",
-                actor_role=actor_role,
+        visible_tools: List[str] = []
+        if not slash_commands_view:
+            visible_tools = sorted(
+                set(
+                    resolve_visible_tool_names(
+                        builtin_enabled,
+                        actor_role=actor_role,
+                        is_pet=actor_is_pet,
+                        is_voice_secretary=actor_is_voice_secretary,
+                        is_web_model=actor_is_web_model,
+                    )
+                )
+                | {str(x.get("name") or "").strip() for x in dynamic_tools if isinstance(x, dict)}
             )
-            hidden_capabilities.append(
-                {
-                    "capability_id": cap_id,
-                    "reason": "policy_indexed" if (not _policy_level_visible(level)) else "not_enabled",
-                    "policy_level": level,
-                }
-            )
+            for cap_id in all_builtin_pack_ids():
+                if cap_id in builtin_enabled:
+                    continue
+                block_entry = blocked_caps.get(cap_id) if isinstance(blocked_caps.get(cap_id), dict) else None
+                if isinstance(block_entry, dict):
+                    scope_token = str(block_entry.get("scope") or "group").strip().lower()
+                    reason_token = "blocked_by_global_policy" if scope_token == "global" else "blocked_by_group_policy"
+                    row = {"capability_id": cap_id, "reason": reason_token, "policy_level": "blocked"}
+                    reason_text = str(block_entry.get("reason") or "").strip()
+                    if reason_text:
+                        row["blocked_reason"] = reason_text
+                    hidden_capabilities.append(row)
+                    continue
+                level = _effective_policy_level(
+                    policy,
+                    capability_id=cap_id,
+                    kind="mcp_toolpack",
+                    source_id="cccc_builtin",
+                    actor_role=actor_role,
+                )
+                hidden_capabilities.append(
+                    {
+                        "capability_id": cap_id,
+                        "reason": "policy_indexed" if (not _policy_level_visible(level)) else "not_enabled",
+                        "policy_level": level,
+                    }
+                )
 
         now = datetime.now(timezone.utc)
         group_enabled_map = state_doc.get("group_enabled") if isinstance(state_doc.get("group_enabled"), dict) else {}

@@ -60,16 +60,17 @@ run_frontend_checks() {
 
 run_full_python_tests() {
   local pytest_workers="${PYTEST_WORKERS:-auto}"
+  local pytest_common=("-x" "-q" "--durations=20" "--timeout=120" "--timeout-method=thread")
 
   echo "Running full Python tests with pytest-xdist (-n ${pytest_workers})..."
-  if uv run --with pytest-xdist python -m pytest tests/ -x -q -n "${pytest_workers}"; then
+  if uv run --with pytest-xdist python -m pytest tests/ "${pytest_common[@]}" -n "${pytest_workers}"; then
     echo "✓ Full Python tests passed"
     echo ""
     return
   fi
 
   echo "Parallel pytest failed, falling back to serial run..."
-  uv run python -m pytest tests/ -x -q
+  uv run python -m pytest tests/ "${pytest_common[@]}"
   echo "✓ Full Python tests passed"
   echo ""
 }
@@ -120,7 +121,7 @@ run_targeted_python_tests() {
 
   echo "Running impacted Python tests:"
   printf '  %s\n' "${python_tests[@]}"
-  uv run python -m pytest -q "${python_tests[@]}"
+  uv run python -m pytest -q --durations=20 --timeout=120 --timeout-method=thread "${python_tests[@]}"
   echo "✓ Impacted Python tests passed"
   echo ""
 }

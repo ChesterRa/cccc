@@ -29,8 +29,10 @@ _SUPPORTED_PYTHON_LABEL = "Python 3.9+"
 _SUPPORTED_PYTHON_COMMANDS = ("python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python")
 _SHERPA_ONNX_STREAMING_PACKAGES = ("sherpa-onnx", "numpy")
 _SHERPA_ONNX_STREAMING_MODULES = ("sherpa_onnx", "numpy")
-_STATUS_CACHE_TTL_SECONDS = 2.0
+_STATUS_CACHE_TTL_SECONDS = 30.0
+_DISK_USAGE_CACHE_TTL_SECONDS = 300.0
 _STATUS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_DISK_USAGE_CACHE: Dict[str, tuple[float, int]] = {}
 
 
 class VoiceRuntimeDepsError(Exception):
@@ -70,9 +72,11 @@ def _read_state(runtime_id: str) -> Dict[str, Any]:
 
 def _write_state(runtime_id: str, payload: Dict[str, Any]) -> None:
     root = _runtime_root(runtime_id)
+    _invalidate_runtime_disk_usage_cache(runtime_id)
     root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(_state_path(runtime_id), payload, indent=2)
     _STATUS_CACHE.pop(str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING, None)
+    _invalidate_runtime_disk_usage_cache(runtime_id)
 
 
 def _runtime_packages(runtime_id: str) -> tuple[str, ...]:
@@ -106,8 +110,33 @@ def _directory_size_bytes(path: Path) -> int:
     return total
 
 
+def _cached_directory_size_bytes(path: Path) -> int:
+    key = str(path)
+    now = time.monotonic()
+    cached = _DISK_USAGE_CACHE.get(key)
+    if cached is not None:
+        cached_at, size = cached
+        if now - cached_at < _DISK_USAGE_CACHE_TTL_SECONDS:
+            return int(size)
+    size = _directory_size_bytes(path)
+    _DISK_USAGE_CACHE[key] = (now, int(size))
+    return int(size)
+
+
+def _invalidate_directory_size_cache(path: Path) -> None:
+    target = os.path.realpath(str(path))
+    for key in list(_DISK_USAGE_CACHE.keys()):
+        if os.path.realpath(str(key)) == target:
+            _DISK_USAGE_CACHE.pop(key, None)
+
+
+def _invalidate_runtime_disk_usage_cache(runtime_id: str) -> None:
+    _invalidate_directory_size_cache(_runtime_root(runtime_id))
+
+
 def _clear_runtime_root(runtime_id: str) -> None:
     root = _runtime_root(runtime_id)
+    _invalidate_runtime_disk_usage_cache(runtime_id)
     if not root.exists():
         return
     for child in root.iterdir():
@@ -120,6 +149,7 @@ def _clear_runtime_root(runtime_id: str) -> None:
                 child.unlink()
             except FileNotFoundError:
                 pass
+    _invalidate_runtime_disk_usage_cache(runtime_id)
 
 
 def _python_version(argv0: str) -> tuple[int, int]:
@@ -242,10 +272,38 @@ def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STRE
         "updated_at": str(state.get("updated_at") or ""),
         "installed_at": str(state.get("installed_at") or ""),
         "error": state.get("error") if isinstance(state.get("error"), dict) else {},
-        "disk_usage_bytes": _directory_size_bytes(_runtime_root(runtime_id)),
+        "disk_usage_bytes": _cached_directory_size_bytes(_runtime_root(runtime_id)),
     }
     _STATUS_CACHE[runtime_id] = (now, dict(result))
     return result
+
+
+def get_voice_runtime_status_snapshot(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING) -> Dict[str, Any]:
+    runtime_id = str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
+    state = _read_state(runtime_id)
+    status = str(state.get("status") or "").strip() or VOICE_RUNTIME_STATUS_NOT_INSTALLED
+    python_path = _venv_python(runtime_id)
+    modules = _runtime_modules(runtime_id)
+    modules_ready = state.get("modules") if isinstance(state.get("modules"), dict) else {}
+    clean_modules = {name: bool(modules_ready.get(name)) for name in modules}
+    missing_modules = [name for name, ready in clean_modules.items() if not ready]
+    if status == VOICE_RUNTIME_STATUS_READY and not modules_ready:
+        missing_modules = []
+    return {
+        "runtime_id": runtime_id,
+        "status": status,
+        "available": True,
+        "installed": status == VOICE_RUNTIME_STATUS_READY,
+        "install_dir": str(_runtime_root(runtime_id)),
+        "python": str(python_path) if python_path.exists() else str(state.get("python") or ""),
+        "packages": list(_runtime_packages(runtime_id)),
+        "modules": clean_modules,
+        "missing_modules": missing_modules,
+        "updated_at": str(state.get("updated_at") or ""),
+        "installed_at": str(state.get("installed_at") or ""),
+        "error": state.get("error") if isinstance(state.get("error"), dict) else {},
+        "disk_usage_bytes": 0,
+    }
 
 
 def resolve_voice_runtime_python(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING) -> str:
@@ -258,6 +316,12 @@ def resolve_voice_runtime_python(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_
 def list_voice_runtime_statuses() -> List[Dict[str, Any]]:
     return [
         get_voice_runtime_status(VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING),
+    ]
+
+
+def list_voice_runtime_status_snapshots() -> List[Dict[str, Any]]:
+    return [
+        get_voice_runtime_status_snapshot(VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING),
     ]
 
 

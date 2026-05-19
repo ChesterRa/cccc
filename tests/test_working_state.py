@@ -2,13 +2,26 @@ from cccc.kernel.pty_terminal_state import derive_pty_terminal_override
 from cccc.kernel.working_state import derive_effective_working_state
 
 
-def test_codex_terminal_text_is_not_used_for_working_state() -> None:
+def test_codex_working_banner_without_prompt_does_not_override_activity_state() -> None:
     terminal_text = """
 › Run /review on my current changes
 ◦ Working (6s • esc to interrupt)
 """
 
     assert derive_pty_terminal_override(runtime="codex", terminal_text=terminal_text) is None
+
+
+def test_codex_prompt_after_working_banner_is_idle() -> None:
+    terminal_text = """
+◦ Working (4s • esc to interrupt)
+> Use /skills to list available skills
+gpt-5.5 medium · ~/Desktop/waterbang/ai/cccc · 30M used
+"""
+
+    assert derive_pty_terminal_override(runtime="codex", terminal_text=terminal_text) == {
+        "effective_working_state": "idle",
+        "effective_working_reason": "pty_terminal_codex_prompt_visible",
+    }
 
 
 def test_claude_boxed_prompt_visible_is_idle() -> None:

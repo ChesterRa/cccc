@@ -449,6 +449,7 @@ def prepare_hermes_runtime(
 ) -> Dict[str, Any]:
     hermes_home_override = _effective_hermes_home_override(hermes_home_override)
     root = Path(home).expanduser().resolve() if home is not None else ensure_home()
+    discovery_home = Path(home).expanduser() if home is not None else root
     lock = None
     commands_run: list[Dict[str, Any]] = []
     try:
@@ -484,7 +485,7 @@ def prepare_hermes_runtime(
                 }
             cmd = build_hermes_mcp_add_command(
                 env_values={
-                    "CCCC_HOME": str(root),
+                    "CCCC_HOME": str(discovery_home),
                     "CCCC_GROUP_ID": HERMES_DISCOVERY_GROUP_ID,
                     "CCCC_ACTOR_ID": HERMES_DISCOVERY_ACTOR_ID,
                 },

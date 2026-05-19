@@ -54,7 +54,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
-            attach_actor_socket=lambda gid, aid, _sock: attached.append((gid, aid)),
+            attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid)),
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
             effective_runner_kind=lambda rk: rk,
@@ -66,6 +66,31 @@ class TestSocketSpecialOps(unittest.TestCase):
         self.assertIsNone(conn.timeout)
         self.assertEqual(attached, [("g1", "a1")])
         self.assertTrue(sent and bool(sent[0].get("ok")))
+
+    def test_term_attach_forwards_since_cursor(self) -> None:
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1", "since": 42}}
+        )
+        conn = _FakeConn()
+        attached = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, _payload: None,
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid, since)),
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(attached, [("g1", "a1", 42)])
 
     def test_events_stream_invalid_kinds_returns_error(self) -> None:
         req = DaemonRequest.model_validate(

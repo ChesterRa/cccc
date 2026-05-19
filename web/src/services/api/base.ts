@@ -757,6 +757,10 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     }
     return normalizeApiResponse<T>(data);
   } catch {
+    if (!resp.ok) {
+      const statusText = resp.statusText ? ` ${resp.statusText}` : "";
+      return makeErrorResponse("HTTP_ERROR", `Server returned ${resp.status}${statusText}: ${text.slice(0, 100)}`);
+    }
     return makeErrorResponse("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 100)}`);
   }
 }

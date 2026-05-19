@@ -148,6 +148,27 @@ class TestPetReviewScheduler(unittest.TestCase):
         self.assertTrue(accepted)
         emit_notify.assert_called_once()
 
+    def test_immediate_review_dispatches_notify_without_inline_flush(self) -> None:
+        fake_group = object()
+        with patch.object(review_scheduler, "load_group", return_value=fake_group), patch.object(
+            review_scheduler,
+            "is_desktop_pet_enabled",
+            return_value=True,
+        ), patch.object(review_scheduler, "get_group_state", return_value="active"), patch.object(
+            review_scheduler,
+            "get_pet_actor",
+            return_value={"id": "pet-peer", "enabled": True},
+        ), patch.object(review_scheduler, "emit_system_notify", return_value={}) as emit_notify:
+            review_scheduler.request_pet_review(
+                "g-test",
+                reason="chat_reply",
+                source_event_id="evt-inline",
+                immediate=True,
+            )
+
+        emit_notify.assert_called_once()
+        self.assertIs(emit_notify.call_args.kwargs.get("async_flush"), True)
+
     def test_review_packet_prefers_reason_bound_focus_task(self) -> None:
         from cccc.kernel.context import Context, ContextStorage, Coordination, CoordinationBrief, Task, TaskStatus, WaitingOn
         from cccc.kernel.ledger import append_event

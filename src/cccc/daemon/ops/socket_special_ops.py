@@ -40,7 +40,7 @@ def try_handle_socket_special_op(
     dump_response: Callable[[DaemonResponse], Dict[str, Any]],
     error: Callable[[str, str, Optional[Dict[str, Any]]], DaemonResponse],
     actor_running: Callable[[str, str], bool],
-    attach_actor_socket: Callable[[str, str, Any], None],
+    attach_actor_socket: Callable[[str, str, Any, Optional[int]], None],
     load_group: Callable[[str], Any],
     find_actor: Callable[[Any, str], Any],
     effective_runner_kind: Callable[[str], str],
@@ -53,6 +53,13 @@ def try_handle_socket_special_op(
     if op == "term_attach":
         group_id = str(args.get("group_id") or "").strip()
         actor_id = str(args.get("actor_id") or "").strip()
+        since_raw = args.get("since")
+        since: Optional[int] = None
+        if since_raw is not None and str(since_raw).strip() != "":
+            try:
+                since = int(since_raw)
+            except Exception:
+                since = None
         if not group_id:
             resp = error("missing_group_id", "missing group_id")
         elif not actor_id:
@@ -85,7 +92,7 @@ def try_handle_socket_special_op(
             send_json(conn, dump_response(resp))
             if resp.ok:
                 _set_blocking_io(conn)
-                attach_actor_socket(group_id, actor_id, conn)
+                attach_actor_socket(group_id, actor_id, conn, since)
                 return True
         except Exception:
             pass

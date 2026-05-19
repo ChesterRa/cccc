@@ -3586,6 +3586,9 @@ class TestCapabilityOps(unittest.TestCase):
             with patch(
                 "cccc.daemon.ops.capability_ops._search._render_source_states",
                 side_effect=AssertionError("slash command state must not render full source states"),
+            ), patch(
+                "cccc.daemon.ops.capability_ops._search.resolve_visible_tool_names",
+                side_effect=AssertionError("slash command state must not resolve full visible tools"),
             ):
                 state_resp, _ = self._call(
                     "capability_state",

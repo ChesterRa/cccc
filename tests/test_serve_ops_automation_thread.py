@@ -24,18 +24,18 @@ class TestServeOpsAutomationThread(unittest.TestCase):
             group_running=lambda _gid: False,
             tick_delivery=lambda _group: None,
             compact_ledgers=lambda _home: None,
-            automation_interval_seconds=0.3,
-            initial_automation_delay_seconds=0.25,
+            automation_interval_seconds=0.03,
+            initial_automation_delay_seconds=0.05,
         )
         try:
-            time.sleep(0.3)
+            time.sleep(0.03)
             self.assertEqual(tick_times, [])
-            time.sleep(0.8)
-            self.assertEqual(len(tick_times), 1)
+            time.sleep(0.08)
+            self.assertGreaterEqual(len(tick_times), 1)
             first_tick = tick_times[0]
-            time.sleep(1.1)
+            time.sleep(0.08)
             self.assertGreaterEqual(len(tick_times), 2)
-            self.assertGreaterEqual(tick_times[1] - first_tick, 0.3)
+            self.assertGreaterEqual(tick_times[1] - first_tick, 0.02)
         finally:
             stop_event.set()
             thread.join(timeout=2.0)

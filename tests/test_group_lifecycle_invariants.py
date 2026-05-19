@@ -1,6 +1,9 @@
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
 
 
 class TestGroupLifecycleInvariants(unittest.TestCase):
@@ -24,6 +27,25 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
         from cccc.daemon.server import handle_request
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    @contextmanager
+    def _fake_codex_headless_start(self):
+        def _fake_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str], model: str = ""):
+            class _Session:
+                def __init__(self) -> None:
+                    self.group_id = group_id
+                    self.actor_id = actor_id
+                    self.cwd = cwd
+                    self.env = dict(env)
+                    self.model = model
+
+            return _Session()
+
+        with patch(
+            "cccc.daemon.group.group_lifecycle_ops.codex_app_supervisor.start_actor",
+            side_effect=_fake_start_actor,
+        ):
+            yield
 
     def test_group_stop_and_start_preserve_core_invariants(self) -> None:
         _, cleanup = self._with_home()
@@ -89,7 +111,8 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
                     continue
                 self.assertFalse(bool(actor.get("enabled", True)))
 
-            start_resp, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+            with self._fake_codex_headless_start():
+                start_resp, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
             self.assertTrue(start_resp.ok, getattr(start_resp, "error", None))
 
             show_after_start_resp, _ = self._call("group_show", {"group_id": group_id})

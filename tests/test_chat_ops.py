@@ -379,7 +379,7 @@ class TestChatOps(unittest.TestCase):
     def test_send_pet_review_immediate_follows_reply_required(self) -> None:
         group_id, cleanup = self._setup_group_with_actors()
         try:
-            with patch("cccc.daemon.messaging.chat_ops.request_pet_review") as review_mock:
+            with patch("cccc.daemon.messaging.chat_side_effects.request_pet_review") as review_mock:
                 resp, _ = self._call(
                     "send",
                     {
@@ -433,7 +433,7 @@ class TestChatOps(unittest.TestCase):
             original_event_id = str(original_event.get("id") or "").strip()
             self.assertTrue(original_event_id)
 
-            with patch("cccc.daemon.messaging.chat_ops.request_pet_review") as review_mock:
+            with patch("cccc.daemon.messaging.chat_side_effects.request_pet_review") as review_mock:
                 reply, _ = self._call(
                     "reply",
                     {
@@ -893,8 +893,8 @@ class TestChatOps(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            with patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as send_queue, patch(
-                "cccc.daemon.messaging.chat_ops.request_flush_pending_messages"
+            with patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as send_queue, patch(
+                "cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages"
             ) as send_flush:
                 send_resp, _ = self._call(
                     "send",
@@ -922,8 +922,8 @@ class TestChatOps(unittest.TestCase):
             reply_to = str(send_event.get("id") or "").strip()
             self.assertTrue(reply_to)
 
-            with patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as reply_queue, patch(
-                "cccc.daemon.messaging.chat_ops.request_flush_pending_messages"
+            with patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as reply_queue, patch(
+                "cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages"
             ) as reply_flush, patch("cccc.daemon.messaging.chat_ops.flush_pending_messages") as reply_sync_flush:
                 reply_resp, _ = self._call(
                     "reply",
@@ -1086,9 +1086,9 @@ class TestChatOps(unittest.TestCase):
 
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit,
-                patch("cccc.daemon.messaging.chat_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
-                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=["fm1"]),
-                patch("cccc.daemon.messaging.chat_ops.emit_system_notify") as emit_notify,
+                patch("cccc.daemon.messaging.chat_delivery_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
+                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=["fm1"]),
+                patch("cccc.daemon.messaging.chat_delivery_ops.emit_system_notify") as emit_notify,
             ):
                 resp = handle_send(
                     {
@@ -1208,9 +1208,9 @@ class TestChatOps(unittest.TestCase):
 
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit,
-                patch("cccc.daemon.messaging.chat_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
-                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=["peer1"]),
-                patch("cccc.daemon.messaging.chat_ops.emit_system_notify") as emit_notify,
+                patch("cccc.daemon.messaging.chat_delivery_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
+                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=["peer1"]),
+                patch("cccc.daemon.messaging.chat_delivery_ops.emit_system_notify") as emit_notify,
             ):
                 resp = handle_reply(
                     {

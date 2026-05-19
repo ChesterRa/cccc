@@ -176,7 +176,7 @@ export function AgentTab({
       fetchTerminalTail(groupId, actor.id, 8000, true, true)
         .then((resp) => {
           if (cancelled) return;
-          setStoppedTerminalText(resp.ok ? getStoppedTerminalOutputText(resp.result.text || "") : "");
+          setStoppedTerminalText(resp.ok ? getStoppedTerminalOutputText(resp.result.text || "", workingState) : "");
         })
         .catch(() => {
           if (!cancelled) setStoppedTerminalText("");
@@ -190,7 +190,7 @@ export function AgentTab({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activated, actor.id, groupId, isBusy, isHeadless, isRunning, termEpoch]);
+  }, [activated, actor.id, groupId, isBusy, isHeadless, isRunning, termEpoch, workingState]);
 
   useEffect(() => {
     if (!activated || observabilityLoaded) return;
@@ -239,7 +239,7 @@ export function AgentTab({
     if (workingState === "working") return t("working");
     return t("running");
   })();
-  const stoppedTerminalOutputText = getStoppedTerminalOutputText(stoppedTerminalText);
+  const stoppedTerminalOutputText = getStoppedTerminalOutputText(stoppedTerminalText, workingState);
   const resumeFailureNotice = hasRuntimeResumeFailure ? (
     <div
       className={classNames(

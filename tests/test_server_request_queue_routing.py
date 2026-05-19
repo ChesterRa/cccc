@@ -49,3 +49,48 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         selected = _request_queue_for(req, read_queue=read_queue, fast_queue=fast_queue, slow_queue=slow_queue)
 
         self.assertIs(selected, read_queue)
+
+    def test_terminal_transcript_ops_stay_on_slow_queue(self) -> None:
+        from cccc.daemon.server import _request_queue_for
+
+        read_queue = object()
+        fast_queue = object()
+        slow_queue = object()
+
+        for op in ("terminal_history", "terminal_tail"):
+            with self.subTest(op=op):
+                req = SimpleNamespace(op=op, args={"group_id": "g1", "actor_id": "peer1"})
+
+                selected = _request_queue_for(req, read_queue=read_queue, fast_queue=fast_queue, slow_queue=slow_queue)
+
+                self.assertIs(selected, slow_queue)
+
+    def test_slash_capability_state_uses_read_queue(self) -> None:
+        from cccc.daemon.server import _request_queue_for
+
+        read_queue = object()
+        fast_queue = object()
+        slow_queue = object()
+        req = SimpleNamespace(
+            op="capability_state",
+            args={"group_id": "g1", "actor_id": "user", "view": "slash_commands"},
+        )
+
+        selected = _request_queue_for(req, read_queue=read_queue, fast_queue=fast_queue, slow_queue=slow_queue)
+
+        self.assertIs(selected, read_queue)
+
+    def test_voice_workspace_state_stays_on_slow_queue_because_get_can_emit_retry_notify(self) -> None:
+        from cccc.daemon.server import _request_queue_for
+
+        read_queue = object()
+        fast_queue = object()
+        slow_queue = object()
+        req = SimpleNamespace(
+            op="assistant_state",
+            args={"group_id": "g1", "assistant_id": "voice_secretary", "view": "voice_workspace"},
+        )
+
+        selected = _request_queue_for(req, read_queue=read_queue, fast_queue=fast_queue, slow_queue=slow_queue)
+
+        self.assertIs(selected, slow_queue)

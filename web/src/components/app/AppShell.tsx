@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
@@ -9,6 +9,7 @@ import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
 import type { Actor, GroupContext, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale } from "../../types";
 import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
+import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
 
 type AppShellProps = {
   orderedGroups: GroupMeta[];
@@ -192,6 +193,10 @@ export function AppShell({
   const shellStyle = {
     "--sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth}px`,
   } as CSSProperties;
+  const mountedRuntimeActorsRef = useRef<{ groupId: string | null; actorsById: Record<string, Actor> }>({
+    groupId: null,
+    actorsById: {},
+  });
 
   useEffect(() => {
     if (!selectedGroupId || runtimeActors.length === 0) return;
@@ -232,6 +237,19 @@ export function AppShell({
       }
     };
   }, [selectedGroupId, runtimeActors.length]);
+
+  useEffect(() => {
+    const current = mountedRuntimeActorsRef.current;
+    const next = current.groupId === selectedGroupId ? { ...current.actorsById } : {};
+    for (const actor of runtimeActors) {
+      const actorId = String(actor.id || "").trim();
+      if (actorId) next[actorId] = actor;
+    }
+    mountedRuntimeActorsRef.current = {
+      groupId: selectedGroupId || null,
+      actorsById: next,
+    };
+  }, [runtimeActors, selectedGroupId]);
 
   return (
     <div
@@ -330,7 +348,9 @@ export function AppShell({
           </div>
 
           {renderedActorIds.map((actorId) => {
-            const actor = runtimeActors.find((item) => item.id === actorId) || null;
+            const mountedRuntimeActors =
+              mountedRuntimeActorsRef.current.groupId === selectedGroupId ? mountedRuntimeActorsRef.current.actorsById : {};
+            const actor = resolveRuntimeInspectorActor(actorId, runtimeActors, mountedRuntimeActors);
             const isVisible = activeTab === actorId && activeTab !== "chat";
             const agentState =
               (groupContext?.agent_states || []).find((item) => item.id === (actor?.id || "")) || null;

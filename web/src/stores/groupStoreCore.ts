@@ -364,19 +364,54 @@ export function scheduleDeferredUnreadRefresh(groupId: string, task: () => void)
 }
 
 export function mergeActorUnreadCounts(nextActors: Actor[], previousActors: Actor[]): Actor[] {
-  if (!nextActors.length || !previousActors.length) return nextActors;
+  if (!nextActors.length || !previousActors.length) return reuseEqualActors(nextActors, previousActors);
   const unreadByActorId = new Map(
     previousActors
       .filter((actor) => typeof actor?.unread_count === "number")
       .map((actor) => [String(actor.id || ""), Number(actor.unread_count || 0)] as const),
   );
 
-  return nextActors.map((actor) => {
+  const merged = nextActors.map((actor) => {
     if (typeof actor?.unread_count === "number") return actor;
     const actorId = String(actor.id || "");
     if (!actorId || !unreadByActorId.has(actorId)) return actor;
     return { ...actor, unread_count: unreadByActorId.get(actorId) ?? 0 };
   });
+  return reuseEqualActors(merged, previousActors);
+}
+
+function actorValueFingerprint(value: unknown): string {
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (value && typeof value === "object") {
+    return JSON.stringify(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, key) => {
+          acc[key] = (value as Record<string, unknown>)[key];
+          return acc;
+        }, {}),
+    );
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function actorShallowEqual(a: Actor, b: Actor): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (actorValueFingerprint((a as Record<string, unknown>)[key]) !== actorValueFingerprint((b as Record<string, unknown>)[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function reuseEqualActors(nextActors: Actor[], previousActors: Actor[]): Actor[] {
+  if (nextActors === previousActors) return previousActors;
+  if (nextActors.length !== previousActors.length) return nextActors;
+  for (let index = 0; index < nextActors.length; index += 1) {
+    if (!actorShallowEqual(nextActors[index], previousActors[index])) return nextActors;
+  }
+  return previousActors;
 }
 
 export function saveCurrentViewSnapshot(groupId: string, state: GroupStateSnapshot): void {

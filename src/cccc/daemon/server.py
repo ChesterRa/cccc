@@ -127,6 +127,7 @@ from .space.group_space_memory_sync import process_due_memory_space_syncs
 from .space.group_space_runtime import process_due_space_jobs
 from .space.group_space_sync import process_due_space_syncs, sync_group_space_files
 from .space.group_space_store import get_space_provider_state
+from .request_queue_policy import FAST_QUEUE_OPS, should_use_read_queue
 from .group.presentation_browser_runtime import close_all_browser_surface_sessions
 from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
 from .actors.web_model_browser_session import close_all_web_model_chatgpt_browser_sessions
@@ -141,22 +142,6 @@ _DAEMON_CLIENT_WARNING_WINDOW_S = 5.0
 _DAEMON_CLIENT_WARN_LOCK = threading.Lock()
 _DAEMON_CLIENT_WARN_SEEN: Dict[tuple[str, str, str], float] = {}
 _SPACE_SYNC_RUN_QUEUE: Optional[GroupSpaceSyncRunQueue] = None
-_REQUEST_FAST_QUEUE_OPS = {"send", "reply", "chat_ack"}
-_REQUEST_READ_QUEUE_OPS = {
-    "branding_get",
-    "capability_overview",
-    "context_get",
-    "groups",
-    "group_space_status",
-    "im_list_authorized",
-    "im_list_pending",
-    "actor_list",
-    "actor_profile_list",
-    "observability_get",
-    "ping",
-}
-
-
 def _should_log_daemon_client_warning(*, op: str, phase: str, reason: str) -> bool:
     key = (
         str(op or "").strip() or "unknown",
@@ -270,13 +255,9 @@ def _request_queue_for(
 ) -> DaemonRequestExecutionQueue:
     op = str(getattr(req, "op", "") or "").strip()
     args = getattr(req, "args", None)
-    if op in _REQUEST_READ_QUEUE_OPS:
+    if should_use_read_queue(op, args):
         return read_queue
-    if op == "group_space_provider_auth":
-        action = str(args.get("action") or "").strip().lower() if isinstance(args, dict) else ""
-        if action == "status":
-            return read_queue
-    if op in _REQUEST_FAST_QUEUE_OPS:
+    if op in FAST_QUEUE_OPS:
         group_id = str(args.get("group_id") or "").strip() if isinstance(args, dict) else ""
         if group_id:
             group = load_group(group_id)
@@ -1175,10 +1156,11 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     dump_response=_dump_response,
                     error=lambda code, message, details=None: _error(code, message, details=details),
                     actor_running=pty_runner.SUPERVISOR.actor_running,
-                    attach_actor_socket=lambda group_id, actor_id, sock2: pty_runner.SUPERVISOR.attach(
+                    attach_actor_socket=lambda group_id, actor_id, sock2, since=None: pty_runner.SUPERVISOR.attach(
                         group_id=group_id,
                         actor_id=actor_id,
                         sock=sock2,
+                        since=since,
                     ),
                     load_group=load_group,
                     find_actor=find_actor,

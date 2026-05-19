@@ -125,7 +125,7 @@ def handle_actor_list(
             if not running and effective_runner != "headless":
                 running = bool(pty_runner.SUPERVISOR.actor_running(group_id, aid))
                 idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=aid) if running else None
-                if running and runtime.lower() != "codex":
+                if running:
                     try:
                         pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
                             group_id=group_id,

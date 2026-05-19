@@ -18,6 +18,37 @@ export function buildTerminalConnectionKey(args: {
   ].join(":");
 }
 
+export function buildTerminalWebSocketUrl(args: {
+  protocol: string;
+  host: string;
+  groupId: string;
+  actorId: string;
+  since?: number | string | null;
+}): string {
+  const protocol = args.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${protocol}//${args.host}/api/v1/groups/${encodeURIComponent(args.groupId)}/actors/${encodeURIComponent(args.actorId)}/term`;
+  const since = args.since;
+  if (since === null || since === undefined || !String(since).trim()) return url;
+  return `${url}?since=${encodeURIComponent(String(since))}`;
+}
+
+export function createTerminalAttachCursorResolver(readCursor: () => Promise<number | null>): {
+  resolve: () => Promise<number | null>;
+} {
+  let cursorPromise: Promise<number | null> | null = null;
+
+  return {
+    resolve: () => {
+      if (!cursorPromise) {
+        cursorPromise = readCursor().finally(() => {
+          cursorPromise = null;
+        });
+      }
+      return cursorPromise;
+    },
+  };
+}
+
 export function isTerminalAttachNonRetryableErrorCode(code: unknown): boolean {
   const normalized = String(code || "").trim();
   return [

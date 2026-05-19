@@ -210,7 +210,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
         selfEvolvingSurface || !String(groupId || "").trim()
           ? Promise.resolve(null)
-          : api.fetchGroupCapabilityState(String(groupId || "").trim(), "user", { noCache: true }),
+          : api.fetchSlashCommandCapabilityState(String(groupId || "").trim(), "user", { noCache: true }),
       ]);
       if (overviewRequestSeqRef.current != requestSeq) return;
       if (!overviewResp.ok) {
@@ -426,7 +426,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         await refreshSlashHiddenState();
         return;
       }
-      const stateResp = await api.fetchGroupCapabilityState(gid, "user", { noCache: true });
+      const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
       if (stateResp.ok) {
         setSlashHiddenCapabilityIds(normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities));
       }
@@ -445,7 +445,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       setSlashHiddenCapabilityIds([]);
       return;
     }
-    const resp = await api.fetchGroupCapabilityState(gid, "user", { noCache: true });
+    const resp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
     if (resp.ok) {
       setSlashHiddenCapabilityIds(normalizeCapabilityIdList(resp.result?.actor_hidden_capabilities));
     }

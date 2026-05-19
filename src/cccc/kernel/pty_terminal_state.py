@@ -42,7 +42,8 @@ def _is_terminal_prompt_line(line: str) -> bool:
 
 def _has_terminal_prompt_visible(text: str) -> bool:
     for line in _recent_non_empty_lines(text):
-        return _is_terminal_prompt_line(line)
+        if _is_terminal_prompt_line(line):
+            return True
     return False
 
 
@@ -112,6 +113,13 @@ def derive_pty_terminal_override(*, runtime: str, terminal_text: str) -> Optiona
         return None
 
     if runtime_id == "codex":
+        prompt_offset = _last_terminal_prompt_offset(cleaned)
+        working_offset = _last_codex_working_banner_offset(cleaned)
+        if prompt_offset >= 0 and prompt_offset > working_offset:
+            return {
+                "effective_working_state": "idle",
+                "effective_working_reason": "pty_terminal_codex_prompt_visible",
+            }
         return None
 
     return None

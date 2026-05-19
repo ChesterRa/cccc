@@ -83,13 +83,15 @@ class PtySession:
         self._lock = threading.Lock()
         self._clients: Dict[int, _PtyClient] = {}
         self._writer_fd: Optional[int] = None
-        self._attach_q: queue.Queue[socket.socket] = queue.Queue()
+        self._attach_q: queue.Queue[object] = queue.Queue()
         self._cmd_r, self._cmd_w = os.pipe()
         os.set_blocking(self._cmd_r, False)
         os.set_blocking(self._cmd_w, False)
 
         self._backlog: deque[bytes] = deque()
         self._backlog_bytes = 0
+        self._backlog_start_offset = 0
+        self._backlog_end_offset = 0
         self._terminal_signal_buffer = ""
         self._terminal_override: Optional[Dict[str, str]] = None
         self._mode_tail = b""
@@ -206,6 +208,61 @@ class PtySession:
             data = data[-limit:]
         return data
 
+    def _backlog_snapshot(self) -> Tuple[bytes, int, int]:
+        with self._lock:
+            data = b"".join(self._backlog) if self._backlog else b""
+            start = int(getattr(self, "_backlog_start_offset", 0) or 0)
+            end = int(getattr(self, "_backlog_end_offset", start + len(data)) or 0)
+        return data, start, end
+
+    def history_page(self, *, before: Optional[int] = None, limit_bytes: int = 64_000) -> Dict[str, object]:
+        limit = int(limit_bytes or 0)
+        if limit <= 0:
+            limit = int(self._max_backlog_bytes or 0) or 64_000
+        limit = min(max(1, limit), int(self._max_backlog_bytes or 0) or limit)
+        data, start, end = self._backlog_snapshot()
+        if before is None:
+            page_end = end
+        else:
+            try:
+                page_end = int(before)
+            except Exception:
+                page_end = end
+        if page_end < start:
+            return {
+                "data": b"",
+                "start_cursor": start,
+                "end_cursor": start,
+                "has_more": False,
+                "cursor_expired": True,
+            }
+        if page_end > end:
+            page_end = end
+        page_start = max(start, page_end - limit)
+        rel_start = max(0, page_start - start)
+        rel_end = max(0, page_end - start)
+        return {
+            "data": data[rel_start:rel_end],
+            "start_cursor": page_start,
+            "end_cursor": page_end,
+            "has_more": page_start > start,
+            "cursor_expired": False,
+        }
+
+    def history_since(self, since: Optional[int]) -> bytes:
+        data, start, end = self._backlog_snapshot()
+        if since is None:
+            return data
+        try:
+            cursor = int(since)
+        except Exception:
+            return data
+        if cursor < start:
+            return data
+        if cursor >= end:
+            return b""
+        return data[max(0, cursor - start):]
+
     def clear_backlog(self) -> None:
         """Clear the in-memory PTY backlog/ring buffer (developer-mode only)."""
         with self._lock:
@@ -214,6 +271,8 @@ class PtySession:
             except Exception:
                 self._backlog = deque()
             self._backlog_bytes = 0
+            end = int(getattr(self, "_backlog_end_offset", 0) or 0)
+            self._backlog_start_offset = end
             self._mode_tail = b""
 
     def resize(self, *, cols: int, rows: int) -> None:
@@ -270,9 +329,9 @@ class PtySession:
         except Exception:
             pass
 
-    def attach_client(self, sock: socket.socket) -> None:
+    def attach_client(self, sock: socket.socket, *, since: Optional[int] = None) -> None:
         try:
-            self._attach_q.put_nowait(sock)
+            self._attach_q.put_nowait((sock, since))
         except Exception:
             return
         try:
@@ -327,10 +386,14 @@ class PtySession:
             self._last_output_at = now
             self._backlog.append(chunk)
             self._backlog_bytes += len(chunk)
+            self._backlog_end_offset = int(getattr(self, "_backlog_end_offset", 0) or 0) + len(chunk)
+            if not hasattr(self, "_backlog_start_offset"):
+                self._backlog_start_offset = self._backlog_end_offset - self._backlog_bytes
             limit = max(0, self._max_backlog_bytes)
             while limit and self._backlog_bytes > limit and self._backlog:
                 drop = self._backlog.popleft()
                 self._backlog_bytes -= len(drop)
+                self._backlog_start_offset = int(getattr(self, "_backlog_start_offset", 0) or 0) + len(drop)
             merged = f"{self._terminal_signal_buffer}{text}"
             if len(merged) > TERMINAL_SIGNAL_BUFFER_CHARS:
                 merged = merged[-TERMINAL_SIGNAL_BUFFER_CHARS:]
@@ -385,9 +448,10 @@ class PtySession:
             pass
         while True:
             try:
-                sock = self._attach_q.get_nowait()
+                item = self._attach_q.get_nowait()
             except queue.Empty:
                 break
+            sock = item[0] if isinstance(item, tuple) else item
             try:
                 sock.close()
             except Exception:
@@ -476,12 +540,16 @@ class PtySession:
 
         while True:
             try:
-                sock = self._attach_q.get_nowait()
+                item = self._attach_q.get_nowait()
             except queue.Empty:
                 return
-            self._attach_client_now(sock)
+            if isinstance(item, tuple):
+                sock, since = item
+            else:
+                sock, since = item, None
+            self._attach_client_now(sock, since=since)
 
-    def _attach_client_now(self, sock: socket.socket) -> None:
+    def _attach_client_now(self, sock: socket.socket, *, since: Optional[int] = None) -> None:
         fileno = int(sock.fileno())
         if fileno < 0:
             try:
@@ -500,7 +568,22 @@ class PtySession:
             writer = self._writer_fd is None
             if writer:
                 self._writer_fd = fileno
-            backlog = b"".join(self._backlog) if self._backlog else b""
+            data = b"".join(self._backlog) if self._backlog else b""
+            start = int(getattr(self, "_backlog_start_offset", 0) or 0)
+            end = int(getattr(self, "_backlog_end_offset", start + len(data)) or 0)
+            if since is None:
+                backlog = data
+            else:
+                try:
+                    cursor = int(since)
+                except Exception:
+                    cursor = start
+                if cursor < start:
+                    backlog = data
+                elif cursor >= end:
+                    backlog = b""
+                else:
+                    backlog = data[max(0, cursor - start):]
             outbuf = bytearray(backlog)
             client = _PtyClient(sock=sock, writer=writer, outbuf=outbuf)
             self._clients[fileno] = client
@@ -652,6 +735,26 @@ class PtySupervisor:
         except Exception:
             return b""
 
+    def history_page(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        before: Optional[int] = None,
+        limit_bytes: int = 64_000,
+    ) -> Dict[str, object]:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None:
+            return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+        try:
+            return s.history_page(before=before, limit_bytes=int(limit_bytes or 0))
+        except Exception:
+            return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+
     def clear_backlog(self, *, group_id: str, actor_id: str) -> bool:
         """Clear an actor's PTY backlog (returns False if actor not running)."""
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
@@ -730,13 +833,13 @@ class PtySupervisor:
             except Exception:
                 pass
 
-    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket) -> None:
+    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket, since: Optional[int] = None) -> None:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             s = self._sessions.get(key)
         if s is None or not s.is_running():
             raise RuntimeError("actor not running")
-        s.attach_client(sock)
+        s.attach_client(sock, since=since)
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())

@@ -257,7 +257,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 running = _pty_state_running(gid, aid)
             idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=gid, actor_id=aid) if running else None
         pty_terminal_text = ""
-        if effective_runner == "pty" and running and runtime.lower() != "codex":
+        if effective_runner == "pty" and running and not uses_codex_app_server_state:
             try:
                 pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
                     group_id=gid,
@@ -1352,7 +1352,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return
 
         try:
+            since = str(websocket.query_params.get("since") or "").strip()
             req = {"op": "term_attach", "args": {"group_id": group_id, "actor_id": actor_id}}
+            if since:
+                req["args"]["since"] = since
             writer.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
             await writer.drain()
             line = await reader.readline()

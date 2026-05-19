@@ -114,6 +114,218 @@ class TestDiagnosticsOps(unittest.TestCase):
         )
         self.assertIsNone(resp)
 
+    def test_terminal_history_returns_latest_page_with_cursors(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        td, cleanup = self._with_home()
+        _ = td
+        try:
+            group = create_group(load_registry(), title="terminal-history")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with (
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.actor_running",
+                    return_value=True,
+                ),
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.history_page",
+                    return_value={
+                        "data": b"\x1b[31mhello\x1b[0m",
+                        "start_cursor": 3,
+                        "end_cursor": 17,
+                        "has_more": True,
+                        "cursor_expired": False,
+                    },
+                ) as history_page,
+            ):
+                resp = self._call(
+                    "terminal_history",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "limit_bytes": 4096,
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "\x1b[31mhello\x1b[0m")
+            self.assertEqual((resp.result or {}).get("start_cursor"), 3)
+            self.assertEqual((resp.result or {}).get("end_cursor"), 17)
+            self.assertEqual((resp.result or {}).get("has_more"), True)
+            self.assertEqual((resp.result or {}).get("cursor_expired"), False)
+            history_page.assert_called_once_with(group_id=group.group_id, actor_id="peer1", before=None, limit_bytes=4096)
+        finally:
+            cleanup()
+
+    def test_terminal_tail_strips_codex_working_status_lines(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-tail-codex-status")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with (
+                patch("cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.actor_running", return_value=True),
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.tail_output",
+                    return_value=b"\xe2\x97\xa6 Working  9m 41s \xe2\x80\xa2 esc to interrupt)\nvisible\n",
+                ),
+            ):
+                resp = self._call(
+                    "terminal_tail",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "visible")
+        finally:
+            cleanup()
+
+    def test_terminal_history_strips_codex_working_status_lines(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-history-codex-status")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with (
+                patch("cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.actor_running", return_value=True),
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.history_page",
+                    return_value={
+                        "data": b"\xe2\x80\xa2\xef\xbf\xbdWorking      40  03\nvisible\n",
+                        "start_cursor": 1,
+                        "end_cursor": 42,
+                        "has_more": False,
+                        "cursor_expired": False,
+                    },
+                ),
+            ):
+                resp = self._call(
+                    "terminal_history",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "visible")
+            self.assertEqual((resp.result or {}).get("start_cursor"), 1)
+            self.assertEqual((resp.result or {}).get("end_cursor"), 42)
+        finally:
+            cleanup()
+
+    def test_terminal_history_before_cursor_and_limit_are_forwarded(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-history-before")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with (
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.actor_running",
+                    return_value=True,
+                ),
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.history_page",
+                    return_value={
+                        "data": b"older",
+                        "start_cursor": 5,
+                        "end_cursor": 10,
+                        "has_more": False,
+                        "cursor_expired": False,
+                    },
+                ) as history_page,
+            ):
+                resp = self._call(
+                    "terminal_history",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "before": 10,
+                        "limit_bytes": 5,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "older")
+            history_page.assert_called_once_with(group_id=group.group_id, actor_id="peer1", before=10, limit_bytes=5)
+        finally:
+            cleanup()
+
+    def test_terminal_history_uses_tail_permission_policy(self) -> None:
+        from cccc.daemon.ops.diagnostics_ops import handle_terminal_history
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-history-permission")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            resp = handle_terminal_history(
+                {"group_id": group.group_id, "actor_id": "peer1", "by": "peer2"},
+                can_read_terminal_transcript=lambda _group, _by, _target: False,
+                pty_backlog_bytes=lambda: 4096,
+            )
+
+            self.assertFalse(resp.ok)
+            self.assertEqual(str(getattr(resp, "error", None).code), "permission_denied")
+        finally:
+            cleanup()
+
+    def test_terminal_history_rejects_non_pty_actor(self) -> None:
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-history-runner")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="headless")
+
+            resp = self._call(
+                "terminal_history",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )[0]
+
+            self.assertFalse(resp.ok)
+            self.assertEqual(str(getattr(resp, "error", None).code), "not_pty_actor")
+        finally:
+            cleanup()
+
     def test_debug_snapshot_includes_web_binding_runtime_evidence(self) -> None:
         from cccc.ports.web.runtime_control import write_web_runtime_state
 

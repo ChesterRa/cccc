@@ -2,11 +2,13 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Terminal } from "@xterm/xterm";
 
-import { fetchTerminalTail, withAuthToken } from "../../services/api";
+import { fetchTerminalHistory, fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
 import {
+  buildTerminalWebSocketUrl,
   buildTerminalConnectionKey,
+  createTerminalAttachCursorResolver,
   isTerminalAttachNonRetryableErrorCode,
   isTerminalAttachStartupRaceErrorCode,
   shouldSuppressTerminalAttachErrorOutput,
@@ -129,6 +131,22 @@ export function useAgentTerminalConnection(args: {
     let disposable: { dispose: () => void } | null = null;
     let resizeDisposable: { dispose: () => void } | null = null;
 
+    const readAttachCursor = async (): Promise<number | null> => {
+      try {
+        const resp = await fetchTerminalHistory(groupId, actorId, {
+          limitBytes: 1,
+          stripAnsi: false,
+          compact: false,
+        });
+        if (!resp.ok) return null;
+        const cursor = Number(resp.result?.end_cursor);
+        return Number.isFinite(cursor) ? cursor : null;
+      } catch {
+        return null;
+      }
+    };
+    const attachCursorResolver = createTerminalAttachCursorResolver(readAttachCursor);
+
     const connect = () => {
       if (disposed) return;
       const existingWs = wsRef.current;
@@ -152,183 +170,193 @@ export function useAgentTerminalConnection(args: {
 
       setConnectionStatus("connecting");
 
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/term`;
-
-      const ws = new WebSocket(withAuthToken(wsUrl));
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (disposed) {
-          ws.close(1000, "Component unmounted during connection");
-          return;
-        }
-        setConnectionStatus("connected");
-        reconnectAttemptRef.current = 0;
-        outputFilterTailRef.current = "";
-        terminalSignalBufferRef.current = "";
-
-        if (terminalReadyTimeoutRef.current) {
-          clearTimeout(terminalReadyTimeoutRef.current);
-        }
-        setTerminalReady(false);
-        terminalReadyTimeoutRef.current = setTimeout(() => {
-          if (!disposed) setTerminalReady(true);
-        }, TERMINAL_SHOW_DELAY_MS);
-
-        void fetchTerminalTail(groupId, actorId, 4000, true, true)
-          .then((resp) => {
-            if (disposed || !resp.ok) return;
-            const tailText = String(resp.result?.text || "");
-            const signal = getTerminalSignalFromChunk("", tailText, runtimeRef.current);
-            terminalSignalBufferRef.current = signal.nextBuffer;
-            if (signal.signalKind) {
-              setTerminalSignalRef.current(groupId, actorId, {
-                kind: signal.signalKind,
-                updatedAt: Date.now(),
-              });
-              return;
-            }
-            clearTerminalSignalRef.current(groupId, actorId);
-          })
-          .catch(() => {
-            if (disposed) return;
-          });
-
-        if (canControlRef.current) {
-          const term = terminalRef.current;
-          if (term && term.cols >= 10 && term.rows >= 2) {
-            ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
-          }
-        }
-      };
-
-      const handleDecoded = (data: string) => {
+      const openWebSocket = (since: number | null) => {
         if (disposed) return;
-        const term = terminalRef.current;
-        if (!term) return;
-        const seq = "\x1b[3J";
-        const repl = "\x1b[2J";
-        const combined = `${outputFilterTailRef.current}${data || ""}`;
-        const replaced = combined.split(seq).join(repl);
-        let tail = "";
-        for (let n = seq.length - 1; n > 0; n--) {
-          const suffix = replaced.slice(-n);
-          if (seq.startsWith(suffix)) {
-            tail = suffix;
-            break;
-          }
-        }
-        outputFilterTailRef.current = tail;
-        const safe = tail ? replaced.slice(0, -tail.length) : replaced;
-        const signal = getTerminalSignalFromChunk(terminalSignalBufferRef.current, safe, runtimeRef.current);
-        terminalSignalBufferRef.current = signal.nextBuffer;
-        if (signal.signalKind) {
-          setTerminalSignalRef.current(groupId, actorId, {
-            kind: signal.signalKind,
-            updatedAt: Date.now(),
-          });
-        }
-        try {
-          term.write(safe);
-        } catch (err) {
-          console.error("terminal write failed", err);
-        }
-      };
+        const wsUrl = buildTerminalWebSocketUrl({
+          protocol: window.location.protocol,
+          host: window.location.host,
+          groupId,
+          actorId,
+          since,
+        });
 
-      ws.onmessage = (event) => {
-        if (disposed) return;
+        const ws = new WebSocket(withAuthToken(wsUrl));
+        ws.binaryType = "arraybuffer";
+        wsRef.current = ws;
 
-        if (event.data instanceof ArrayBuffer) {
-          handleDecoded(new TextDecoder().decode(event.data));
-        } else if (event.data instanceof Blob) {
-          void event.data.arrayBuffer().then((buf) => handleDecoded(new TextDecoder().decode(buf)));
-        } else if (typeof event.data === "string") {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.ok === false && msg.error) {
-              const code = String(msg.error.code || "").trim();
-              if (!shouldSuppressTerminalAttachErrorOutput(code)) {
-                handleDecoded(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
-              }
-              if (isTerminalAttachNonRetryableErrorCode(code)) {
-                terminalAttachNoRetryRef.current = true;
-              }
-              if (isTerminalAttachStartupRaceErrorCode(code)) {
-                terminalAttachStartupRaceRef.current = true;
-              }
-              onStatusChangeRef.current?.();
-            }
-          } catch {
-            handleDecoded(event.data);
-          }
-        }
-      };
-
-      ws.onclose = (event) => {
-        if (disposed) return;
-        wsRef.current = null;
-        const noRetry = event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
-
-        if (!noRetry && isRunningRef.current && !isHeadless) {
-          const startupRace = terminalAttachStartupRaceRef.current;
-          const attempt = startupRace ? 0 : reconnectAttemptRef.current;
-          if (!startupRace && attempt >= MAX_RECONNECT_ATTEMPTS) {
-            setConnectionStatus("disconnected");
+        ws.onopen = () => {
+          if (disposed) {
+            ws.close(1000, "Component unmounted during connection");
             return;
           }
+          setConnectionStatus("connected");
+          reconnectAttemptRef.current = 0;
+          outputFilterTailRef.current = "";
+          terminalSignalBufferRef.current = "";
 
-          const delay = startupRace
-            ? STARTUP_RACE_RECONNECT_DELAY_MS
-            : Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), RECONNECT_MAX_DELAY_MS);
-          setConnectionStatus("reconnecting");
-
-          reconnectTimeoutRef.current = setTimeout(() => {
-            if (startupRace) {
-              terminalAttachStartupRaceRef.current = false;
-            } else {
-              reconnectAttemptRef.current++;
-            }
-            connect();
-          }, delay);
-        } else {
-          setConnectionStatus("disconnected");
-        }
-      };
-
-      ws.onerror = () => {
-        // onclose owns reconnect policy.
-      };
-
-      const term = terminalRef.current;
-      if (term && canControlRef.current) {
-        disposable = term.onData((data) => {
-          if (ws.readyState !== WebSocket.OPEN) return;
-          const runtime = runtimeRef.current;
-          if (runtime === "droid" || runtime === "gemini" || runtime === "neovate") {
-            const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
-            if (isDeviceAttributesReply) return;
-            const isOscColorReply = /^\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)$/.test(data);
-            if (isOscColorReply) return;
-            const isFocusEvent = /^\x1b\[[IO]$/.test(data);
-            if (isFocusEvent) return;
+          if (terminalReadyTimeoutRef.current) {
+            clearTimeout(terminalReadyTimeoutRef.current);
           }
-          if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
+          setTerminalReady(false);
+          terminalReadyTimeoutRef.current = setTimeout(() => {
+            if (!disposed) setTerminalReady(true);
+          }, TERMINAL_SHOW_DELAY_MS);
+
+          void fetchTerminalTail(groupId, actorId, 4000, true, true)
+            .then((resp) => {
+              if (disposed || !resp.ok) return;
+              const tailText = String(resp.result?.text || "");
+              const signal = getTerminalSignalFromChunk("", tailText, runtimeRef.current);
+              terminalSignalBufferRef.current = signal.nextBuffer;
+              if (signal.signalKind) {
+                setTerminalSignalRef.current(groupId, actorId, {
+                  kind: signal.signalKind,
+                  updatedAt: Date.now(),
+                });
+                return;
+              }
+              clearTerminalSignalRef.current(groupId, actorId);
+            })
+            .catch(() => {
+              if (disposed) return;
+            });
+
+          if (canControlRef.current) {
+            const term = terminalRef.current;
+            if (term && term.cols >= 10 && term.rows >= 2) {
+              ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
+            }
+          }
+        };
+
+        const handleDecoded = (data: string) => {
+          if (disposed) return;
+          const term = terminalRef.current;
+          if (!term) return;
+          const seq = "\x1b[3J";
+          const repl = "\x1b[2J";
+          const combined = `${outputFilterTailRef.current}${data || ""}`;
+          const replaced = combined.split(seq).join(repl);
+          let tail = "";
+          for (let n = seq.length - 1; n > 0; n--) {
+            const suffix = replaced.slice(-n);
+            if (seq.startsWith(suffix)) {
+              tail = suffix;
+              break;
+            }
+          }
+          outputFilterTailRef.current = tail;
+          const safe = tail ? replaced.slice(0, -tail.length) : replaced;
+          const signal = getTerminalSignalFromChunk(terminalSignalBufferRef.current, safe, runtimeRef.current);
+          terminalSignalBufferRef.current = signal.nextBuffer;
+          if (signal.signalKind) {
             setTerminalSignalRef.current(groupId, actorId, {
-              kind: "working_output",
+              kind: signal.signalKind,
               updatedAt: Date.now(),
             });
           }
-          ws.send(JSON.stringify({ t: "i", d: data }));
-        });
-
-        resizeDisposable = term.onResize(({ cols, rows }) => {
-          if (ws.readyState === WebSocket.OPEN && cols >= 10 && rows >= 2) {
-            ws.send(JSON.stringify({ t: "r", c: cols, r: rows }));
+          try {
+            if (safe) term.write(safe);
+          } catch (err) {
+            console.error("terminal write failed", err);
           }
-        });
-      }
+        };
+
+        ws.onmessage = (event) => {
+          if (disposed) return;
+
+          if (event.data instanceof ArrayBuffer) {
+            handleDecoded(new TextDecoder().decode(event.data));
+          } else if (event.data instanceof Blob) {
+            void event.data.arrayBuffer().then((buf) => handleDecoded(new TextDecoder().decode(buf)));
+          } else if (typeof event.data === "string") {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.ok === false && msg.error) {
+                const code = String(msg.error.code || "").trim();
+                if (!shouldSuppressTerminalAttachErrorOutput(code)) {
+                  handleDecoded(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
+                }
+                if (isTerminalAttachNonRetryableErrorCode(code)) {
+                  terminalAttachNoRetryRef.current = true;
+                }
+                if (isTerminalAttachStartupRaceErrorCode(code)) {
+                  terminalAttachStartupRaceRef.current = true;
+                }
+                onStatusChangeRef.current?.();
+              }
+            } catch {
+              handleDecoded(event.data);
+            }
+          }
+        };
+
+        ws.onclose = (event) => {
+          if (disposed) return;
+          wsRef.current = null;
+          const noRetry = event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
+
+          if (!noRetry && isRunningRef.current && !isHeadless) {
+            const startupRace = terminalAttachStartupRaceRef.current;
+            const attempt = startupRace ? 0 : reconnectAttemptRef.current;
+            if (!startupRace && attempt >= MAX_RECONNECT_ATTEMPTS) {
+              setConnectionStatus("disconnected");
+              return;
+            }
+
+            const delay = startupRace
+              ? STARTUP_RACE_RECONNECT_DELAY_MS
+              : Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), RECONNECT_MAX_DELAY_MS);
+            setConnectionStatus("reconnecting");
+
+            reconnectTimeoutRef.current = setTimeout(() => {
+              if (startupRace) {
+                terminalAttachStartupRaceRef.current = false;
+              } else {
+                reconnectAttemptRef.current++;
+              }
+              connect();
+            }, delay);
+          } else {
+            setConnectionStatus("disconnected");
+          }
+        };
+
+        ws.onerror = () => {
+          // onclose owns reconnect policy.
+        };
+
+        const term = terminalRef.current;
+        if (term && canControlRef.current) {
+          disposable = term.onData((data) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            const runtime = runtimeRef.current;
+            if (runtime === "droid" || runtime === "gemini" || runtime === "neovate") {
+              const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
+              if (isDeviceAttributesReply) return;
+              const isOscColorReply = /^\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)$/.test(data);
+              if (isOscColorReply) return;
+              const isFocusEvent = /^\x1b\[[IO]$/.test(data);
+              if (isFocusEvent) return;
+            }
+            if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
+              setTerminalSignalRef.current(groupId, actorId, {
+                kind: "working_output",
+                updatedAt: Date.now(),
+              });
+            }
+            ws.send(JSON.stringify({ t: "i", d: data }));
+          });
+
+          resizeDisposable = term.onResize(({ cols, rows }) => {
+            if (ws.readyState === WebSocket.OPEN && cols >= 10 && rows >= 2) {
+              ws.send(JSON.stringify({ t: "r", c: cols, r: rows }));
+            }
+          });
+        }
+      };
+
+      void attachCursorResolver.resolve().then(openWebSocket);
     };
 
     connect();

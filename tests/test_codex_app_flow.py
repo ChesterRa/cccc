@@ -45,6 +45,36 @@ class TestCodexAppFlow(unittest.TestCase):
                     events.append(obj)
         return events
 
+    def _wait_until(self, predicate, *, timeout: float = 1.0, interval: float = 0.01):
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            last = predicate()
+            if last:
+                return last
+            time.sleep(interval)
+        return predicate()
+
+    def _activity_events_from_path(self, ledger_path: Path) -> list[dict]:
+        if not ledger_path.exists():
+            return []
+        text = ledger_path.read_text(encoding="utf-8").strip()
+        if not text:
+            return []
+        return [json.loads(line) for line in text.split("\n") if '"actor.activity"' in line]
+
+    def _activity_events_with_actor_state(self, ledger_path: Path, actor_id: str, state: str) -> list[dict]:
+        return [
+            ev
+            for ev in self._activity_events_from_path(ledger_path)
+            if any(
+                isinstance(actor, dict)
+                and actor.get("id") == actor_id
+                and actor.get("effective_working_state") == state
+                for actor in ((ev.get("data") or {}).get("actors") or [])
+            )
+        ]
+
     def test_claude_app_session_persists_start_state_outside_lock(self) -> None:
         from cccc.daemon.claude_app_sessions import ClaudeAppSession
 
@@ -536,8 +566,8 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
             ):
                 resp = handle_send(
@@ -598,8 +628,8 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
             ):
                 resp = handle_send(
@@ -686,8 +716,8 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
             ):
                 resp = handle_send(
@@ -802,8 +832,8 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
             ):
                 resp = handle_reply(
@@ -865,10 +895,10 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_send(
                     {
@@ -921,10 +951,10 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_send(
                     {
@@ -1027,10 +1057,10 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_reply(
                     {
@@ -1119,8 +1149,8 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
             ):
                 resp = handle_reply(
@@ -1232,8 +1262,8 @@ class TestCodexAppFlow(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
-                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
             ):
                 resp = handle_reply(
@@ -3394,40 +3424,40 @@ class TestCodexAppFlow(unittest.TestCase):
                 codex_supervisor=_CodexSupervisor(),
                 event_broadcaster=_Broadcaster(),
                 load_group=load_group,
-                interval_seconds=1.0,
+                interval_seconds=0.01,
             )
             try:
                 # First tick runs immediately: new actor → state_changed → writes to ledger
-                time.sleep(0.25)
-                # Verify ledger has actor.activity
-                import json
-                lines = ledger_path.read_text(encoding="utf-8").strip().split("\n")
-                activity_lines = [json.loads(line) for line in lines if '"actor.activity"' in line]
+                activity_lines = self._wait_until(
+                    lambda: self._activity_events_with_actor_state(ledger_path, "peer1", "working"),
+                    timeout=0.5,
+                )
                 self.assertTrue(activity_lines, "First tick should write actor.activity to ledger")
                 self.assertEqual(activity_lines[-1]["data"]["actors"][0]["effective_working_state"], "working")
 
-                initial_count = len(activity_lines)
-                # Wait another tick (>1s interval) — no state change → no new ledger write
-                time.sleep(1.3)
-                lines2 = ledger_path.read_text(encoding="utf-8").strip().split("\n")
-                activity_lines2 = [json.loads(line) for line in lines2 if '"actor.activity"' in line]
+                initial_count = len(self._activity_events_from_path(ledger_path))
+                # Wait another tick — no state change → no new ledger write
+                time.sleep(0.05)
+                activity_lines2 = self._activity_events_from_path(ledger_path)
                 self.assertEqual(len(activity_lines2), initial_count, "No state change should not add ledger entries")
 
                 # Change state: working → idle → should write to ledger on next tick
                 status_holder["status"] = "idle"
-                time.sleep(1.3)
-                lines3 = ledger_path.read_text(encoding="utf-8").strip().split("\n")
-                activity_lines3 = [json.loads(line) for line in lines3 if '"actor.activity"' in line]
-                self.assertGreater(len(activity_lines3), initial_count, "State change should add ledger entry")
+                activity_lines3 = self._wait_until(
+                    lambda: self._activity_events_with_actor_state(ledger_path, "peer1", "idle"),
+                    timeout=0.5,
+                )
+                self.assertGreater(len(self._activity_events_from_path(ledger_path)), initial_count, "State change should add ledger entry")
                 self.assertEqual(activity_lines3[-1]["data"]["actors"][0]["effective_working_state"], "idle")
 
                 # Simulate actor stopping (actor_running returns False)
-                idle_count = len(activity_lines3)
+                idle_count = len(self._activity_events_from_path(ledger_path))
                 status_holder["running"] = False
-                time.sleep(1.3)
-                lines4 = ledger_path.read_text(encoding="utf-8").strip().split("\n")
-                activity_lines4 = [json.loads(line) for line in lines4 if '"actor.activity"' in line]
-                self.assertGreater(len(activity_lines4), idle_count, "Actor stop should add ledger entry")
+                activity_lines4 = self._wait_until(
+                    lambda: self._activity_events_with_actor_state(ledger_path, "peer1", "stopped"),
+                    timeout=0.5,
+                )
+                self.assertGreater(len(self._activity_events_from_path(ledger_path)), idle_count, "Actor stop should add ledger entry")
                 last_event = activity_lines4[-1]
                 stopped_actors = [a for a in last_event["data"]["actors"] if a["id"] == "peer1"]
                 self.assertEqual(len(stopped_actors), 1, "Stopped actor should appear in event")
@@ -3492,20 +3522,103 @@ class TestCodexAppFlow(unittest.TestCase):
                 codex_supervisor=object(),
                 event_broadcaster=_Broadcaster(),
                 load_group=load_group,
-                interval_seconds=1.0,
+                interval_seconds=0.01,
             )
             try:
-                time.sleep(0.25)
+                self._wait_until(lambda: self._activity_events_from_path(ledger_path))
                 status_holder["running"] = False
-                time.sleep(1.3)
 
-                lines = ledger_path.read_text(encoding="utf-8").strip().split("\n")
-                activity_lines = [json.loads(line) for line in lines if '"actor.activity"' in line]
+                activity_lines = self._wait_until(
+                    lambda: [
+                        ev
+                        for ev in self._activity_events_from_path(ledger_path)
+                        if any(
+                            isinstance(actor, dict)
+                            and actor.get("id") == "peer1"
+                            and actor.get("effective_working_state") == "stopped"
+                            for actor in ((ev.get("data") or {}).get("actors") or [])
+                        )
+                    ]
+                )
                 self.assertTrue(activity_lines, "Actor stop should write actor.activity to ledger")
                 stopped_actors = [a for a in activity_lines[-1]["data"]["actors"] if a["id"] == "peer1"]
                 self.assertEqual(len(stopped_actors), 1)
                 self.assertEqual(stopped_actors[0]["effective_working_state"], "stopped")
                 self.assertEqual(stopped_actors[0]["runner_effective"], "pty")
+            finally:
+                stop_event.set()
+                thread.join(timeout=1.0)
+        finally:
+            cleanup()
+
+    def test_actor_activity_thread_uses_codex_pty_prompt_override(self) -> None:
+        from cccc.daemon.serve_ops import start_actor_activity_thread
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="codex-pty-prompt-activity", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            add_actor(
+                group,
+                actor_id="peer1",
+                title="Peer 1",
+                runtime="codex",
+                runner="pty",
+                runtime_state_source="terminal",
+            )  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            published: list[dict] = []
+
+            class _PtySupervisor:
+                @staticmethod
+                def actor_running(_group_id: str, _actor_id: str) -> bool:
+                    return True
+
+                @staticmethod
+                def idle_seconds(*, group_id: str, actor_id: str) -> float:
+                    return 0.2
+
+                @staticmethod
+                def terminal_override(*, group_id: str, actor_id: str):
+                    return None
+
+                @staticmethod
+                def tail_output(*, group_id: str, actor_id: str, max_bytes: int) -> bytes:
+                    return (
+                        "◦ Working (4s • esc to interrupt)\n"
+                        "> Use /skills to list available skills\n"
+                        "gpt-5.5 medium · ~/Desktop/waterbang/ai/cccc · 30M used\n"
+                    ).encode("utf-8")
+
+            class _Broadcaster:
+                def publish(self, event: dict) -> None:
+                    published.append(event)
+
+            stop_event = threading.Event()
+            thread = start_actor_activity_thread(
+                stop_event=stop_event,
+                home=Path(home),
+                pty_supervisor=_PtySupervisor(),
+                headless_supervisor=object(),
+                codex_supervisor=object(),
+                event_broadcaster=_Broadcaster(),
+                load_group=load_group,
+                interval_seconds=1.0,
+            )
+            try:
+                time.sleep(0.25)
+                actor_events = [event for event in published if str(event.get("kind") or "") == "actor.activity"]
+                self.assertTrue(actor_events)
+                actors = ((actor_events[-1].get("data") or {}).get("actors") or [])
+                self.assertEqual(len(actors), 1)
+                self.assertEqual(str(actors[0].get("effective_working_state") or ""), "idle")
+                self.assertEqual(str(actors[0].get("effective_working_reason") or ""), "pty_terminal_codex_prompt_visible")
             finally:
                 stop_event.set()
                 thread.join(timeout=1.0)

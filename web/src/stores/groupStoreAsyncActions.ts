@@ -24,6 +24,7 @@ import {
   loadSelectedGroupId,
   MAX_UI_EVENTS,
   mergeActorUnreadCounts,
+  reuseEqualActors,
   patchGroupRuntimeStatus,
   presentationRequestEpochByGroup,
   refreshActorsInFlight,
@@ -164,10 +165,10 @@ export function createGroupStoreAsyncActions(
           const prevActors = get().selectedGroupId === gid ? get().actors : getCachedGroupView(gid)?.actors || [];
           const prevInternalActors = get().internalRuntimeActorsByGroup[gid] || [];
           const nextActors = includeUnread
-            ? split.actors
+            ? reuseEqualActors(split.actors, prevActors)
             : mergeActorUnreadCounts(split.actors, prevActors);
           const nextInternalRuntimeActors = includeUnread
-            ? split.internalRuntimeActors
+            ? reuseEqualActors(split.internalRuntimeActors, prevInternalActors)
             : mergeActorUnreadCounts(split.internalRuntimeActors, prevInternalActors);
           const current = get();
           const runtimeFallback =

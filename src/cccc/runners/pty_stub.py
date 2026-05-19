@@ -30,6 +30,16 @@ class PtySupervisor:
     def tail_output(self, *, group_id: str, actor_id: str, max_bytes: int = 2_000_000) -> bytes:
         return b""
 
+    def history_page(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        before: Optional[int] = None,
+        limit_bytes: int = 64_000,
+    ):
+        return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+
     def terminal_override(self, *, group_id: str, actor_id: str):
         return None
 
@@ -58,7 +68,8 @@ class PtySupervisor:
     def stop_all(self) -> None:
         return None
 
-    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket) -> None:
+    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket, since: Optional[int] = None) -> None:
+        _ = since
         raise RuntimeError(pty_support_error_message() or "PTY runner is not supported in this environment.")
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:

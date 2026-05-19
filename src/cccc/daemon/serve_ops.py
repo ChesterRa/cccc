@@ -48,7 +48,7 @@ def start_automation_thread(
     def _automation_loop() -> None:
         next_compact = 0.0
         next_automation = time.time() + max(0.0, float(initial_automation_delay_seconds or 0.0))
-        automation_interval = max(1.0, float(automation_interval_seconds or 5.0))
+        automation_interval = max(0.01, float(automation_interval_seconds or 5.0))
         while not stop_event.is_set():
             now = time.time()
             if now >= next_automation:
@@ -80,7 +80,7 @@ def start_automation_thread(
                     compact_ledgers(home)
                 except Exception as e:
                     _log_loop_error("compact_ledgers failed", e)
-            stop_event.wait(1.0)
+            stop_event.wait(min(1.0, automation_interval))
 
     t = threading.Thread(target=_automation_loop, name="cccc-automation", daemon=True)
     t.start()
@@ -294,7 +294,7 @@ def start_actor_activity_thread(
     import uuid
 
     def _actor_activity_loop() -> None:
-        interval = max(1.0, float(interval_seconds or 1.0))
+        interval = max(0.01, float(interval_seconds or 1.0))
         prev_runtime_by_group: Dict[str, Dict[str, Dict[str, Any]]] = {}
         while not stop_event.is_set():
             try:
@@ -385,7 +385,7 @@ def start_actor_activity_thread(
                             if uses_app_server_state and not running and effective_runner == "pty":
                                 running = bool(pty_supervisor.actor_running(gid, aid))
                                 idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid) if running else None
-                            if effective_runner == "pty" and running and runtime != "codex":
+                            if effective_runner == "pty" and running and not uses_app_server_state:
                                 pty_signal = read_pty_activity_signal(pty_supervisor, group_id=gid, actor_id=aid)
                                 pty_terminal_override = pty_signal.terminal_override
                                 pty_terminal_text = pty_signal.terminal_text

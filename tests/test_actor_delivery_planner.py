@@ -233,8 +233,8 @@ def test_handle_send_uses_same_planner_for_claude_headless_actor(monkeypatch, tm
     with (
         patch("cccc.daemon.messaging.chat_ops.claude_app_supervisor.actor_running", return_value=True),
         patch("cccc.daemon.messaging.chat_ops.claude_app_supervisor.submit_user_message", return_value=True) as submit,
-        patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-        patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush,
+        patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+        patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush,
     ):
         resp = handle_send(
             {
@@ -295,10 +295,10 @@ def test_handle_send_schedules_browser_delivery_for_web_model_actor(monkeypatch,
     assert add_resp.ok
 
     with (
-        patch("cccc.daemon.messaging.chat_ops.web_model_browser_delivery_enabled", return_value=True),
-        patch("cccc.daemon.messaging.chat_ops.schedule_web_model_browser_delivery", return_value=True) as schedule,
-        patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
-        patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush,
+        patch("cccc.daemon.messaging.chat_delivery_ops.web_model_browser_delivery_enabled", return_value=True),
+        patch("cccc.daemon.messaging.chat_delivery_ops.schedule_web_model_browser_delivery", return_value=True) as schedule,
+        patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
+        patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush,
     ):
         resp = handle_send(
             {

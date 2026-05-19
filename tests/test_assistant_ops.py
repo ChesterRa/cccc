@@ -480,6 +480,41 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_workspace_view_uses_runtime_snapshot(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            with patch(
+                "cccc.daemon.assistants.assistant_ops.list_voice_runtime_statuses",
+                side_effect=AssertionError("workspace view must not probe voice runtime"),
+            ), patch(
+                "cccc.daemon.assistants.assistant_ops.get_voice_runtime_status",
+                side_effect=AssertionError("workspace view must not probe voice runtime"),
+            ), patch(
+                "cccc.daemon.assistants.assistant_ops.list_voice_runtime_status_snapshots",
+                return_value=[{"runtime_id": "sherpa_onnx_streaming", "status": "ready"}],
+            ), patch(
+                "cccc.daemon.assistants.assistant_ops.get_voice_runtime_status_snapshot",
+                return_value={"runtime_id": "sherpa_onnx_streaming", "status": "ready"},
+            ):
+                state, _ = self._call(
+                    "assistant_state",
+                    {
+                        "group_id": group_id,
+                        "assistant_id": "voice_secretary",
+                        "view": "voice_workspace",
+                    },
+                )
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            result = state.result or {}
+            self.assertEqual((result.get("service_runtime") or {}).get("status"), "ready")
+            self.assertIn("sherpa_onnx_streaming", result.get("service_runtimes_by_id") or {})
+        finally:
+            cleanup()
+
     def test_voice_recording_lease_blocks_other_group_until_release(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1392,9 +1427,12 @@ class TestAssistantOps(unittest.TestCase):
         try:
             group_id = self._create_group()
             self._ensure_foreman(group_id)
+            from cccc.daemon.assistants import voice_runtime_deps
+
             runtime_root = Path(home) / "cache" / "voice-runtimes" / "sherpa_onnx_streaming"
             runtime_root.joinpath(".venv").mkdir(parents=True, exist_ok=True)
             runtime_root.joinpath(".venv", "dummy.bin").write_bytes(b"runtime-cache")
+            voice_runtime_deps._DISK_USAGE_CACHE[str(runtime_root)] = (time.monotonic(), 123456)
 
             remove, _ = self._call(
                 "assistant_voice_runtime_remove",
@@ -1404,6 +1442,12 @@ class TestAssistantOps(unittest.TestCase):
             runtime = (remove.result or {}).get("service_runtime") if isinstance(remove.result, dict) else {}
             self.assertEqual(str(runtime.get("status") or ""), "not_installed")
             self.assertFalse(runtime_root.joinpath(".venv", "dummy.bin").exists())
+            self.assertNotEqual(int(runtime.get("disk_usage_bytes") or -1), 123456)
+            self.assertEqual(
+                int(runtime.get("disk_usage_bytes") or -1),
+                voice_runtime_deps._directory_size_bytes(runtime_root),
+            )
+            self.assertNotIn(str(runtime_root), voice_runtime_deps._DISK_USAGE_CACHE)
         finally:
             cleanup()
 

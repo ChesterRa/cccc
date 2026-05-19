@@ -315,7 +315,7 @@ def _emit_pet_review(group_id: str, reasons: Set[str], source_event_id: str) -> 
         return
     if not _can_review_now(group_id):
         return
-    emit_system_notify(group, by="system", notify=_pet_review_notify(group, reasons, source_event_id))
+    emit_system_notify(group, by="system", notify=_pet_review_notify(group, reasons, source_event_id), async_flush=True)
 
 
 def request_manual_pet_review(

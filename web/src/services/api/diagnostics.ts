@@ -42,6 +42,40 @@ export async function fetchTerminalTail(
   );
 }
 
+export interface TerminalHistoryPage {
+  text: string;
+  hint: string;
+  start_cursor: number;
+  end_cursor: number;
+  has_more: boolean;
+  cursor_expired: boolean;
+}
+
+export async function fetchTerminalHistory(
+  groupId: string,
+  actorId: string,
+  opts?: {
+    before?: number | string | null;
+    limitBytes?: number;
+    stripAnsi?: boolean;
+    compact?: boolean;
+  },
+) {
+  const params = new URLSearchParams({
+    actor_id: actorId,
+    limit_bytes: String(opts?.limitBytes || 64000),
+    strip_ansi: String(opts?.stripAnsi ?? false),
+    compact: String(opts?.compact ?? false),
+  });
+  const before = opts?.before;
+  if (before !== null && before !== undefined && String(before).trim()) {
+    params.set("before", String(before));
+  }
+  return apiJson<TerminalHistoryPage>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/terminal/history?${params.toString()}`,
+  );
+}
+
 export async function clearTerminalTail(groupId: string, actorId: string) {
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/terminal/clear?actor_id=${encodeURIComponent(actorId)}`,

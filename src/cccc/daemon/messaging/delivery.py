@@ -1008,6 +1008,7 @@ def emit_system_notify(
     *,
     by: str,
     notify: SystemNotifyData,
+    async_flush: bool = False,
 ) -> Dict[str, Any]:
     """Append a system.notify event and dispatch it to running runtime targets."""
     event = append_event(
@@ -1040,7 +1041,7 @@ def emit_system_notify(
         return event
 
     for aid in target_actor_ids:
-        dispatch_system_notify_event_to_actor(group, event=event, actor_id=aid)
+        dispatch_system_notify_event_to_actor(group, event=event, actor_id=aid, async_flush=async_flush)
 
     return event
 

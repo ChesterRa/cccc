@@ -67,6 +67,13 @@ import {
 import { voiceTranscriptSourceDetail, voiceTranscriptSourceLabel } from "./voice-secretary/voiceTranscriptSource";
 import { voiceServiceStopDispatchKind } from "./voice-secretary/voiceServiceStopDispatch";
 import {
+  beginVoiceAssistantRefresh,
+  resetVoiceAssistantVisibleLoading,
+  shouldApplyVoiceAssistantRefresh,
+  shouldFinishVoiceAssistantVisibleLoading,
+  type VoiceAssistantLoadingOwnership,
+} from "./voice-secretary/voiceAssistantLoadingOwnership";
+import {
   appendFinalVoiceTranscriptItem,
   annotateVoiceTranscriptItemsWithSpeakers,
   createVoiceTranscriptItem,
@@ -724,6 +731,7 @@ export function VoiceSecretaryComposerControl({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
   const refreshSeq = useRef(0);
+  const visibleLoadSeqRef = useRef(0);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -1266,13 +1274,22 @@ export function VoiceSecretaryComposerControl({
   const refreshAssistant = useCallback(async (opts?: { quiet?: boolean }) => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
-    const seq = ++refreshSeq.current;
     const quiet = Boolean(opts?.quiet);
-    if (!quiet) setLoading(true);
+    const ownership = beginVoiceAssistantRefresh({
+      dataSeq: refreshSeq.current,
+      visibleLoadingSeq: visibleLoadSeqRef.current,
+    }, { quiet });
+    refreshSeq.current = ownership.next.dataSeq;
+    visibleLoadSeqRef.current = ownership.next.visibleLoadingSeq;
+    const currentOwnership = (): VoiceAssistantLoadingOwnership => ({
+      dataSeq: refreshSeq.current,
+      visibleLoadingSeq: visibleLoadSeqRef.current,
+    });
+    if (ownership.shouldShowLoading) setLoading(true);
     try {
       const promptRequestId = String(pendingPromptRequestIdRef.current || "").trim();
       const resp = await fetchVoiceAssistantWorkspace(gid, { promptRequestId });
-      if (!isCurrentGroup(gid) || seq !== refreshSeq.current) return;
+      if (!shouldApplyVoiceAssistantRefresh(currentOwnership(), ownership.request, isCurrentGroup(gid))) return;
       if (!resp.ok) {
         if (!quiet) showError(resp.error.message);
         return;
@@ -1335,7 +1352,7 @@ export function VoiceSecretaryComposerControl({
           setDocumentContentLoadingPath(nextViewedPath);
           try {
             const docResp = await fetchVoiceAssistantDocumentContent(gid, nextViewedPath);
-            if (!isCurrentGroup(gid) || seq !== refreshSeq.current) return;
+            if (!shouldApplyVoiceAssistantRefresh(currentOwnership(), ownership.request, isCurrentGroup(gid))) return;
             if (docResp.ok && docResp.result.document) {
               nextActiveDocument = docResp.result.document;
               nextDocuments = nextDocuments.map((document) => (
@@ -1344,7 +1361,9 @@ export function VoiceSecretaryComposerControl({
               setDocuments(nextDocuments);
             }
           } finally {
-            if (isCurrentGroup(gid) && seq === refreshSeq.current) setDocumentContentLoadingPath("");
+            if (shouldApplyVoiceAssistantRefresh(currentOwnership(), ownership.request, isCurrentGroup(gid))) {
+              setDocumentContentLoadingPath("");
+            }
           }
         }
         const serverTitle = String(nextActiveDocument.title || "");
@@ -1364,7 +1383,9 @@ export function VoiceSecretaryComposerControl({
         loadDocumentDraft(null);
       }
     } finally {
-      if (isCurrentGroup(gid) && seq === refreshSeq.current && !quiet) setLoading(false);
+      if (shouldFinishVoiceAssistantVisibleLoading(currentOwnership(), ownership.request, isCurrentGroup(gid))) {
+        setLoading(false);
+      }
     }
   }, [isCurrentGroup, loadDocumentDraft, selectedGroupId, showError]);
 
@@ -1567,7 +1588,12 @@ export function VoiceSecretaryComposerControl({
   }, [loadAudioDevices, open, serviceAsrReady]);
 
   useEffect(() => {
-    refreshSeq.current += 1;
+    const ownership = resetVoiceAssistantVisibleLoading({
+      dataSeq: refreshSeq.current,
+      visibleLoadingSeq: visibleLoadSeqRef.current,
+    });
+    refreshSeq.current = ownership.dataSeq;
+    visibleLoadSeqRef.current = ownership.visibleLoadingSeq;
     const keepActiveRecording = recordingRef.current;
     if (!keepActiveRecording) {
       const recognition = recognitionRef.current;

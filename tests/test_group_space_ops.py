@@ -52,6 +52,26 @@ class TestGroupSpaceOps(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
+    def _wait_until(self, predicate, *, timeout: float = 1.0, interval: float = 0.01):
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            last = predicate()
+            if last:
+                return last
+            time.sleep(interval)
+        return predicate()
+
+    def _wait_for_generate_lane_idle(self, lane_key: str, *, timeout: float = 1.0) -> bool:
+        from cccc.daemon.space import group_space_ops
+
+        def _idle() -> bool:
+            with group_space_ops._GENERATE_LANES_LOCK:
+                lane = group_space_ops._GENERATE_LANES.get(lane_key)
+                return lane is None or (int(lane.active) <= 0 and not lane.pending)
+
+        return bool(self._wait_until(_idle, timeout=timeout))
+
     def _create_group(self, title: str = "space-test") -> str:
         create, _ = self._call("group_create", {"title": title, "topic": "", "by": "user"})
         self.assertTrue(create.ok, getattr(create, "error", None))
@@ -1287,6 +1307,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
         try:
             gid = self._create_group("space-generate-queue")
+            lane_key = f"{gid}:notebooklm:work:nb_gen_queue"
             bind, _ = self._call(
                 "group_space_bind",
                 {
@@ -1301,6 +1322,8 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertTrue(bind.ok, getattr(bind, "error", None))
 
             seq = {"n": 0}
+            wait_release = threading.Event()
+            wait_completed = threading.Event()
 
             def _fake_generate(provider: str, *, remote_space_id: str, kind: str, options: dict) -> dict:
                 _ = provider
@@ -1324,7 +1347,8 @@ class TestGroupSpaceOps(unittest.TestCase):
                 _ = timeout_seconds
                 _ = initial_interval
                 _ = max_interval
-                time.sleep(1.0)
+                wait_release.wait(timeout=1.0)
+                wait_completed.set()
                 return {"task_id": task_id, "status": "completed"}
 
             with patch("cccc.daemon.space.group_space_ops.provider_generate_artifact", side_effect=_fake_generate), patch(
@@ -1391,8 +1415,9 @@ class TestGroupSpaceOps(unittest.TestCase):
                 details = getattr(third.error, "details", {}) if third.error else {}
                 self.assertEqual(str((details or {}).get("lane") or ""), "generate")
 
-                # Let async workers finish before patch exits.
-                time.sleep(2.5)
+                wait_release.set()
+                self.assertTrue(wait_completed.wait(timeout=1.0))
+                self.assertTrue(self._wait_for_generate_lane_idle(lane_key))
         finally:
             cleanup_stub()
             cleanup()
@@ -1402,6 +1427,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
         try:
             gid = self._create_group("space-generate-notify")
+            lane_key = f"{gid}:notebooklm:work:nb_gen_notify"
             self._add_actor(gid, "peer1", by="user")
             bind, _ = self._call(
                 "group_space_bind",
@@ -1438,34 +1464,33 @@ class TestGroupSpaceOps(unittest.TestCase):
                 )
                 self.assertTrue(generated.ok, getattr(generated, "error", None))
 
-            matched_notify = None
-            for _ in range(30):
-                inbox, _ = self._call(
-                    "inbox_list",
-                    {
-                        "group_id": gid,
-                        "actor_id": "peer1",
-                        "by": "peer1",
-                        "kind_filter": "notify",
-                        "limit": 30,
-                    },
-                )
-                self.assertTrue(inbox.ok, getattr(inbox, "error", None))
-                messages = (inbox.result or {}).get("messages") if isinstance(inbox.result, dict) else []
-                if isinstance(messages, list):
-                    for ev in messages:
-                        if not isinstance(ev, dict):
-                            continue
-                        if str(ev.get("kind") or "") != "system.notify":
-                            continue
-                        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
-                        context = data.get("context") if isinstance(data.get("context"), dict) else {}
-                        if str(context.get("task_id") or "") == "task_notify_1":
-                            matched_notify = ev
-                            break
-                if matched_notify is not None:
-                    break
-                time.sleep(0.1)
+                def _find_notify():
+                    inbox, _ = self._call(
+                        "inbox_list",
+                        {
+                            "group_id": gid,
+                            "actor_id": "peer1",
+                            "by": "peer1",
+                            "kind_filter": "notify",
+                            "limit": 30,
+                        },
+                    )
+                    self.assertTrue(inbox.ok, getattr(inbox, "error", None))
+                    messages = (inbox.result or {}).get("messages") if isinstance(inbox.result, dict) else []
+                    if isinstance(messages, list):
+                        for ev in messages:
+                            if not isinstance(ev, dict):
+                                continue
+                            if str(ev.get("kind") or "") != "system.notify":
+                                continue
+                            data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+                            context = data.get("context") if isinstance(data.get("context"), dict) else {}
+                            if str(context.get("task_id") or "") == "task_notify_1":
+                                return ev
+                    return None
+
+                matched_notify = self._wait_until(_find_notify, timeout=0.5)
+                self.assertTrue(self._wait_for_generate_lane_idle(lane_key))
             self.assertIsNotNone(matched_notify, "expected async generate completion notify in inbox")
             assert isinstance(matched_notify, dict)
             data = matched_notify.get("data") if isinstance(matched_notify.get("data"), dict) else {}
@@ -1523,18 +1548,16 @@ class TestGroupSpaceOps(unittest.TestCase):
                 )
                 self.assertTrue(generated.ok, getattr(generated, "error", None))
 
-            matched_notify = False
-            for _ in range(20):
+            def _has_notify() -> bool:
                 group = load_group(gid)
                 self.assertIsNotNone(group)
                 assert group is not None
-                matched_notify = any(
+                return any(
                     isinstance(ev, dict) and str(ev.get("kind") or "") == "system.notify"
                     for ev in iter_events(group.ledger_path)
                 )
-                if matched_notify:
-                    break
-                time.sleep(0.05)
+
+            matched_notify = self._wait_until(_has_notify, timeout=0.05)
             self.assertFalse(matched_notify, "did not expect async artifact notify without actor recipients")
         finally:
             cleanup_stub()
@@ -1594,6 +1617,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
         try:
             gid = self._create_group("space-generate-fast-return")
+            lane_key = f"{gid}:notebooklm:work:nb_gen_fast"
             bind, _ = self._call(
                 "group_space_bind",
                 {
@@ -1607,9 +1631,13 @@ class TestGroupSpaceOps(unittest.TestCase):
             )
             self.assertTrue(bind.ok, getattr(bind, "error", None))
 
+            generate_release = threading.Event()
+            generate_completed = threading.Event()
+
             def _slow_generate(provider: str, *, remote_space_id: str, kind: str, options: dict) -> dict:
                 _ = provider, remote_space_id, kind, options
-                time.sleep(2.0)
+                generate_release.wait(timeout=1.0)
+                generate_completed.set()
                 return {"task_id": "task_slow_1", "status": "pending"}
 
             with patch(
@@ -1647,7 +1675,9 @@ class TestGroupSpaceOps(unittest.TestCase):
                 self.assertIn("Do not poll in a loop.", str(result.get("wait_guidance") or ""))
                 self.assertLess(elapsed, 1.0, f"expected async return, elapsed={elapsed:.3f}s")
                 # Let background worker consume patched provider fns before exiting patch scope.
-                time.sleep(2.3)
+                generate_release.set()
+                self.assertTrue(generate_completed.wait(timeout=1.0))
+                self.assertTrue(self._wait_for_generate_lane_idle(lane_key))
         finally:
             cleanup_stub()
             cleanup()

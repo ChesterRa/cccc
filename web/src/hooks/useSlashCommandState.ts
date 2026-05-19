@@ -60,16 +60,6 @@ export function useSlashCommandState(selectedGroupId: string) {
   }, [selectedGid]);
 
   useEffect(() => {
-    const handleFocus = () => {
-      void refreshSlashCommands();
-    };
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [refreshSlashCommands]);
-
-  useEffect(() => {
     return subscribeCapabilityChanged(selectedGid, () => {
       void refreshSlashCommands();
     });

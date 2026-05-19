@@ -56,8 +56,10 @@ from .voice_runtime_deps import (
     VoiceRuntimeDepsError,
     begin_voice_runtime_install,
     get_voice_runtime_status,
+    get_voice_runtime_status_snapshot,
     install_voice_runtime_deps,
     list_voice_runtime_statuses,
+    list_voice_runtime_status_snapshots,
     remove_voice_runtime_deps,
 )
 from .sherpa_streaming_asr import sherpa_streaming_backend_status
@@ -3313,8 +3315,21 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
             else []
         )
-        service_runtimes = list_voice_runtime_statuses() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
-        service_runtime = get_voice_runtime_status() if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
+        use_voice_runtime_snapshot = assistant_id == ASSISTANT_ID_VOICE_SECRETARY and is_voice_workspace_view(view)
+        service_runtimes = (
+            list_voice_runtime_status_snapshots()
+            if use_voice_runtime_snapshot
+            else list_voice_runtime_statuses()
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else []
+        )
+        service_runtime = (
+            get_voice_runtime_status_snapshot()
+            if use_voice_runtime_snapshot
+            else get_voice_runtime_status()
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else {}
+        )
         recording_lease = (
             _current_public_voice_recording_lease()
             if assistant_id == ASSISTANT_ID_VOICE_SECRETARY

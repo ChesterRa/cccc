@@ -54,13 +54,106 @@ export function isTerminalPromptVisible(buffer: string): boolean {
     if (/^(?:>|›)\s?.*/.test(line)) return true;
     if (/^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line)) return true;
     if (/^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)) return true;
-    return false;
   }
   return false;
 }
 
 export function isCodexWorkingBannerVisible(buffer: string): boolean {
   return /(?:^|\n)\s*[◦·•]\s+Working\s*\([^)\n]*esc to interrupt[^)\n]*\)/i.test(String(buffer || ""));
+}
+
+export function stripTerminalWorkingBanners(text: string): string {
+  const stripped = String(text || "")
+    .split(/\r\n|\r|\n/)
+    .filter((line) => !isTerminalWorkingBannerLine(line))
+    .join("\n");
+  return stripped.trim() ? stripped : "";
+}
+
+export function stripInactiveTerminalWorkingBanners(text: string, _workingState?: string): string {
+  return stripTerminalWorkingBanners(text);
+}
+
+function isTerminalWorkingBannerLine(line: string): boolean {
+  return /^\s*[◦·•]\s*(?:�\s*)?Working\b.*$/i.test(stripControlChars(stripAnsi(String(line || ""))));
+}
+
+function isTerminalWorkingBannerPrefix(line: string): boolean {
+  const value = stripControlChars(stripAnsi(String(line || "")));
+  if (isTerminalWorkingBannerLine(value)) return true;
+  return /^\s*[◦·•]\s*(?:�\s*)?(?:W(?:o(?:r(?:k(?:i(?:n(?:g.*)?)?)?)?)?)?)?$/i.test(value);
+}
+
+export function filterTerminalWorkingBannerChunk(
+  previousTail: string,
+  chunk: string,
+): {
+  visible: string;
+  nextTail: string;
+} {
+  const combined = `${previousTail || ""}${chunk || ""}`;
+  if (!combined) return { visible: "", nextTail: "" };
+
+  let visible = "";
+  let lineStart = 0;
+  const consumeLine = (end: number, includeSeparator: number) => {
+    const line = combined.slice(lineStart, end);
+    if (!isTerminalWorkingBannerLine(line)) {
+      visible += combined.slice(lineStart, end + includeSeparator);
+    }
+    lineStart = end + includeSeparator;
+  };
+
+  for (let index = 0; index < combined.length; index += 1) {
+    const ch = combined[index];
+    if (ch === "\r") {
+      const separatorLength = combined[index + 1] === "\n" ? 2 : 1;
+      consumeLine(index, separatorLength);
+      if (separatorLength === 2) index += 1;
+    } else if (ch === "\n") {
+      consumeLine(index, 1);
+    }
+  }
+
+  const tail = combined.slice(lineStart);
+  if (!tail) return { visible, nextTail: "" };
+  if (isTerminalWorkingBannerPrefix(tail)) {
+    return { visible, nextTail: tail };
+  }
+  return { visible: `${visible}${tail}`, nextTail: "" };
+}
+
+function lastTerminalPromptOffset(text: string): number {
+  let offset = 0;
+  let lastOffset = -1;
+  for (const rawLine of String(text || "").split(/(\n)/)) {
+    if (rawLine === "\n") {
+      offset += rawLine.length;
+      continue;
+    }
+    const line = rawLine.trim();
+    if (/^(?:>|›)\s+\S.*$/.test(line) || /^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line) || /^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)) {
+      lastOffset = offset;
+    }
+    offset += rawLine.length;
+  }
+  return lastOffset;
+}
+
+function lastCodexWorkingBannerOffset(text: string): number {
+  let lastOffset = -1;
+  const re = /\bworking\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(text || ""))) !== null) {
+    lastOffset = match.index;
+  }
+  return lastOffset;
+}
+
+function isCodexIdlePromptAfterWorkingBanner(buffer: string): boolean {
+  const promptOffset = lastTerminalPromptOffset(buffer);
+  if (promptOffset < 0) return false;
+  return promptOffset > lastCodexWorkingBannerOffset(buffer);
 }
 
 function tailWindowHasCodexWorkingBanner(text: string): boolean {
@@ -90,7 +183,7 @@ export function getTerminalSignalFromChunk(
   const nextBuffer = appendTerminalSignalBuffer(previousBuffer, chunk);
   const runtimeId = String(runtime || "").trim().toLowerCase();
   if (runtimeId === "codex") {
-    if (isTerminalPromptVisible(nextBuffer)) {
+    if (isCodexIdlePromptAfterWorkingBanner(nextBuffer)) {
       return { nextBuffer, signalKind: "idle_prompt" };
     }
     const tailWindow = getTailWindow(nextBuffer);

@@ -3062,6 +3062,28 @@ Result:
 { group_id: string; actor_id: string; warning: string; hint: string; text: string }
 ```
 
+#### `terminal_history`
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string; before?: number; limit_bytes?: number; strip_ansi?: boolean; compact?: boolean }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  actor_id: string
+  warning: string
+  hint: string
+  text: string
+  start_cursor: number
+  end_cursor: number
+  has_more: boolean
+  cursor_expired: boolean
+}
+```
+
 #### `terminal_clear`
 
 Args:
