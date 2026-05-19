@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.19] — 2026-05-19
+
+### Fixed
+- **PTY runtime resume recovery** now falls back to a fresh actor when a saved provider resume fails, while preserving durable fresh-session metadata for Claude and Gemini where explicit provider session IDs are supported.
+- **Codex app-server backed PTY relaunches** now record fresh remote TUI thread ids after stale resume metadata falls back to a new thread, preventing repeated relaunch failures on the same invalid thread.
+- **Windows actor restart behavior** now handles Codex command shims, app-server process-tree termination, and PTY terminal capability queries more reliably.
+- **MCP runtime context recovery on Windows** can recover CCCC runtime identity from parent and ancestor process environments when the immediate MCP process environment is incomplete.
+
+### Changed
+- **Codex remote TUI startup and shutdown** now distinguish provider thread failures from observer disconnects, use bounded websocket shutdown, and avoid marking resume metadata failed when only the remote TUI surface exits.
+
+### Tests
+- Expanded coverage for Windows PTY query replies, Windows MCP context recovery, Codex app-server thread resume/fallback, remote TUI shutdown semantics, and PTY resume failure recovery across Claude, Gemini, and Codex.
+
 ## [0.4.18] — 2026-05-18
 
 ### Added
