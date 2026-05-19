@@ -134,6 +134,98 @@ class TestMessageRequestLanes(unittest.TestCase):
         finally:
             stop_event.set()
 
+    def test_busy_group_yields_to_waiting_group_when_limit_reached(self) -> None:
+        from cccc.daemon.messaging.message_request_lanes import MessageRequestLanes
+
+        stop_event = threading.Event()
+        g2_started = threading.Event()
+        started_groups: list[str] = []
+
+        def handle_request(req):
+            group_id = req.args["group_id"]
+            started_groups.append(group_id)
+            if group_id == "g1" and req.args["label"] == "first":
+                self.assertTrue(
+                    lanes.submit(
+                        conn=_FakeConn(),
+                        req=SimpleNamespace(op="send", args={"group_id": "g1", "label": "second"}),
+                    )
+                )
+                self.assertTrue(
+                    lanes.submit(
+                        conn=_FakeConn(),
+                        req=SimpleNamespace(op="send", args={"group_id": "g2", "label": "only"}),
+                    )
+                )
+            if group_id == "g2":
+                g2_started.set()
+            return SimpleNamespace(ok=True, result={"group_id": group_id}), False
+
+        lanes = MessageRequestLanes(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=lambda conn, payload: conn.payloads.append(payload),
+            dump_response=lambda resp: {"ok": bool(resp.ok), "result": dict(resp.result)},
+            logger=logging.getLogger("test"),
+            on_should_exit=stop_event.set,
+            max_concurrent_groups=1,
+        )
+
+        try:
+            self.assertTrue(
+                lanes.submit(conn=_FakeConn(), req=SimpleNamespace(op="send", args={"group_id": "g1", "label": "first"}))
+            )
+
+            self.assertTrue(g2_started.wait(timeout=1))
+            self.assertTrue(lanes.wait_for_idle_for_tests(timeout=2))
+            self.assertEqual(started_groups, ["g1", "g2", "g1"])
+        finally:
+            stop_event.set()
+
+    def test_developer_diagnostics_include_request_identity_and_timing(self) -> None:
+        from cccc.daemon.messaging.message_request_lanes import MessageRequestLanes
+
+        stop_event = threading.Event()
+        logger = logging.getLogger("test.message_lanes.diagnostics")
+
+        def handle_request(req):
+            time.sleep(0.02)
+            return SimpleNamespace(ok=True, result={"ok": True}), False
+
+        lanes = MessageRequestLanes(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=lambda conn, payload: conn.payloads.append(payload),
+            dump_response=lambda resp: {"ok": bool(resp.ok), "result": dict(resp.result)},
+            logger=logger,
+            on_should_exit=stop_event.set,
+            max_concurrent_groups=1,
+            slow_request_seconds=10,
+            diagnostics_enabled=lambda: True,
+        )
+
+        try:
+            with self.assertLogs("test.message_lanes.diagnostics", level="INFO") as logs:
+                self.assertTrue(
+                    lanes.submit(
+                        conn=_FakeConn(),
+                        req=SimpleNamespace(
+                            op="reply",
+                            args={"group_id": "g1", "client_id": "c1", "reply_to": "evt_1"},
+                        ),
+                    )
+                )
+                self.assertTrue(lanes.wait_for_idle_for_tests(timeout=2))
+
+            joined = "\n".join(logs.output)
+            self.assertIn("message request done op=reply group=g1", joined)
+            self.assertIn("client_id=c1", joined)
+            self.assertIn("reply_to=evt_1", joined)
+            self.assertIn("queue_wait_ms=", joined)
+            self.assertIn("run_ms=", joined)
+        finally:
+            stop_event.set()
+
 
 if __name__ == "__main__":
     unittest.main()

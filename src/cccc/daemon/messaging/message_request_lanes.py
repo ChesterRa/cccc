@@ -38,6 +38,13 @@ def message_request_lane_key(req: Any) -> str:
     return "global"
 
 
+def _request_arg(req: Any, key: str) -> str:
+    args = getattr(req, "args", None)
+    if not isinstance(args, dict):
+        return ""
+    return str(args.get(key) or "").strip()
+
+
 class MessageRequestLanes:
     """Serialize message writes per group while allowing different groups to run concurrently."""
 
@@ -52,6 +59,7 @@ class MessageRequestLanes:
         on_should_exit: Callable[[], None],
         max_concurrent_groups: int | None = None,
         slow_request_seconds: float = 5.0,
+        diagnostics_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._stop_event = stop_event
         self._handle_request = handle_request
@@ -59,6 +67,7 @@ class MessageRequestLanes:
         self._dump_response = dump_response
         self._logger = logger
         self._on_should_exit = on_should_exit
+        self._diagnostics_enabled = diagnostics_enabled
         self._max_concurrent_groups = max(1, int(max_concurrent_groups or default_message_request_max_concurrent_groups()))
         self._slow_request_seconds = max(0.1, float(slow_request_seconds or 5.0))
         self._condition = threading.Condition()
@@ -111,19 +120,29 @@ class MessageRequestLanes:
             self._logger.exception("message request lane could not start key=%s", lane_key)
             self._drain_lane(lane_key)
 
-    def _start_waiting_lanes_locked(self) -> list[str]:
+    def _start_waiting_lanes_locked(self, *, yielded_lane_key: str = "") -> list[str]:
         lane_keys: list[str] = []
         while len(self._running) < self._max_concurrent_groups:
             next_key = ""
             for key, queue in self._pending.items():
-                if key not in self._running and queue:
+                if key != yielded_lane_key and key not in self._running and queue:
                     next_key = key
                     break
+            if not next_key and yielded_lane_key:
+                queue = self._pending.get(yielded_lane_key)
+                if yielded_lane_key not in self._running and queue:
+                    next_key = yielded_lane_key
             if not next_key:
                 break
             self._running.add(next_key)
             lane_keys.append(next_key)
         return lane_keys
+
+    def _has_waiting_lane_locked(self, lane_key: str) -> bool:
+        for key, queue in self._pending.items():
+            if key != lane_key and key not in self._running and queue:
+                return True
+        return False
 
     def _drain_lane(self, lane_key: str) -> None:
         next_lanes: list[str] = []
@@ -161,14 +180,26 @@ class MessageRequestLanes:
                     pass
             finally:
                 elapsed = time.monotonic() - started_at
+                op = str(getattr(item.req, "op", "") or "unknown").strip() or "unknown"
+                queue_wait_ms = int(max(0.0, started_at - item.submitted_at) * 1000)
+                run_ms = int(elapsed * 1000)
+                if self._diagnostics_enabled and self._diagnostics_enabled():
+                    self._logger.info(
+                        "message request done op=%s group=%s client_id=%s reply_to=%s queue_wait_ms=%d run_ms=%d",
+                        op,
+                        lane_key,
+                        _request_arg(item.req, "client_id"),
+                        _request_arg(item.req, "reply_to"),
+                        queue_wait_ms,
+                        run_ms,
+                    )
                 if elapsed >= self._slow_request_seconds:
-                    op = str(getattr(item.req, "op", "") or "unknown").strip() or "unknown"
                     self._logger.warning(
                         "slow message request op=%s group=%s queue_wait_ms=%d run_ms=%d",
                         op,
                         lane_key,
-                        int(max(0.0, started_at - item.submitted_at) * 1000),
-                        int(elapsed * 1000),
+                        queue_wait_ms,
+                        run_ms,
                     )
                 try:
                     item.conn.close()
@@ -179,6 +210,14 @@ class MessageRequestLanes:
                 self._on_should_exit()
                 self._stop_event.set()
                 break
+
+            with self._condition:
+                queue = self._pending.get(lane_key)
+                if queue and self._has_waiting_lane_locked(lane_key):
+                    self._running.discard(lane_key)
+                    next_lanes = self._start_waiting_lanes_locked(yielded_lane_key=lane_key)
+                    self._condition.notify_all()
+                    break
 
         for next_lane in next_lanes:
             self._start_lane(next_lane)

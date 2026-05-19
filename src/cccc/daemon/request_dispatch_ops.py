@@ -403,6 +403,7 @@ def dispatch_request(
         automation_on_resume=deps.automation_on_resume,
         automation_on_new_message=deps.automation_on_new_message,
         clear_pending_system_notifies=deps.clear_pending_system_notifies_chat,
+        diagnostics_enabled=deps.developer_mode_enabled,
     )
     if chat_resp is not None:
         return chat_resp, False

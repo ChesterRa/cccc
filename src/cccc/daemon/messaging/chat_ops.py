@@ -40,6 +40,7 @@ from ..context.context_ops import handle_context_sync
 from .install_slash_command import INSTALL_CAPABILITY_ID, parse_install_slash_command, render_install_command_task
 from .chat_side_effects import schedule_chat_side_effects
 from .post_commit import run_chat_post_commit, run_group_chat_post_commit
+from .chat_diagnostics import make_chat_diagnostics
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -264,6 +265,7 @@ def handle_send(
     automation_on_resume: Callable[[Any], None],
     automation_on_new_message: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
+    diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     text = str(args.get("text") or "")
@@ -278,6 +280,13 @@ def handle_send(
     source_platform = str(args.get("source_platform") or "").strip()
     source_user_name = str(args.get("source_user_name") or "").strip()
     source_user_id = str(args.get("source_user_id") or "").strip()
+    diag = make_chat_diagnostics(
+        op="send",
+        group_id=group_id,
+        client_id=client_id,
+        diagnostics_enabled=diagnostics_enabled,
+        logger=logger,
+    )
     mention_user_ids_raw = args.get("mention_user_ids")
     mention_user_ids = (
         [str(item).strip() for item in mention_user_ids_raw if str(item).strip()]
@@ -308,8 +317,11 @@ def handle_send(
         return _error("missing_group_id", "missing group_id")
 
     group = load_group(group_id)
+    diag.mark("load_group")
     if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
+        resp = _error("group_not_found", f"group not found: {group_id}")
+        diag.done(ok=False, error_code="group_not_found")
+        return resp
     if _is_internal_pet_sender(group, by):
         return _error(
             "pet_visible_chat_forbidden",
@@ -327,11 +339,15 @@ def handle_send(
         automation_on_resume=automation_on_resume,
         clear_pending_system_notifies=clear_pending_system_notifies,
     )
+    diag.mark("wake_group")
 
     try:
         to = resolve_recipient_tokens(group, to_tokens)
     except Exception as e:
-        return _error("invalid_recipient", str(e))
+        resp = _error("invalid_recipient", str(e))
+        diag.done(ok=False, error_code="invalid_recipient")
+        return resp
+    diag.mark("resolve_recipients")
 
     if not to:
         mention_pattern = re.compile(r"@(\w[\w-]*)")
@@ -356,6 +372,7 @@ def handle_send(
         if by and by in matched_enabled:
             matched_enabled = [actor_id for actor_id in matched_enabled if actor_id != by]
         woken = auto_wake_recipients(group, to, by)
+        diag.mark("auto_wake")
         if not matched_enabled:
             if not woken:
                 wanted = " ".join(to) if to else "@all"
@@ -439,6 +456,7 @@ def handle_send(
             client_id=client_id or None,
         ).model_dump(),
     )
+    diag.mark("append_event")
     effective_to = to if to else ["@all"]
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
@@ -491,6 +509,7 @@ def handle_send(
             source_user_id=source_user_id,
         ),
     )
+    diag.mark("schedule_delivery")
     schedule_chat_side_effects(
         group=group,
         by=by,
@@ -501,7 +520,9 @@ def handle_send(
         pet_review_immediate=reply_required,
         automation_on_new_message=automation_on_new_message,
     )
+    diag.mark("schedule_side_effects")
 
+    diag.done(ok=True, event_id=event_id)
     return DaemonResponse(ok=True, result={"event": event})
 
 
@@ -724,6 +745,7 @@ def handle_reply(
     automation_on_resume: Callable[[Any], None],
     automation_on_new_message: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
+    diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     text = str(args.get("text") or "")
@@ -732,6 +754,14 @@ def handle_reply(
     priority = str(args.get("priority") or "normal").strip() or "normal"
     reply_required = coerce_bool(args.get("reply_required"))
     client_id = str(args.get("client_id") or "").strip()
+    diag = make_chat_diagnostics(
+        op="reply",
+        group_id=group_id,
+        client_id=client_id,
+        reply_to=reply_to,
+        diagnostics_enabled=diagnostics_enabled,
+        logger=logger,
+    )
     to_raw = args.get("to")
     to_tokens: list[str] = []
     if isinstance(to_raw, list):
@@ -745,8 +775,11 @@ def handle_reply(
         return _error("missing_reply_to", "missing reply_to event_id")
 
     group = load_group(group_id)
+    diag.mark("load_group")
     if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
+        resp = _error("group_not_found", f"group not found: {group_id}")
+        diag.done(ok=False, error_code="group_not_found")
+        return resp
     if _is_internal_pet_sender(group, by):
         return _error(
             "pet_visible_chat_forbidden",
@@ -759,8 +792,11 @@ def handle_reply(
             return DaemonResponse(ok=True, result=existing)
 
     original, existing_ack = find_event_with_chat_ack(group, event_id=reply_to, actor_id=by)
+    diag.mark("load_reply_target")
     if original is None:
-        return _error("event_not_found", f"event not found: {reply_to}")
+        resp = _error("event_not_found", f"event not found: {reply_to}")
+        diag.done(ok=False, error_code="event_not_found")
+        return resp
     target_event_id = str(original.get("id") or "").strip()
     if client_id and target_event_id and target_event_id != reply_to:
         existing = find_existing_reply_result(group, client_id=client_id, by=by, reply_to=target_event_id or reply_to)
@@ -774,6 +810,7 @@ def handle_reply(
         automation_on_resume=automation_on_resume,
         clear_pending_system_notifies=clear_pending_system_notifies,
     )
+    diag.mark("wake_group")
     original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
     quote_text = _quote_text_from_message_data(original_data, max_len=100)
     original_source_platform = str(original_data.get("source_platform") or "").strip()
@@ -791,7 +828,10 @@ def handle_reply(
     try:
         to = resolve_recipient_tokens(group, to_tokens)
     except Exception as e:
-        return _error("invalid_recipient", str(e))
+        resp = _error("invalid_recipient", str(e))
+        diag.done(ok=False, error_code="invalid_recipient")
+        return resp
+    diag.mark("resolve_recipients")
 
     woken: list[str] = []
     if targets_any_agent(to):
@@ -799,6 +839,7 @@ def handle_reply(
         if by and by in matched_enabled:
             matched_enabled = [actor_id for actor_id in matched_enabled if actor_id != by]
         woken = auto_wake_recipients(group, to, by)
+        diag.mark("auto_wake")
         if not matched_enabled:
             if not woken:
                 wanted = " ".join(to) if to else "@all"
@@ -845,6 +886,7 @@ def handle_reply(
             client_id=client_id or None,
         ).model_dump(),
     )
+    diag.mark("append_event")
 
     ack_event: Optional[dict[str, Any]] = None
     try:
@@ -912,6 +954,7 @@ def handle_reply(
             quote_text=quote_text,
         ),
     )
+    diag.mark("schedule_delivery")
     schedule_chat_side_effects(
         group=group,
         by=by,
@@ -922,7 +965,9 @@ def handle_reply(
         pet_review_immediate=reply_required,
         automation_on_new_message=automation_on_new_message,
     )
+    diag.mark("schedule_side_effects")
 
+    diag.done(ok=True, event_id=event_id)
     return DaemonResponse(ok=True, result={"event": event, "ack_event": ack_event})
 
 
@@ -994,6 +1039,7 @@ def try_handle_chat_op(
     automation_on_resume: Callable[[Any], None],
     automation_on_new_message: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
+    diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> Optional[DaemonResponse]:
     if op == "stream_emit":
         return handle_stream_emit(args)
@@ -1007,6 +1053,7 @@ def try_handle_chat_op(
             automation_on_resume=automation_on_resume,
             automation_on_new_message=automation_on_new_message,
             clear_pending_system_notifies=clear_pending_system_notifies,
+            diagnostics_enabled=diagnostics_enabled,
         )
     if op == "tracked_send":
         return handle_tracked_send(
@@ -1029,5 +1076,6 @@ def try_handle_chat_op(
             automation_on_resume=automation_on_resume,
             automation_on_new_message=automation_on_new_message,
             clear_pending_system_notifies=clear_pending_system_notifies,
+            diagnostics_enabled=diagnostics_enabled,
         )
     return None

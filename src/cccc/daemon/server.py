@@ -1115,6 +1115,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             dump_response=_dump_response,
             logger=logger,
             on_should_exit=stop_event.set,
+            diagnostics_enabled=_developer_mode_enabled,
         )
         read_request_queue = DaemonRequestExecutionQueue(
             stop_event=stop_event,
