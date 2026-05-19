@@ -970,6 +970,47 @@ def _abort_pty_actor_after_resume_failure(
         pass
 
 
+def _start_fresh_pty_actor_after_resume_failure(
+    *,
+    group_id: str,
+    actor_id: str,
+    cwd: Path,
+    base_command: list[str],
+    env: Dict[str, str],
+    runtime: str,
+    max_backlog_bytes: int,
+    runtime_start_preflight_error: Callable[..., str],
+    cause: Optional[BaseException] = None,
+) -> Any:
+    runtime_error = runtime_start_preflight_error(runtime, base_command, runner="pty")
+    if runtime_error:
+        if cause is not None:
+            raise RuntimeError(runtime_error) from cause
+        raise RuntimeError(runtime_error)
+    session = pty_runner.SUPERVISOR.start_actor(
+        group_id=group_id,
+        actor_id=actor_id,
+        cwd=cwd,
+        command=base_command,
+        env=env,
+        runtime=runtime,
+        max_backlog_bytes=max_backlog_bytes,
+    )
+    try:
+        setattr(session, "_cccc_base_command", tuple(base_command))
+    except Exception:
+        pass
+    remove_runtime_session(group_id, actor_id)
+    if str(runtime or "").strip().lower() == "codex":
+        _schedule_codex_pty_status_capture(
+            group_id=group_id,
+            actor_id=actor_id,
+            cwd=cwd,
+            base_command=base_command,
+        )
+    return session
+
+
 def start_pty_actor_with_runtime_resume(
     *,
     group_id: str,
@@ -1034,10 +1075,22 @@ def start_pty_actor_with_runtime_resume(
     runtime_error = runtime_start_preflight_error(runtime, launch_cmd, runner="pty")
     if runtime_error:
         if resume_doc:
+            resume_exc = RuntimeError(runtime_error)
             mark_runtime_session_resume_failed(
                 group_id=group_id,
                 actor_id=actor_id,
                 error=f"runtime resume launch rejected: {runtime_error}",
+            )
+            return _start_fresh_pty_actor_after_resume_failure(
+                group_id=group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                base_command=base_cmd,
+                env=env,
+                runtime=runtime,
+                max_backlog_bytes=max_backlog_bytes,
+                runtime_start_preflight_error=runtime_start_preflight_error,
+                cause=resume_exc,
             )
         elif initial_doc:
             mark_runtime_session_resume_failed(
@@ -1069,12 +1122,23 @@ def start_pty_actor_with_runtime_resume(
                 timeout_seconds=verify_timeout,
             )
             if resume_error:
+                resume_exc = RuntimeError(resume_error)
                 _abort_pty_actor_after_resume_failure(
                     group_id=group_id,
                     actor_id=actor_id,
                     error=resume_error,
                 )
-                raise RuntimeError(resume_error)
+                return _start_fresh_pty_actor_after_resume_failure(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    cwd=cwd,
+                    base_command=base_cmd,
+                    env=env,
+                    runtime=runtime,
+                    max_backlog_bytes=max_backlog_bytes,
+                    runtime_start_preflight_error=runtime_start_preflight_error,
+                    cause=resume_exc,
+                )
             _schedule_pty_resume_failure_monitor(
                 group_id=group_id,
                 actor_id=actor_id,
@@ -1101,7 +1165,17 @@ def start_pty_actor_with_runtime_resume(
                     actor_id=actor_id,
                     error=str(exc),
                 )
-            raise RuntimeError(str(exc)) from exc
+            return _start_fresh_pty_actor_after_resume_failure(
+                group_id=group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                base_command=base_cmd,
+                env=env,
+                runtime=runtime,
+                max_backlog_bytes=max_backlog_bytes,
+                runtime_start_preflight_error=runtime_start_preflight_error,
+                cause=exc,
+            )
         mark_runtime_session_resume_failed(group_id=group_id, actor_id=actor_id, error=str(exc))
         fallback_cmd = base_cmd
         runtime_error = runtime_start_preflight_error(runtime, fallback_cmd, runner="pty")

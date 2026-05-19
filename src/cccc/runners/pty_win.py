@@ -305,22 +305,35 @@ class PtySession:
     def _maybe_reply_to_terminal_queries(self, chunk: bytes) -> None:
         if not chunk:
             return
-        query = b"\x1b[6n"
-        should_reply = False
+        query_responses = (
+            (b"\x1b[6n", b"\x1b[1;1R"),
+            (b"\x1b[c", b"\x1b[?1;2c"),
+            (b"\x1b[0c", b"\x1b[?1;2c"),
+            (b"\x1b[>c", b"\x1b[>0;0;0c"),
+            (b"\x1b[>0c", b"\x1b[>0;0;0c"),
+        )
+        responses: list[bytes] = []
         with self._lock:
-            # If a real terminal is attached, avoid duplicating DSR replies.
-            if self._writer_fd is not None:
-                data = (self._query_tail or b"") + chunk
-                keep = len(query) - 1
-                self._query_tail = data[-keep:] if keep > 0 else b""
-                return
             data = (self._query_tail or b"") + chunk
-            if query in data:
-                should_reply = True
-            keep = len(query) - 1
-            self._query_tail = data[-keep:] if keep > 0 else b""
-        if should_reply:
-            self.write_input(b"\x1b[1;1R")
+            writer_attached = self._writer_fd is not None
+            runtime = str(self._runtime or "").strip().lower()
+            backend_handles_device_attributes = runtime in {"gemini", "droid", "neovate"}
+            for query, response in query_responses:
+                if query not in data:
+                    continue
+                if query == b"\x1b[6n" and writer_attached:
+                    continue
+                if query != b"\x1b[6n" and writer_attached and not backend_handles_device_attributes:
+                    continue
+                responses.append(response)
+            self._query_tail = b""
+            for size in range(min(len(data), max(len(query) for query, _response in query_responses) - 1), 0, -1):
+                suffix = data[-size:]
+                if any(query.startswith(suffix) and len(suffix) < len(query) for query, _response in query_responses):
+                    self._query_tail = suffix
+                    break
+        for response in responses:
+            self.write_input(response)
 
     def _on_wake_readable(self) -> None:
         while True:

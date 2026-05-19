@@ -78,7 +78,8 @@ def start_codex_app_thread(
             resumed = True
         except Exception as exc:
             mark_runtime_session_resume_failed(group_id=group_id, actor_id=actor_id, error=str(exc))
-            raise RuntimeError(f"codex app-server resume failed for thread {resume_thread_id}: {exc}") from exc
+            thread_resp = request("thread/start", thread_params, timeout=20.0)
+            resumed = False
     else:
         thread_resp = request("thread/start", thread_params, timeout=20.0)
 
@@ -106,3 +107,49 @@ def start_codex_app_thread(
         thread_id=thread_id,
         resumed=resumed,
     )
+
+
+def prepare_codex_app_tui_resume(
+    *,
+    request: CodexThreadRequest,
+    group_id: str,
+    actor_id: str,
+    cwd: Path,
+    command: Iterable[str],
+    model: str = "",
+) -> CodexThreadStartResult:
+    model = str(model or "").strip()
+    command_list = [str(item) for item in list(command or []) if str(item).strip()]
+    resume_doc = prepare_codex_app_thread_resume(
+        group_id=group_id,
+        actor_id=actor_id,
+        cwd=cwd,
+        command=command_list,
+        model=model,
+    )
+    if resume_doc:
+        resume_thread_id = str(resume_doc.get("provider_thread_id") or "").strip()
+        try:
+            resume_params = _thread_resume_params(thread_id=resume_thread_id, model=model)
+            thread_resp = request("thread/resume", resume_params, timeout=20.0)
+            thread_id = _thread_id_from_response(thread_resp) or resume_thread_id
+            if runtime_resume_enabled():
+                try:
+                    record_codex_app_thread_runtime_session(
+                        group_id=group_id,
+                        actor_id=actor_id,
+                        cwd=cwd,
+                        model=model,
+                        command=command_list,
+                        provider_thread_id=thread_id,
+                        runner="pty",
+                        status="usable",
+                        captured_from="app_server_thread_resume",
+                        resume_eligible=True,
+                    )
+                except Exception:
+                    pass
+            return CodexThreadStartResult(thread_id=thread_id, resumed=True)
+        except Exception as exc:
+            mark_runtime_session_resume_failed(group_id=group_id, actor_id=actor_id, error=str(exc))
+    return CodexThreadStartResult(thread_id="", resumed=False)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -73,6 +75,44 @@ class TestMcpRuntimeContext(unittest.TestCase):
         self.assertEqual(ctx.home, str(fake_home))
         self.assertEqual(ctx.group_id, "g_ancestor")
         self.assertEqual(ctx.actor_id, "foreman-ancestor")
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only process environment recovery")
+    def test_windows_runtime_context_recovers_from_parent_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = str(Path(tmp).resolve())
+            repo_src = Path(__file__).resolve().parents[1] / "src"
+            child_env = os.environ.copy()
+            child_env["PYTHONPATH"] = str(repo_src) + os.pathsep + str(child_env.get("PYTHONPATH") or "")
+            for key in ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID"):
+                child_env.pop(key, None)
+            code = (
+                "import json\n"
+                "from cccc.ports.mcp.common import _runtime_context\n"
+                "ctx = _runtime_context()\n"
+                "print(json.dumps({'home': ctx.home, 'group_id': ctx.group_id, 'actor_id': ctx.actor_id}))\n"
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "CCCC_HOME": home,
+                    "CCCC_GROUP_ID": "g_windows_parent",
+                    "CCCC_ACTOR_ID": "peer_windows_parent",
+                },
+                clear=False,
+            ):
+                result = subprocess.run(
+                    [sys.executable, "-c", code],
+                    env=child_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        recovered = json.loads(str(result.stdout or "").strip())
+        self.assertEqual(str(Path(recovered.get("home") or "").resolve()), home)
+        self.assertEqual(recovered.get("group_id"), "g_windows_parent")
+        self.assertEqual(recovered.get("actor_id"), "peer_windows_parent")
 
     def test_runtime_context_override_wins_without_mutating_env(self) -> None:
         from cccc.ports.mcp.common import _runtime_context, runtime_context_override

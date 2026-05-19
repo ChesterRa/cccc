@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -203,6 +204,53 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
             session.stop()
 
         mock_terminate.assert_called_once_with(4321, timeout_s=1.0, include_group=True, force=True)
+
+    def test_windows_pty_replies_to_gemini_device_attributes_when_writer_attached(self) -> None:
+        from cccc.runners import pty_win
+
+        session = object.__new__(pty_win.PtySession)
+        session._query_tail = b""
+        session._writer_fd = object()
+        session._runtime = "gemini"
+        session._lock = threading.RLock()
+        writes: list[bytes] = []
+        session.write_input = lambda data: writes.append(bytes(data)) or True
+
+        session._maybe_reply_to_terminal_queries(b"\x1b[c")
+
+        self.assertEqual(writes, [b"\x1b[?1;2c"])
+
+        session._query_tail = b""
+        session._runtime = "codex"
+        writes.clear()
+
+        session._maybe_reply_to_terminal_queries(b"\x1b[c")
+
+        self.assertEqual(writes, [])
+
+    def test_windows_pty_does_not_replay_complete_terminal_query_tail(self) -> None:
+        from cccc.runners import pty_win
+
+        session = object.__new__(pty_win.PtySession)
+        session._query_tail = b""
+        session._writer_fd = object()
+        session._runtime = "gemini"
+        session._lock = threading.RLock()
+        writes: list[bytes] = []
+        session.write_input = lambda data: writes.append(bytes(data)) or True
+
+        session._maybe_reply_to_terminal_queries(b"\x1b[c")
+        session._maybe_reply_to_terminal_queries(b"Gemini ready")
+
+        self.assertEqual(writes, [b"\x1b[?1;2c"])
+
+        session._query_tail = b""
+        writes.clear()
+
+        session._maybe_reply_to_terminal_queries(b"\x1b[")
+        session._maybe_reply_to_terminal_queries(b"c")
+
+        self.assertEqual(writes, [b"\x1b[?1;2c"])
 
     def test_codex_windows_command_still_gets_env_inherit_flag(self) -> None:
         from cccc.daemon import server as daemon_server

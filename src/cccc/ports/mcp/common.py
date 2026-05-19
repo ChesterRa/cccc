@@ -157,8 +157,125 @@ def _iter_ancestor_pids(start_pid: Optional[int] = None) -> list[int]:
     return out
 
 
+def _proc_environ_windows(pid: int) -> Dict[str, str]:
+    if pid <= 0 or os.name != "nt":
+        return {}
+
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_INFORMATION = 0x0400
+    PROCESS_VM_READ = 0x0010
+
+    class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("Reserved1", ctypes.c_void_p),
+            ("PebBaseAddress", ctypes.c_void_p),
+            ("Reserved2", ctypes.c_void_p * 2),
+            ("UniqueProcessId", ctypes.c_void_p),
+            ("Reserved3", ctypes.c_void_p),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.ReadProcessMemory.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    kernel32.ReadProcessMemory.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    ntdll.NtQueryInformationProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_ulong,
+        ctypes.POINTER(PROCESS_BASIC_INFORMATION),
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+    ]
+    ntdll.NtQueryInformationProcess.restype = ctypes.c_long
+
+    handle = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    if not handle:
+        return {}
+
+    try:
+        pbi = PROCESS_BASIC_INFORMATION()
+        status = ntdll.NtQueryInformationProcess(handle, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), None)
+        if status != 0 or not pbi.PebBaseAddress:
+            return {}
+
+        ptr_size = ctypes.sizeof(ctypes.c_void_p)
+        is_64bit = ptr_size == 8
+        pp_offset = 0x20 if is_64bit else 0x10
+        env_offset = 0x80 if is_64bit else 0x48
+
+        def read_mem(addr: int, size: int) -> Optional[bytes]:
+            if int(addr or 0) <= 0 or int(size or 0) <= 0:
+                return None
+            buf = ctypes.create_string_buffer(size)
+            bytes_read = ctypes.c_size_t(0)
+            if not kernel32.ReadProcessMemory(handle, ctypes.c_void_p(addr), buf, size, ctypes.byref(bytes_read)):
+                return None
+            if bytes_read.value <= 0:
+                return None
+            return bytes(buf.raw[: bytes_read.value])
+
+        def ptr_from_raw(raw: Optional[bytes]) -> int:
+            if not raw or len(raw) < ptr_size:
+                return 0
+            return int.from_bytes(raw[:ptr_size], "little", signed=False)
+
+        pp_ptr_raw = read_mem(pbi.PebBaseAddress + pp_offset, ptr_size)
+        pp_addr = ptr_from_raw(pp_ptr_raw)
+        if not pp_addr:
+            return {}
+
+        env_ptr_raw = read_mem(pp_addr + env_offset, ptr_size)
+        env_addr = ptr_from_raw(env_ptr_raw)
+        if not env_addr:
+            return {}
+
+        full_data = b""
+        chunk_size = 4096
+        curr = env_addr
+        for _ in range(256):  # Max 1MB
+            chunk = read_mem(curr, chunk_size)
+            if not chunk:
+                break
+            full_data += chunk
+            if b"\x00\x00\x00\x00" in full_data[-(chunk_size + 3):]:
+                break
+            curr += chunk_size
+
+        env_str = full_data.decode("utf-16le", errors="ignore")
+        end_idx = env_str.find("\x00\x00")
+        if end_idx != -1:
+            env_str = env_str[:end_idx]
+
+        out: Dict[str, str] = {}
+        for item in env_str.split("\x00"):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                if k:
+                    out[k] = v
+        return out
+    except Exception:
+        return {}
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _proc_environ(pid: int) -> Dict[str, str]:
-    if pid <= 0 or os.name != "posix":
+    if pid <= 0:
+        return {}
+    if os.name == "nt":
+        return _proc_environ_windows(pid)
+    if os.name != "posix":
         return {}
     try:
         raw = (Path("/proc") / str(pid) / "environ").read_bytes()

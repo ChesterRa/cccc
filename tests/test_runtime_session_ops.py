@@ -526,7 +526,7 @@ class TestRuntimeSessionOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_resume_start_failure_marks_metadata_failed_without_fresh_fallback(self) -> None:
+    def test_resume_start_failure_falls_back_to_fresh_actor(self) -> None:
         home, cleanup = self._with_home()
         try:
             from cccc.daemon.runtime_session_ops import (
@@ -549,36 +549,37 @@ class TestRuntimeSessionOps(unittest.TestCase):
 
             calls: list[list[str]] = []
 
+            class FreshSession:
+                pid = 222
+
             def fake_start_actor(**kwargs):
                 calls.append(list(kwargs.get("command") or []))
-                raise RuntimeError("resume id not found")
+                if len(calls) == 1:
+                    raise RuntimeError("resume id not found")
+                return FreshSession()
 
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
             ):
-                with self.assertRaises(RuntimeError):
-                    start_pty_actor_with_runtime_resume(
-                        group_id="g1",
-                        actor_id="peer1",
-                        cwd=cwd,
-                        base_command=["claude"],
-                        env={},
-                        runtime="claude",
-                        max_backlog_bytes=1000,
-                        runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
-                    )
+                session = start_pty_actor_with_runtime_resume(
+                    group_id="g1",
+                    actor_id="peer1",
+                    cwd=cwd,
+                    base_command=["claude"],
+                    env={},
+                    runtime="claude",
+                    max_backlog_bytes=1000,
+                    runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
+                )
 
-            self.assertEqual(calls, [["claude", "--resume", "old-session-id"]])
-            stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("provider_session_id"), "old-session-id")
-            self.assertEqual(stored.get("status"), "resume_failed")
-            self.assertFalse(bool(stored.get("resume_eligible")))
-            self.assertIn("resume id not found", str(stored.get("last_resume_error") or ""))
+            self.assertIsInstance(session, FreshSession)
+            self.assertEqual(calls, [["claude", "--resume", "old-session-id"], ["claude"]])
+            self.assertEqual(read_runtime_session("g1", "peer1"), {})
         finally:
             cleanup()
 
-    def test_resume_quick_exit_marks_metadata_failed_without_fresh_fallback(self) -> None:
+    def test_resume_quick_exit_falls_back_to_fresh_actor(self) -> None:
         home, cleanup = self._with_home()
         try:
             from cccc.daemon.runtime_session_ops import (
@@ -602,11 +603,14 @@ class TestRuntimeSessionOps(unittest.TestCase):
             class ResumeSession:
                 pid = 111
 
+            class FreshSession:
+                pid = 222
+
             calls: list[list[str]] = []
 
             def fake_start_actor(**kwargs):
                 calls.append(list(kwargs.get("command") or []))
-                return ResumeSession()
+                return ResumeSession() if len(calls) == 1 else FreshSession()
 
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
@@ -620,28 +624,24 @@ class TestRuntimeSessionOps(unittest.TestCase):
             ), patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.stop_actor",
             ):
-                with self.assertRaises(RuntimeError):
-                    start_pty_actor_with_runtime_resume(
-                        group_id="g1",
-                        actor_id="peer1",
-                        cwd=cwd,
-                        base_command=["claude"],
-                        env={},
-                        runtime="claude",
-                        max_backlog_bytes=1000,
-                        runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
-                    )
+                session = start_pty_actor_with_runtime_resume(
+                    group_id="g1",
+                    actor_id="peer1",
+                    cwd=cwd,
+                    base_command=["claude"],
+                    env={},
+                    runtime="claude",
+                    max_backlog_bytes=1000,
+                    runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
+                )
 
-            self.assertEqual(calls, [["claude", "--resume", "old-session-id"]])
-            stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("provider_session_id"), "old-session-id")
-            self.assertEqual(stored.get("status"), "resume_failed")
-            self.assertFalse(bool(stored.get("resume_eligible")))
-            self.assertIn("resume", str(stored.get("last_resume_error") or ""))
+            self.assertIsInstance(session, FreshSession)
+            self.assertEqual(calls, [["claude", "--resume", "old-session-id"], ["claude"]])
+            self.assertEqual(read_runtime_session("g1", "peer1"), {})
         finally:
             cleanup()
 
-    def test_pty_resume_process_quick_exit_marks_failed_without_fresh_fallback(self) -> None:
+    def test_pty_resume_process_quick_exit_falls_back_to_fresh_actor(self) -> None:
         home, cleanup = self._with_home()
         try:
             from cccc.daemon.runtime_session_ops import (
@@ -665,13 +665,16 @@ class TestRuntimeSessionOps(unittest.TestCase):
             class ResumeSession:
                 pid = 111
 
+            class FreshSession:
+                pid = 222
+
             calls: list[list[str]] = []
             stopped: list[tuple[str, str]] = []
             scheduled: list[dict] = []
 
             def fake_start_actor(**kwargs):
                 calls.append(list(kwargs.get("command") or []))
-                return ResumeSession()
+                return ResumeSession() if len(calls) == 1 else FreshSession()
 
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
@@ -689,25 +692,22 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 "cccc.daemon.runtime_session_ops._schedule_codex_pty_status_capture",
                 side_effect=lambda **kwargs: scheduled.append(kwargs),
             ):
-                with self.assertRaises(RuntimeError):
-                    start_pty_actor_with_runtime_resume(
-                        group_id="g1",
-                        actor_id="peer1",
-                        cwd=cwd,
-                        base_command=["codex"],
-                        env={},
-                        runtime="codex",
-                        max_backlog_bytes=1000,
-                        runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
-                    )
+                session = start_pty_actor_with_runtime_resume(
+                    group_id="g1",
+                    actor_id="peer1",
+                    cwd=cwd,
+                    base_command=["codex"],
+                    env={},
+                    runtime="codex",
+                    max_backlog_bytes=1000,
+                    runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
+                )
 
-            self.assertEqual(calls, [["codex", "resume", "019dbe1d-cd97-7d31-9ba6-212d3e57b15c"]])
+            self.assertIsInstance(session, FreshSession)
+            self.assertEqual(calls, [["codex", "resume", "019dbe1d-cd97-7d31-9ba6-212d3e57b15c"], ["codex"]])
             self.assertEqual(stopped, [("g1", "peer1")])
-            self.assertEqual(scheduled, [])
-            stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("status"), "resume_failed")
-            self.assertFalse(bool(stored.get("resume_eligible")))
-            self.assertIn("resume", str(stored.get("last_resume_error") or ""))
+            self.assertEqual(len(scheduled), 1)
+            self.assertEqual(read_runtime_session("g1", "peer1"), {})
         finally:
             cleanup()
 

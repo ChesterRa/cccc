@@ -69,7 +69,7 @@ class TestCodexAppThreadOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_failed_codex_thread_resume_is_skipped_on_next_start(self) -> None:
+    def test_missing_codex_thread_resume_starts_fresh_thread(self) -> None:
         from cccc.daemon.codex_app_thread_ops import start_codex_app_thread
         from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session
 
@@ -94,34 +94,12 @@ class TestCodexAppThreadOps(unittest.TestCase):
                 calls.append(method)
                 if method == "thread/resume":
                     raise RuntimeError("thread not found")
-                raise AssertionError(f"unexpected request: {method}")
-
-            with self.assertRaises(RuntimeError):
-                start_codex_app_thread(
-                    request=failing_request,
-                    group_id="g_codex_resume",
-                    actor_id="peer1",
-                    cwd=cwd,
-                    command=command,
-                    runner="pty",
-                )
-
-            self.assertEqual(calls, ["thread/resume"])
-            failed = read_runtime_session("g_codex_resume", "peer1")
-            self.assertEqual(failed.get("provider_thread_id"), "thr_stale")
-            self.assertEqual(failed.get("status"), "resume_failed")
-            self.assertFalse(bool(failed.get("resume_eligible")))
-
-            calls.clear()
-
-            def fresh_request(method: str, params: dict, *, timeout: float):
-                calls.append(method)
                 if method == "thread/start":
                     return {"thread": {"id": "thr_fresh"}}
                 raise AssertionError(f"unexpected request: {method}")
 
             result = start_codex_app_thread(
-                request=fresh_request,
+                request=failing_request,
                 group_id="g_codex_resume",
                 actor_id="peer1",
                 cwd=cwd,
@@ -129,7 +107,7 @@ class TestCodexAppThreadOps(unittest.TestCase):
                 runner="pty",
             )
 
-            self.assertEqual(calls, ["thread/start"])
+            self.assertEqual(calls, ["thread/resume", "thread/start"])
             self.assertFalse(result.resumed)
             self.assertEqual(result.thread_id, "thr_fresh")
             fresh = read_runtime_session("g_codex_resume", "peer1")
