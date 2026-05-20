@@ -22,7 +22,7 @@ from .ledger_segments import (
 
 @dataclass(frozen=True)
 class LedgerRetentionConfig:
-    max_active_bytes: int = 20_000_000
+    max_active_bytes: int = 5_000_000
     keep_recent_segments_uncompressed: int = 1
     min_interval_seconds: int = 300
 

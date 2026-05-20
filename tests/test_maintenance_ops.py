@@ -137,6 +137,11 @@ class TestMaintenanceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_ledger_retention_defaults_rotate_active_ledger_at_five_mb(self) -> None:
+        from cccc.kernel.ledger_retention import LedgerRetentionConfig
+
+        self.assertEqual(LedgerRetentionConfig.max_active_bytes, 5_000_000)
+
     def test_term_resize_rejects_tiny_size(self) -> None:
         _, cleanup = self._with_home()
         try:
