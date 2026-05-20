@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
@@ -20,6 +21,11 @@ from .ledger_state_snapshot import can_replay_from_basis, current_ledger_basis, 
 MessageKindFilter = Literal["all", "chat", "notify"]
 
 _UNREAD_INDEX_SCHEMA = 1
+_FULL_EVENT_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+
+
+def _is_full_event_id(value: str) -> bool:
+    return bool(_FULL_EVENT_ID_RE.fullmatch(str(value or "").strip()))
 
 
 def iter_events(ledger_path: Path) -> Iterable[Dict[str, Any]]:
@@ -1020,6 +1026,8 @@ def resolve_event_id(group: Group, event_id: str) -> str:
     event = lookup_event_by_id(group.ledger_path, wanted)
     if event is not None:
         return str(event.get("id") or "").strip()
+    if _is_full_event_id(wanted):
+        return wanted
 
     exact_match = ""
     prefix_match = ""
@@ -1060,13 +1068,16 @@ def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
 
 def find_event_with_chat_ack(group: Group, *, event_id: str, actor_id: str) -> Tuple[Optional[Dict[str, Any]], bool]:
     """Find an event and whether a matching chat.ack already exists."""
-    wanted = resolve_event_id(group, event_id)
+    raw_event_id = str(event_id or "").strip()
+    wanted = raw_event_id if _is_full_event_id(raw_event_id) else resolve_event_id(group, raw_event_id)
     actor = str(actor_id or "").strip()
     if not wanted:
         return None, False
 
     found_event = lookup_event_by_id(group.ledger_path, wanted)
     found_ack = has_chat_ack_indexed(group.ledger_path, event_id=wanted, actor_id=actor)
+    if found_event is None and _is_full_event_id(raw_event_id):
+        return None, found_ack
     if found_event is not None:
         return found_event, found_ack
 

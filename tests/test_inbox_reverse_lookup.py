@@ -1,6 +1,9 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 class TestInboxReverseLookup(unittest.TestCase):
@@ -71,6 +74,24 @@ class TestInboxReverseLookup(unittest.TestCase):
             self.assertEqual(str((found or {}).get("id") or ""), target_id)
         finally:
             cleanup()
+
+    def test_full_event_id_lookup_does_not_scan_when_index_misses(self) -> None:
+        from cccc.kernel.inbox import find_event_with_chat_ack
+
+        group = SimpleNamespace(ledger_path=Path("/tmp/cccc-test-ledger.jsonl"))
+        full_id = "a" * 32
+        with (
+            patch("cccc.kernel.inbox.resolve_event_id") as resolve_event_id,
+            patch("cccc.kernel.inbox.lookup_event_by_id", return_value=None),
+            patch("cccc.kernel.inbox.has_chat_ack_indexed", return_value=False),
+            patch("cccc.kernel.inbox.iter_events_reverse") as iter_reverse,
+        ):
+            found, found_ack = find_event_with_chat_ack(group, event_id=full_id, actor_id="user")
+
+        self.assertIsNone(found)
+        self.assertFalse(found_ack)
+        resolve_event_id.assert_not_called()
+        iter_reverse.assert_not_called()
 
 
 if __name__ == "__main__":
