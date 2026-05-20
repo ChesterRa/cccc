@@ -7,3 +7,13 @@ export function getComposerActionVisibility(isSmallScreen: boolean): {
     showMessageModeSelector: !isSmallScreen,
   };
 }
+
+export function getComposerCanSend({
+  composerText,
+  composerFilesCount,
+}: {
+  composerText: string;
+  composerFilesCount: number;
+}): boolean {
+  return String(composerText || "").trim().length > 0 || composerFilesCount > 0;
+}

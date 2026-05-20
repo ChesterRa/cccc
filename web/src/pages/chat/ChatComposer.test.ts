@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getComposerActionVisibility } from "./chatComposerActions";
+import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
 
 describe("ChatComposer action visibility", () => {
   it("hides PET shortcut and message mode selector on small screens", () => {
@@ -15,5 +15,19 @@ describe("ChatComposer action visibility", () => {
       showPetShortcut: true,
       showMessageModeSelector: true,
     });
+  });
+});
+
+describe("ChatComposer send availability", () => {
+  it("enables send when the composer has non-whitespace text", () => {
+    expect(getComposerCanSend({ composerText: "hello", composerFilesCount: 0 })).toBe(true);
+  });
+
+  it("enables send when the composer only has files", () => {
+    expect(getComposerCanSend({ composerText: "   ", composerFilesCount: 1 })).toBe(true);
+  });
+
+  it("disables send when the composer has no text or files", () => {
+    expect(getComposerCanSend({ composerText: "   ", composerFilesCount: 0 })).toBe(false);
   });
 });

@@ -14,7 +14,7 @@ import { updateSettings } from "../../services/api";
 import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
 import { getComposerDestGroupDisplayValue } from "../../stores/useComposerStore";
 import { filterSlashCommands, getVisibleSlashCommandPage, type SlashCommandItem } from "../../utils/slashCommands";
-import { getComposerActionVisibility } from "./chatComposerActions";
+import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 
@@ -513,7 +513,10 @@ export function ChatComposer({
     requestAnimationFrame(() => composerRef.current?.focus());
   };
 
-  const canSend = composerGroupSettled && !selectedGroupActorsHydrating && (composerText.trim() || composerFiles.length > 0);
+  const canSend = getComposerCanSend({
+    composerText,
+    composerFilesCount: composerFiles.length,
+  });
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const destGroupDisplayValue = selectedGroupActorsHydrating

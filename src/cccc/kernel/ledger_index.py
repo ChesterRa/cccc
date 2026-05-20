@@ -80,11 +80,6 @@ def _reset_legacy_schema(conn: sqlite3.Connection) -> bool:
 
 
 def _rebuild_events_indexes(conn: sqlite3.Connection) -> None:
-    conn.execute("DROP INDEX IF EXISTS idx_events_reply_to")
-    conn.execute("DROP INDEX IF EXISTS idx_events_ts")
-    conn.execute("DROP INDEX IF EXISTS idx_events_kind_ts")
-    conn.execute("DROP INDEX IF EXISTS idx_events_by_ts")
-    conn.execute("DROP INDEX IF EXISTS idx_events_source_line")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_reply_to ON events(reply_to)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts, source_seq, line_no)")
@@ -511,6 +506,49 @@ def lookup_event_by_id(ledger_path: Path, event_id: str) -> Optional[Dict[str, A
     finally:
         conn.close()
     return _read_event_from_source(ledger_path.parent, source_path=source_path, line_no=line_no, offset_bytes=offset_bytes)
+
+
+def lookup_event_with_chat_ack_indexed(
+    ledger_path: Path,
+    *,
+    event_id: str,
+    actor_id: str,
+) -> tuple[Optional[Dict[str, Any]], bool]:
+    wanted = str(event_id or "").strip()
+    actor = str(actor_id or "").strip()
+    if not wanted:
+        return None, False
+
+    catch_up_ledger_index(ledger_path)
+    index_path = _index_path_for_ledger(ledger_path)
+    conn = _connect(index_path)
+    try:
+        _ensure_schema(conn)
+        event_row = conn.execute(
+            "SELECT source_path, line_no, offset_bytes FROM events WHERE event_id = ?",
+            (wanted,),
+        ).fetchone()
+        if actor:
+            ack_row = conn.execute(
+                "SELECT 1 FROM chat_ack WHERE event_id = ? AND actor_id = ? LIMIT 1",
+                (wanted, actor),
+            ).fetchone()
+        else:
+            ack_row = conn.execute(
+                "SELECT 1 FROM chat_ack WHERE event_id = ? LIMIT 1",
+                (wanted,),
+            ).fetchone()
+    finally:
+        conn.close()
+
+    found_ack = ack_row is not None
+    if event_row is None:
+        return None, found_ack
+    source_path = str(event_row[0] or "").strip()
+    line_no = int(event_row[1] or 0)
+    offset_bytes = int(event_row[2] or 0)
+    event = _read_event_from_source(ledger_path.parent, source_path=source_path, line_no=line_no, offset_bytes=offset_bytes)
+    return event, found_ack
 
 
 def lookup_events_by_ids(ledger_path: Path, event_ids: list[str]) -> list[Optional[Dict[str, Any]]]:

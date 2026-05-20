@@ -12,7 +12,12 @@ from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 from .actors import find_actor, get_effective_role, is_internal_actor, list_actors
 from .group import Group
-from .ledger_index import has_chat_ack_indexed, lookup_event_by_id, lookup_events_by_ids, search_event_ids_indexed
+from .ledger_index import (
+    lookup_event_by_id,
+    lookup_event_with_chat_ack_indexed,
+    lookup_events_by_ids,
+    search_event_ids_indexed,
+)
 from .ledger_segments import iter_source_lines, list_ledger_sources
 from .ledger_state_snapshot import can_replay_from_basis, current_ledger_basis, load_latest_ledger_snapshot
 
@@ -1074,8 +1079,7 @@ def find_event_with_chat_ack(group: Group, *, event_id: str, actor_id: str) -> T
     if not wanted:
         return None, False
 
-    found_event = lookup_event_by_id(group.ledger_path, wanted)
-    found_ack = has_chat_ack_indexed(group.ledger_path, event_id=wanted, actor_id=actor)
+    found_event, found_ack = lookup_event_with_chat_ack_indexed(group.ledger_path, event_id=wanted, actor_id=actor)
     if found_event is None and _is_full_event_id(raw_event_id):
         return None, found_ack
     if found_event is not None:

@@ -37,7 +37,7 @@ def active_ledger_path(group_path: Path) -> Path:
     return group_path / "ledger.jsonl"
 
 
-def _segment_entry_from_path(group_path: Path, path: Path) -> Dict[str, Any] | None:
+def _segment_entry_from_path(group_path: Path, path: Path, *, count_lines: bool = False) -> Dict[str, Any] | None:
     match = _SEGMENT_FILE_RE.match(path.name)
     if match is None:
         return None
@@ -49,12 +49,13 @@ def _segment_entry_from_path(group_path: Path, path: Path) -> Dict[str, Any] | N
     except Exception:
         size_bytes = 0
     line_count = 0
-    try:
-        with open_ledger_source_text(path) as handle:
-            for _ in handle:
-                line_count += 1
-    except Exception:
-        line_count = 0
+    if count_lines:
+        try:
+            with open_ledger_source_text(path) as handle:
+                for _ in handle:
+                    line_count += 1
+        except Exception:
+            line_count = 0
     stamp = str(match.group("stamp") or "")
     return {
         "id": f"{seq:06d}",
@@ -115,7 +116,8 @@ def _normalize_manifest_segments(group_path: Path, segments: List[Dict[str, Any]
                 normalized["compressed"] = bool(discovered_entry.get("compressed"))
                 changed = True
             normalized["size_bytes"] = int(discovered_entry.get("size_bytes") or 0)
-            normalized["line_count"] = int(discovered_entry.get("line_count") or 0)
+            if int(normalized.get("line_count") or 0) <= 0:
+                normalized["line_count"] = int(discovered_entry.get("line_count") or 0)
             if not str(normalized.get("created_at") or "").strip():
                 normalized["created_at"] = str(discovered_entry.get("created_at") or "")
                 changed = True

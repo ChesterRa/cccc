@@ -132,6 +132,23 @@ class TestLedgerIndexSchemaUpgrade(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_schema_ensure_does_not_rebuild_indexes_when_current(self) -> None:
+        from cccc.kernel import ledger_index
+
+        conn = sqlite3.connect(":memory:")
+        statements: list[str] = []
+        try:
+            ledger_index._ensure_schema(conn)
+            conn.commit()
+            conn.set_trace_callback(statements.append)
+            ledger_index._ensure_schema(conn)
+            conn.commit()
+        finally:
+            conn.close()
+
+        dropped_indexes = [stmt for stmt in statements if stmt.strip().upper().startswith("DROP INDEX")]
+        self.assertEqual(dropped_indexes, [])
+
 
 if __name__ == "__main__":
     unittest.main()
