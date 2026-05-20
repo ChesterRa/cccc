@@ -21,6 +21,7 @@ const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const STARTUP_RACE_RECONNECT_DELAY_MS = 750;
+const TERMINAL_ATTACH_HISTORY_LIMIT_BYTES = 160_000;
 
 export function useAgentTerminalConnection(args: {
   activated: boolean;
@@ -65,6 +66,7 @@ export function useAgentTerminalConnection(args: {
   const terminalSignalBufferRef = useRef("");
   const terminalAttachNoRetryRef = useRef(false);
   const terminalAttachStartupRaceRef = useRef(false);
+  const terminalHistoryPreloadedRef = useRef(false);
   const lastTermEpochRef = useRef(termEpoch);
 
   const isRunningRef = useRef(isRunning);
@@ -90,8 +92,13 @@ export function useAgentTerminalConnection(args: {
   useEffect(() => {
     if (isRunning && !isHeadless) return;
     terminalSignalBufferRef.current = "";
+    terminalHistoryPreloadedRef.current = false;
     clearTerminalSignalRef.current(groupId, actorId);
   }, [actorId, groupId, isHeadless, isRunning]);
+
+  useEffect(() => {
+    terminalHistoryPreloadedRef.current = false;
+  }, [actorId, groupId, termEpoch]);
 
   const requestReconnect = useCallback(() => {
     reconnectAttemptRef.current = 0;
@@ -131,14 +138,29 @@ export function useAgentTerminalConnection(args: {
     let disposable: { dispose: () => void } | null = null;
     let resizeDisposable: { dispose: () => void } | null = null;
 
+    const writeAttachHistory = async (text: string): Promise<void> => {
+      if (!text || terminalHistoryPreloadedRef.current || disposed) return;
+      const term = terminalRef.current;
+      if (!term) return;
+      terminalHistoryPreloadedRef.current = true;
+      await new Promise<void>((resolve) => {
+        try {
+          term.write(text, resolve);
+        } catch {
+          resolve();
+        }
+      });
+    };
+
     const readAttachCursor = async (): Promise<number | null> => {
       try {
         const resp = await fetchTerminalHistory(groupId, actorId, {
-          limitBytes: 1,
+          limitBytes: terminalHistoryPreloadedRef.current ? 1 : TERMINAL_ATTACH_HISTORY_LIMIT_BYTES,
           stripAnsi: false,
           compact: false,
         });
         if (!resp.ok) return null;
+        await writeAttachHistory(String(resp.result?.text || ""));
         const cursor = Number(resp.result?.end_cursor);
         return Number.isFinite(cursor) ? cursor : null;
       } catch {

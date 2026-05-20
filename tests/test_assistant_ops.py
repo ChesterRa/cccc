@@ -1448,6 +1448,10 @@ class TestAssistantOps(unittest.TestCase):
                 voice_runtime_deps._directory_size_bytes(runtime_root),
             )
             self.assertNotIn(str(runtime_root), voice_runtime_deps._DISK_USAGE_CACHE)
+            self.assertNotIn(
+                os.path.realpath(str(runtime_root)),
+                {os.path.realpath(path) for path in voice_runtime_deps._DISK_USAGE_CACHE},
+            )
         finally:
             cleanup()
 

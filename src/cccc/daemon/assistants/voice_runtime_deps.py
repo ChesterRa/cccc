@@ -452,6 +452,8 @@ def remove_voice_runtime_deps(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STR
             },
         )
         _STATUS_CACHE.pop(runtime_id, None)
-        return get_voice_runtime_status(runtime_id)
+        result = get_voice_runtime_status(runtime_id)
+        _invalidate_runtime_disk_usage_cache(runtime_id)
+        return result
     finally:
         release_lockfile(lock_handle)
