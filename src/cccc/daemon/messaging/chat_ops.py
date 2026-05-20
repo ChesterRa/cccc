@@ -312,25 +312,26 @@ def handle_send(
     install_slash_command = parse_install_slash_command(text)
 
     if priority not in ("normal", "attention"):
-        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
+        return diag.finish_response(_error("invalid_priority", "priority must be 'normal' or 'attention'"))
     if not group_id:
-        return _error("missing_group_id", "missing group_id")
+        return diag.finish_response(_error("missing_group_id", "missing group_id"))
 
     group = load_group(group_id)
     diag.mark("load_group")
     if group is None:
         resp = _error("group_not_found", f"group not found: {group_id}")
-        diag.done(ok=False, error_code="group_not_found")
-        return resp
+        return diag.finish_response(resp)
     if _is_internal_pet_sender(group, by):
-        return _error(
-            "pet_visible_chat_forbidden",
-            "Pet cannot send or reply visible chat directly; use pet decisions instead.",
+        return diag.finish_response(
+            _error(
+                "pet_visible_chat_forbidden",
+                "Pet cannot send or reply visible chat directly; use pet decisions instead.",
+            )
         )
     if client_id:
         existing = _tracked_send_existing_result(group, client_id=client_id, by=by)
         if existing is not None:
-            return DaemonResponse(ok=True, result=existing)
+            return diag.finish_response(DaemonResponse(ok=True, result=existing))
 
     group = _wake_group_on_human_message(
         group,
@@ -345,8 +346,7 @@ def handle_send(
         to = resolve_recipient_tokens(group, to_tokens)
     except Exception as e:
         resp = _error("invalid_recipient", str(e))
-        diag.done(ok=False, error_code="invalid_recipient")
-        return resp
+        return diag.finish_response(resp)
     diag.mark("resolve_recipients")
 
     if not to:
@@ -376,14 +376,16 @@ def handle_send(
         if not matched_enabled:
             if not woken:
                 wanted = " ".join(to) if to else "@all"
-                return _error(
-                    "no_enabled_recipients",
-                    (
-                        "No enabled recipients after excluding sender. "
-                        "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
-                        f"Current resolved recipients: {wanted}"
-                    ),
-                    details={"to": list(to)},
+                return diag.finish_response(
+                    _error(
+                        "no_enabled_recipients",
+                        (
+                            "No enabled recipients after excluding sender. "
+                            "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
+                            f"Current resolved recipients: {wanted}"
+                        ),
+                        details={"to": list(to)},
+                    )
                 )
 
     path = str(args.get("path") or "").strip()
@@ -395,10 +397,12 @@ def handle_send(
         if isinstance(scopes, list):
             attached = any(isinstance(item, dict) and item.get("scope_key") == scope_key for item in scopes)
         if not attached:
-            return _error(
-                "scope_not_attached",
-                f"scope not attached: {scope_key}",
-                details={"hint": "cccc attach <path> --group <id>"},
+            return diag.finish_response(
+                _error(
+                    "scope_not_attached",
+                    f"scope not attached: {scope_key}",
+                    details={"hint": "cccc attach <path> --group <id>"},
+                )
             )
     else:
         scope_key = str(group.doc.get("active_scope_key") or "").strip()
@@ -408,7 +412,7 @@ def handle_send(
     try:
         attachments = normalize_attachments(group, args.get("attachments"))
     except Exception as e:
-        return _error("invalid_attachments", str(e))
+        return diag.finish_response(_error("invalid_attachments", str(e)))
     refs = _normalize_refs(args.get("refs"))
     delivery_body_text = text
     if install_slash_command is not None:
@@ -427,7 +431,7 @@ def handle_send(
         ]
 
     if not text.strip() and not attachments:
-        return _error("empty_message", "message text cannot be empty")
+        return diag.finish_response(_error("empty_message", "message text cannot be empty"))
 
     event = append_event(
         group.ledger_path,
@@ -522,8 +526,7 @@ def handle_send(
     )
     diag.mark("schedule_side_effects")
 
-    diag.done(ok=True, event_id=event_id)
-    return DaemonResponse(ok=True, result={"event": event})
+    return diag.finish_response(DaemonResponse(ok=True, result={"event": event}))
 
 
 def handle_tracked_send(
@@ -768,40 +771,40 @@ def handle_reply(
         to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
 
     if priority not in ("normal", "attention"):
-        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
+        return diag.finish_response(_error("invalid_priority", "priority must be 'normal' or 'attention'"))
     if not group_id:
-        return _error("missing_group_id", "missing group_id")
+        return diag.finish_response(_error("missing_group_id", "missing group_id"))
     if not reply_to:
-        return _error("missing_reply_to", "missing reply_to event_id")
+        return diag.finish_response(_error("missing_reply_to", "missing reply_to event_id"))
 
     group = load_group(group_id)
     diag.mark("load_group")
     if group is None:
         resp = _error("group_not_found", f"group not found: {group_id}")
-        diag.done(ok=False, error_code="group_not_found")
-        return resp
+        return diag.finish_response(resp)
     if _is_internal_pet_sender(group, by):
-        return _error(
-            "pet_visible_chat_forbidden",
-            "Pet cannot send or reply visible chat directly; use pet decisions instead.",
+        return diag.finish_response(
+            _error(
+                "pet_visible_chat_forbidden",
+                "Pet cannot send or reply visible chat directly; use pet decisions instead.",
+            )
         )
 
     if client_id:
         existing = find_existing_reply_result(group, client_id=client_id, by=by, reply_to=reply_to)
         if existing is not None:
-            return DaemonResponse(ok=True, result=existing)
+            return diag.finish_response(DaemonResponse(ok=True, result=existing))
 
     original, existing_ack = find_event_with_chat_ack(group, event_id=reply_to, actor_id=by)
     diag.mark("load_reply_target")
     if original is None:
         resp = _error("event_not_found", f"event not found: {reply_to}")
-        diag.done(ok=False, error_code="event_not_found")
-        return resp
+        return diag.finish_response(resp)
     target_event_id = str(original.get("id") or "").strip()
     if client_id and target_event_id and target_event_id != reply_to:
         existing = find_existing_reply_result(group, client_id=client_id, by=by, reply_to=target_event_id or reply_to)
         if existing is not None:
-            return DaemonResponse(ok=True, result=existing)
+            return diag.finish_response(DaemonResponse(ok=True, result=existing))
 
     group = _wake_group_on_human_message(
         group,
@@ -829,8 +832,7 @@ def handle_reply(
         to = resolve_recipient_tokens(group, to_tokens)
     except Exception as e:
         resp = _error("invalid_recipient", str(e))
-        diag.done(ok=False, error_code="invalid_recipient")
-        return resp
+        return diag.finish_response(resp)
     diag.mark("resolve_recipients")
 
     woken: list[str] = []
@@ -843,24 +845,26 @@ def handle_reply(
         if not matched_enabled:
             if not woken:
                 wanted = " ".join(to) if to else "@all"
-                return _error(
-                    "no_enabled_recipients",
-                    (
-                        "No enabled recipients after excluding sender. "
-                        "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
-                        f"Current resolved recipients: {wanted}"
-                    ),
-                    details={"to": list(to)},
+                return diag.finish_response(
+                    _error(
+                        "no_enabled_recipients",
+                        (
+                            "No enabled recipients after excluding sender. "
+                            "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
+                            f"Current resolved recipients: {wanted}"
+                        ),
+                        details={"to": list(to)},
+                    )
                 )
 
     scope_key = str(group.doc.get("active_scope_key") or "").strip()
     try:
         attachments = normalize_attachments(group, args.get("attachments"))
     except Exception as e:
-        return _error("invalid_attachments", str(e))
+        return diag.finish_response(_error("invalid_attachments", str(e)))
     refs = _normalize_refs(args.get("refs"))
     if not text.strip() and not attachments:
-        return _error("empty_message", "message text cannot be empty")
+        return diag.finish_response(_error("empty_message", "message text cannot be empty"))
 
     event = append_event(
         group.ledger_path,
@@ -967,8 +971,7 @@ def handle_reply(
     )
     diag.mark("schedule_side_effects")
 
-    diag.done(ok=True, event_id=event_id)
-    return DaemonResponse(ok=True, result={"event": event, "ack_event": ack_event})
+    return diag.finish_response(DaemonResponse(ok=True, result={"event": event, "ack_event": ack_event}))
 
 
 def handle_stream_emit(args: Dict[str, Any]) -> DaemonResponse:

@@ -95,6 +95,33 @@ class TestChatDiagnostics(unittest.TestCase):
         messages = [record.getMessage() for record in records]
         self.assertFalse(any(message.startswith("chat request ") for message in messages))
 
+    def test_send_validation_error_finishes_started_diagnostics(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.util.conv import coerce_bool
+
+        with self.assertLogs("cccc.daemon.server", level="INFO") as logs:
+            resp = handle_send(
+                {"group_id": "g_diag", "by": "user", "priority": "urgent", "text": "hello"},
+                coerce_bool=coerce_bool,
+                normalize_attachments=lambda _group, _raw: [],
+                effective_runner_kind=lambda runner: str(runner or "pty"),
+                auto_wake_recipients=lambda _group, _to, _by: [],
+                automation_on_resume=lambda _group: None,
+                automation_on_new_message=lambda _group: None,
+                clear_pending_system_notifies=lambda _group_id, _kinds: None,
+                diagnostics_enabled=lambda: True,
+            )
+
+        self.assertFalse(resp.ok)
+        self.assertIsNotNone(resp.error)
+        self.assertEqual(resp.error.code, "invalid_priority")
+        messages = [record.getMessage() for record in logs.records]
+        self.assertEqual(1, sum(message.startswith("chat request start ") for message in messages))
+        done = [message for message in messages if message.startswith("chat request done ")]
+        self.assertEqual(1, len(done))
+        self.assertIn("ok=False", done[0])
+        self.assertIn("error=invalid_priority", done[0])
+
 
 if __name__ == "__main__":
     unittest.main()

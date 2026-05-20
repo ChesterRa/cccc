@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 
 def _ms_since(started_at: float) -> int:
@@ -24,6 +24,7 @@ class ChatRequestDiagnostics:
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     _started_at: float = field(default_factory=time.monotonic)
     _last_mark_at: float = field(default_factory=time.monotonic)
+    _finished: bool = False
 
     def start(self) -> None:
         if not self.enabled:
@@ -53,8 +54,9 @@ class ChatRequestDiagnostics:
         self._last_mark_at = now
 
     def done(self, *, ok: bool, error_code: str = "", event_id: str = "") -> None:
-        if not self.enabled:
+        if not self.enabled or self._finished:
             return
+        self._finished = True
         self.logger.info(
             "chat request done op=%s group=%s request_id=%s ok=%s error=%s event_id=%s total_ms=%d",
             self.op,
@@ -65,6 +67,21 @@ class ChatRequestDiagnostics:
             str(event_id or "").strip(),
             _ms_since(self._started_at),
         )
+
+    def finish_response(self, resp: Any) -> Any:
+        if self._finished:
+            return resp
+        ok = bool(getattr(resp, "ok", False))
+        error = getattr(resp, "error", None)
+        error_code = str(getattr(error, "code", "") or "").strip()
+        event_id = ""
+        result = getattr(resp, "result", None)
+        if isinstance(result, dict):
+            event = result.get("event")
+            if isinstance(event, dict):
+                event_id = str(event.get("id") or "").strip()
+        self.done(ok=ok, error_code=error_code, event_id=event_id)
+        return resp
 
 
 def make_chat_diagnostics(
