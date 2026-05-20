@@ -50,6 +50,7 @@ export interface ChatComposerProps {
   destGroupId: string;
   setDestGroupId: (groupId: string) => void;
   composerGroupSettled: boolean;
+  selectedGroupActorsHydrating?: boolean;
   destGroupScopeLabel?: string;
   busy: string;
   recentMessages?: LedgerEvent[];
@@ -104,6 +105,7 @@ export function ChatComposer({
   destGroupId,
   setDestGroupId,
   composerGroupSettled,
+  selectedGroupActorsHydrating,
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
   recentMessages = [],
@@ -478,7 +480,7 @@ export function ChatComposer({
       if (showSlashMenu) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        if (composerGroupSettled) onSendMessage();
+        if (canSend) onSendMessage();
       }
     } else if (e.key === "Escape") {
       setShowMentionMenu(false);
@@ -511,10 +513,12 @@ export function ChatComposer({
     requestAnimationFrame(() => composerRef.current?.focus());
   };
 
-  const canSend = composerGroupSettled && (composerText.trim() || composerFiles.length > 0);
+  const canSend = composerGroupSettled && !selectedGroupActorsHydrating && (composerText.trim() || composerFiles.length > 0);
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
-  const destGroupDisplayValue = getComposerDestGroupDisplayValue(destGroupId, selectedGroupId, composerGroupSettled);
+  const destGroupDisplayValue = selectedGroupActorsHydrating
+    ? selectedGroupId
+    : getComposerDestGroupDisplayValue(destGroupId, selectedGroupId, composerGroupSettled);
   const actionVisibility = getComposerActionVisibility(isSmallScreen);
   const canChooseDestGroup =
     !!selectedGroupId && busy !== "send" && !replyTarget && !quotedPresentationRef && composerFiles.length === 0;

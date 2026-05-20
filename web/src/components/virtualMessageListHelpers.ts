@@ -62,7 +62,7 @@ export function shouldDetachChatFollowOnScroll(input: {
 
   const topLoadThresholdPx = Math.max(0, Number(input.topLoadThresholdPx) || 0);
   if (input.currentTop <= topLoadThresholdPx) return true;
-  return input.currentTop < input.previousTop - 4;
+  return input.currentTop < input.previousTop;
 }
 
 export function shouldNotifyScrollChange(input: {

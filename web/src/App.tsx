@@ -221,6 +221,7 @@ export default function App() {
     selectedGroupId,
     composerGroupId: activeGroupId,
     sendGroupId: computedSendGroupId,
+    selectedGroupActorsHydrating,
   });
   const sendGroupId = computedSendGroupId;
 

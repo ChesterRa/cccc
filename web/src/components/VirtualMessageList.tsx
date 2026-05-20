@@ -412,7 +412,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
     if (!el) return true;
-    const threshold = 32;
+    const threshold = 8;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
@@ -607,7 +607,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     lastScrollTopRef.current = curTop;
 
     if (atBottom && followModeRef.current === "detached") {
-      setFollowMode("follow");
+      if (curTop >= previousTop) {
+        setFollowMode("follow");
+      }
     }
     // Only notify parent when atBottom state actually changes (not on every scroll event)
     // to avoid triggering store updates and re-renders during inertia scrolling.

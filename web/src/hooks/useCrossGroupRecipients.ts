@@ -16,6 +16,8 @@ interface UseCrossGroupRecipientsOptions {
   composerGroupId: string;
   /** Target group ID for sending (from useComposerStore.destGroupId) */
   sendGroupId: string;
+  /** Whether the selected group's actors are currently hydrating */
+  selectedGroupActorsHydrating?: boolean;
 }
 
 interface UseCrossGroupRecipientsResult {
@@ -33,13 +35,16 @@ export function resolveRecipientActorsForComposer({
   selectedGroupId,
   composerGroupId,
   sendGroupId,
+  selectedGroupActorsHydrating,
 }: {
   actors: Actor[];
   remoteActorsByGroup: Record<string, Actor[]>;
   selectedGroupId: string;
   composerGroupId: string;
   sendGroupId: string;
+  selectedGroupActorsHydrating?: boolean;
 }): Actor[] {
+  if (selectedGroupActorsHydrating) return [];
   const selectedGid = String(selectedGroupId || "").trim();
   const composerGid = String(composerGroupId || "").trim();
   const sendGid = String(sendGroupId || "").trim();
@@ -66,6 +71,7 @@ export function useCrossGroupRecipients({
   selectedGroupId,
   composerGroupId,
   sendGroupId,
+  selectedGroupActorsHydrating,
 }: UseCrossGroupRecipientsOptions): UseCrossGroupRecipientsResult {
   const selectedGid = String(selectedGroupId || "").trim();
   const composerGid = String(composerGroupId || "").trim();
@@ -132,17 +138,19 @@ export function useCrossGroupRecipients({
       selectedGroupId: selectedGid,
       composerGroupId: composerGid,
       sendGroupId: sendGid,
+      selectedGroupActorsHydrating,
     });
-  }, [actors, composerGid, remoteActorsByGroup, selectedGid, sendGid]);
+  }, [actors, composerGid, remoteActorsByGroup, selectedGid, sendGid, selectedGroupActorsHydrating]);
 
   const recipientActorsBusy = useMemo(() => {
+    if (selectedGroupActorsHydrating) return true;
     if (!sendGid) return false;
     if (!selectedGid) return false;
     if (composerGid !== selectedGid) return true;
     if (sendGid === selectedGid) return false;
     if (!canFetchRemoteRecipients) return false;
     return !Object.prototype.hasOwnProperty.call(remoteActorsByGroup, sendGid);
-  }, [canFetchRemoteRecipients, composerGid, remoteActorsByGroup, selectedGid, sendGid]);
+  }, [canFetchRemoteRecipients, composerGid, remoteActorsByGroup, selectedGid, sendGid, selectedGroupActorsHydrating]);
 
   return { recipientActors, recipientActorsBusy, destGroupScopeLabel };
 }

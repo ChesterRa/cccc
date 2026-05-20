@@ -865,6 +865,7 @@ export function ChatTab({
             actors={actors}
             recipientActors={recipientActors}
             recipientActorsBusy={recipientActorsBusy}
+            selectedGroupActorsHydrating={selectedGroupActorsHydrating}
             groups={groups}
             destGroupId={destGroupId}
             setDestGroupId={setDestGroupId}
