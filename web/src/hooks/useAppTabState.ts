@@ -29,6 +29,23 @@ type UseAppTabStateResult = {
   handleTabChange: (newTab: string) => void;
 };
 
+export function getRenderedActorIds({
+  mountedActorIds,
+  activeTab,
+  runtimeActors,
+}: {
+  mountedActorIds: string[];
+  activeTab: string;
+  runtimeActors: Actor[];
+}): string[] {
+  const live = new Set(runtimeActors.map((actor) => String(actor.id || "").trim()).filter((id) => id));
+  const mountedLiveIds = mountedActorIds.filter((id) => live.has(id));
+  if (activeTab === "chat") return mountedLiveIds;
+  if (mountedLiveIds.includes(activeTab)) return mountedLiveIds;
+  if (mountedActorIds.includes(activeTab) || live.has(activeTab)) return [...mountedLiveIds, activeTab];
+  return mountedLiveIds;
+}
+
 export function useAppTabState({
   activeTab,
   runtimeActors,
@@ -83,12 +100,7 @@ export function useAppTabState({
   }, [runtimeActors]);
 
   const renderedActorIds = useMemo(() => {
-    const live = new Set(runtimeActors.map((actor) => String(actor.id || "")).filter((id) => id));
-    const mountedLiveIds = mountedActorIds.filter((id) => live.has(id));
-    if (activeTab !== "chat" && live.has(activeTab) && !mountedLiveIds.includes(activeTab)) {
-      return [...mountedLiveIds, activeTab];
-    }
-    return mountedLiveIds;
+    return getRenderedActorIds({ mountedActorIds, activeTab, runtimeActors });
   }, [mountedActorIds, activeTab, runtimeActors]);
 
   const resetMountedActorIds = React.useCallback(() => {

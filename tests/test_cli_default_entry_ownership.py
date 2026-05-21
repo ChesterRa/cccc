@@ -162,7 +162,9 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
             lock_path = daemon_dir / "ccccd.lock"
             lock_path.write_text("", encoding="utf-8")
 
-            with patch.object(common, "ensure_home", return_value=home), patch.object(common.Path, "is_dir", return_value=False), patch.object(
+            with patch.object(common, "ensure_home", return_value=home), patch.object(
+                common.Path, "is_dir", return_value=False
+            ), patch.object(common.os, "getpid", return_value=1111), patch.object(
                 common.shutil, "which", return_value="/usr/sbin/lsof"
             ), patch.object(
                 common.subprocess,

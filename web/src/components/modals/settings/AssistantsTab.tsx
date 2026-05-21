@@ -363,6 +363,7 @@ export function AssistantsTab({
   const loadSeq = useRef(0);
   const visibleLoadCount = useRef(0);
   const groupIdRef = useRef("");
+  const voiceBackendDraftDirtyRef = useRef(false);
   groupIdRef.current = String(groupId || "").trim();
   const isCurrentGroup = useCallback((gid: string) => String(gid || "").trim() === groupIdRef.current, []);
 
@@ -406,7 +407,9 @@ export function AssistantsTab({
     const voice = findAssistant(state, "voice_secretary");
     const backend = readStringConfig(voice, "recognition_backend", "browser_asr");
     setVoiceEnabled(Boolean(voice?.enabled));
-    setRecognitionBackend(backend || "browser_asr");
+    if (!voiceBackendDraftDirtyRef.current) {
+      setRecognitionBackend(backend || "browser_asr");
+    }
     const rawMaxWindow = voice?.config?.auto_document_max_window_seconds;
     const documentAutoUpdateEnabled = rawMaxWindow !== null;
     setVoiceDocumentAutoUpdateEnabled(documentAutoUpdateEnabled);
@@ -428,6 +431,7 @@ export function AssistantsTab({
     setServiceRuntimeInstallBusy(false);
     setDiarizationModelInstallBusy(false);
     setLocalAsrMaintenanceBusy(false);
+    voiceBackendDraftDirtyRef.current = false;
     setAssistantState(null);
     syncVoiceDraft(null);
     setError("");
@@ -567,6 +571,7 @@ export function AssistantsTab({
         return false;
       }
       setVoiceEnabled(nextEnabled);
+      voiceBackendDraftDirtyRef.current = false;
       setRecognitionBackend(nextBackend);
       setVoiceDocumentAutoUpdateEnabled(nextDocumentAutoUpdateEnabled);
       setVoiceMaxWindowSeconds(maxWindowSeconds);
@@ -1162,7 +1167,10 @@ export function AssistantsTab({
                       <GroupCombobox
                         items={backendComboboxItems}
                         value={recognitionBackend}
-                        onChange={setRecognitionBackend}
+                        onChange={(value) => {
+                          voiceBackendDraftDirtyRef.current = true;
+                          setRecognitionBackend(value);
+                        }}
                         placeholder={t("assistants.recognitionBackend")}
                         searchPlaceholder={t("assistants.recognitionBackend")}
                         emptyText={t("common:noResults", { defaultValue: "No matching results" })}

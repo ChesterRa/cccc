@@ -24,6 +24,8 @@ from ...ports.web.runtime_control import (
 )
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
 from ...util.process import pid_is_alive
 from ...util.time import utc_now_iso
@@ -182,19 +184,28 @@ def handle_debug_snapshot(
                     continue
                 runner_kind = str(actor.get("runner") or "pty")
                 runner_effective = effective_runner_kind(runner_kind)
+                runtime = str(actor.get("runtime") or "")
+                runtime_lower = runtime.strip().lower()
                 running = False
                 try:
                     if runner_effective == "pty":
                         running = pty_runner.SUPERVISOR.actor_running(group.group_id, aid)
                     elif runner_effective == "headless":
-                        running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
+                        if runtime_lower == "codex":
+                            state = codex_app_supervisor.get_state(group_id=group.group_id, actor_id=aid)
+                            running = bool(state is not None and codex_app_supervisor.actor_running(group.group_id, aid))
+                        elif runtime_lower == "claude":
+                            state = claude_app_supervisor.get_state(group_id=group.group_id, actor_id=aid)
+                            running = bool(state is not None and claude_app_supervisor.actor_running(group.group_id, aid))
+                        else:
+                            running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
                 except Exception:
                     running = False
                 actors.append(
                     {
                         "id": aid,
                         "role": get_effective_role(group, aid),
-                        "runtime": str(actor.get("runtime") or ""),
+                        "runtime": runtime,
                         "runner": runner_kind,
                         "runner_effective": (runner_effective if runner_effective != runner_kind else runner_kind),
                         "enabled": coerce_bool(actor.get("enabled"), default=True),

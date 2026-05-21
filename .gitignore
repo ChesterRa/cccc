@@ -64,6 +64,7 @@ AGENTS.md
 .codex/
 .windsurf/
 .factory/
+.antigravitycli/
 .github/*
 !.github/workflows/
 !.github/workflows/**

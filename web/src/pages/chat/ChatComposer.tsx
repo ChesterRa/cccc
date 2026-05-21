@@ -516,6 +516,7 @@ export function ChatComposer({
   const canSend = getComposerCanSend({
     composerText,
     composerFilesCount: composerFiles.length,
+    recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
   });
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;

@@ -30,4 +30,9 @@ describe("ChatComposer send availability", () => {
   it("disables send when the composer has no text or files", () => {
     expect(getComposerCanSend({ composerText: "   ", composerFilesCount: 0 })).toBe(false);
   });
+
+  it("disables send while recipients are still resolving", () => {
+    expect(getComposerCanSend({ composerText: "hello", composerFilesCount: 0, recipientResolutionBusy: true })).toBe(false);
+    expect(getComposerCanSend({ composerText: "   ", composerFilesCount: 1, recipientResolutionBusy: true })).toBe(false);
+  });
 });

@@ -114,6 +114,44 @@ class TestDiagnosticsOps(unittest.TestCase):
         )
         self.assertIsNone(resp)
 
+    def test_debug_snapshot_uses_app_supervisors_for_main_headless_runtimes(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            update, _ = self._call("observability_update", {"by": "user", "patch": {"developer_mode": True}})
+            self.assertTrue(update.ok, getattr(update, "error", None))
+            group = create_group(load_registry(), title="debug-headless-app-supervisors")
+            add_actor(group, actor_id="codex-1", title="Codex", runtime="codex", runner="headless")
+            add_actor(group, actor_id="claude-1", title="Claude", runtime="claude", runner="headless")
+
+            with (
+                patch("cccc.daemon.ops.diagnostics_ops.codex_app_supervisor.get_state", return_value={"thread_id": "thr"}),
+                patch("cccc.daemon.ops.diagnostics_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.ops.diagnostics_ops.claude_app_supervisor.get_state", return_value={"session_id": "sid"}),
+                patch("cccc.daemon.ops.diagnostics_ops.claude_app_supervisor.actor_running", return_value=True),
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.headless_runner.SUPERVISOR.actor_running",
+                    side_effect=AssertionError("main headless runtimes should use app supervisors"),
+                ),
+            ):
+                resp, _ = self._call("debug_snapshot", {"group_id": group.group_id, "by": "user"})
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            actors = {
+                str(item.get("id") or ""): item
+                for item in (resp.result or {}).get("actors", [])
+                if isinstance(item, dict)
+            }
+            self.assertTrue(actors["codex-1"].get("running"))
+            self.assertTrue(actors["claude-1"].get("running"))
+        finally:
+            cleanup()
+
     def test_terminal_history_returns_latest_page_with_cursors(self) -> None:
         from unittest.mock import patch
 
