@@ -146,45 +146,51 @@
 /* CSS Custom Properties for theming */
 :root {
   /* Light theme (default for prefers-color-scheme: light) */
+  --color-body-bg: #f8f6f2;          /* 温暖温润的画布底色 */
+  --color-sidebar-bg: #f1f0ec;       /* 侧边栏采用略深的暖沙色，增加对比 */
+  --color-chat-bg: rgba(255, 255, 255, 0.85); /* 主聊天面板使用柔和乳白纸张色 */
+
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #fbfcfe;
   --color-bg-tertiary: #f6f8fb;
   --color-bg-elevated: #ffffff;
-  --color-bg-overlay: rgba(0, 0, 0, 0.5);
+  --color-bg-overlay: rgba(0, 0, 0, 0.4);
 
   /* Enhanced Liquid Glass Light Theme — Premium (Optimized) */
-  --glass-bg: rgba(255, 255, 255, 0.82);
-  --glass-bg-hover: rgba(255, 255, 255, 0.92);
-  --glass-bg-active: rgba(255, 255, 255, 0.97);
-  --glass-border: rgba(226, 232, 240, 0.68);
-  --glass-border-subtle: rgba(226, 232, 240, 0.48);
+  --glass-bg: rgba(241, 240, 236, 0.85); /* 侧边栏毛玻璃基础色 */
+  --glass-bg-hover: rgba(241, 240, 236, 0.94);
+  --glass-bg-active: rgba(241, 240, 236, 0.98);
+  --glass-border: rgba(15, 23, 42, 0.06);
+  --glass-border-subtle: rgba(15, 23, 42, 0.04);
   --glass-border-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.4));
   --glass-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.02),
-    0 8px 24px rgba(0, 0, 0, 0.03);
+    0 2px 8px rgba(0, 0, 0, 0.015),
+    0 8px 24px rgba(0, 0, 0, 0.02);
   --glass-shadow-lg:
-    0 8px 24px rgba(0, 0, 0, 0.04),
-    0 16px 48px rgba(0, 0, 0, 0.04);
-  --glass-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 1);
-  --glass-glow: 0 0 0 1px rgba(255, 255, 255, 0.8) inset;
+    0 8px 24px rgba(0, 0, 0, 0.025),
+    0 16px 48px rgba(0, 0, 0, 0.025);
+  --glass-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --glass-glow: 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
   --glass-blur: 16px;
   --glass-blur-lg: 32px;
 
   /* Tab glass tokens */
-  --glass-tab-bg: rgba(248, 250, 252, 0.76);
-  --glass-tab-bg-hover: rgba(255, 255, 255, 0.9);
+  --glass-tab-bg: rgba(15, 23, 42, 0.02);
+  --glass-tab-bg-hover: rgba(15, 23, 42, 0.04);
   --glass-tab-bg-active: rgba(255, 255, 255, 0.98);
-  --glass-tab-border-active: rgba(226, 232, 240, 0.88);
-  --glass-tab-shadow-active: 0 1px 2px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 1);
+  --glass-tab-border-active: rgba(15, 23, 42, 0.08);
+  --glass-tab-shadow-active: 0 1px 2px rgba(0, 0, 0, 0.02), inset 0 1px 0 rgba(255, 255, 255, 1);
 
   /* Bubble glass tokens */
-  --glass-bubble-bg: rgba(255, 255, 255, 0.86);
-  --glass-bubble-border: rgba(226, 232, 240, 0.58);
-  --glass-bubble-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 12px rgba(0, 0, 0, 0.02);
+  --glass-bubble-bg: #ffffff;
+  --glass-bubble-border: rgba(15, 23, 42, 0.06);
+  --glass-bubble-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.02),
+    0 4px 12px rgba(0, 0, 0, 0.015);
 
   /* Panel glass tokens (non-interactive) */
-  --glass-panel-bg: rgba(255, 255, 255, 0.78);
-  --glass-panel-border: rgba(226, 232, 240, 0.58);
+  --glass-panel-bg: rgba(255, 255, 255, 0.9);
+  --glass-panel-border: rgba(15, 23, 42, 0.06);
 
   /* Enhanced Accent System — Neutral */
   --glass-accent-bg: rgba(35, 36, 37, 0.08);
@@ -199,14 +205,14 @@
   --gradient-subtle: linear-gradient(180deg, rgba(35, 36, 37, 0.08) 0%, transparent 100%);
   --gradient-shine: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, transparent 50%);
 
-  --color-border-primary: #e2e8f0;
-  --color-border-secondary: #cbd5e1;
+  --color-border-primary: rgba(15, 23, 42, 0.06);
+  --color-border-secondary: rgba(15, 23, 42, 0.1);
   --color-border-focus: rgb(35, 36, 37);
 
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-tertiary: #64748b;
-  --color-text-muted: #94a3b8;
+  --color-text-primary: #1c1d21;      /* 炭黑色 */
+  --color-text-secondary: #4a4c54;
+  --color-text-tertiary: #767985;
+  --color-text-muted: #9b9ea8;
   --color-text-inverse: #ffffff;
 
   --color-accent-primary: rgb(35, 36, 37);
@@ -261,6 +267,10 @@
 
 /* Dark theme */
 .dark, :root.dark {
+  --color-body-bg: #090a0f;          /* Soft indigo-tinted charcoal dark */
+  --color-sidebar-bg: #10121a;       /* Neutral dark with more air */
+  --color-chat-bg: rgba(22, 25, 36, 0.75); /* Slightly lighter */
+
   --color-bg-primary: #090a0f; /* Soft indigo-tinted charcoal dark */
   --color-bg-secondary: #10121a; /* Neutral dark with more air */
   --color-bg-tertiary: #161924; /* Slightly lighter */
@@ -377,6 +387,10 @@
 /* System preference fallback — only when no explicit theme class is set */
 @media (prefers-color-scheme: dark) {
   :root:not(.light):not(.dark) {
+    --color-body-bg: #0f172a;
+    --color-sidebar-bg: #1e293b;
+    --color-chat-bg: #1e293b;
+
     --color-bg-primary: #0f172a;
     --color-bg-secondary: #1e293b;
     --color-bg-tertiary: #334155;
@@ -450,7 +464,9 @@ body {
     Helvetica,
     Arial,
     sans-serif;
-  background: var(--color-bg-primary);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+  background: var(--color-body-bg, var(--color-bg-primary));
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -1174,7 +1190,7 @@ select {
   background: linear-gradient(
     180deg,
     var(--glass-bg) 0%,
-    rgba(255, 255, 255, 0.68) 100%
+    var(--color-sidebar-bg) 100%
   );
   backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
@@ -1202,7 +1218,7 @@ select {
 
 /* Glass header - enhanced */
 .glass-header {
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--color-chat-bg);
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   border-bottom: 1px solid var(--glass-border-subtle);
@@ -1294,9 +1310,12 @@ select {
 }
 
 .glass-group-item-active {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.9) 100%);
-  border-color: rgba(15, 23, 42, 0.07);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 10px 26px rgba(15, 23, 42, 0.05);
+  background: var(--color-chat-bg);
+  border-color: rgba(15, 23, 42, 0.06);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.02),
+    0 4px 12px rgba(15, 23, 42, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
 }
 
 .glass-group-item-active::before {
@@ -1489,11 +1508,18 @@ select {
 
 /* Glass overlay for modals */
 .glass-overlay {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(12px) saturate(130%);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
 }
 
 .dark .glass-overlay {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.65);
+}
+
+/* Micro-damping elastic transition (Spring easing) */
+.ease-spring {
+  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 
 /* ============================================

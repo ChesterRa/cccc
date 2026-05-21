@@ -184,20 +184,21 @@ export function DeveloperTab({
                   {t("developer.enableHint")}
                 </div>
               </div>
-              <label className="inline-flex cursor-pointer items-center">
+              <label className="inline-flex cursor-pointer items-center select-none">
                 <input
                   type="checkbox"
+                  role="switch"
                   className="sr-only"
                   checked={developerMode}
                   onChange={(e) => setDeveloperMode(e.target.checked)}
                 />
-                <div className={`h-6 w-11 rounded-full transition-colors ${
+                <div className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring ${
                   developerMode
-                    ? "bg-emerald-500"
-                    : "bg-gray-300 dark:bg-slate-700"
+                    ? "border-emerald-500 bg-emerald-500"
+                    : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)]"
                 }`}>
-                  <div className={`mt-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                    developerMode ? "translate-x-5" : "translate-x-0.5"
+                  <div className={`absolute left-0.5 h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.08),0_1px_1px_rgba(0,0,0,0.04)] transition-transform duration-300 ease-spring ${
+                    developerMode ? "translate-x-5" : "translate-x-0"
                   }`} />
                 </div>
               </label>

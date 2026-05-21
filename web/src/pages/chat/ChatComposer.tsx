@@ -654,7 +654,7 @@ export function ChatComposer({
     <footer
       className={classNames(
         "relative z-40 flex-shrink-0 border-t px-2 py-1.5 safe-area-bottom-compact transition-colors sm:px-2.5 sm:py-2",
-        isDark ? "border-white/5 bg-slate-950/72 backdrop-blur-md" : "border-black/5 bg-white/78 backdrop-blur-md"
+        "border-[var(--glass-border)] bg-[var(--glass-panel-bg)] backdrop-blur-md"
       )}
     >
         {/* Reply indicator */}
@@ -909,10 +909,7 @@ export function ChatComposer({
               <textarea
                 ref={composerRef as RefObject<HTMLTextAreaElement>}
                 className={classNames(
-                  "w-full bg-transparent border-0 px-4 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0",
-                  isDark
-                    ? "text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
-                    : "text-gray-900 placeholder-gray-400",
+                  "w-full bg-transparent border-0 px-4 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
                 )}
                 style={{
                   minHeight: `${Math.max(baseComposerHeight + 6, 52)}px`,

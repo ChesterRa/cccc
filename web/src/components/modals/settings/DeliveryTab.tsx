@@ -50,19 +50,18 @@ const ToggleRow = ({
           onAutoSave?.(newValue);
         }}
         className={`
-          relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+          relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring
           focus:outline-none focus:ring-2 focus:ring-offset-2
           ${checked
-            ? "bg-emerald-500 focus:ring-emerald-500"
-            : "bg-gray-300 dark:bg-slate-600 focus:ring-gray-400 dark:focus:ring-slate-500"
+            ? "border-emerald-500 bg-emerald-500 focus:ring-emerald-500"
+            : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] focus:ring-offset-white dark:focus:ring-offset-slate-900"
           }
-          focus:ring-offset-white dark:focus:ring-offset-slate-900
         `}
       >
         <span
           className={`
-            inline-block h-4 w-4 rounded-full bg-white shadow-sm transform transition-transform
-            ${checked ? "translate-x-6" : "translate-x-1"}
+            absolute left-0.5 inline-block h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.08),0_1px_1px_rgba(0,0,0,0.04)] transform transition-transform duration-300 ease-spring
+            ${checked ? "translate-x-5" : "translate-x-0"}
           `}
         />
       </button>

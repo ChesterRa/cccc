@@ -93,9 +93,9 @@ function isWebModelProfile(profile: ActorProfile): boolean {
 
 function modeButtonClass(selected: boolean): string {
   return [
-    "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
+    "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-all ease-spring duration-300",
     selected
-      ? "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-[rgb(35,36,37)] dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white"
+      ? "border-[var(--color-text-primary)] bg-[var(--color-text-primary)] text-[var(--color-bg-primary)] hover:opacity-90"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
   ].join(" ");
 }
@@ -205,7 +205,7 @@ export function AddActorModal({
   const collapsibleLabelClass = "text-xs font-medium text-[var(--color-text-secondary)]";
   const collapsibleChevronClass =
     "text-sm transition-transform group-open:rotate-180 text-[var(--color-text-tertiary)]";
-  const nestedCardClass = "rounded-xl border p-3 border-[var(--glass-border-subtle)] bg-[var(--glass-bg)]";
+  const nestedCardClass = "rounded-xl border p-3 border-[var(--glass-border-subtle)] bg-[var(--glass-bg)] transition-all duration-300 hover:border-[var(--glass-border)]";
 
   const handleSubmit = async () => {
     try {
@@ -223,7 +223,7 @@ export function AddActorModal({
 
   return (
     <div
-      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
+      className="fixed inset-0 flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -290,9 +290,9 @@ export function AddActorModal({
                     <Button
                       type="button"
                       className={classNames(
-                        "h-auto justify-start whitespace-normal border text-sm font-medium transition-all",
+                        "h-auto justify-start whitespace-normal border text-sm font-medium transition-all ease-spring duration-300",
                         newActorRole === "foreman"
-                          ? "bg-amber-500/20 border-amber-500 text-amber-700 dark:text-amber-300"
+                          ? "bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-400"
                           : hasForeman
                             ? "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-muted)] cursor-not-allowed"
                             : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
@@ -307,9 +307,9 @@ export function AddActorModal({
                     <Button
                       type="button"
                       className={classNames(
-                        "h-auto justify-start whitespace-normal border text-sm font-medium transition-all",
+                        "h-auto justify-start whitespace-normal border text-sm font-medium transition-all ease-spring duration-300",
                         newActorRole === "peer"
-                          ? "border-[rgb(35,36,37)] bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white"
+                          ? "bg-[var(--glass-accent-bg)] border-[var(--glass-accent-border)] text-[var(--color-text-primary)]"
                           : !hasForeman
                             ? "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-muted)] cursor-not-allowed"
                             : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
@@ -495,7 +495,7 @@ export function AddActorModal({
 	                    ) : null}
 
 	                    {newActorRuntime === "web_model" ? (
-	                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
+	                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
 	                        <div className="font-medium">
 	                          {t("webModelActorBoundConnectorTitle", { defaultValue: "Single ChatGPT Web Model actor" })}
 	                        </div>
@@ -534,7 +534,7 @@ export function AddActorModal({
                     ) : null}
 
                     {newActorRuntime === "custom" || !runtimeAvailable ? (
-                      <div className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                      <div className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400">
                         <div className="font-medium">{t("manualMcpRequired")}</div>
                         <div className="mt-1">{t("customCommandHint").replace(/<1>|<\/1>/g, "")}</div>
                       </div>
@@ -573,7 +573,7 @@ export function AddActorModal({
                         </span>
                       </summary>
 
-                      <div className="mt-4 rounded-xl border px-3 py-2 text-[11px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                      <div className="mt-4 rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400">
                         <div className="font-medium">{t("manualMcpRequired")}</div>
                         {newActorRuntime === "custom" ? (
                           <>
@@ -592,7 +592,7 @@ export function AddActorModal({
                           </pre>
                         ) : null}
 
-                        <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-300/80">
+                        <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
                           {t("restartAfterConfig")}
                         </div>
                       </div>
@@ -654,7 +654,7 @@ export function AddActorModal({
                   </details>
 
                   {webModelSetupIsActorBound ? (
-                    <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
+                    <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
                       ChatGPT Web Model is a single actor for this CCCC instance. Create it, then manage the MCP URL and target ChatGPT chat in Settings &gt; ChatGPT Web Model.
                     </div>
                   ) : (
@@ -690,14 +690,14 @@ export function AddActorModal({
         <div className="border-t px-4 py-3 sm:px-6 sm:py-4 safe-area-inset-bottom border-[var(--glass-border-subtle)] glass-header flex-shrink-0">
           {addActorError ? (
             <div
-              className="mb-3 rounded-xl border px-3 py-2 text-xs border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+              className="mb-3 rounded-xl border px-3 py-2 text-xs border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400"
               role="alert"
             >
               <div className="flex items-start justify-between gap-3">
                 <span>{addActorError}</span>
                 <button
                   type="button"
-                  className="text-rose-700 dark:text-rose-300 hover:opacity-80"
+                  className="text-rose-600 dark:text-rose-400 hover:opacity-80"
                   onClick={() => setAddActorError("")}
                   aria-label={t("common:close")}
                 >
@@ -719,7 +719,7 @@ export function AddActorModal({
             <div className="flex-1 min-w-0">
               <Button
                 type="button"
-                className="w-full font-semibold"
+                className="w-full font-semibold transition-all ease-spring duration-300"
                 onClick={() => {
                   void handleSubmit();
                 }}
@@ -728,7 +728,7 @@ export function AddActorModal({
                 {busy === "actor-add" ? t("adding") : newActorUseProfile ? t("createFromProfile") : t("addAgent")}
               </Button>
               {addActorDisabledReason ? (
-                <div className="text-[10px] text-amber-600 dark:text-amber-300 mt-1.5">{addActorDisabledReason}</div>
+                <div className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5">{addActorDisabledReason}</div>
               ) : null}
             </div>
           </div>

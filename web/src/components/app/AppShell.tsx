@@ -277,9 +277,7 @@ export function AppShell({
       />
 
       <main
-        className={`absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto ${
-          isDark ? "bg-transparent md:bg-black/75" : "bg-transparent md:bg-white/80"
-        }`}
+        className="absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto bg-transparent md:bg-[var(--color-chat-bg)] md:backdrop-blur-md"
       >
         <AppHeader
           isDark={isDark}

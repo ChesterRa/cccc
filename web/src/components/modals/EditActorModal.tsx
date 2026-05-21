@@ -120,9 +120,9 @@ function isWebModelProfile(profile: ActorProfile): boolean {
 
 function modeButtonClass(selected: boolean): string {
   return [
-    "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
+    "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-all ease-spring duration-300",
     selected
-      ? "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-[rgb(35,36,37)] dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white"
+      ? "border-[var(--color-text-primary)] bg-[var(--color-text-primary)] text-[var(--color-bg-primary)] hover:opacity-90"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
   ].join(" ");
 }
@@ -531,7 +531,7 @@ export function EditActorModal({
   const collapsibleSummaryClass = `flex cursor-pointer list-none items-start justify-between gap-3 [&::-webkit-details-marker]:hidden`;
   const collapsibleLabelClass = "text-xs font-medium text-[var(--color-text-secondary)]";
   const collapsibleChevronClass = "text-sm transition-transform group-open:rotate-180 text-[var(--color-text-tertiary)]";
-  const nestedCardClass = "group rounded-xl border p-3 border-[var(--glass-border-subtle)] bg-[var(--glass-bg)]";
+  const nestedCardClass = "group rounded-xl border p-3 border-[var(--glass-border-subtle)] bg-[var(--glass-bg)] transition-all duration-300 hover:border-[var(--glass-border)]";
   const saveDisabled =
     busy === "actor-update" ||
     avatarBusy !== "" ||
@@ -697,16 +697,16 @@ export function EditActorModal({
                     ) : null}
                   </>
                 ) : effectiveLinked ? (
-                  <Surface className="border-black/10 bg-[rgb(245,245,245)] px-3 py-3 text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white" radius="md" padding="none">
+                  <Surface className="border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3 text-[var(--color-text-primary)]" radius="md" padding="none">
                     <div className="text-sm font-medium">
                       {selectedProfileName ? t("managedByProfileName", { name: selectedProfileName }) : t("managedByProfile")}
                     </div>
-                    <div className="mt-1 text-xs text-[rgb(35,36,37)]/78 dark:text-white/72">{t("managedByProfileCustomHint")}</div>
+                    <div className="mt-1 text-xs text-[var(--color-text-secondary)]">{t("managedByProfileCustomHint")}</div>
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      className="mt-3"
+                      className="mt-3 transition-all ease-spring duration-300"
                       onClick={convertToCustomDraft}
                       disabled={busy === "actor-update"}
                     >
@@ -780,7 +780,7 @@ export function EditActorModal({
 	                    ) : null}
 
 	                    {runtime === "web_model" ? (
-	                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
+	                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
 	                        <div className="font-medium">
 	                          {t("webModelActorBoundConnectorTitle", { defaultValue: "Single ChatGPT Web Model actor" })}
 	                        </div>
@@ -833,7 +833,7 @@ export function EditActorModal({
                       </div>
                       <span aria-hidden="true" className={collapsibleChevronClass}>⌄</span>
                     </summary>
-                    <div className="mt-4 rounded-xl border px-3 py-2 text-[11px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200">
+                    <div className="mt-4 rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400">
                       <div className="font-medium">{t("manualMcpRequired")}</div>
                       {runtime === "custom" ? (
                         <div className="mt-1">
@@ -845,7 +845,7 @@ export function EditActorModal({
                           <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
                         </pre>
                       ) : null}
-                      <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-100/80">{t("restartAfterConfig")}</div>
+                      <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">{t("restartAfterConfig")}</div>
                     </div>
                   </details>
                 ) : null}
@@ -966,7 +966,7 @@ export function EditActorModal({
                 </details>
 
                 {editMode === "custom" && runtime === "web_model" ? (
-                  <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200">
+                  <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
                     ChatGPT Web Model is managed in Settings &gt; ChatGPT Web Model instead of being saved as a Runtime Profile.
                   </div>
                 ) : editMode === "custom" ? (
@@ -998,9 +998,7 @@ export function EditActorModal({
         <div className="border-t px-4 py-3 sm:px-6 sm:py-4 safe-area-inset-bottom border-[var(--glass-border-subtle)] glass-header">
           {secretsError ? (
             <div
-              className={`mb-3 rounded-xl border px-3 py-2 text-xs ${
-                isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
-              }`}
+              className="mb-3 rounded-xl border px-3 py-2 text-xs border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400"
               role="alert"
             >
               {secretsError}
@@ -1009,9 +1007,7 @@ export function EditActorModal({
 
           {String(localNotice || inlineNotice || "").trim() ? (
             <div
-              className={`mb-3 rounded-xl border px-3 py-2 text-xs ${
-                isDark ? "border-white/12 bg-white/[0.08] text-white" : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
-              }`}
+              className="mb-3 rounded-xl border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
               role="status"
             >
               {String(localNotice || inlineNotice || "").trim()}
@@ -1022,14 +1018,14 @@ export function EditActorModal({
             <Button
               type="button"
               variant="secondary"
-              className="w-full md:w-auto"
+              className="w-full md:w-auto transition-all ease-spring duration-300"
               onClick={onCancel}
             >
               {t("common:cancel")}
             </Button>
             <Button
               type="button"
-              className="w-full md:flex-1 border-[rgb(35,36,37)] bg-[rgb(35,36,37)] font-semibold text-white hover:border-black hover:bg-black dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:border-white dark:hover:bg-white/92"
+              className="w-full md:flex-1 border-[var(--color-text-primary)] bg-[var(--color-text-primary)] font-semibold text-[var(--color-bg-primary)] hover:opacity-90 transition-all ease-spring duration-300"
               onClick={() => void submit(true)}
               disabled={saveDisabled}
             >
@@ -1037,7 +1033,7 @@ export function EditActorModal({
             </Button>
             <Button
               type="button"
-              className="w-full md:flex-1 font-semibold"
+              className="w-full md:flex-1 font-semibold transition-all ease-spring duration-300"
               onClick={() => void submit(false)}
               disabled={saveDisabled}
             >

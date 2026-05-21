@@ -134,7 +134,7 @@ function StatusPill({ children, tone }: { children: React.ReactNode; tone: "on" 
     tone === "on"
       ? "border border-emerald-600/15 bg-emerald-50 text-emerald-800 dark:border-emerald-400/18 dark:bg-emerald-400/10 dark:text-emerald-200"
       : tone === "off"
-        ? "border border-slate-500/10 bg-slate-500/8 text-[var(--color-text-muted)]"
+        ? "border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]"
         : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] ${classes}`}>
@@ -144,19 +144,11 @@ function StatusPill({ children, tone }: { children: React.ReactNode; tone: "on" 
 }
 
 function localVoicePanelClass(isDark: boolean) {
-  return `rounded-xl border p-4 ${
-    isDark
-      ? "border-white/10 bg-white/[0.035]"
-      : "border-slate-200/80 bg-white/70"
-  }`;
+  return "rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-4";
 }
 
 function localVoiceModelCardClass(isDark: boolean) {
-  return `rounded-lg border p-3 ${
-    isDark
-      ? "border-white/10 bg-black/10"
-      : "border-slate-200/75 bg-slate-50/70"
-  }`;
+  return "rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] p-3";
 }
 
 function AssistantsFeedbackToast({ error, notice }: { error: string; notice: string }) {
@@ -208,14 +200,14 @@ function AssistantSwitch({
       />
       <span
         aria-hidden="true"
-        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${
+        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring ${
           checked
             ? "border-emerald-500 bg-emerald-500"
             : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)]"
         } ${disabled ? "opacity-50" : ""}`}
       >
         <span
-          className={`absolute left-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
+          className={`absolute left-0.5 h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.08),0_1px_1px_rgba(0,0,0,0.04)] transition-transform duration-300 ease-spring ${
             checked ? "translate-x-5" : "translate-x-0"
           }`}
         />

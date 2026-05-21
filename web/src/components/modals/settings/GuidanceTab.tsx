@@ -238,7 +238,7 @@ export function GuidanceTab({ isDark, groupId }: {
   if (!groupId) {
     return (
       <div className={cardClass(isDark)}>
-        <div className={`text-sm ${isDark ? "text-white/72" : "text-gray-700"}`}>{t("guidance.openFromGroup")}</div>
+        <div className="text-sm text-[var(--color-text-secondary)]">{t("guidance.openFromGroup")}</div>
       </div>
     );
   }
@@ -253,7 +253,7 @@ export function GuidanceTab({ isDark, groupId }: {
         : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)] border border-black/10"
       : isDark
         ? "bg-white/[0.04] text-white/68 border border-white/8"
-        : "bg-gray-100 text-gray-700 border border-gray-200";
+        : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
 
   const preambleSource = preamble?.source || "builtin";
   const preambleBadge =
@@ -263,7 +263,7 @@ export function GuidanceTab({ isDark, groupId }: {
         : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)] border border-black/10"
       : isDark
         ? "bg-white/[0.04] text-white/68 border border-white/8"
-        : "bg-gray-100 text-gray-700 border border-gray-200";
+        : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
   const settingsScrollAreaClass = "overflow-y-auto scrollbar-subtle pr-2 pb-2 [scrollbar-gutter:stable]";
   const promptShellClass = `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
     isDark
@@ -274,12 +274,12 @@ export function GuidanceTab({ isDark, groupId }: {
     isDark ? "border-b border-white/8 bg-white/[0.025]" : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
   }`;
   const promptHeaderTextClass = isDark ? "text-white" : "text-[rgb(22,24,29)]";
-  const promptHintClass = isDark ? "text-white/50" : "text-gray-500";
+  const promptHintClass = "text-[var(--color-text-tertiary)]";
   const promptBodyClass = (expanded = false) => `px-4 py-4 sm:px-5 sm:py-5 ${expanded ? "min-h-0 flex flex-1 flex-col" : "space-y-4"}`;
   const promptPathClass = `inline-flex max-w-full items-center rounded-full border px-3 py-1 text-[11px] font-mono leading-5 ${
     isDark
       ? "border-white/8 bg-white/[0.03] text-white/64"
-      : "border-black/8 bg-black/[0.03] text-gray-600"
+      : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
   }`;
   const editorSurfaceSoftClass = `rounded-[18px] border px-4 py-3 sm:px-4 sm:py-4 ${
     isDark
@@ -287,11 +287,9 @@ export function GuidanceTab({ isDark, groupId }: {
       : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,251,0.88))]"
   }`;
   const editorTextareaClass = `${inputClass(isDark)} min-h-[320px] resize-y border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0`;
-  const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
-    isDark ? "bg-white/[0.05] text-white/66" : "bg-black/[0.05] text-gray-600"
-  }`;
+  const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`;
   const segmentedControlClass = `inline-flex rounded-full border p-1 ${
-    isDark ? "border-white/8 bg-white/[0.025]" : "border-black/8 bg-black/[0.03]"
+    isDark ? "border-white/8 bg-white/[0.025]" : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]"
   }`;
   const navigationPanelClass = `rounded-[18px] border p-3 ${
     isDark
@@ -303,9 +301,7 @@ export function GuidanceTab({ isDark, groupId }: {
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
       : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
   }`;
-  const navSectionTitleClass = `mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-    isDark ? "text-white/36" : "text-gray-500"
-  }`;
+  const navSectionTitleClass = `mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]`;
   const overridesHintClass = `rounded-[18px] border px-4 py-3 text-[11px] leading-5 ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] text-white/50"
@@ -511,7 +507,7 @@ export function GuidanceTab({ isDark, groupId }: {
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="font-medium truncate">{item.title}</span>
           {item.roleLabel ? (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${isDark ? "bg-white/[0.05] text-white/62" : "bg-gray-100 text-gray-600"}`}>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`}>
               {item.roleLabel}
             </span>
           ) : null}
@@ -553,7 +549,7 @@ export function GuidanceTab({ isDark, groupId }: {
         <div className={`${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
           <div className={`flex items-start justify-between gap-4 ${expanded ? "pb-4" : "mb-4"}`}>
             <div className="min-w-0">
-              <div className={`max-w-[54ch] text-[11px] leading-5 ${isDark ? "text-white/40" : "text-gray-500"}`}>
+              <div className="max-w-[54ch] text-[11px] leading-5 text-[var(--color-text-tertiary)]">
                 {t("guidance.helpEditorHint", "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.")}
               </div>
             </div>
@@ -562,10 +558,8 @@ export function GuidanceTab({ isDark, groupId }: {
                 type="button"
                 className={`px-3 py-1.5 text-xs rounded-full transition-colors ${
                   helpViewMode === "structured"
-                    ? isDark ? "bg-white text-[rgb(35,36,37)]" : "bg-[rgb(35,36,37)] text-white"
-                    : isDark
-                      ? "text-white/68 hover:bg-white/[0.05]"
-                      : "text-gray-700 hover:bg-white"
+                    ? "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)]"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
                 }`}
                 onClick={() => setHelpViewMode("structured")}
               >
@@ -575,10 +569,8 @@ export function GuidanceTab({ isDark, groupId }: {
                 type="button"
                 className={`px-3 py-1.5 text-xs rounded-full transition-colors ${
                   helpViewMode === "raw"
-                    ? isDark ? "bg-white text-[rgb(35,36,37)]" : "bg-[rgb(35,36,37)] text-white"
-                    : isDark
-                      ? "text-white/68 hover:bg-white/[0.05]"
-                      : "text-gray-700 hover:bg-white"
+                    ? "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)]"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
                 }`}
                 onClick={() => setHelpViewMode("raw")}
               >
@@ -613,7 +605,7 @@ export function GuidanceTab({ isDark, groupId }: {
                         {actorScopes.map((item) => renderHelpScopeButton(item))}
                       </div>
                     ) : (
-                      <div className={`rounded-lg border border-dashed px-3 py-4 text-sm ${isDark ? "border-white/8 text-white/36" : "border-gray-200 text-gray-400"}`}>
+                      <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-4 text-sm text-[var(--color-text-muted)]">
                         {t("guidance.noActorsForStructuredHelp", "No actors available in this group yet.")}
                       </div>
                     )}

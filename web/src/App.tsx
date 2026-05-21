@@ -340,9 +340,7 @@ export default function App() {
 
   return (
     <div
-      className={`relative min-h-0 w-full overflow-hidden ${
-        isDark ? "bg-black text-slate-100" : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
-      }`}
+      className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
       style={{
         height: "calc(100dvh - var(--vk-offset, 0px))",
         maxHeight: "calc(100dvh - var(--vk-offset, 0px))",

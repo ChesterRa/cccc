@@ -53,9 +53,7 @@ interface SettingsModalProps {
 function SettingsTabFallback({ isDark }: { isDark: boolean }) {
   return (
     <div
-      className={`rounded-2xl border p-5 text-sm ${
-        isDark ? "border-slate-700 bg-slate-900/70 text-slate-200" : "border-slate-200 bg-slate-50 text-slate-600"
-      }`}
+      className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-5 text-sm text-[var(--color-text-secondary)]"
     >
       Loading...
     </div>
@@ -1067,8 +1065,8 @@ export function SettingsModal({
           ref={contentScrollRef}
           className={`min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable] ${
             isDark
-              ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]"
-              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.96),rgba(255,255,255,0)_34%),linear-gradient(180deg,rgb(255,255,255),rgb(246,248,251))]"
+              ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_32%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))]"
+              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.96),rgba(255,255,255,0)_34%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))]"
           }`}
         >
           <div className="p-4 pb-6 sm:p-5 lg:p-6 sm:pb-7 space-y-4 lg:space-y-5">
@@ -1080,7 +1078,7 @@ export function SettingsModal({
                   <button
                     type="button"
                     onClick={() => setScope("group")}
-                    className={`mt-4 px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-100 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}
+                    className="mt-4 px-3 py-2 rounded-lg text-xs font-medium border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)] transition-all"
                   >
                     {t("navigation.thisGroup")}
                   </button>
