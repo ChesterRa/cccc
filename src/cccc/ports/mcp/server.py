@@ -682,6 +682,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     "group_id": gid,
                     "request_id": str(arguments.get("request_id") or ""),
                     "draft_text": str(arguments.get("draft_text") or ""),
+                    "no_op": coerce_bool(arguments.get("no_op"), default=False),
                     "summary": str(arguments.get("summary") or ""),
                     "operation": str(arguments.get("operation") or ""),
                     "composer_snapshot_hash": str(arguments.get("composer_snapshot_hash") or ""),

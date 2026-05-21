@@ -12,6 +12,8 @@ from ..util.fs import atomic_write_json, read_json
 
 logger = logging.getLogger(__name__)
 
+_PROMPT_DRAFT_NO_OP_STATUSES = {"no_change", "no_op"}
+
 
 def _input_state(group_id: str) -> Dict[str, int]:
     path = ensure_home() / "voice-secretary" / str(group_id or "").strip() / "input_state.json"
@@ -469,6 +471,11 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
         for request_id in composer_request_ids:
             current = current_prompt_drafts.get(request_id) if isinstance(current_prompt_drafts.get(request_id), dict) else {}
             before = before_prompt_drafts.get(request_id) if isinstance(before_prompt_drafts.get(request_id), dict) else {}
+            current_status = str(current.get("status") or "").strip().lower()
+            if current_status in _PROMPT_DRAFT_NO_OP_STATUSES:
+                if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
+                    missing.append(f"composer_draft_updated_at:{request_id}")
+                continue
             if not str(current.get("draft_text") or "").strip():
                 missing.append(f"composer_draft:{request_id}")
                 continue

@@ -96,7 +96,7 @@ _MAX_VOICE_DOCUMENTS = 100
 _DEFAULT_AUTO_DOCUMENT_QUIET_MS = 5_000
 _DEFAULT_AUTO_DOCUMENT_MIN_CHARS = 700
 _DEFAULT_AUTO_DOCUMENT_FAST_MIN_CHARS = 120
-_DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS = 120
+_DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS = 300
 _MIN_AUTO_DOCUMENT_QUIET_MS = 1_000
 _MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS = 10
 _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_CHARS = 12_000
@@ -484,11 +484,15 @@ def _normalize_voice_config(raw: Any, *, base: Dict[str, Any]) -> Dict[str, Any]
             raise ValueError("auto_document_min_chars must be an integer") from exc
         out["auto_document_min_chars"] = min(max(40, min_chars), 8_000)
     if "auto_document_max_window_seconds" in raw:
-        try:
-            max_window_seconds = int(raw.get("auto_document_max_window_seconds"))
-        except Exception as exc:
-            raise ValueError("auto_document_max_window_seconds must be an integer") from exc
-        out["auto_document_max_window_seconds"] = min(max(_MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS, max_window_seconds), 300)
+        raw_max_window_seconds = raw.get("auto_document_max_window_seconds")
+        if raw_max_window_seconds is None:
+            out["auto_document_max_window_seconds"] = None
+        else:
+            try:
+                max_window_seconds = int(raw_max_window_seconds)
+            except Exception as exc:
+                raise ValueError("auto_document_max_window_seconds must be an integer or null") from exc
+            out["auto_document_max_window_seconds"] = min(max(_MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS, max_window_seconds), 300)
     if "service_model_id" in raw:
         value = str(raw.get("service_model_id") or "").strip()
         if value and not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", value):
@@ -2647,7 +2651,9 @@ def _append_voice_document_transcript(
     )
 
 
-def _voice_auto_document_max_window_seconds(config: Dict[str, Any]) -> int:
+def _voice_auto_document_max_window_seconds(config: Dict[str, Any]) -> Optional[int]:
+    if "auto_document_max_window_seconds" in config and config.get("auto_document_max_window_seconds") is None:
+        return None
     try:
         max_window_seconds = int(config.get("auto_document_max_window_seconds") or _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS)
     except Exception:
@@ -2703,6 +2709,8 @@ def _voice_document_input_due(
     if started is None or now_dt is None:
         return False
     max_window_seconds = _voice_auto_document_max_window_seconds(config)
+    if max_window_seconds is None:
+        return False
     return (now_dt - started).total_seconds() >= max_window_seconds
 
 
@@ -2905,6 +2913,8 @@ def _flush_stale_voice_session_windows(group: Group) -> int:
         return 0
     assistant_config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
     max_window_seconds = _voice_auto_document_max_window_seconds(assistant_config)
+    if max_window_seconds is None:
+        return 0
     now = utc_now_iso()
     now_dt = parse_utc_iso(now)
     if now_dt is None:
@@ -5319,6 +5329,9 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
     summary = _clean_multiline_text(args.get("summary"), max_len=800)
     raw_operation = str(args.get("operation") or "").strip()
     composer_snapshot_hash = str(args.get("composer_snapshot_hash") or "").strip()
+    no_op = coerce_bool(args.get("no_op"), default=False)
+    if no_op:
+        draft_text = ""
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     if by not in {VOICE_SECRETARY_ACTOR_ID, _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY), "assistant:voice_secretary"}:
@@ -5326,7 +5339,7 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
     if not raw_request_id:
         return _error("missing_prompt_request_id", "request_id is required for voice prompt drafts")
     request_id = _clean_voice_prompt_request_id(raw_request_id)
-    if not draft_text:
+    if not draft_text and not no_op:
         return _error("empty_voice_prompt_draft", "draft_text is required")
     group = load_group(group_id)
     if group is None:
@@ -5345,12 +5358,13 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
         request_snapshot_hash = str(request_record.get("composer_snapshot_hash") or "").strip()
         drafts = state.setdefault("voice_prompt_drafts", {})
         existing = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
+        status = "no_change" if no_op else "pending"
         record = {
             "schema": 1,
             "group_id": group.group_id,
             "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
             "request_id": request_id,
-            "status": "pending",
+            "status": status,
             "operation": operation,
             "draft_text": draft_text,
             "draft_preview": _clean_multiline_text(draft_text, max_len=240),
@@ -5372,16 +5386,16 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
             data={
                 "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
                 "request_id": request_id,
-                "action": "submit",
-                "status": "pending",
+                "action": "no_op" if no_op else "submit",
+                "status": status,
                 "draft_preview": str(record.get("draft_preview") or ""),
             },
         )
         assistant_after = _set_voice_assistant_runtime(
             group,
-            lifecycle="waiting",
+            lifecycle="idle" if no_op else "waiting",
             health={
-                "status": "prompt_draft_ready",
+                "status": "prompt_draft_no_change" if no_op else "prompt_draft_ready",
                 "last_prompt_request_id": request_id,
                 "last_prompt_draft_at": now,
             },

@@ -44,10 +44,7 @@ const VOICE_BACKENDS = [
 ];
 const VOICE_AVAILABLE_BACKENDS = new Set(["browser_asr", "assistant_service_local_asr"]);
 
-const VOICE_RECOMMENDED_QUIET_SECONDS = 5;
-const VOICE_MIN_QUIET_SECONDS = 1;
-const VOICE_MAX_QUIET_SECONDS = 60;
-const VOICE_RECOMMENDED_MAX_WINDOW_SECONDS = 120;
+const VOICE_RECOMMENDED_MAX_WINDOW_SECONDS = 300;
 const VOICE_MIN_MAX_WINDOW_SECONDS = 10;
 const VOICE_MAX_MAX_WINDOW_SECONDS = 300;
 const DIARIZATION_MODEL_ID = "sherpa_onnx_diarization_pyannote_3dspeaker_zh";
@@ -378,7 +375,7 @@ export function AssistantsTab({
 
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [recognitionBackend, setRecognitionBackend] = useState("browser_asr");
-  const [voiceQuietWindowSeconds, setVoiceQuietWindowSeconds] = useState(VOICE_RECOMMENDED_QUIET_SECONDS);
+  const [voiceDocumentAutoUpdateEnabled, setVoiceDocumentAutoUpdateEnabled] = useState(true);
   const [voiceMaxWindowSeconds, setVoiceMaxWindowSeconds] = useState(VOICE_RECOMMENDED_MAX_WINDOW_SECONDS);
   const [serviceRuntimeInstallBusy, setServiceRuntimeInstallBusy] = useState(false);
   const [diarizationModelInstallBusy, setDiarizationModelInstallBusy] = useState(false);
@@ -410,13 +407,9 @@ export function AssistantsTab({
     const backend = readStringConfig(voice, "recognition_backend", "browser_asr");
     setVoiceEnabled(Boolean(voice?.enabled));
     setRecognitionBackend(backend || "browser_asr");
-    setVoiceQuietWindowSeconds(readNumberConfig(
-      voice,
-      "auto_document_quiet_ms",
-      VOICE_RECOMMENDED_QUIET_SECONDS * 1000,
-      VOICE_MIN_QUIET_SECONDS * 1000,
-      VOICE_MAX_QUIET_SECONDS * 1000,
-    ) / 1000);
+    const rawMaxWindow = voice?.config?.auto_document_max_window_seconds;
+    const documentAutoUpdateEnabled = rawMaxWindow !== null;
+    setVoiceDocumentAutoUpdateEnabled(documentAutoUpdateEnabled);
     setVoiceMaxWindowSeconds(readNumberConfig(
       voice,
       "auto_document_max_window_seconds",
@@ -531,7 +524,7 @@ export function AssistantsTab({
   const saveVoiceSettings = async (overrides?: {
     enabled?: boolean;
     backend?: string;
-    quietSeconds?: number;
+    documentAutoUpdateEnabled?: boolean;
     maxWindowSeconds?: number;
   }) => {
     const gid = String(groupId || "").trim();
@@ -546,11 +539,9 @@ export function AssistantsTab({
         readStringConfig(voiceAssistant, "recognition_language", "mixed"),
         nextBackend,
       );
-      const quietSeconds = clampNumber(
-        Number(overrides?.quietSeconds ?? voiceQuietWindowSeconds),
-        VOICE_MIN_QUIET_SECONDS,
-        VOICE_MAX_QUIET_SECONDS,
-      );
+      const nextDocumentAutoUpdateEnabled = typeof overrides?.documentAutoUpdateEnabled === "boolean"
+        ? overrides.documentAutoUpdateEnabled
+        : voiceDocumentAutoUpdateEnabled;
       const maxWindowSeconds = clampNumber(
         Number(overrides?.maxWindowSeconds ?? voiceMaxWindowSeconds),
         VOICE_MIN_MAX_WINDOW_SECONDS,
@@ -563,8 +554,7 @@ export function AssistantsTab({
           recognition_backend: nextBackend,
           recognition_language: nextRecognitionLanguage,
           auto_document_enabled: true,
-          auto_document_quiet_ms: Math.round(quietSeconds * 1000),
-          auto_document_max_window_seconds: Math.round(maxWindowSeconds),
+          auto_document_max_window_seconds: nextDocumentAutoUpdateEnabled ? Math.round(maxWindowSeconds) : null,
           document_default_dir: "docs/voice-secretary",
           service_model_id: "",
           tts_enabled: false,
@@ -578,7 +568,7 @@ export function AssistantsTab({
       }
       setVoiceEnabled(nextEnabled);
       setRecognitionBackend(nextBackend);
-      setVoiceQuietWindowSeconds(quietSeconds);
+      setVoiceDocumentAutoUpdateEnabled(nextDocumentAutoUpdateEnabled);
       setVoiceMaxWindowSeconds(maxWindowSeconds);
       setNotice(t("assistants.voiceSaved"));
       await loadAssistants({ quiet: true });
@@ -592,17 +582,17 @@ export function AssistantsTab({
     }
   };
 
-  const resetVoiceBatching = async () => {
-    const previousQuiet = voiceQuietWindowSeconds;
+  const resetVoiceDocumentUpdateInterval = async () => {
+    const previousAutoUpdateEnabled = voiceDocumentAutoUpdateEnabled;
     const previousMaxWindow = voiceMaxWindowSeconds;
-    setVoiceQuietWindowSeconds(VOICE_RECOMMENDED_QUIET_SECONDS);
+    setVoiceDocumentAutoUpdateEnabled(true);
     setVoiceMaxWindowSeconds(VOICE_RECOMMENDED_MAX_WINDOW_SECONDS);
     const ok = await saveVoiceSettings({
-      quietSeconds: VOICE_RECOMMENDED_QUIET_SECONDS,
+      documentAutoUpdateEnabled: true,
       maxWindowSeconds: VOICE_RECOMMENDED_MAX_WINDOW_SECONDS,
     });
     if (!ok) {
-      setVoiceQuietWindowSeconds(previousQuiet);
+      setVoiceDocumentAutoUpdateEnabled(previousAutoUpdateEnabled);
       setVoiceMaxWindowSeconds(previousMaxWindow);
     }
   };
@@ -1059,7 +1049,7 @@ export function AssistantsTab({
     activeAssistantHelpPrompt !== null,
     resolveVoiceSecretaryGuidanceDraft(""),
   );
-  const showBrowserTranscriptBatching = recognitionBackend === "browser_asr";
+  const showDocumentUpdateControls = recognitionBackend === "browser_asr" || recognitionBackend === "assistant_service_local_asr";
 
   const renderVoiceGuidanceEditor = (expanded = false) => (
     <AssistantPromptEditor
@@ -1375,52 +1365,37 @@ export function AssistantsTab({
                     </div>
                   ) : null}
 
-                  {showBrowserTranscriptBatching ? (
+                  {showDocumentUpdateControls ? (
                     <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-xs font-semibold text-[var(--color-text-primary)]">
-                            {t("assistants.transcriptBatchingTitle")}
+                            {t("assistants.documentUpdateIntervalTitle")}
                           </div>
                           <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                            {t("assistants.transcriptBatchingHint")}
+                            {t("assistants.documentUpdateIntervalHint")}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void resetVoiceBatching()}
-                          disabled={busy || voiceSaveBusy}
-                          className={secondaryButtonClass("sm")}
-                        >
-                          {t("assistants.resetTranscriptBatching")}
-                        </button>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <AssistantSwitch
+                            checked={voiceDocumentAutoUpdateEnabled}
+                            disabled={busy || voiceSaveBusy}
+                            label={t("assistants.documentAutoUpdateSwitch")}
+                            onChange={(checked) => setVoiceDocumentAutoUpdateEnabled(checked)}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void resetVoiceDocumentUpdateInterval()}
+                            disabled={busy || voiceSaveBusy}
+                            className={secondaryButtonClass("sm")}
+                          >
+                            {t("assistants.resetDocumentUpdateInterval")}
+                          </button>
+                        </div>
                       </div>
-                      <div className="mt-3 grid gap-4 md:grid-cols-2">
+                      <div className="mt-3 grid gap-4 md:grid-cols-1">
                         <div>
-                          <label className={labelClass(isDark)}>{t("assistants.transcriptQuietWindow")}</label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={VOICE_MIN_QUIET_SECONDS}
-                              max={VOICE_MAX_QUIET_SECONDS}
-                              step={1}
-                              value={voiceQuietWindowSeconds}
-                              onChange={(event) => {
-                                const value = Number(event.target.value);
-                                if (Number.isFinite(value)) setVoiceQuietWindowSeconds(value);
-                              }}
-                              className={inputClass(isDark)}
-                            />
-                            <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
-                              {t("assistants.secondsUnit")}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                            {t("assistants.transcriptQuietWindowHint")}
-                          </p>
-                        </div>
-                        <div>
-                          <label className={labelClass(isDark)}>{t("assistants.transcriptMaxWindow")}</label>
+                          <label className={labelClass(isDark)}>{t("assistants.documentUpdateInterval")}</label>
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
@@ -1428,6 +1403,7 @@ export function AssistantsTab({
                               max={VOICE_MAX_MAX_WINDOW_SECONDS}
                               step={1}
                               value={voiceMaxWindowSeconds}
+                              disabled={!voiceDocumentAutoUpdateEnabled}
                               onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
@@ -1439,7 +1415,9 @@ export function AssistantsTab({
                             </span>
                           </div>
                           <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                            {t("assistants.transcriptMaxWindowHint")}
+                            {voiceDocumentAutoUpdateEnabled
+                              ? t("assistants.documentUpdateIntervalEnabledHint")
+                              : t("assistants.documentUpdateIntervalDisabledHint")}
                           </p>
                         </div>
                       </div>

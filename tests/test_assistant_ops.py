@@ -356,6 +356,34 @@ class TestAssistantOps(unittest.TestCase):
             "fragmented",
         )
 
+    def test_voice_document_input_due_respects_disabled_max_window(self) -> None:
+        from cccc.daemon.assistants.assistant_ops import _voice_document_input_due
+
+        due = _voice_document_input_due(
+            config={"auto_document_max_window_seconds": None},
+            window_text="stable local ASR transcript tail",
+            intent_hint="",
+            trigger={"trigger_kind": "meeting_window"},
+            flush=False,
+            window_started_at="2026-05-21T00:00:00Z",
+            window_segment_count=1,
+            now="2026-05-21T01:00:00Z",
+        )
+
+        self.assertFalse(due)
+        default_due = _voice_document_input_due(
+            config={},
+            window_text="stable local ASR transcript tail",
+            intent_hint="",
+            trigger={"trigger_kind": "meeting_window"},
+            flush=False,
+            window_started_at="2026-05-21T00:00:00Z",
+            window_segment_count=1,
+            now="2026-05-21T01:00:00Z",
+        )
+
+        self.assertTrue(default_due)
+
     def test_state_exposes_builtin_assistants(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -370,6 +398,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(assistants_by_id["voice_secretary"].get("lifecycle"), "disabled")
             self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_backend"), "browser_asr")
             self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_language"), "auto")
+            self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("auto_document_max_window_seconds"), 300)
         finally:
             cleanup()
 
@@ -424,6 +453,19 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(updated_config.get("auto_document_max_window_seconds"), 10)
             self.assertNotIn("dispatch_mode", updated_config)
             self.assertNotIn("auto_proposal_enabled", updated_config)
+
+            disabled_window, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"auto_document_max_window_seconds": None}},
+                },
+            )
+            self.assertTrue(disabled_window.ok, getattr(disabled_window, "error", None))
+            disabled_config = ((disabled_window.result or {}).get("assistant") or {}).get("config") or {}
+            self.assertIsNone(disabled_config.get("auto_document_max_window_seconds"))
         finally:
             cleanup()
 
@@ -2672,6 +2714,94 @@ class TestAssistantOps(unittest.TestCase):
             state_after, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
             self.assertTrue(state_after.ok, getattr(state_after, "error", None))
             self.assertFalse(bool((state_after.result or {}).get("prompt_draft")))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_prompt_refine_no_op_completes_without_pending_draft(self) -> None:
+        from cccc.daemon.assistants.voice_secretary_output_completion import complete_missing_composer_drafts
+        from cccc.daemon.voice_secretary_control_turns import control_consumption_diagnostics
+
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["assistants"] = {"voice_secretary": {"enabled": True}}
+            group.save()
+            state_dir = Path(home) / "groups" / group_id / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            assistants_path = state_dir / "assistants.json"
+            assistants_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "assistants": {},
+                        "voice_sessions": {},
+                        "voice_ask_requests": {},
+                        "voice_prompt_drafts": {},
+                        "voice_prompt_requests": {
+                            "voice-prompt-noop": {
+                                "schema": 1,
+                                "request_id": "voice-prompt-noop",
+                                "operation": "append_to_composer_end",
+                                "composer_text": "请帮我检查这个方案",
+                                "composer_snapshot_hash": "hash-noop",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            submit, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-noop",
+                    "no_op": True,
+                    "draft_text": "placeholder should be ignored",
+                    "summary": "No useful spoken change.",
+                },
+            )
+            self.assertTrue(submit.ok, getattr(submit, "error", None))
+            draft = (submit.result or {}).get("prompt_draft") if isinstance(submit.result, dict) else {}
+            self.assertEqual(draft.get("status"), "no_change")
+            self.assertFalse(str(draft.get("draft_text") or "").strip())
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertFalse(bool((state.result or {}).get("prompt_draft")))
+
+            diagnostics = control_consumption_diagnostics(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "prefetched_read_new_input": True,
+                    "composer_request_ids": ["voice-prompt-noop"],
+                    "before_prompt_drafts": {},
+                },
+            )
+            self.assertEqual(diagnostics.get("missing"), [])
+
+            repaired = complete_missing_composer_drafts(
+                group_id=group_id,
+                diagnostics={"missing": ["composer_draft:voice-prompt-noop"]},
+            )
+            self.assertEqual(repaired.get("completed_request_ids"), ["voice-prompt-noop"])
+            saved_state = json.loads(assistants_path.read_text(encoding="utf-8"))
+            saved_draft = ((saved_state.get("voice_prompt_drafts") or {}).get("voice-prompt-noop") or {})
+            self.assertEqual(saved_draft.get("status"), "no_change")
+            self.assertFalse(str(saved_draft.get("draft_text") or "").strip())
+            state_after_repair, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state_after_repair.ok, getattr(state_after_repair, "error", None))
+            assistant_after_repair = (state_after_repair.result or {}).get("assistant") if isinstance(state_after_repair.result, dict) else {}
+            self.assertEqual(assistant_after_repair.get("lifecycle"), "idle")
+            self.assertFalse(bool((state_after_repair.result or {}).get("prompt_draft")))
         finally:
             cleanup()
 

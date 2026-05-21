@@ -2744,6 +2744,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     continue
 
                 if message_type in {"close", "stop"}:
+                    skip_final_document_apply = coerce_bool(
+                        payload.get("skip_final_document_apply", payload.get("skipFinalDocumentApply")),
+                        default=False,
+                    )
                     if streaming_session is not None:
                         try:
                             await streaming_session.send({"type": "stop", "seq": seq})
@@ -2790,6 +2794,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                 and streaming_pcm16_path is not None
                                 and streaming_pcm16_bytes > 0
                                 and streaming_diarization_ready
+                                and not skip_final_document_apply
                             ):
                                 audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
                                 audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
@@ -2882,7 +2887,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                             event["text"] = raw_final_asr_text
                                             await websocket.send_json(event)
                                             final_asr_text = raw_final_asr_text
-                                    if final_asr_text:
+                                    if final_asr_text and not skip_final_document_apply:
                                         segment_id = f"final-{_safe_voice_session_id(streaming_client_session_id)}"
                                         trigger = {
                                             "mode": "meeting",
@@ -2928,6 +2933,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                                 "message": str(error.get("message") or "final transcript could not be applied"),
                                                 "details": error.get("details") if isinstance(error.get("details"), dict) else {},
                                             }
+                                    elif final_asr_text:
+                                        final_apply_result = {"ok": True, "result": {"applied": False, "reason": "windowed_checkpoint_already_applied"}}
                                     else:
                                         final_apply_result = {"ok": True, "result": {"applied": False, "reason": "empty_final_transcript"}}
                                     artifact_path = _write_voice_speaker_transcript_artifact(
@@ -2948,7 +2955,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                                         "end_ms": audio_duration_ms,
                                                     }
                                                 ]
-                                                if final_asr_text
+                                                if final_asr_text and not skip_final_document_apply
                                                 else []
                                             ),
                                             "speaker_transcript_error": final_asr_error,

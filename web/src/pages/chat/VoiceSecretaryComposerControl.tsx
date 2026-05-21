@@ -185,9 +185,7 @@ const VOICE_RECORDING_HEARTBEAT_FAILURE_GRACE_MS = 10000;
 const VOICE_CAPTURE_LOCK_PROBE_TIMEOUT_MS = 300;
 const BROWSER_DEFAULT_MIC_LABEL = "browser_default";
 const SERVICE_DEFAULT_MIC_LABEL = "service_default";
-const BROWSER_SPEECH_MIN_QUIET_MS = 1_000;
-const BROWSER_SPEECH_FAST_MODE_QUIET_REDUCTION_MS = 2_000;
-const BROWSER_SPEECH_MAX_WINDOW_FALLBACK_MS = 120_000;
+const BROWSER_SPEECH_MAX_WINDOW_FALLBACK_MS = 300_000;
 const BROWSER_SPEECH_MIN_MAX_WINDOW_MS = 10_000;
 const BROWSER_SPEECH_RESTART_BASE_MS = 500;
 const BROWSER_SPEECH_RESTART_MAX_MS = 8000;
@@ -751,12 +749,15 @@ export function VoiceSecretaryComposerControl({
   const serviceFinalTranscriptRef = useRef("");
   const serviceLatestPartialTranscriptRef = useRef("");
   const serviceCommittedTranscriptRef = useRef("");
+  const serviceDocumentCommittedTranscriptRef = useRef("");
   const serviceFinalAsrTextRef = useRef("");
   const serviceAudioDurationMsRef = useRef(0);
   const serviceCommittedEndMsRef = useRef(0);
+  const serviceDocumentCommittedEndMsRef = useRef(0);
   const serviceFinalSpeakerSegmentsRef = useRef<Record<string, unknown>[]>([]);
   const serviceProvisionalSpeakerSegmentsRef = useRef<Record<string, unknown>[]>([]);
   const servicePartialCommitTimerRef = useRef<number | null>(null);
+  const serviceDocumentCheckpointTimerRef = useRef<number | null>(null);
   const voiceCaptureOwnerIdRef = useRef(createVoiceCaptureOwnerId());
   const voiceRecordingLeaseGroupIdRef = useRef("");
   const voiceRecordingLeaseIdRef = useRef("");
@@ -1041,26 +1042,17 @@ export function VoiceSecretaryComposerControl({
   }, [t]);
   const configuredRecognitionLanguageLabel = voiceLanguageLabel(configuredRecognitionLanguage);
   const configuredRecognitionLanguageShortLabel = voiceLanguageShortLabel(configuredRecognitionLanguage);
-  const autoDocumentQuietMs = useMemo(
-    () => numberFromUnknown(
-      assistant?.config?.auto_document_quiet_ms,
-      BROWSER_SPEECH_MIN_QUIET_MS,
-      BROWSER_SPEECH_MIN_QUIET_MS,
-      60_000,
-    ),
-    [assistant?.config?.auto_document_quiet_ms],
-  );
-  const effectiveAutoDocumentQuietMs = useMemo(() => {
-    if (captureMode !== "instruction" && captureMode !== "prompt") return autoDocumentQuietMs;
-    return Math.max(BROWSER_SPEECH_MIN_QUIET_MS, autoDocumentQuietMs - BROWSER_SPEECH_FAST_MODE_QUIET_REDUCTION_MS);
-  }, [autoDocumentQuietMs, captureMode]);
   const autoDocumentMaxWindowMs = useMemo(
-    () => numberFromUnknown(
-      assistant?.config?.auto_document_max_window_seconds,
-      BROWSER_SPEECH_MAX_WINDOW_FALLBACK_MS / 1000,
-      BROWSER_SPEECH_MIN_MAX_WINDOW_MS / 1000,
-      300,
-    ) * 1000,
+    () => {
+      const raw = assistant?.config?.auto_document_max_window_seconds;
+      if (raw === null) return null;
+      return numberFromUnknown(
+        raw,
+        BROWSER_SPEECH_MAX_WINDOW_FALLBACK_MS / 1000,
+        BROWSER_SPEECH_MIN_MAX_WINDOW_MS / 1000,
+        300,
+      ) * 1000;
+    },
     [assistant?.config?.auto_document_max_window_seconds],
   );
   const browserSpeechReady = recognitionBackend === "browser_asr";
@@ -1696,13 +1688,19 @@ export function VoiceSecretaryComposerControl({
         window.clearTimeout(servicePartialCommitTimerRef.current);
         servicePartialCommitTimerRef.current = null;
       }
+      if (serviceDocumentCheckpointTimerRef.current !== null) {
+        window.clearTimeout(serviceDocumentCheckpointTimerRef.current);
+        serviceDocumentCheckpointTimerRef.current = null;
+      }
       browserFinalTranscriptBufferRef.current = "";
       serviceLatestPartialTranscriptRef.current = "";
       serviceCommittedTranscriptRef.current = "";
+      serviceDocumentCommittedTranscriptRef.current = "";
       serviceFinalAsrTextRef.current = "";
       serviceAudioResamplerRef.current = null;
       serviceAudioDurationMsRef.current = 0;
       serviceCommittedEndMsRef.current = 0;
+      serviceDocumentCommittedEndMsRef.current = 0;
       serviceFinalSpeakerSegmentsRef.current = [];
       serviceProvisionalSpeakerSegmentsRef.current = [];
       if (browserSpeechRestartTimerRef.current !== null) {
@@ -1749,6 +1747,12 @@ export function VoiceSecretaryComposerControl({
     if (servicePartialCommitTimerRef.current === null) return;
     window.clearTimeout(servicePartialCommitTimerRef.current);
     servicePartialCommitTimerRef.current = null;
+  }, []);
+
+  const clearServiceDocumentCheckpointTimer = useCallback(() => {
+    if (serviceDocumentCheckpointTimerRef.current === null) return;
+    window.clearTimeout(serviceDocumentCheckpointTimerRef.current);
+    serviceDocumentCheckpointTimerRef.current = null;
   }, []);
 
   const clearBrowserSpeechMediaHandlers = useCallback(() => {
@@ -1815,12 +1819,12 @@ export function VoiceSecretaryComposerControl({
       endMs?: number;
       speakerSegments?: Record<string, unknown>[];
     },
-  ) => {
+  ): Promise<boolean> => {
     const gid = String(selectedGroupId || "").trim();
-    if (!gid || !assistantEnabled) return;
+    if (!gid || !assistantEnabled) return false;
     const cleanText = String(text || "").trim();
     const flush = Boolean(opts?.flush);
-    if (!cleanText && !flush) return;
+    if (!cleanText && !flush) return false;
     const targetDocumentPath = String(opts?.documentPath || captureTargetDocumentPathRef.current || "").trim();
     const segmentSeq = transcriptSegmentSeqRef.current + 1;
     transcriptSegmentSeqRef.current = segmentSeq;
@@ -1848,10 +1852,10 @@ export function VoiceSecretaryComposerControl({
         },
         by: "user",
       });
-      if (!isCurrentGroup(gid)) return;
+      if (!isCurrentGroup(gid)) return false;
       if (!resp.ok) {
         showError(resp.error.message);
-        return;
+        return false;
       }
       applyTranscriptAppendResult(resp.result);
       const resultDocumentPath = voiceDocumentPath(resp.result.document) || targetDocumentPath;
@@ -1862,11 +1866,13 @@ export function VoiceSecretaryComposerControl({
           endMs: opts?.endMs,
         });
       }
+      return true;
     } catch {
-      if (!isCurrentGroup(gid)) return;
+      if (!isCurrentGroup(gid)) return false;
       showError(t("voiceSecretaryTranscriptAppendFailed", {
         defaultValue: "Failed to save Voice Secretary transcript segment.",
       }));
+      return false;
     }
   }, [
     applyTranscriptAppendResult,
@@ -1881,6 +1887,53 @@ export function VoiceSecretaryComposerControl({
     showError,
     t,
   ]);
+
+  const flushServiceDocumentCheckpoint = useCallback(async (triggerKind = "max_window"): Promise<boolean> => {
+    clearServiceDocumentCheckpointTimer();
+    if (captureMode !== "document") return false;
+    const committedDocumentText = normalizeBrowserTranscriptChunk(serviceDocumentCommittedTranscriptRef.current);
+    const finalAsrText = normalizeBrowserTranscriptChunk(serviceFinalAsrTextRef.current);
+    const streamingText = normalizeBrowserTranscriptChunk(serviceCommittedTranscriptRef.current || serviceFinalTranscriptRef.current);
+    const stableText = committedDocumentText && finalAsrText.startsWith(committedDocumentText)
+      ? finalAsrText
+      : streamingText;
+    const newText = nextUncommittedServiceTranscriptText(stableText, committedDocumentText);
+    if (!newText) return false;
+    const startMs = serviceDocumentCommittedEndMsRef.current;
+    const endMs = Math.max(startMs, serviceCommittedEndMsRef.current || serviceAudioDurationMsRef.current);
+    const ok = await appendTranscriptSegment(newText, {
+      flush: true,
+      triggerKind,
+      source: "assistant_service_local_asr_streaming",
+      inputDeviceLabel: selectedAudioDeviceLabel,
+      documentPath: effectiveCaptureTargetDocumentPath,
+      startMs,
+      endMs,
+      speakerSegments: serviceFinalSpeakerSegmentsRef.current.length
+        ? serviceFinalSpeakerSegmentsRef.current
+        : serviceProvisionalSpeakerSegmentsRef.current,
+    });
+    if (!ok) return false;
+    serviceDocumentCommittedTranscriptRef.current = mergeTranscriptChunks(committedDocumentText, newText);
+    serviceDocumentCommittedEndMsRef.current = endMs;
+    return true;
+  }, [
+    appendTranscriptSegment,
+    captureMode,
+    clearServiceDocumentCheckpointTimer,
+    effectiveCaptureTargetDocumentPath,
+    selectedAudioDeviceLabel,
+  ]);
+
+  const scheduleServiceDocumentCheckpoint = useCallback(() => {
+    if (captureMode !== "document") return;
+    if (autoDocumentMaxWindowMs === null) return;
+    if (serviceDocumentCheckpointTimerRef.current !== null) return;
+    serviceDocumentCheckpointTimerRef.current = window.setTimeout(() => {
+      serviceDocumentCheckpointTimerRef.current = null;
+      void flushServiceDocumentCheckpoint("max_window");
+    }, autoDocumentMaxWindowMs);
+  }, [autoDocumentMaxWindowMs, captureMode, flushServiceDocumentCheckpoint]);
 
   const sendInstructionTranscript = useCallback(async (
     text: string,
@@ -2092,26 +2145,16 @@ export function VoiceSecretaryComposerControl({
     takeBrowserFinalTranscriptBuffer,
   ]);
 
-  const scheduleTranscriptFlush = useCallback((triggerKind: string, options?: { preserveExisting?: boolean }) => {
-    if (options?.preserveExisting && transcriptFlushTimerRef.current !== null) return;
-    clearTranscriptFlushTimer();
-    const documentPath = captureTargetDocumentPathRef.current;
-    // Browser speech boundary events can lag; use recognition-result idle as
-    // the primary quiet window. Delayed speechend must not postpone it.
-    transcriptFlushTimerRef.current = window.setTimeout(() => {
-      transcriptFlushTimerRef.current = null;
-      void flushBrowserTranscriptWindow(triggerKind, { documentPath });
-    }, effectiveAutoDocumentQuietMs);
-  }, [clearTranscriptFlushTimer, effectiveAutoDocumentQuietMs, flushBrowserTranscriptWindow]);
-
   const scheduleTranscriptMaxFlush = useCallback((triggerKind: string) => {
+    if (captureMode !== "document") return;
+    if (autoDocumentMaxWindowMs === null) return;
     if (transcriptMaxFlushTimerRef.current !== null) return;
     const documentPath = captureTargetDocumentPathRef.current;
     transcriptMaxFlushTimerRef.current = window.setTimeout(() => {
       transcriptMaxFlushTimerRef.current = null;
       void flushBrowserTranscriptWindow(triggerKind, { documentPath });
     }, autoDocumentMaxWindowMs);
-  }, [autoDocumentMaxWindowMs, flushBrowserTranscriptWindow]);
+  }, [autoDocumentMaxWindowMs, captureMode, flushBrowserTranscriptWindow]);
 
   const queueBrowserFinalTranscript = useCallback((text: string) => {
     const clean = normalizeBrowserTranscriptChunk(text);
@@ -2176,20 +2219,24 @@ export function VoiceSecretaryComposerControl({
     serviceFinalTranscriptRef.current = "";
     serviceLatestPartialTranscriptRef.current = "";
     serviceCommittedTranscriptRef.current = "";
+    serviceDocumentCommittedTranscriptRef.current = "";
     serviceFinalAsrTextRef.current = "";
     serviceAudioPendingPcmRef.current = [];
     serviceAudioResamplerRef.current = null;
     serviceAudioDurationMsRef.current = 0;
     serviceCommittedEndMsRef.current = 0;
+    serviceDocumentCommittedEndMsRef.current = 0;
     serviceFinalSpeakerSegmentsRef.current = [];
     serviceProvisionalSpeakerSegmentsRef.current = [];
     clearServicePartialCommitTimer();
+    clearServiceDocumentCheckpointTimer();
     releaseVoiceRecordingGuards();
     recordingRef.current = false;
     setRecording(false);
     endRecordingRun(runId);
   }, [
     clearBrowserSpeechMediaHandlers,
+    clearServiceDocumentCheckpointTimer,
     clearServicePartialCommitTimer,
     endRecordingRun,
     isActiveRecordingRun,
@@ -2259,6 +2306,7 @@ export function VoiceSecretaryComposerControl({
     const ws = serviceAudioWsRef.current;
     const processor = serviceAudioProcessorRef.current;
     if (processor) processor.onaudioprocess = null;
+    clearServiceDocumentCheckpointTimer();
     if (voiceCaptureStopAction().releaseLocalMicrophoneNow) {
       releaseLocalMicrophoneCapture();
     }
@@ -2266,7 +2314,11 @@ export function VoiceSecretaryComposerControl({
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
         serviceAudioSeqRef.current += 1;
-        ws.send(JSON.stringify({ type: "stop", seq: serviceAudioSeqRef.current }));
+        ws.send(JSON.stringify({
+          type: "stop",
+          seq: serviceAudioSeqRef.current,
+          skip_final_document_apply: captureMode === "document" && Boolean(normalizeBrowserTranscriptChunk(serviceDocumentCommittedTranscriptRef.current)),
+        }));
         return;
       } catch {
         // fall through to local cleanup
@@ -2286,7 +2338,7 @@ export function VoiceSecretaryComposerControl({
       // fall through to cleanup
     }
     cleanupServiceAudio(stopRunId || undefined);
-  }, [cleanupServiceAudio, releaseLocalMicrophoneCapture, setRecordingStartingFlag]);
+  }, [captureMode, cleanupServiceAudio, clearServiceDocumentCheckpointTimer, releaseLocalMicrophoneCapture, setRecordingStartingFlag]);
 
   const stopCurrentRecording = useCallback(() => {
     if (mediaRecorderRef.current || serviceAudioWsRef.current) {
@@ -2330,12 +2382,14 @@ export function VoiceSecretaryComposerControl({
     clearTranscriptFlushTimer();
     clearTranscriptMaxFlushTimer();
     clearServicePartialCommitTimer();
+    clearServiceDocumentCheckpointTimer();
     cleanupServiceAudio();
     releaseVoiceRecordingGuards();
   }, [
     cleanupServiceAudio,
     clearBrowserSpeechRestartTimer,
     clearBrowserSpeechStopFinalizeTimer,
+    clearServiceDocumentCheckpointTimer,
     clearServicePartialCommitTimer,
     clearTranscriptFlushTimer,
     clearTranscriptMaxFlushTimer,
@@ -2532,10 +2586,6 @@ export function VoiceSecretaryComposerControl({
           if (!isActiveRecordingRun(runId)) return;
           clearTranscriptFlushTimer();
         };
-        recognition.onspeechend = () => {
-          if (!isActiveRecordingRun(runId)) return;
-          scheduleTranscriptFlush("speech_end", { preserveExisting: true });
-        };
         recognition.onresult = (event) => {
           if (!isActiveRecordingRun(runId)) return;
           let finalText = "";
@@ -2562,9 +2612,6 @@ export function VoiceSecretaryComposerControl({
           if (hasFinalText) {
             queueBrowserFinalTranscript(finalText);
             updateLiveTranscriptPreview(finalText, "final");
-          }
-          if (hasFinalText || cleanInterimText) {
-            scheduleTranscriptFlush("result_idle");
           }
         };
         recognition.onerror = (event) => {
@@ -2720,7 +2767,6 @@ export function VoiceSecretaryComposerControl({
     loadAudioDevices,
     queueBrowserFinalTranscript,
     releaseVoiceRecordingGuards,
-    scheduleTranscriptFlush,
     selectedGroupId,
     showError,
     t,
@@ -2754,10 +2800,12 @@ export function VoiceSecretaryComposerControl({
       serviceCommittedEndMsRef.current = endMs;
     }
     serviceCommittedTranscriptRef.current = mergeTranscriptChunks(committed, newText);
+    scheduleServiceDocumentCheckpoint();
   }, [
     captureMode,
     clearServicePartialCommitTimer,
     finalizeLiveTranscriptPreview,
+    scheduleServiceDocumentCheckpoint,
     updateLiveTranscriptPreview,
   ]);
 
@@ -2921,9 +2969,12 @@ export function VoiceSecretaryComposerControl({
       serviceAudioResamplerRef.current = new Pcm16Resampler(audioContext.sampleRate);
       serviceAudioDurationMsRef.current = 0;
       serviceCommittedEndMsRef.current = 0;
+      serviceDocumentCommittedEndMsRef.current = 0;
+      serviceDocumentCommittedTranscriptRef.current = "";
       serviceFinalSpeakerSegmentsRef.current = [];
       serviceProvisionalSpeakerSegmentsRef.current = [];
       clearServicePartialCommitTimer();
+      clearServiceDocumentCheckpointTimer();
       processor.onaudioprocess = (event) => {
         const activeWs = serviceAudioWsRef.current;
         if (!recordingRef.current || !isActiveRecordingRun(runId)) return;
@@ -3009,7 +3060,12 @@ export function VoiceSecretaryComposerControl({
               const finalText = String(payload.text || "").trim();
               if (isMeaningfulVoiceDispatchText(finalText)) {
                 serviceFinalAsrTextRef.current = finalText;
-                await handleServiceStreamingFinal(finalText);
+                const hasWindowedDocumentCheckpoint = Boolean(
+                  captureMode === "document" && normalizeBrowserTranscriptChunk(serviceDocumentCommittedTranscriptRef.current),
+                );
+                if (!hasWindowedDocumentCheckpoint) {
+                  await handleServiceStreamingFinal(finalText);
+                }
               }
             }
             return;
@@ -3054,6 +3110,9 @@ export function VoiceSecretaryComposerControl({
           }
           if (type === "closed") {
             await commitServiceLatestPartialTranscript();
+            if (captureMode === "document" && normalizeBrowserTranscriptChunk(serviceDocumentCommittedTranscriptRef.current)) {
+              await flushServiceDocumentCheckpoint("service_transcript");
+            }
             if (!isActiveRecordingRun(runId)) return;
             const dispatchText = serviceFinalAsrTextRef.current
               || serviceCommittedTranscriptRef.current
@@ -3130,9 +3189,11 @@ export function VoiceSecretaryComposerControl({
     beginRecordingRun,
     cleanupServiceAudio,
     commitServiceLatestPartialTranscript,
+    flushServiceDocumentCheckpoint,
     getAudioCaptureErrorMessage,
     getAudioSupportIssueMessage,
     handleServiceStreamingFinal,
+    clearServiceDocumentCheckpointTimer,
     clearServicePartialCommitTimer,
     finishRecordingStart,
     loadAudioDevices,

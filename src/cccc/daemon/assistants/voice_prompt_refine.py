@@ -75,6 +75,7 @@ def build_voice_prompt_refine_input_text(
         [
             "draft_text rule:",
             "Put only composer text in the cccc_voice_secretary_composer draft_text argument; do not print the draft in chat or console.",
+            "If the spoken input contains no useful change and the current composer draft should stay as-is, submit cccc_voice_secretary_composer with no_op=true and no placeholder draft_text.",
         ]
     )
     if replace_operation:

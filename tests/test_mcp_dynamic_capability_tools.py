@@ -141,6 +141,30 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         self.assertEqual(args.get("by"), "voice-secretary")
         self.assertEqual(args.get("request_id"), "voice-prompt-1")
         self.assertEqual(args.get("operation"), "")
+        self.assertFalse(args.get("no_op"))
+
+    def test_voice_secretary_composer_no_op_routes_to_daemon(self) -> None:
+        from cccc.ports.mcp.server import handle_tool_call
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "voice-secretary"}, clear=False), patch(
+            "cccc.ports.mcp.server._call_daemon_or_raise",
+            return_value={"ok": True},
+        ) as daemon_call:
+            handle_tool_call(
+                "cccc_voice_secretary_composer",
+                {
+                    "action": "submit_prompt_draft",
+                    "request_id": "voice-prompt-1",
+                    "no_op": True,
+                },
+            )
+
+        req = daemon_call.call_args.args[0]
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(req.get("op"), "assistant_voice_prompt_draft_submit")
+        self.assertEqual(args.get("request_id"), "voice-prompt-1")
+        self.assertTrue(args.get("no_op"))
+        self.assertEqual(args.get("draft_text"), "")
 
     def test_voice_secretary_document_list_defaults_to_compact_content(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call

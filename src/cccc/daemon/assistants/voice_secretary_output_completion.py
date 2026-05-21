@@ -20,6 +20,8 @@ from .assistant_ops import (
     _trim_voice_prompt_drafts,
 )
 
+_PROMPT_DRAFT_NO_OP_STATUSES = {"no_change", "no_op"}
+
 
 def _missing_composer_request_ids(
     diagnostics: Dict[str, Any],
@@ -74,8 +76,35 @@ def complete_missing_composer_drafts(*, group_id: str, diagnostics: Dict[str, An
     drafts = state.setdefault("voice_prompt_drafts", {})
     completed: List[str] = []
     events: List[Dict[str, Any]] = []
+    pending_draft_completed = False
     for request_id in request_ids:
         existing = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
+        existing_status = str(existing.get("status") or "").strip().lower()
+        if existing_status in _PROMPT_DRAFT_NO_OP_STATUSES:
+            if request_id in missing_updated_at_request_ids:
+                updated = dict(existing)
+                updated["updated_at"] = now
+                if not str(updated.get("by") or "").strip():
+                    updated["by"] = _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY)
+                drafts[request_id] = updated
+                events.append(
+                    append_event(
+                        group.ledger_path,
+                        kind="assistant.voice.prompt_draft",
+                        group_id=group.group_id,
+                        scope_key="",
+                        by=_assistant_principal(ASSISTANT_ID_VOICE_SECRETARY),
+                        data={
+                            "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                            "request_id": request_id,
+                            "action": "auto_refresh",
+                            "status": str(updated.get("status") or "no_change"),
+                            "draft_preview": "",
+                        },
+                    )
+                )
+            completed.append(request_id)
+            continue
         if request_id in missing_updated_at_request_ids and str(existing.get("draft_text") or "").strip():
             updated = dict(existing)
             updated["updated_at"] = now
@@ -99,9 +128,11 @@ def complete_missing_composer_drafts(*, group_id: str, diagnostics: Dict[str, An
                     },
                 )
             )
+            pending_draft_completed = True
             continue
         if str(existing.get("draft_text") or "").strip():
             completed.append(request_id)
+            pending_draft_completed = True
             continue
         request_record = requests.get(request_id) if isinstance(requests.get(request_id), dict) else {}
         if not request_record:
@@ -128,6 +159,7 @@ def complete_missing_composer_drafts(*, group_id: str, diagnostics: Dict[str, An
         }
         drafts[request_id] = record
         completed.append(request_id)
+        pending_draft_completed = True
         events.append(
             append_event(
                 group.ledger_path,
@@ -148,11 +180,13 @@ def complete_missing_composer_drafts(*, group_id: str, diagnostics: Dict[str, An
     if completed:
         state["voice_prompt_drafts"] = _trim_voice_prompt_drafts(drafts)
         _save_runtime_state(group, state)
+        lifecycle = "waiting" if pending_draft_completed else "idle"
+        health_status = "prompt_draft_auto_filled" if pending_draft_completed else "prompt_draft_no_change"
         _set_voice_assistant_runtime(
             group,
-            lifecycle="waiting",
+            lifecycle=lifecycle,
             health={
-                "status": "prompt_draft_auto_filled",
+                "status": health_status,
                 "last_prompt_request_id": completed[-1],
                 "last_prompt_draft_at": now,
             },
