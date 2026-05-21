@@ -168,6 +168,7 @@ export function MessageFooter({
     : webModelDeliveryStatus?.state === "submitted"
       ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
       : "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
+  const allRead = visibleReadStatusEntries.length > 0 && visibleReadStatusEntries.every(([_, cleared]) => cleared);
 
   return (
     <div
@@ -195,15 +196,15 @@ export function MessageFooter({
         ) : null}
         {obligationSummary ? (
           readOnly ? (
-            <div className="flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]">
-              <span
-                className={classNames(
-                  "text-[10px] font-semibold tracking-tight",
-                  obligationSummary.done >= obligationSummary.total
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-amber-600 dark:text-amber-400",
-                )}
-              >
+            <div
+              className={classNames(
+                "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
+                obligationSummary.done >= obligationSummary.total
+                  ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/5"
+                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5"
+              )}
+            >
+              <span className="text-[10px] font-semibold tracking-tight">
                 {obligationSummary.kind === "reply" ? t("reply") : t("ack")} {obligationSummary.done}/{obligationSummary.total}
               </span>
             </div>
@@ -211,35 +212,30 @@ export function MessageFooter({
             <button
               type="button"
               className={classNames(
-                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]",
-                "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]",
+                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
+                obligationSummary.done >= obligationSummary.total
+                  ? "border-emerald-500/25 bg-emerald-500/6 hover:bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/8 dark:hover:bg-emerald-500/15"
+                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15"
               )}
               onClick={onShowRecipients}
               aria-label={t("showObligationStatus")}
             >
-              <span
-                className={classNames(
-                  "text-[10px] font-semibold tracking-tight",
-                  obligationSummary.done >= obligationSummary.total
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-amber-600 dark:text-amber-400",
-                )}
-              >
+              <span className="text-[10px] font-semibold tracking-tight">
                 {obligationSummary.kind === "reply" ? t("reply") : t("ack")} {obligationSummary.done}/{obligationSummary.total}
               </span>
             </button>
           )
         ) : ackSummary ? (
           readOnly ? (
-            <div className="flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]">
-              <span
-                className={classNames(
-                  "text-[10px] font-semibold tracking-tight",
-                  ackSummary.done >= ackSummary.total
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-amber-600 dark:text-amber-400",
-                )}
-              >
+            <div
+              className={classNames(
+                "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
+                ackSummary.done >= ackSummary.total
+                  ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/5"
+                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5"
+              )}
+            >
+              <span className="text-[10px] font-semibold tracking-tight">
                 {t("ack")} {ackSummary.done}/{ackSummary.total}
               </span>
             </div>
@@ -247,35 +243,39 @@ export function MessageFooter({
             <button
               type="button"
               className={classNames(
-                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]",
-                "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]",
+                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
+                ackSummary.done >= ackSummary.total
+                  ? "border-emerald-500/25 bg-emerald-500/6 hover:bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/8 dark:hover:bg-emerald-500/15"
+                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15"
               )}
               onClick={onShowRecipients}
               aria-label={t("showAckStatus")}
             >
-              <span
-                className={classNames(
-                  "text-[10px] font-semibold tracking-tight",
-                  ackSummary.done >= ackSummary.total
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-amber-600 dark:text-amber-400",
-                )}
-              >
+              <span className="text-[10px] font-semibold tracking-tight">
                 {t("ack")} {ackSummary.done}/{ackSummary.total}
               </span>
             </button>
           )
         ) : visibleReadStatusEntries.length > 0 ? (
           readOnly ? (
-            <div className="flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]">
+            <div
+              className={classNames(
+                "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
+                allRead
+                  ? "border-emerald-500/15 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/15 dark:bg-emerald-500/5"
+                  : "border-black/5 bg-black/[0.025] dark:border-white/8 dark:bg-white/[0.035]"
+              )}
+            >
               {renderRecipientStatus()}
             </div>
           ) : (
             <button
               type="button"
               className={classNames(
-                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border border-black/5 bg-black/[0.035] px-2.5 py-1 dark:border-white/8 dark:bg-white/[0.045]",
-                "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]",
+                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
+                allRead
+                  ? "border-emerald-500/15 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/15 dark:bg-emerald-500/5 dark:hover:bg-emerald-500/10"
+                  : "border-black/5 bg-black/[0.025] hover:bg-black/[0.045] dark:border-white/8 dark:bg-white/[0.035] dark:hover:bg-white/[0.055]"
               )}
               onClick={onShowRecipients}
               aria-label={t("showRecipientStatus")}

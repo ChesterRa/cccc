@@ -59,9 +59,11 @@ export const ActorAvatar = memo(function ActorAvatar({
         sizeClassName,
         textClassName,
         isUser
-          ? "bg-[linear-gradient(135deg,rgb(245,245,245)_0%,rgb(232,234,236)_100%)] text-[rgb(35,36,37)] border border-black/6"
+          ? isDark
+            ? "bg-[linear-gradient(135deg,#1f2937_0%,#111827_100%)] text-gray-200 border border-white/10"
+            : "bg-[linear-gradient(135deg,rgb(245,245,245)_0%,rgb(232,234,236)_100%)] text-[rgb(35,36,37)] border border-black/6"
           : isDark
-            ? "bg-slate-700 text-slate-200"
+            ? "bg-[linear-gradient(135deg,var(--glass-tab-bg-hover)_0%,var(--glass-tab-bg-active)_100%)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]"
             : "border border-gray-200 bg-white text-gray-700",
         !isUser && accentRingClassName ? `ring-1 ring-inset ${accentRingClassName}` : "",
         className,

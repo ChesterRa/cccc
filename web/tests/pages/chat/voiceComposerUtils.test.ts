@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   shouldAutoOpenVoiceReplyBubble,
+  stripUncertainSpeakerPrefix,
   voiceTranscriptItemsFromMeetingSession,
 } from "../../../src/pages/chat/voice-secretary/voiceComposerUtils";
 
@@ -64,5 +65,9 @@ describe("voice composer utils", () => {
         ],
       },
     })).toEqual([]);
+  });
+
+  it("strips uncertain speaker placeholders from restored transcript text", () => {
+    expect(stripUncertainSpeakerPrefix("Speaker ?: first line\nSpeaker ?: second line")).toBe("first line second line");
   });
 });

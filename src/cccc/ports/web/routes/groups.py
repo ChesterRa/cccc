@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import logging
+import math
 import mimetypes
+import struct
 import tempfile
 from pathlib import Path
 import time
@@ -45,7 +48,11 @@ from ....daemon.assistants.voice_speaker_identity import (
     run_provisional_diarization_prefix,
 )
 from ....daemon.assistants.voice_final_asr import build_final_asr_text_event
-from ....daemon.assistants.voice_final_document_apply import apply_final_speaker_transcript_to_document
+from ....daemon.assistants.voice_final_document_apply import (
+    apply_final_speaker_transcript_to_document,
+    apply_final_text_to_document,
+    is_meaningful_voice_text,
+)
 from ....daemon.assistants.voice_speaker_transcripts import build_offline_speaker_transcript_segments
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
 from ....runners import headless as headless_runner
@@ -132,6 +139,7 @@ _VOICE_DIARIZATION_INTERVAL_MS = 8_000
 _VOICE_DIARIZATION_MIN_AUDIO_MS = 10_000
 _VOICE_DIARIZATION_ENABLE_PROVISIONAL = True
 _VOICE_PCM16_BYTES_PER_SAMPLE = 2
+_VOICE_PCM16_ACTIVE_THRESHOLD = 800
 WEB_MAX_GROUP_COPY_PACKAGE_BYTES = 100 * 1024 * 1024
 
 
@@ -173,6 +181,31 @@ def _voice_meeting_segments_path(group_id: str, session_id: str) -> Path:
 
 def _voice_meeting_audio_path(group_id: str, session_id: str) -> Path:
     return _voice_meeting_session_dir(group_id, session_id) / "audio.pcm16"
+
+
+def _safe_voice_document_id(value: Any = "") -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    safe = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in raw).strip(".-")[:96]
+    return safe
+
+
+def _voice_documents_root(group_id: str) -> Path:
+    return ensure_home() / "voice-secretary" / str(group_id or "").strip() / "documents"
+
+
+def _voice_documents_index_path(group_id: str) -> Path:
+    return _voice_documents_root(group_id) / "index.json"
+
+
+def _voice_document_transcript_path(group_id: str, document_id: str) -> Path:
+    return _voice_documents_root(group_id) / _safe_voice_document_id(document_id) / "transcript.jsonl"
+
+
+def _voice_document_id_for_workspace_path(workspace_path: str) -> str:
+    digest = hashlib.sha1(str(workspace_path or "").encode("utf-8")).hexdigest()[:24]
+    return _safe_voice_document_id(f"voice-doc-{digest}")
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
@@ -238,6 +271,108 @@ def _read_voice_meeting_segments(group_id: str, session_id: str, *, limit: int =
     return rows
 
 
+def _voice_document_record_for_path(group_id: str, document_path: str) -> dict[str, Any]:
+    target = str(document_path or "").strip()
+    if not target:
+        return {}
+    index = _read_json_file(_voice_documents_index_path(group_id))
+    documents = index.get("documents") if isinstance(index.get("documents"), dict) else {}
+    for raw_id, raw_record in documents.items():
+        if not isinstance(raw_record, dict):
+            continue
+        record_path = str(raw_record.get("document_path") or raw_record.get("workspace_path") or "").strip()
+        if record_path == target:
+            record = dict(raw_record)
+            record["document_id"] = str(record.get("document_id") or raw_id or "").strip()
+            record["document_path"] = target
+            return record
+    fallback_id = _voice_document_id_for_workspace_path(target)
+    if _voice_document_transcript_path(group_id, fallback_id).exists():
+        return {"document_id": fallback_id, "document_path": target}
+    return {}
+
+
+def _append_voice_document_transcript_segment(
+    group_id: str,
+    *,
+    document_path: str,
+    segment: dict[str, Any],
+    segment_path: str = "",
+) -> None:
+    record = _voice_document_record_for_path(group_id, document_path)
+    doc_id = str(record.get("document_id") or "").strip()
+    text = str(segment.get("text") or "").strip()
+    if not doc_id or not text:
+        return
+    path = _voice_document_transcript_path(group_id, doc_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    now = utc_now_iso()
+    payload = {
+        "schema": 1,
+        "document_id": doc_id,
+        "document_path": str(record.get("document_path") or document_path or "").strip(),
+        "created_at": str(segment.get("created_at") or now),
+        "updated_at": str(segment.get("updated_at") or now),
+        "session_id": _safe_voice_session_id(segment.get("session_id") or ""),
+        "segment_id": str(segment.get("segment_id") or ""),
+        "text": text,
+        "language": str(segment.get("language") or ""),
+        "is_final": bool(segment.get("is_final", True)),
+        "start_ms": segment.get("start_ms"),
+        "end_ms": segment.get("end_ms"),
+        "speaker_label": str(segment.get("speaker_label") or ""),
+        "by": str(segment.get("by") or ""),
+        "segment_path": segment_path,
+        "trigger": dict(segment.get("trigger")) if isinstance(segment.get("trigger"), dict) else {},
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _read_voice_document_transcript_segments(group_id: str, document_path: str, *, limit: int = 1000) -> list[dict[str, Any]]:
+    record = _voice_document_record_for_path(group_id, document_path)
+    doc_id = str(record.get("document_id") or "").strip()
+    if not doc_id:
+        return []
+    path = _voice_document_transcript_path(group_id, doc_id)
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    for line in lines[-max(1, int(limit)) :]:
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict) and str(payload.get("text") or "").strip():
+            rows.append(payload)
+    return rows
+
+
+def _read_voice_document_transcript_session(group_id: str, document_path: str) -> dict[str, Any]:
+    rows = _read_voice_document_transcript_segments(group_id, document_path)
+    if not rows:
+        return {}
+    record = _voice_document_record_for_path(group_id, document_path)
+    doc_id = str(record.get("document_id") or "").strip()
+    return {
+        "schema": 1,
+        "group_id": str(group_id or "").strip(),
+        "session_id": f"document-{doc_id}" if doc_id else "document-transcript",
+        "status": "ready",
+        "capture_mode": "document",
+        "document_path": str(document_path or "").strip(),
+        "created_at": str(rows[0].get("created_at") or ""),
+        "updated_at": str(rows[-1].get("updated_at") or rows[-1].get("created_at") or ""),
+        "segments": rows,
+        "diarization": {},
+        "source": "document_transcript",
+    }
+
+
 def _voice_meeting_transcript_text(group_id: str, session_id: str, *, limit: int = 200) -> str:
     texts: list[str] = []
     for segment in _read_voice_meeting_segments(group_id, session_id, limit=limit):
@@ -260,11 +395,20 @@ def _read_voice_meeting_session(group_id: str, session_id: str) -> dict[str, Any
     }
 
 
-def _read_latest_voice_meeting_session(group_id: str, *, document_path: str = "") -> dict[str, Any]:
+def _read_latest_voice_meeting_session(
+    group_id: str,
+    *,
+    document_path: str = "",
+    prefer_document_transcript: bool = True,
+) -> dict[str, Any]:
     root = ensure_home() / "voice-secretary" / str(group_id or "").strip()
+    target_document_path = str(document_path or "").strip()
+    if prefer_document_transcript and target_document_path:
+        document_session = _read_voice_document_transcript_session(group_id, target_document_path)
+        if document_session:
+            return document_session
     if not root.exists():
         return {}
-    target_document_path = str(document_path or "").strip()
     candidates = []
     for path in root.glob("*/session.json"):
         if not path.is_file():
@@ -361,6 +505,7 @@ async def _run_voice_meeting_diarization_background(
                 speaker_segments,
                 sample_rate=sample_rate,
                 selected_model_id=final_asr_model_id,
+                language=language,
             )
         except LocalStreamingAsrError as exc:
             speaker_transcript_error = {"code": exc.code, "message": exc.message, "details": exc.details}
@@ -515,6 +660,52 @@ async def _run_voice_meeting_diarization_background(
 def _pcm16_duration_ms(byte_count: int, sample_rate: int) -> int:
     rate = max(1, int(sample_rate or 16000))
     return int(max(0, byte_count) / (_VOICE_PCM16_BYTES_PER_SAMPLE * rate) * 1000)
+
+
+def _empty_pcm16_audio_level_stats() -> dict[str, int]:
+    return {
+        "sample_count": 0,
+        "sum_squares": 0,
+        "peak": 0,
+        "active_samples": 0,
+    }
+
+
+def _update_pcm16_audio_level_stats(stats: dict[str, int], chunk: bytes) -> None:
+    even_length = len(chunk) - (len(chunk) % _VOICE_PCM16_BYTES_PER_SAMPLE)
+    if even_length <= 0:
+        return
+    sample_count = 0
+    sum_squares = 0
+    peak = 0
+    active_samples = 0
+    for (sample,) in struct.iter_unpack("<h", chunk[:even_length]):
+        amplitude = abs(int(sample))
+        sample_count += 1
+        sum_squares += amplitude * amplitude
+        if amplitude > peak:
+            peak = amplitude
+        if amplitude >= _VOICE_PCM16_ACTIVE_THRESHOLD:
+            active_samples += 1
+    stats["sample_count"] = int(stats.get("sample_count") or 0) + sample_count
+    stats["sum_squares"] = int(stats.get("sum_squares") or 0) + sum_squares
+    stats["peak"] = max(int(stats.get("peak") or 0), peak)
+    stats["active_samples"] = int(stats.get("active_samples") or 0) + active_samples
+
+
+def _pcm16_audio_level_summary(stats: dict[str, int], sample_rate: int) -> dict[str, Any]:
+    sample_count = int(stats.get("sample_count") or 0)
+    sum_squares = int(stats.get("sum_squares") or 0)
+    active_samples = int(stats.get("active_samples") or 0)
+    rms = math.sqrt(sum_squares / sample_count) if sample_count > 0 else 0.0
+    return {
+        "sample_count": sample_count,
+        "duration_ms": _pcm16_duration_ms(sample_count * _VOICE_PCM16_BYTES_PER_SAMPLE, sample_rate),
+        "rms": round(rms, 2),
+        "peak": int(stats.get("peak") or 0),
+        "active_ratio": round(active_samples / sample_count, 6) if sample_count > 0 else 0.0,
+        "active_threshold": _VOICE_PCM16_ACTIVE_THRESHOLD,
+    }
 
 
 _PRESENTATION_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
@@ -2299,6 +2490,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         streaming_pcm16_audio = bytearray()
         streaming_pcm16_path: Path | None = None
         streaming_pcm16_bytes = 0
+        streaming_audio_level_stats = _empty_pcm16_audio_level_stats()
         streaming_sample_rate = 16000
         streaming_final_asr_model_id = ""
         streaming_diarization_model_id = ""
@@ -2322,7 +2514,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             streaming_pcm16_bytes = 0
 
         def append_streaming_pcm16(chunk: bytes) -> None:
-            nonlocal streaming_pcm16_path, streaming_pcm16_bytes
+            nonlocal streaming_pcm16_path, streaming_pcm16_bytes, streaming_audio_level_stats
             if not chunk:
                 return
             if streaming_pcm16_path is None:
@@ -2332,6 +2524,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             with streaming_pcm16_path.open("ab") as handle:
                 handle.write(chunk)
             streaming_pcm16_bytes += len(chunk)
+            _update_pcm16_audio_level_stats(streaming_audio_level_stats, chunk)
 
         async def cleanup_streaming_state() -> None:
             nonlocal streaming_session, streaming_diarization_task, streaming_pcm16_audio
@@ -2382,6 +2575,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     )
                     streaming_language = str(payload.get("language") or config.get("recognition_language") or "").strip()
                     cleanup_streaming_pcm16()
+                    streaming_audio_level_stats = _empty_pcm16_audio_level_stats()
                     streaming_pcm16_audio = bytearray()
                     streaming_sample_rate = int(payload.get("sample_rate") or 16000)
                     streaming_diarization_ready = bool(sherpa_diarization_status(streaming_diarization_model_id).get("ready"))
@@ -2598,6 +2792,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                 and streaming_diarization_ready
                             ):
                                 audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
+                                audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
                                 persisted_pcm16_path = _persist_voice_meeting_pcm16(
                                     group_id,
                                     streaming_client_session_id,
@@ -2610,6 +2805,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                         "status": "separating_speakers",
                                         "sample_rate": streaming_sample_rate,
                                         "audio_duration_ms": audio_duration_ms,
+                                        "audio_level": audio_level,
                                         "segments": [],
                                         "speaker_transcript_segments": [],
                                         "speaker_transcript_error": None,
@@ -2622,6 +2818,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     {
                                         "status": "separating_speakers",
                                         "audio_duration_ms": audio_duration_ms,
+                                        "audio_level": audio_level,
                                         "audio_path": str(persisted_pcm16_path),
                                         "diarization_artifact_path": artifact_path,
                                         "final_asr_model_id": streaming_final_asr_model_id,
@@ -2648,6 +2845,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     language=streaming_language,
                                 ))
                             else:
+                                final_asr_text = ""
+                                final_apply_result: dict[str, Any] = {"ok": True, "result": {"applied": False}}
+                                final_asr_error: dict[str, Any] | None = None
+                                artifact_path = ""
+                                audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
+                                audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
                                 if (
                                     streaming_capture_mode in {"instruction", "prompt"}
                                     and streaming_pcm16_audio
@@ -2657,15 +2860,113 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                         selected_model_id=streaming_final_asr_model_id,
                                         sample_rate=streaming_sample_rate,
                                         seq=seq,
+                                        language=streaming_language,
+                                    )
+                                    if event is not None and is_meaningful_voice_text(event.get("text")):
+                                        await websocket.send_json(event)
+                                elif (
+                                    streaming_capture_mode == "document"
+                                    and streaming_pcm16_audio
+                                    and str(streaming_document_path or "").strip()
+                                ):
+                                    event = await build_final_asr_text_event(
+                                        bytes(streaming_pcm16_audio),
+                                        selected_model_id=streaming_final_asr_model_id,
+                                        sample_rate=streaming_sample_rate,
+                                        seq=seq,
+                                        language=streaming_language,
                                     )
                                     if event is not None:
-                                        await websocket.send_json(event)
+                                        raw_final_asr_text = str(event.get("text") or "").strip()
+                                        if is_meaningful_voice_text(raw_final_asr_text):
+                                            event["text"] = raw_final_asr_text
+                                            await websocket.send_json(event)
+                                            final_asr_text = raw_final_asr_text
+                                    if final_asr_text:
+                                        segment_id = f"final-{_safe_voice_session_id(streaming_client_session_id)}"
+                                        trigger = {
+                                            "mode": "meeting",
+                                            "capture_mode": "service",
+                                            "trigger_kind": "service_transcript",
+                                            "recognition_backend": "assistant_service_local_asr_final",
+                                            "client_session_id": streaming_client_session_id,
+                                            "final_asr_model_id": streaming_final_asr_model_id,
+                                            "sample_rate": streaming_sample_rate,
+                                            "document_path": streaming_document_path,
+                                        }
+                                        _append_voice_meeting_segment(
+                                            group_id,
+                                            streaming_client_session_id,
+                                            {
+                                                "segment_id": segment_id,
+                                                "text": final_asr_text,
+                                                "language": streaming_language,
+                                                "is_final": True,
+                                                "start_ms": 0,
+                                                "end_ms": audio_duration_ms,
+                                                "speaker_label": "",
+                                                "document_path": streaming_document_path,
+                                                "trigger": trigger,
+                                                "by": "user",
+                                            },
+                                        )
+                                        final_apply_result = await apply_final_text_to_document(
+                                            ctx.daemon,
+                                            group_id=group_id,
+                                            session_id=streaming_client_session_id,
+                                            document_path=streaming_document_path,
+                                            text=final_asr_text,
+                                            sample_rate=streaming_sample_rate,
+                                            language=streaming_language,
+                                            final_asr_model_id=streaming_final_asr_model_id,
+                                            audio_duration_ms=audio_duration_ms,
+                                        )
+                                        if not bool(final_apply_result.get("ok")):
+                                            error = final_apply_result.get("error") if isinstance(final_apply_result.get("error"), dict) else {}
+                                            final_asr_error = {
+                                                "code": str(error.get("code") or "final_transcript_apply_failed"),
+                                                "message": str(error.get("message") or "final transcript could not be applied"),
+                                                "details": error.get("details") if isinstance(error.get("details"), dict) else {},
+                                            }
+                                    else:
+                                        final_apply_result = {"ok": True, "result": {"applied": False, "reason": "empty_final_transcript"}}
+                                    artifact_path = _write_voice_speaker_transcript_artifact(
+                                        group_id,
+                                        streaming_client_session_id,
+                                        {
+                                            "status": "failed" if final_asr_error else "closed",
+                                            "sample_rate": streaming_sample_rate,
+                                            "audio_duration_ms": audio_duration_ms,
+                                            "audio_level": audio_level,
+                                            "segments": [],
+                                            "speaker_transcript_segments": (
+                                                [
+                                                    {
+                                                        "speaker_label": "",
+                                                        "text": final_asr_text,
+                                                        "start_ms": 0,
+                                                        "end_ms": audio_duration_ms,
+                                                    }
+                                                ]
+                                                if final_asr_text
+                                                else []
+                                            ),
+                                            "speaker_transcript_error": final_asr_error,
+                                            "speaker_transcript_model_id": streaming_final_asr_model_id,
+                                            "final_apply_result": final_apply_result,
+                                        },
+                                    )
                                 _write_voice_meeting_session(
                                     group_id,
                                     streaming_client_session_id,
                                     {
-                                        "status": "closed",
-                                        "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
+                                        "status": "failed" if final_asr_error else "closed",
+                                        "audio_duration_ms": audio_duration_ms,
+                                        "audio_level": audio_level,
+                                        "diarization_artifact_path": artifact_path if streaming_capture_mode == "document" else "",
+                                        "final_asr_text": final_asr_text,
+                                        "final_apply_result": final_apply_result,
+                                        "error": final_asr_error,
                                     },
                                 )
                             await websocket.send_json({"type": "closed", "ok": True, "seq": seq})
@@ -2675,6 +2976,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                 streaming_client_session_id,
                                 {
                                     "status": "failed",
+                                    "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
+                                    "audio_level": _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate),
                                     "error": {"code": exc.code, "message": exc.message, "details": exc.details},
                                 },
                             )
@@ -2800,9 +3103,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.delete("/assistants/voice_secretary/sessions/latest/transcript")
     async def group_voice_secretary_latest_session_transcript_clear(group_id: str, req: AssistantVoiceTranscriptClearRequest) -> Dict[str, Any]:
-        session = _read_latest_voice_meeting_session(group_id, document_path=req.document_path)
-        session_id = str(session.get("session_id") or "").strip()
         cleared = False
+        document_path = str(req.document_path or "").strip()
+        if document_path:
+            record = _voice_document_record_for_path(group_id, document_path)
+            doc_id = str(record.get("document_id") or "").strip()
+            if doc_id:
+                transcript_path = _voice_document_transcript_path(group_id, doc_id)
+                if transcript_path.exists():
+                    try:
+                        transcript_path.unlink()
+                        cleared = True
+                    except FileNotFoundError:
+                        cleared = True
+                else:
+                    cleared = True
+        session = _read_latest_voice_meeting_session(
+            group_id,
+            document_path=req.document_path,
+            prefer_document_transcript=False,
+        )
+        session_id = str(session.get("session_id") or "").strip()
         if session_id:
             path = _voice_meeting_segments_path(group_id, session_id)
             if path.exists():
@@ -2821,21 +3142,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group_id: str,
         req: AssistantVoiceTranscriptSegmentRequest,
     ) -> Dict[str, Any]:
+        segment_record = {
+            "segment_id": req.segment_id,
+            "session_id": req.session_id,
+            "text": req.text,
+            "language": req.language,
+            "is_final": req.is_final,
+            "start_ms": req.start_ms,
+            "end_ms": req.end_ms,
+            "speaker_label": req.speaker_label,
+            "document_path": req.document_path,
+            "trigger": dict(req.trigger),
+            "by": req.by,
+        }
         segment_path = _append_voice_meeting_segment(
             group_id,
             req.session_id,
-            {
-                "segment_id": req.segment_id,
-                "text": req.text,
-                "language": req.language,
-                "is_final": req.is_final,
-                "start_ms": req.start_ms,
-                "end_ms": req.end_ms,
-                "speaker_label": req.speaker_label,
-                "document_path": req.document_path,
-                "trigger": dict(req.trigger),
-                "by": req.by,
-            },
+            segment_record,
         )
         trigger_kind = str(req.trigger.get("trigger_kind") or "").strip().lower()
         _write_voice_meeting_session(
@@ -2853,6 +3176,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             },
         )
         if not req.flush:
+            _append_voice_document_transcript_segment(
+                group_id,
+                document_path=req.document_path,
+                segment=segment_record,
+                segment_path=segment_path,
+            )
             return {
                 "ok": True,
                 "result": {

@@ -87,16 +87,16 @@ function isStandardChatGptWebModelActor(actor?: Actor | null): boolean {
   );
 }
 
-function LazyModalFallback({ isDark }: { isDark: boolean }) {
+function LazyModalFallback({ isDark: _ }: { isDark?: boolean }) {
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
       <div
-        className={[
-          "rounded-2xl border px-4 py-3 text-sm shadow-xl",
-          isDark ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-700",
-        ].join(" ")}
+        className="rounded-2xl px-5 py-4 text-sm shadow-xl glass-modal min-w-[120px] flex items-center justify-center font-medium text-[var(--color-text-secondary)]"
       >
-        Loading...
+        <span className="flex items-center gap-2">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-text-muted)] border-t-transparent" />
+          <span>Loading...</span>
+        </span>
       </div>
     </div>
   );

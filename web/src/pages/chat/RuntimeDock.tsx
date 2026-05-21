@@ -338,7 +338,7 @@ function RuntimeDockActorButton({
             ? classNames(
                 "scale-[1.04] shadow-[0_18px_40px_-28px_rgba(62,80,103,0.32)]"
               )
-            : "hover:scale-[1.02]",
+            : "hover:scale-[1.05] active:scale-[0.95]",
         )}
         aria-label={item.runner === "headless"
           ? t("chat:runtimeDockOpenLiveWork", {

@@ -62,10 +62,11 @@ class VoiceFinalAsrTests(unittest.TestCase):
                         selected_model_id="sense_voice",
                         sample_rate=16000,
                         seq=7,
+                        language="zh-CN",
                     )
                 ]
 
-            open_session.assert_awaited_once()
+            open_session.assert_awaited_once_with("sense_voice", sample_rate=16000, language="zh-CN")
             self.assertEqual(session.calls, 2)
             self.assertTrue(session.closed)
             self.assertEqual([event.text for event in events if event.text], ["text-1", "text-2"])
@@ -73,7 +74,7 @@ class VoiceFinalAsrTests(unittest.TestCase):
             final_payloads = [event.payload for event in events if event.payload.get("type") == "final"]
             self.assertEqual(final_payloads[0]["model_id"], "sense_voice")
             self.assertEqual(final_payloads[0]["engine"], "sense_voice")
-            self.assertEqual(final_payloads[0]["language"], "auto")
+            self.assertEqual(final_payloads[0]["language"], "zh")
             self.assertIn("quality_flags", final_payloads[0])
 
         asyncio.run(run_case())
@@ -274,7 +275,31 @@ class BuildFinalAsrTextEventTests(unittest.TestCase):
                 "text": "今天苏州天气怎么样",
                 "source": "assistant_service_local_asr_final",
                 "model_id": "sense_voice",
+                "language": "auto",
             })
+
+        asyncio.run(run_case())
+
+    def test_returns_event_payload_with_effective_language(self) -> None:
+        async def run_case() -> None:
+            with patch(
+                "cccc.daemon.assistants.voice_final_asr.collect_final_asr_text",
+                AsyncMock(return_value="今天苏州天气怎么样"),
+            ) as collect_text:
+                event = await build_final_asr_text_event(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                    seq=42,
+                    language="zh-CN",
+                )
+            collect_text.assert_awaited_once_with(
+                b"\x01\x00" * 16000,
+                selected_model_id="sense_voice",
+                sample_rate=16000,
+                language="zh-CN",
+            )
+            self.assertEqual(event["language"], "zh")
 
         asyncio.run(run_case())
 

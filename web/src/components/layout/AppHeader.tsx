@@ -72,7 +72,7 @@ export function AppHeader({
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const headerIconButtonBaseClass =
-    "flex items-center justify-center h-10 w-10 rounded-[14px] transition-all shrink-0";
+    "flex items-center justify-center h-10 w-10 rounded-[14px] transition-all duration-150 active:scale-[0.95] shrink-0";
   const headerRailClass =
     "flex items-center gap-1 p-[3px]";
   const headerUtilityRailClass =
@@ -80,9 +80,9 @@ export function AppHeader({
   const headerMinorActionClass =
     "hidden md:inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent text-[var(--color-text-tertiary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailButtonClass =
-    "flex items-center justify-center h-9 w-9 rounded-[14px] transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
+    "flex items-center justify-center h-9 w-9 rounded-[14px] transition-all duration-150 active:scale-[0.95] shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
   const headerUtilityButtonClass =
-    "flex items-center justify-center h-8 w-8 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
+    "flex items-center justify-center h-8 w-8 rounded-xl transition-all duration-150 active:scale-[0.95] shrink-0 border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailDividerClass = "mx-1 h-5 w-px bg-[var(--glass-border-subtle)]";
   const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
     running: selectedGroupRunning,

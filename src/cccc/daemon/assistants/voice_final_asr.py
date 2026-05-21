@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .local_streaming_asr import LocalStreamingAsrError, open_local_offline_asr_session, transcribe_local_streaming_pcm16
+from .sherpa_offline_asr import normalize_sherpa_sense_voice_language
 from .sherpa_vad_segments import SherpaVadSegmentError, detect_sherpa_vad_segments
 from .sense_voice_text import clean_sense_voice_text
 from .voice_pcm_segments import VoicePcmSegment, build_pcm16_segments_from_ranges, split_pcm16_voice_segments
@@ -30,7 +31,7 @@ def _pcm16_duration_ms(byte_count: int, sample_rate: int) -> int:
     return int(max(0, byte_count) / (2 * rate) * 1000)
 
 
-def _base_meta(selected_model_id: str, sample_rate: int) -> dict[str, Any]:
+def _base_meta(selected_model_id: str, sample_rate: int, language: str = "") -> dict[str, Any]:
     status = get_voice_model_status(selected_model_id)
     offline = status.get("offline") if isinstance(status.get("offline"), dict) else {}
     streaming = status.get("streaming") if isinstance(status.get("streaming"), dict) else {}
@@ -40,10 +41,11 @@ def _base_meta(selected_model_id: str, sample_rate: int) -> dict[str, Any]:
             config = resolve_installed_voice_model_offline_config(selected_model_id)
         except Exception:
             config = {}
+    effective_language = normalize_sherpa_sense_voice_language(language) if str(language or "").strip() else ""
     return {
         "model_id": str(selected_model_id or "").strip(),
         "engine": str(config.get("engine") or offline.get("engine") or streaming.get("engine") or "").strip(),
-        "language": str(config.get("language") or offline.get("language") or "auto").strip() or "auto",
+        "language": effective_language or str(config.get("language") or offline.get("language") or "auto").strip() or "auto",
         "sample_rate": int(config.get("sample_rate") or offline.get("sample_rate") or streaming.get("sample_rate") or sample_rate or 16000),
         "model_ready": bool(status.get("offline_ready") or status.get("streaming_ready")),
     }
@@ -55,6 +57,7 @@ def _progress(
     seq: Any,
     selected_model_id: str,
     sample_rate: int,
+    language: str = "",
     segment_count: int = 0,
     segment: VoicePcmSegment | None = None,
     index: int = 0,
@@ -67,7 +70,7 @@ def _progress(
         "seq": seq,
         "stage": stage,
         "source": _FINAL_ASR_SOURCE,
-        **_base_meta(selected_model_id, sample_rate),
+        **_base_meta(selected_model_id, sample_rate, language),
     }
     if fallback_reason:
         payload["fallback_reason"] = fallback_reason
@@ -83,7 +86,7 @@ def _progress(
     return FinalAsrEvent(payload)
 
 
-def _final(text: str, *, seq: Any, selected_model_id: str, sample_rate: int, segment: VoicePcmSegment) -> FinalAsrEvent:
+def _final(text: str, *, seq: Any, selected_model_id: str, sample_rate: int, segment: VoicePcmSegment, language: str = "") -> FinalAsrEvent:
     text = clean_sense_voice_text(text)
     return FinalAsrEvent(
         {
@@ -94,7 +97,7 @@ def _final(text: str, *, seq: Any, selected_model_id: str, sample_rate: int, seg
             "start_ms": segment.start_ms,
             "end_ms": segment.end_ms,
             "source": _FINAL_ASR_SOURCE,
-            **_base_meta(selected_model_id, sample_rate),
+            **_base_meta(selected_model_id, sample_rate, language),
             "quality_flags": voice_final_asr_quality_flags(text),
         },
         text=text,
@@ -107,14 +110,15 @@ async def iter_final_asr_events(
     selected_model_id: str,
     sample_rate: int = 16000,
     seq: Any = None,
+    language: str = "",
 ) -> AsyncIterator[FinalAsrEvent]:
-    yield FinalAsrEvent({"type": "final_asr_started", "ok": True, "seq": seq, "source": _FINAL_ASR_SOURCE, **_base_meta(selected_model_id, sample_rate)})
+    yield FinalAsrEvent({"type": "final_asr_started", "ok": True, "seq": seq, "source": _FINAL_ASR_SOURCE, **_base_meta(selected_model_id, sample_rate, language)})
     try:
         try:
             vad_ranges = await detect_sherpa_vad_segments(pcm16_audio, sample_rate=sample_rate)
         except SherpaVadSegmentError:
             vad_ranges = []
-            yield _progress("vad_fallback", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, fallback_reason="vad_failed")
+            yield _progress("vad_fallback", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, fallback_reason="vad_failed")
 
         segments = build_pcm16_segments_from_ranges(
             pcm16_audio,
@@ -135,13 +139,13 @@ async def iter_final_asr_events(
         if not segments and pcm16_audio:
             segments = [VoicePcmSegment(start_ms=0, end_ms=_pcm16_duration_ms(len(pcm16_audio), sample_rate), audio=pcm16_audio)]
 
-        yield _progress("segments_ready", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment_count=len(segments))
+        yield _progress("segments_ready", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments))
         if not segments:
             return
 
-        yield _progress("model_loading", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment_count=len(segments))
+        yield _progress("model_loading", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments))
         try:
-            offline_session = await open_local_offline_asr_session(selected_model_id, sample_rate=sample_rate)
+            offline_session = await open_local_offline_asr_session(selected_model_id, sample_rate=sample_rate, language=language)
         except LocalStreamingAsrError as exc:
             offline_session = None
             yield _progress(
@@ -149,6 +153,7 @@ async def iter_final_asr_events(
                 seq=seq,
                 selected_model_id=selected_model_id,
                 sample_rate=sample_rate,
+                language=language,
                 segment_count=len(segments),
                 fallback_reason="offline_session_unavailable",
                 error=exc,
@@ -158,10 +163,10 @@ async def iter_final_asr_events(
             offline_transcribe_failed = False
             try:
                 for index, segment in enumerate(segments, start=1):
-                    yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment_count=len(segments), segment=segment, index=index)
+                    yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), segment=segment, index=index)
                     segment_text = (await offline_session.transcribe_pcm16(segment.audio, sample_rate=sample_rate)).strip()
                     if segment_text:
-                        yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment)
+                        yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language)
             except LocalStreamingAsrError as exc:
                 offline_transcribe_failed = True
                 yield _progress(
@@ -169,6 +174,7 @@ async def iter_final_asr_events(
                     seq=seq,
                     selected_model_id=selected_model_id,
                     sample_rate=sample_rate,
+                    language=language,
                     segment_count=len(segments),
                     fallback_reason="offline_transcribe_failed",
                     error=exc,
@@ -178,18 +184,19 @@ async def iter_final_asr_events(
             if not offline_transcribe_failed:
                 return
 
-        yield _progress("legacy_fallback", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment_count=len(segments), fallback_reason="offline_session_unavailable")
+        yield _progress("legacy_fallback", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), fallback_reason="offline_session_unavailable")
         for index, segment in enumerate(segments, start=1):
-            yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment_count=len(segments), segment=segment, index=index)
+            yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), segment=segment, index=index)
             segment_text = (
                 await transcribe_local_streaming_pcm16(
                     segment.audio,
                     selected_model_id=selected_model_id,
                     sample_rate=sample_rate,
+                    language=language,
                 )
             ).strip()
             if segment_text:
-                yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment)
+                yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language)
     except LocalStreamingAsrError as exc:
         yield FinalAsrEvent(
             {
@@ -197,7 +204,7 @@ async def iter_final_asr_events(
                 "ok": False,
                 "seq": seq,
                 "source": _FINAL_ASR_SOURCE,
-                **_base_meta(selected_model_id, sample_rate),
+                **_base_meta(selected_model_id, sample_rate, language),
                 "fallback_reason": "local_asr_error",
                 "error": {"code": exc.code, "message": exc.message, "details": exc.details},
             }
@@ -229,12 +236,14 @@ async def collect_final_asr_text(
     *,
     selected_model_id: str,
     sample_rate: int = 16000,
+    language: str = "",
 ) -> str:
     text = ""
     async for event in iter_final_asr_events(
         pcm16_audio,
         selected_model_id=selected_model_id,
         sample_rate=sample_rate,
+        language=language,
     ):
         chunk = (event.text or "").strip()
         if not chunk:
@@ -249,12 +258,14 @@ async def build_final_asr_text_event(
     selected_model_id: str,
     sample_rate: int = 16000,
     seq: Any = None,
+    language: str = "",
 ) -> dict[str, Any] | None:
     try:
         text = await collect_final_asr_text(
             pcm16_audio,
             selected_model_id=selected_model_id,
             sample_rate=sample_rate,
+            language=language,
         )
     except Exception:
         return None
@@ -268,4 +279,5 @@ async def build_final_asr_text_event(
         "text": text,
         "source": _FINAL_ASR_SOURCE,
         "model_id": str(selected_model_id or "").strip(),
+        "language": normalize_sherpa_sense_voice_language(language) if str(language or "").strip() else "auto",
     }

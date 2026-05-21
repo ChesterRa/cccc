@@ -83,9 +83,16 @@ class SherpaStreamingSession:
         if self.process.stdin is None:
             raise SherpaStreamingAsrError("asr_backend_closed", "ASR worker stdin is closed")
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
-        async with self._write_lock:
-            self.process.stdin.write(data)
-            await self.process.stdin.drain()
+        try:
+            async with self._write_lock:
+                self.process.stdin.write(data)
+                await self.process.stdin.drain()
+        except Exception as exc:
+            raise SherpaStreamingAsrError(
+                "asr_backend_closed",
+                "ASR worker stdin is closed",
+                details={"returncode": self.process.returncode, "error": str(exc)},
+            ) from exc
 
     async def receive(self, timeout: float | None = None) -> dict[str, Any]:
         if self.process.stdout is None:

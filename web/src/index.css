@@ -261,16 +261,16 @@
 
 /* Dark theme */
 .dark, :root.dark {
-  --color-bg-primary: #000000; /* Pure black */
-  --color-bg-secondary: #0f1115; /* Neutral dark with more air */
-  --color-bg-tertiary: #151821; /* Slightly lighter */
-  --color-bg-elevated: #151821;
+  --color-bg-primary: #090a0f; /* Soft indigo-tinted charcoal dark */
+  --color-bg-secondary: #10121a; /* Neutral dark with more air */
+  --color-bg-tertiary: #161924; /* Slightly lighter */
+  --color-bg-elevated: #161924;
   --color-bg-overlay: rgba(0, 0, 0, 0.8);
 
   /* Enhanced Liquid Glass Dark Theme — Pure Black (Neutral) */
-  --glass-bg: rgba(18, 18, 22, 0.72);
-  --glass-bg-hover: rgba(26, 26, 32, 0.84);
-  --glass-bg-active: rgba(30, 30, 36, 0.9);
+  --glass-bg: rgba(18, 20, 28, 0.72);
+  --glass-bg-hover: rgba(26, 29, 39, 0.84);
+  --glass-bg-active: rgba(30, 34, 46, 0.9);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-border-subtle: rgba(255, 255, 255, 0.08);
   --glass-border-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
@@ -598,25 +598,50 @@ button[class*="bg-cyan"]:active:not(:disabled) {
 
 /* Shared subtle scrollbar utility.
    Apply this only to actual scroll regions instead of every element. */
-.scrollbar-subtle {
+/* Custom premium scrollbar system globally */
+* {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-secondary) transparent;
 }
 
-.scrollbar-subtle::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.scrollbar-subtle::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.scrollbar-subtle::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: var(--color-border-secondary);
-  border-radius: 4px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
 }
 
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Specific styling for scrollbar-subtle */
+.scrollbar-subtle {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-secondary) transparent;
+}
+.scrollbar-subtle::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-subtle::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-subtle::-webkit-scrollbar-thumb {
+  background: var(--color-border-secondary);
+  border-radius: 9999px;
+}
 .scrollbar-subtle::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
@@ -764,11 +789,11 @@ select {
 @keyframes runtime-dock-ticker-entry-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: perspective(600px) rotateX(12deg) translateY(12px) scale(0.96);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: perspective(600px) rotateX(0deg) translateY(0) scale(1);
   }
 }
 
@@ -1045,6 +1070,7 @@ select {
 :where(.glass-btn:active) {
   background: var(--glass-bg-active);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03), var(--glass-inner-glow);
+  transform: scale(0.97);
 }
 
 :where(.glass-btn:disabled) {
@@ -1061,7 +1087,8 @@ select {
   box-shadow: var(--glass-accent-glow);
   transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
               box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -1086,6 +1113,10 @@ select {
   .dark :where(.glass-btn-accent:hover) {
     background: var(--glass-accent-bg-hover);
   }
+}
+
+:where(.glass-btn-accent:active) {
+  transform: scale(0.97);
 }
 
 :where(.glass-btn-accent:disabled) {

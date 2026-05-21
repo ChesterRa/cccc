@@ -32,6 +32,27 @@ import { LazyMarkdownRenderer } from "./LazyMarkdownRenderer";
 const ANIMATED_MESSAGE_BUBBLE_KEYS = new Set<string>();
 const NEW_MESSAGE_ANIMATION_WINDOW_MS = 12000;
 
+const ACCENT_BORDER_CLASSES: Record<string, string> = {
+    // Dark mode accents
+    "text-sky-300": "border-l-sky-400/80",
+    "text-indigo-300": "border-l-indigo-400/80",
+    "text-violet-300": "border-l-violet-400/80",
+    "text-fuchsia-300": "border-l-fuchsia-400/80",
+    "text-cyan-300": "border-l-cyan-400/80",
+    "text-teal-300": "border-l-teal-400/80",
+    "text-emerald-300": "border-l-emerald-400/80",
+    "text-amber-300": "border-l-amber-400/80",
+    // Light mode accents
+    "text-sky-700": "border-l-sky-500",
+    "text-indigo-700": "border-l-indigo-500",
+    "text-violet-700": "border-l-violet-500",
+    "text-fuchsia-700": "border-l-fuchsia-500",
+    "text-cyan-700": "border-l-cyan-500",
+    "text-teal-700": "border-l-teal-500",
+    "text-emerald-700": "border-l-emerald-500",
+    "text-amber-700": "border-l-amber-500",
+};
+
 const TASK_REF_STATE_TONE_CLASS: Record<TaskRefStateKey, string> = {
     planned: "border-slate-300/70 bg-slate-100/90 text-slate-700 dark:border-white/10 dark:bg-white/[0.08] dark:text-slate-300",
     active: "border-emerald-300/70 bg-emerald-100/90 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/12 dark:text-emerald-300",
@@ -906,7 +927,11 @@ export const MessageBubble = memo(function MessageBubble({
                         bubbleMotionClass,
                         isUserMessage
                             ? "glass-bubble w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md"
-                            : "w-full rounded-[22px] rounded-tl-md border border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.06)]"
+                            : classNames(
+                                "w-full rounded-[22px] rounded-tl-md border-y border-r border-l-4 bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.04)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.25)]",
+                                "border-y-[var(--glass-border-subtle)] border-r-[var(--glass-border-subtle)]",
+                                ACCENT_BORDER_CLASSES[senderAccent?.text || ""] || "border-l-[var(--glass-border-subtle)]"
+                              )
                         ,
                         isAttention ? "ring-1 ring-amber-400/40 dark:ring-amber-500/40" : ""
                         ,

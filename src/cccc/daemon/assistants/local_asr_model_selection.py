@@ -89,6 +89,7 @@ def transcribe_offline_service_pcm16(
             audio_bytes,
             selected_model_id=selected_model_id,
             sample_rate=sample_rate,
+            language=language,
         )
     )
     return {

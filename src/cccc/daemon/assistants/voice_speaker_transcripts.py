@@ -58,9 +58,13 @@ async def build_offline_speaker_transcript_segments(
     *,
     selected_model_id: str,
     sample_rate: int = 16000,
+    language: str = "",
     max_segments: int = _DEFAULT_MAX_SPEAKER_TRANSCRIPT_SEGMENTS,
 ) -> list[dict[str, Any]]:
-    session = await open_local_offline_asr_session(selected_model_id, sample_rate=sample_rate)
+    session_kwargs: dict[str, Any] = {"sample_rate": sample_rate}
+    if str(language or "").strip():
+        session_kwargs["language"] = language
+    session = await open_local_offline_asr_session(selected_model_id, **session_kwargs)
     try:
         return await build_speaker_transcript_segments(
             pcm16_audio,

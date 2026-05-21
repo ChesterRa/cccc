@@ -11,7 +11,14 @@ import sherpa_onnx
 
 
 def _send(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False), flush=True)
+    data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    stdout_buffer = getattr(sys.stdout, "buffer", None)
+    if stdout_buffer is not None:
+        stdout_buffer.write(data)
+        stdout_buffer.flush()
+        return
+    sys.stdout.write(data.decode("utf-8"))
+    sys.stdout.flush()
 
 
 def _pcm16_to_float32(audio_b64: str) -> np.ndarray:

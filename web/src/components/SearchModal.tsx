@@ -175,7 +175,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
       <div
         className={classNames(
           "relative w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-3xl flex flex-col border shadow-2xl animate-scale-in",
-          "rounded-none sm:rounded-xl",
+          "rounded-none sm:rounded-[28px]",
           "glass-modal"
         )}
         ref={modalRef}
@@ -221,13 +221,13 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void doSearch({ mode: "replace" });
                 }}
-                className="flex-1 rounded-lg px-3 py-2"
+                className="flex-1 rounded-xl px-3 py-2"
                 placeholder={t('searchPlaceholder')}
               />
               <Button
                 onClick={() => void doSearch({ mode: "replace" })}
                 disabled={busy}
-                className="rounded-lg bg-emerald-600 hover:bg-emerald-500"
+                className="rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.97] transition-all duration-150"
               >
                 {busy ? "…" : t('common:search')}
               </Button>
@@ -239,7 +239,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               <label className={classNames("block text-xs font-medium mb-1", "text-[var(--color-text-secondary)]")}>
                 {t('kind')}
               </label>
-              <div className={classNames("flex items-center gap-1 p-1 rounded-lg", "glass-panel")}>
+              <div className={classNames("flex items-center gap-1 p-1 rounded-xl", "glass-panel")}>
                 {([
                   ["all", t('kindAll')],
                   ["chat", t('kindChat')],
@@ -252,7 +252,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                     size="sm"
                     onClick={() => setKind(id)}
                     className={classNames(
-                      "min-h-[36px] rounded-md",
+                      "min-h-[36px] rounded-lg active:scale-[0.97] transition-all duration-150",
                       kind === id
                         ? "glass-card text-[var(--color-text-primary)]"
                         : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
@@ -317,11 +317,11 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               <Surface
                 key={evId || `r${idx}`}
                 className={classNames(
-                  "rounded-lg px-4 py-3",
+                  "rounded-2xl px-4 py-3",
                   "glass-card"
                 )}
                 variant="subtle"
-                radius="md"
+                radius="lg"
                 padding="none"
               >
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">

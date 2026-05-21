@@ -41,6 +41,8 @@ _DEFAULT_MANIFEST_RESOURCE = "voice-models.default.json"
 _LOCAL_MANIFEST_REL_PATH = ("config", "voice-models.json")
 _SHA256_HEX_LENGTH = 64
 _VOICE_MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_DEFAULT_VOICE_MODEL_NUM_THREADS = 2
+_MAX_AUTO_VOICE_MODEL_NUM_THREADS = 4
 _CA_CERT_CANDIDATES = (
     "/etc/ssl/cert.pem",
     "/opt/homebrew/etc/ca-certificates/cert.pem",
@@ -135,6 +137,23 @@ def _normalize_rel_model_path(value: Any, *, field: str) -> str:
             details={"path": raw},
         )
     return path.as_posix()
+
+
+def _effective_voice_model_num_threads(value: Any) -> int:
+    try:
+        configured = int(value or 0)
+    except Exception:
+        configured = 0
+    if configured > _DEFAULT_VOICE_MODEL_NUM_THREADS:
+        return configured
+    if configured == 1:
+        return configured
+    cpu_count = max(1, int(os.cpu_count() or _DEFAULT_VOICE_MODEL_NUM_THREADS))
+    adaptive = min(
+        _MAX_AUTO_VOICE_MODEL_NUM_THREADS,
+        max(_DEFAULT_VOICE_MODEL_NUM_THREADS, cpu_count // 4),
+    )
+    return adaptive
 
 
 def _load_builtin_manifest() -> Any:
@@ -297,7 +316,7 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
             "model": model,
             "tokens": tokens,
             "sample_rate": int(offline.get("sample_rate") or 16000),
-            "num_threads": int(offline.get("num_threads") or 2),
+            "num_threads": int(offline.get("num_threads") or _DEFAULT_VOICE_MODEL_NUM_THREADS),
             "provider": str(offline.get("provider") or "cpu").strip() or "cpu",
             "language": str(offline.get("language") or "auto").strip() or "auto",
             "use_itn": bool(offline.get("use_itn", True)),
@@ -314,7 +333,7 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
             "engine": engine,
             "tokens": tokens,
             "sample_rate": int(streaming.get("sample_rate") or 16000),
-            "num_threads": int(streaming.get("num_threads") or 2),
+            "num_threads": int(streaming.get("num_threads") or _DEFAULT_VOICE_MODEL_NUM_THREADS),
             "provider": str(streaming.get("provider") or "cpu").strip() or "cpu",
         }
         for key in ("model", "encoder", "decoder", "joiner", "bpe_vocab"):
@@ -358,7 +377,7 @@ def _normalize_model_entry(item: Any) -> Dict[str, Any]:
             "segmentation_model": segmentation_model,
             "embedding_model": embedding_model,
             "sample_rate": int(diarization.get("sample_rate") or 16000),
-            "num_threads": int(diarization.get("num_threads") or 2),
+            "num_threads": int(diarization.get("num_threads") or _DEFAULT_VOICE_MODEL_NUM_THREADS),
             "provider": str(diarization.get("provider") or "cpu").strip() or "cpu",
             "num_speakers": int(diarization.get("num_speakers") or -1),
             "cluster_threshold": float(diarization.get("cluster_threshold") or 0.5),
@@ -446,21 +465,24 @@ def _voice_runtime_id_for_model(model_id: str) -> str:
 
 def _render_command_template(command_template: Any, *, model_id: str, model_dir: Path) -> str:
     _ = model_id
-    mapping = {
-        "python": shlex.quote(os.sys.executable),
-        "model_dir": shlex.quote(str(model_dir)),
+    raw_mapping = {
+        "python": os.sys.executable,
+        "model_dir": str(model_dir),
     }
     if isinstance(command_template, list):
         rendered: List[str] = []
         for raw in command_template:
             text = str(raw or "")
-            for key, value in mapping.items():
+            for key, value in raw_mapping.items():
                 text = text.replace("{" + key + "}", value)
             rendered.append(text)
-        return " ".join(rendered)
+        if os.name == "nt":
+            return subprocess.list2cmdline(rendered)
+        return shlex.join(rendered)
     text = str(command_template or "")
-    for key, value in mapping.items():
-        text = text.replace("{" + key + "}", value)
+    for key, value in raw_mapping.items():
+        quoted = subprocess.list2cmdline([value]) if os.name == "nt" else shlex.quote(value)
+        text = text.replace("{" + key + "}", quoted)
     return text
 
 
@@ -1083,7 +1105,7 @@ def resolve_installed_voice_model_offline_config(model_id: str, *, source: str =
         "model_dir": str(model_dir),
         "engine": str(offline.get("engine") or ""),
         "sample_rate": int(offline.get("sample_rate") or 16000),
-        "num_threads": int(offline.get("num_threads") or 2),
+        "num_threads": _effective_voice_model_num_threads(offline.get("num_threads")),
         "provider": str(offline.get("provider") or "cpu").strip() or "cpu",
         "language": str(offline.get("language") or "auto").strip() or "auto",
         "use_itn": bool(offline.get("use_itn", True)),
@@ -1113,7 +1135,7 @@ def resolve_installed_voice_model_streaming_config(model_id: str, *, source: str
         "model_dir": str(model_dir),
         "engine": str(streaming.get("engine") or ""),
         "sample_rate": int(streaming.get("sample_rate") or 16000),
-        "num_threads": int(streaming.get("num_threads") or 2),
+        "num_threads": _effective_voice_model_num_threads(streaming.get("num_threads")),
         "provider": str(streaming.get("provider") or "cpu").strip() or "cpu",
     }
     for key in ("tokens", "model", "encoder", "decoder", "joiner", "bpe_vocab"):
@@ -1141,7 +1163,7 @@ def resolve_installed_voice_model_diarization_config(model_id: str, *, source: s
         "model_dir": str(model_dir),
         "engine": str(diarization.get("engine") or "offline_speaker_diarization"),
         "sample_rate": int(diarization.get("sample_rate") or 16000),
-        "num_threads": int(diarization.get("num_threads") or 2),
+        "num_threads": _effective_voice_model_num_threads(diarization.get("num_threads")),
         "provider": str(diarization.get("provider") or "cpu").strip() or "cpu",
         "num_speakers": int(diarization.get("num_speakers") or -1),
         "cluster_threshold": float(diarization.get("cluster_threshold") or 0.5),

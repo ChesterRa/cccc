@@ -14,6 +14,24 @@ from email.message import Message
 
 
 class TestAssistantOps(unittest.TestCase):
+    def test_speakerize_voice_window_text_omits_unknown_speaker_placeholder(self) -> None:
+        from cccc.daemon.assistants.assistant_ops import _speakerize_voice_window_text
+
+        text = _speakerize_voice_window_text(
+            [
+                {"text": "first", "start_ms": 0, "end_ms": 900},
+                {"text": "second", "start_ms": 1000, "end_ms": 2000},
+                {"text": "tail", "start_ms": 2200, "end_ms": 2500},
+            ],
+            [
+                {"speaker_label": "Speaker 1", "start_ms": 1000, "end_ms": 2000},
+            ],
+            "fallback",
+        )
+
+        self.assertEqual(text, "first\nSpeaker 1: second\ntail")
+        self.assertNotIn("Speaker ?", text)
+
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
         td_ctx = tempfile.TemporaryDirectory()
@@ -284,6 +302,17 @@ class TestAssistantOps(unittest.TestCase):
         self.assertTrue(str(streaming.get("encoder") or "").endswith("encoder.int8.onnx"))
         self.assertTrue(str(streaming.get("decoder") or "").endswith("decoder.int8.onnx"))
         self.assertTrue(str(streaming.get("tokens") or "").endswith("tokens.txt"))
+
+    def test_voice_model_runtime_threads_scale_conservatively(self) -> None:
+        from cccc.daemon.assistants import voice_models
+
+        with patch.object(voice_models.os, "cpu_count", return_value=16):
+            self.assertEqual(voice_models._effective_voice_model_num_threads(2), 4)
+        with patch.object(voice_models.os, "cpu_count", return_value=4):
+            self.assertEqual(voice_models._effective_voice_model_num_threads(2), 2)
+        with patch.object(voice_models.os, "cpu_count", return_value=16):
+            self.assertEqual(voice_models._effective_voice_model_num_threads(1), 1)
+            self.assertEqual(voice_models._effective_voice_model_num_threads(6), 6)
 
     def test_sherpa_streaming_model_resolution_falls_back_from_invalid_selection(self) -> None:
         from cccc.daemon.assistants import sherpa_streaming_asr
@@ -581,7 +610,7 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_voice_recording_release_requires_matching_lease_id(self) -> None:
+    def test_voice_recording_same_owner_reacquire_preserves_lease_id(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_a = self._create_group()
@@ -601,28 +630,36 @@ class TestAssistantOps(unittest.TestCase):
                 "assistant_voice_recording_lease",
                 {"group_id": group_a, "action": "acquire", "owner_id": "owner-a", "ttl_seconds": 30},
             )
-            self.assertFalse(second.ok)
-            self.assertEqual(getattr(second.error, "code", ""), "assistant_voice_recording_busy")
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            self.assertTrue(bool((second.result or {}).get("acquired")))
+            second_lease_id = str((second.result or {}).get("lease_id") or "")
+            self.assertTrue(second_lease_id)
+            self.assertEqual(second_lease_id, first_lease_id)
 
-            stale_release, _ = self._call(
+            same_owner_other_group, _ = self._call(
+                "assistant_voice_recording_lease",
+                {"group_id": group_b, "action": "acquire", "owner_id": "owner-a", "ttl_seconds": 30},
+            )
+            self.assertFalse(same_owner_other_group.ok)
+            self.assertEqual(getattr(same_owner_other_group.error, "code", ""), "assistant_voice_recording_busy")
+
+            release_active, _ = self._call(
                 "assistant_voice_recording_lease",
                 {
                     "group_id": group_a,
                     "action": "release",
                     "owner_id": "owner-a",
-                    "lease_id": f"{first_lease_id}-stale",
+                    "lease_id": first_lease_id,
                 },
             )
-            self.assertTrue(stale_release.ok, getattr(stale_release, "error", None))
-            self.assertFalse(bool((stale_release.result or {}).get("released")))
-            self.assertTrue(bool((stale_release.result or {}).get("lost")))
+            self.assertTrue(release_active.ok, getattr(release_active, "error", None))
+            self.assertTrue(bool((release_active.result or {}).get("released")))
 
             acquire_b, _ = self._call(
                 "assistant_voice_recording_lease",
                 {"group_id": group_b, "action": "acquire", "owner_id": "owner-b"},
             )
-            self.assertFalse(acquire_b.ok)
-            self.assertEqual(getattr(acquire_b.error, "code", ""), "assistant_voice_recording_busy")
+            self.assertTrue(acquire_b.ok, getattr(acquire_b, "error", None))
         finally:
             cleanup()
 

@@ -371,7 +371,7 @@ class TestDiagnosticsOps(unittest.TestCase):
             self.assertEqual(bool(runtime.get("pid_alive")), True)
             self.assertEqual(bool(web.get("runtime_matches_configured_binding")), False)
             self.assertIn("binding_apply_pending", web.get("issues") or [])
-            self.assertTrue(str(web.get("log_path") or "").endswith("daemon/cccc-web.log"))
+            self.assertTrue(str(web.get("log_path") or "").replace("\\", "/").endswith("daemon/cccc-web.log"))
         finally:
             cleanup()
 

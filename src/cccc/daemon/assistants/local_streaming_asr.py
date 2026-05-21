@@ -65,7 +65,12 @@ async def open_local_streaming_asr_session(selected_model_id: str = "") -> Any:
         raise LocalStreamingAsrError(exc.code, exc.message, details=exc.details) from exc
 
 
-async def open_local_offline_asr_session(selected_model_id: str = "", *, sample_rate: int = 16000) -> LocalOfflineAsrSession:
+async def open_local_offline_asr_session(
+    selected_model_id: str = "",
+    *,
+    sample_rate: int = 16000,
+    language: str = "",
+) -> LocalOfflineAsrSession:
     selected = str(selected_model_id or "").strip()
     model_status = get_voice_model_status(selected) if selected else {}
     runtime_id = str(model_status.get("runtime_id") or "").strip()
@@ -77,7 +82,7 @@ async def open_local_offline_asr_session(selected_model_id: str = "", *, sample_
                     "selected local ASR model does not support offline transcription",
                     details={"model_id": selected, "model": model_status},
                 )
-            return LocalOfflineAsrSession(await open_sherpa_offline_session(selected, sample_rate=sample_rate))
+            return LocalOfflineAsrSession(await open_sherpa_offline_session(selected, sample_rate=sample_rate, language=language))
         raise LocalStreamingAsrError(
             "asr_runtime_unsupported",
             f"unsupported local ASR runtime: {runtime_id}",
@@ -92,6 +97,7 @@ async def transcribe_local_streaming_pcm16(
     *,
     selected_model_id: str = "",
     sample_rate: int = 16000,
+    language: str = "",
 ) -> str:
     selected = str(selected_model_id or "").strip()
     model_status = get_voice_model_status(selected) if selected else {}
@@ -103,6 +109,7 @@ async def transcribe_local_streaming_pcm16(
                     pcm16_audio,
                     selected_model_id=selected,
                     sample_rate=sample_rate,
+                    language=language,
                 )
             return await transcribe_sherpa_streaming_pcm16(
                 pcm16_audio,

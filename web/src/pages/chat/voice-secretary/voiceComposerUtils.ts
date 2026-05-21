@@ -8,7 +8,7 @@ import { createVoiceTranscriptItem, type VoiceTranscriptItem } from "./voiceStre
 import { voiceTranscriptSourceDetail, voiceTranscriptSourceLabel } from "./voiceTranscriptSource";
 
 const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
-const VOICE_PROMPT_REQUEST_STALE_MS = 90_000;
+const VOICE_PROMPT_REQUEST_STALE_MS = 180_000;
 const VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS = 72;
 
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
@@ -246,7 +246,9 @@ export function mergeTranscriptChunks(previous: string, nextText: string): strin
 }
 
 export function stripUncertainSpeakerPrefix(value: string): string {
-  return normalizeBrowserTranscriptChunk(value).replace(/^Speaker\s*\?:\s*/i, "").trim();
+  return normalizeBrowserTranscriptChunk(
+    String(value || "").replace(/(^|\n)\s*Speaker\s*\?:\s*/gi, "$1"),
+  ).trim();
 }
 
 export function nextUncommittedServiceTranscriptText(partialText: string, committedText: string): string {

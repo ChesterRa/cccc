@@ -28,6 +28,20 @@ class SherpaOfflineAsrError(Exception):
         self.details = details or {}
 
 
+def normalize_sherpa_sense_voice_language(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace("_", "-")
+    if not raw or raw in {"auto", "mixed"}:
+        return "auto"
+    if raw in {"yue", "cantonese", "zh-yue"}:
+        return "yue"
+    if raw in {"zh-hk", "zh-mo"}:
+        return "yue"
+    base = raw.split("-", 1)[0]
+    if base in {"zh", "en", "ja", "ko"}:
+        return base
+    return "auto"
+
+
 def resolve_sherpa_offline_model_id(selected_model_id: str = "") -> str:
     selected = str(selected_model_id or "").strip()
     if selected:
@@ -163,6 +177,7 @@ async def open_sherpa_offline_session(
     selected_model_id: str = "",
     *,
     sample_rate: int = 16000,
+    language: str = "",
 ) -> SherpaOfflineSession:
     status = sherpa_offline_backend_status(selected_model_id)
     runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
@@ -184,6 +199,11 @@ async def open_sherpa_offline_session(
     python_path = str(runtime.get("python") or "").strip()
     if not python_path:
         raise SherpaOfflineAsrError("asr_runtime_not_ready", "sherpa-onnx runtime Python is missing", details={"runtime": runtime})
+    effective_language = (
+        normalize_sherpa_sense_voice_language(language)
+        if str(language or "").strip()
+        else str(config.get("language") or "auto").strip() or "auto"
+    )
     argv = [
         python_path,
         "-m",
@@ -201,7 +221,7 @@ async def open_sherpa_offline_session(
         "--provider",
         str(config.get("provider") or "cpu"),
         "--language",
-        str(config.get("language") or "auto"),
+        effective_language,
         "--use-itn" if bool(config.get("use_itn", True)) else "--no-use-itn",
     ]
     env = os.environ.copy()
@@ -241,10 +261,11 @@ async def transcribe_sherpa_offline_pcm16(
     *,
     selected_model_id: str = "",
     sample_rate: int = 16000,
+    language: str = "",
 ) -> str:
     if not pcm16_audio:
         return ""
-    session = await open_sherpa_offline_session(selected_model_id, sample_rate=sample_rate)
+    session = await open_sherpa_offline_session(selected_model_id, sample_rate=sample_rate, language=language)
     try:
         return await session.transcribe_pcm16(pcm16_audio, sample_rate=sample_rate)
     finally:

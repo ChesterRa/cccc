@@ -142,14 +142,14 @@ export function LanguageSwitcher({ isDark: _isDark, showLabel = false, variant =
         ref={triggerRef}
         onClick={() => setIsOpen((v) => !v)}
         className={classNames(
-          "transition-all font-semibold tracking-wide select-none",
+          "transition-all duration-150 font-semibold tracking-wide select-none",
           isRow
-            ? "w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-sm min-h-[48px]"
+            ? "w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-sm min-h-[48px] active:scale-[0.98]"
             : isRail
-            ? "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] text-[11px] shrink-0 border border-transparent bg-transparent"
+            ? "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] text-[11px] shrink-0 border border-transparent bg-transparent active:scale-[0.95]"
             : showLabel
-            ? "w-full flex items-center justify-center gap-2 px-3 py-3 text-sm rounded-2xl min-h-[52px] glass-btn"
-            : "flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-xl text-xs shrink-0 glass-btn",
+            ? "w-full flex items-center justify-center gap-2 px-3 py-3 text-sm rounded-2xl min-h-[52px] glass-btn active:scale-[0.98]"
+            : "flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-xl text-xs shrink-0 glass-btn active:scale-[0.95]",
           isRow
             ? "text-[var(--color-text-primary)] hover:bg-black/5 dark:hover:bg-white/6"
             : isRail

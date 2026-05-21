@@ -87,7 +87,10 @@ def _service_state_ready(state: dict[str, Any], *, pid: int | None = None) -> bo
     except Exception:
         return False
     if pid is not None and state_pid != int(pid):
-        return False
+        # Windows pythonw launchers can report a wrapper pid while the service
+        # state is written by the actual child interpreter process.
+        if os.name != "nt" or not pid_is_alive(state_pid):
+            return False
     host = str(state.get("host") or "").strip()
     status = str(state.get("status") or "").strip()
     return bool(state_pid > 0 and port > 0 and host and status in {"running", "working", "failed"})

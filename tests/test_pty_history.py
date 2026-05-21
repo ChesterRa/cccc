@@ -5,9 +5,9 @@ from collections import deque
 
 class TestPtyHistoryPage(unittest.TestCase):
     def _session(self):
-        from cccc.runners.pty import PtySession
+        from cccc.runners import pty as pty_runner
 
-        session = PtySession.__new__(PtySession)
+        session = pty_runner.PtySession.__new__(pty_runner.PtySession)
         session.group_id = "g1"
         session.actor_id = "a1"
         session._runtime = "codex"

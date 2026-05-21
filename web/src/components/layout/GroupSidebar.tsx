@@ -377,7 +377,7 @@ export function GroupSidebar({
 
         {!isCollapsed && (
           <div
-            className="absolute inset-y-0 right-0 z-20 hidden w-4 translate-x-1/2 cursor-col-resize items-center justify-center md:flex"
+            className="absolute inset-y-0 right-0 z-20 hidden w-4 translate-x-1/2 cursor-col-resize items-center justify-center md:flex group/resize-handle"
             onPointerDown={handleResizeStart}
             role="separator"
             aria-orientation="vertical"
@@ -388,10 +388,10 @@ export function GroupSidebar({
           >
             <div
               className={classNames(
-                "h-14 w-[3px] rounded-full transition-all",
+                "h-14 w-[3px] rounded-full transition-all duration-300 ease-out-expo group-hover/resize-handle:w-[5px] group-hover/resize-handle:h-20",
                 isResizing
-                  ? "bg-[rgb(35,36,37)] shadow-[0_0_0_4px_rgba(17,24,39,0.08)] dark:bg-white dark:shadow-[0_0_0_4px_rgba(255,255,255,0.08)]"
-                  : "bg-black/10 hover:bg-black/30 dark:bg-white/10 dark:hover:bg-white/30"
+                  ? "bg-[rgb(35,36,37)] w-[5px] h-20 shadow-[0_0_12px_rgba(17,24,39,0.25)] dark:bg-white dark:shadow-[0_0_12px_rgba(255,255,255,0.25)]"
+                  : "bg-black/10 dark:bg-white/10 group-hover/resize-handle:bg-black/30 dark:group-hover/resize-handle:bg-white/30 group-hover/resize-handle:shadow-[0_0_8px_rgba(0,0,0,0.05)] dark:group-hover/resize-handle:shadow-[0_0_8px_rgba(255,255,255,0.05)]"
               )}
             />
           </div>

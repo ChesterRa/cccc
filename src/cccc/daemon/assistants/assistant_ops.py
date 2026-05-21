@@ -2608,6 +2608,45 @@ def _append_voice_document_source(group: Group, *, record: Dict[str, Any], segme
     )
 
 
+def _append_voice_document_transcript(
+    group: Group,
+    *,
+    record: Dict[str, Any],
+    segment: Dict[str, Any],
+    segment_path: str,
+    trigger: Optional[Dict[str, Any]] = None,
+) -> None:
+    doc_id = str(record.get("document_id") or "").strip()
+    text = _clean_multiline_text(segment.get("text"), max_len=_MAX_TRANSCRIPT_SESSION_CHARS)
+    if not doc_id or not text:
+        return
+    item: Dict[str, Any] = {
+        "schema": 1,
+        "document_id": doc_id,
+        "document_path": _voice_document_path(record),
+        "created_at": str(segment.get("created_at") or utc_now_iso()),
+        "updated_at": str(segment.get("updated_at") or utc_now_iso()),
+        "session_id": str(segment.get("session_id") or ""),
+        "segment_id": str(segment.get("segment_id") or ""),
+        "text": text,
+        "language": str(segment.get("language") or ""),
+        "is_final": coerce_bool(segment.get("is_final"), default=True),
+        "source": str(segment.get("source") or ""),
+        "by": str(segment.get("by") or ""),
+        "segment_path": segment_path,
+        "trigger": dict(trigger) if isinstance(trigger, dict) else {},
+    }
+    for key in ("start_ms", "end_ms", "speaker_label", "speaker_index"):
+        if key in segment:
+            item[key] = segment.get(key)
+    _append_voice_document_jsonl(
+        group,
+        document_id=doc_id,
+        filename="transcript.jsonl",
+        item=item,
+    )
+
+
 def _voice_auto_document_max_window_seconds(config: Dict[str, Any]) -> int:
     try:
         max_window_seconds = int(config.get("auto_document_max_window_seconds") or _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS)
@@ -2801,6 +2840,13 @@ def _flush_voice_session_window(
         record=document,
         segment=source_segment,
         segment_path=str(session_entry.get("last_segment_path") or ""),
+    )
+    _append_voice_document_transcript(
+        group,
+        record=document,
+        segment=source_segment,
+        segment_path=str(session_entry.get("last_segment_path") or ""),
+        trigger=trigger_for_document,
     )
     _append_voice_input_event(
         group,
@@ -3201,10 +3247,14 @@ def _speakerize_voice_window_text(window_segments: Any, speaker_segments: Any, f
         label = _speaker_label_for_range(start_ms, end_ms, speaker_segments)
         if not label:
             label = str(item.get("speaker_label") or "").strip()
-        if not label:
-            label = "Speaker ?"
         if label == last_label and lines:
             lines[-1] = f"{lines[-1]} {text}".strip()
+        elif not label:
+            if not last_label and lines:
+                lines[-1] = f"{lines[-1]} {text}".strip()
+            else:
+                lines.append(text)
+                last_label = ""
         else:
             lines.append(f"{label}: {text}")
             last_label = label
@@ -3939,13 +3989,18 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
                 ),
             )
 
+        same_owner_reacquire = False
         if action == "acquire" and active:
-            public_active = _public_voice_recording_lease(active)
-            return _error(
-                "assistant_voice_recording_busy",
-                "voice secretary recording is already active",
-                details={"active_lease": public_active},
-            )
+            active_owner_id = str(active.get("owner_id") or "").strip()
+            active_group_id = str(active.get("group_id") or "").strip()
+            if active_owner_id != owner_id or active_group_id != group.group_id:
+                public_active = _public_voice_recording_lease(active)
+                return _error(
+                    "assistant_voice_recording_busy",
+                    "voice secretary recording is already active",
+                    details={"active_lease": public_active},
+                )
+            same_owner_reacquire = True
 
         if active and str(active.get("owner_id") or "") != owner_id:
             public_active = _public_voice_recording_lease(active)
@@ -3968,11 +4023,14 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
                     ),
                 )
 
-        created_at = str(active.get("created_at") or "") if active and action == "heartbeat" else ""
+        renew_existing = bool(active) and (action == "heartbeat" or same_owner_reacquire)
+        created_at = str(active.get("created_at") or "") if renew_existing else ""
         if not created_at:
             created_at = utc_now_iso()
         expires_at_ms = now_ms + ttl_seconds * 1000
-        next_lease_id = str(active.get("lease_id") or "").strip() if active and action == "heartbeat" else f"vrl_{uuid.uuid4().hex}"
+        next_lease_id = str(active.get("lease_id") or "").strip() if renew_existing else f"vrl_{uuid.uuid4().hex}"
+        if not next_lease_id:
+            next_lease_id = f"vrl_{uuid.uuid4().hex}"
         next_lease = {
             "lease_id": next_lease_id,
             "owner_id": owner_id,
@@ -4271,7 +4329,28 @@ def handle_assistant_voice_transcript_append(
             raw_trigger.get("speaker_segments"),
             document_source_text,
         )
-    if document_source_text and is_final and coerce_bool(assistant_config.get("auto_document_enabled"), default=True):
+    auto_document_enabled = coerce_bool(assistant_config.get("auto_document_enabled"), default=True)
+    if target_document_path and is_final and (text or document_source_text) and (not document_source_text or not auto_document_enabled):
+        try:
+            _, transcript_record = _find_voice_document_by_path(
+                group,
+                document_path=target_document_path,
+                create=False,
+                config=assistant_config,
+            )
+            transcript_segment = dict(segment)
+            if document_source_text:
+                transcript_segment["text"] = document_source_text
+            _append_voice_document_transcript(
+                group,
+                record=transcript_record,
+                segment=transcript_segment,
+                segment_path=segment_path or str(session_entry.get("last_segment_path") or ""),
+                trigger=raw_trigger,
+            )
+        except Exception:
+            pass
+    if document_source_text and is_final and auto_document_enabled:
         try:
             document_intent_hint = _infer_voice_transcript_intent(document_source_text, raw_trigger)
             trigger_for_document = {
@@ -4326,6 +4405,13 @@ def handle_assistant_voice_transcript_append(
                 record=document,
                 segment=source_segment,
                 segment_path=str(session_entry.get("last_segment_path") or segment_path or ""),
+            )
+            _append_voice_document_transcript(
+                group,
+                record=document,
+                segment=source_segment,
+                segment_path=str(session_entry.get("last_segment_path") or segment_path or ""),
+                trigger=trigger_for_document,
             )
             input_event = _append_voice_input_event(
                 group,

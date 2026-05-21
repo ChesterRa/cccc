@@ -44,12 +44,15 @@ export function GroupSidebarItem({
         onFocus={onWarm}
         title={group.title || gid}
       >
-          <span
-            className={classNames(
-              "text-sm font-semibold",
-              isActive ? "text-[rgb(35,36,37)] dark:text-white" : "text-[var(--color-text-secondary)]"
-            )}
-          >
+        {isActive && (
+          <span className="absolute left-0 top-3 bottom-3 w-0.75 rounded-r bg-[rgb(35,36,37)] dark:bg-white animate-in slide-in-from-left-1 duration-200" />
+        )}
+        <span
+          className={classNames(
+            "text-sm font-semibold",
+            isActive ? "text-[rgb(35,36,37)] dark:text-white" : "text-[var(--color-text-secondary)]"
+          )}
+        >
           {initial}
         </span>
         <span
@@ -64,10 +67,13 @@ export function GroupSidebarItem({
 
   return (
     <div className="group/item relative">
+      {isActive && (
+        <span className="absolute left-1.5 top-3.5 bottom-3.5 w-1 rounded-full bg-[rgb(35,36,37)] dark:bg-white z-10 animate-in slide-in-from-left-1 duration-200" />
+      )}
       <div
         className={classNames(
-          "w-full px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
-          isActive ? "glass-group-item-active" : "glass-group-item",
+          "w-full pr-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
+          isActive ? "glass-group-item-active pl-5.5" : "glass-group-item pl-3",
           isArchived && !isActive && "opacity-90"
         )}
         role="button"

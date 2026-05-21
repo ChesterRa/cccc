@@ -29,7 +29,7 @@ export function TextScaleSwitcher({
       type="button"
       onClick={() => onTextScaleChange(nextScale)}
       className={classNames(
-        "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+        "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] transition-all duration-150 active:scale-[0.95] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
         className,
       )}
       title={t("switchTextSize", { percent: nextScaleLabel })}
@@ -46,7 +46,7 @@ export function TextScaleSwitcher({
       <button
         type="button"
         onClick={() => onTextScaleChange(nextScale)}
-        className="flex w-full items-center justify-start gap-3 rounded-xl px-3.5 py-3 text-sm min-h-[48px] text-[var(--color-text-primary)] transition-all hover:bg-black/5 dark:hover:bg-white/6"
+        className="flex w-full items-center justify-start gap-3 rounded-xl px-3.5 py-3 text-sm min-h-[48px] text-[var(--color-text-primary)] transition-all duration-150 active:scale-[0.98] hover:bg-black/5 dark:hover:bg-white/6"
         title={t("switchTextSize", { percent: nextScaleLabel })}
         aria-label={`${t("currentTextSize", { percent: currentScaleLabel })}. ${t("switchTextSize", { percent: nextScaleLabel })}`}
       >

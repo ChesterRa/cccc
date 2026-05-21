@@ -792,12 +792,7 @@ export function ChatComposer({
         {/* Integrated composer */}
         <div className="flex flex-col">
           <div
-            className={classNames(
-              "relative flex min-w-0 flex-1 flex-col transition-[background-color] duration-200",
-              isDark
-                ? "bg-white/[0.025] focus-within:bg-white/[0.045]"
-                : "bg-white/55 focus-within:bg-white/80",
-            )}
+            className="relative flex min-w-0 flex-1 flex-col"
           >
             {/* Row 1 — Recipients */}
             <div

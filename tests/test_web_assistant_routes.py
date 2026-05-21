@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -357,7 +358,10 @@ class TestWebAssistantRoutes(unittest.TestCase):
             repo.mkdir()
             self._attach_scope(group_id, str(repo))
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.daemon.assistants.assistant_ops._try_wake_voice_secretary_actor_after_input",
+                return_value=(False, ""),
+            ):
                 with TestClient(create_app()) as client:
                     settings_resp = client.put(
                         f"/api/v1/groups/{group_id}/assistants/voice_secretary/settings",
@@ -460,6 +464,111 @@ class TestWebAssistantRoutes(unittest.TestCase):
             self.assertTrue(bool(state_body.get("ok")), state_body)
             documents = ((state_body.get("result") or {}).get("documents_by_id")) or {}
             self.assertIn(document_id, documents)
+        finally:
+            cleanup()
+
+    def test_web_voice_secretary_document_transcript_survives_session_prune(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._add_foreman(group_id)
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.daemon.assistants.assistant_ops._try_wake_voice_secretary_actor_after_input",
+                return_value=(False, ""),
+            ):
+                with TestClient(create_app()) as client:
+                    settings_resp = client.put(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/settings",
+                        json={
+                            "enabled": True,
+                            "config": {
+                                "capture_mode": "browser",
+                                "recognition_backend": "browser_asr",
+                                "recognition_language": "en-US",
+                                "retention_ttl_seconds": 1,
+                                "auto_document_enabled": True,
+                                "document_default_dir": "docs/voice-secretary",
+                                "tts_enabled": False,
+                            },
+                        },
+                    )
+                    self.assertEqual(settings_resp.status_code, 200)
+                    self.assertTrue(bool(settings_resp.json().get("ok")), settings_resp.json())
+
+                    first_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcript_segments",
+                        json={
+                            "session_id": "durable-doc-session-1",
+                            "segment_id": "seg-durable-1",
+                            "text": "first durable transcript for the document",
+                            "language": "en-US",
+                            "is_final": True,
+                            "flush": True,
+                            "trigger": {
+                                "mode": "meeting",
+                                "trigger_kind": "meeting_window",
+                                "capture_mode": "browser",
+                                "recognition_backend": "browser_asr",
+                                "input_device_label": "browser_default",
+                                "language": "en-US",
+                            },
+                            "by": "user",
+                        },
+                    )
+                    self.assertEqual(first_resp.status_code, 200)
+                    first_body = first_resp.json()
+                    self.assertTrue(bool(first_body.get("ok")), first_body)
+                    document = ((first_body.get("result") or {}).get("document")) or {}
+                    document_path = str(document.get("document_path") or "")
+                    self.assertTrue(document_path)
+
+                    second_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcript_segments",
+                        json={
+                            "session_id": "durable-doc-session-2",
+                            "segment_id": "seg-durable-2",
+                            "document_path": document_path,
+                            "text": "second durable transcript for the same document",
+                            "language": "en-US",
+                            "is_final": True,
+                            "flush": True,
+                            "trigger": {
+                                "mode": "meeting",
+                                "trigger_kind": "meeting_window",
+                                "capture_mode": "browser",
+                                "recognition_backend": "browser_asr",
+                                "input_device_label": "browser_default",
+                                "language": "en-US",
+                            },
+                            "by": "user",
+                        },
+                    )
+                    self.assertEqual(second_resp.status_code, 200)
+                    second_body = second_resp.json()
+                    self.assertTrue(bool(second_body.get("ok")), second_body)
+
+                    shutil.rmtree(Path(home) / "voice-secretary" / group_id / "durable-doc-session-1", ignore_errors=True)
+                    shutil.rmtree(Path(home) / "voice-secretary" / group_id / "durable-doc-session-2", ignore_errors=True)
+
+                    session_resp = client.get(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest",
+                        params={"document_path": document_path},
+                    )
+                    self.assertEqual(session_resp.status_code, 200)
+                    session_body = session_resp.json()
+                    self.assertTrue(bool(session_body.get("ok")), session_body)
+                    session = ((session_body.get("result") or {}).get("session")) or {}
+                    self.assertEqual(str(session.get("capture_mode") or ""), "document")
+                    self.assertEqual(str(session.get("document_path") or ""), document_path)
+                    texts = [str(item.get("text") or "") for item in (session.get("segments") or [])]
+                    self.assertIn("first durable transcript for the document", texts)
+                    self.assertIn("second durable transcript for the same document", texts)
         finally:
             cleanup()
 

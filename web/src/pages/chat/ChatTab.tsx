@@ -857,7 +857,7 @@ export function ChatTab({
 
       {/* 3. Footer Area: Composer */}
       {!readOnly && (
-        <footer className="flex-shrink-0 w-full bg-transparent">
+        <>
           <ChatComposer
             isDark={isDark}
             isSmallScreen={isSmallScreen}
@@ -901,7 +901,7 @@ export function ChatTab({
             onAppendRecipientToken={appendRecipientToken}
             slashCommands={slashCommands}
           />
-        </footer>
+        </>
       )}
     </div>
   );

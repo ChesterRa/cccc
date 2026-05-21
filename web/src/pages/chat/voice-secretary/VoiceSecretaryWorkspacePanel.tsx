@@ -4,6 +4,7 @@ import { MarkdownDocumentSurface } from "../../../components/document/MarkdownDo
 import { classNames } from "../../../utils/classNames";
 import { isDisplayableFinalVoiceTranscriptItem, type VoiceTranscriptItem } from "./voiceStreamModel";
 import { VoiceTranscriptRecordingIndicator } from "./VoiceTranscriptRecordingIndicator";
+import { stripUncertainSpeakerPrefix } from "./voiceComposerUtils";
 
 export type VoiceWorkspaceView = "document" | "transcript";
 
@@ -289,12 +290,13 @@ export function VoiceSecretaryWorkspacePanel({
             </div>
           ) : null}
           {transcriptRows.length ? transcriptRows.map((item) => {
-            const itemText = normalizeTranscriptText(item.text);
+            const itemText = normalizeTranscriptText(stripUncertainSpeakerPrefix(item.text));
             const timeLabel = formatTime(item.updatedAt);
             const fullTimeLabel = formatFullTime(item.updatedAt);
             const sourceLabel = String(item.sourceLabel || "").trim();
             const sourceDetail = String(item.sourceDetail || "").trim();
-            const speakerLabel = String(item.speakerLabel || "").trim();
+            const rawSpeakerLabel = String(item.speakerLabel || "").trim();
+            const speakerLabel = /^Speaker\s*\?$/i.test(rawSpeakerLabel) ? "" : rawSpeakerLabel;
             return (
               <div
                 key={item.id}

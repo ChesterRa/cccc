@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from cccc.daemon.assistants.voice_final_document_apply import (
+    build_final_text_transcript_append_request,
     build_final_transcript_append_request,
     final_speaker_transcript_text,
 )
@@ -66,6 +67,94 @@ class VoiceFinalDocumentApplyTests(unittest.TestCase):
                 session_id="s1",
                 document_path="docs/voice.md",
                 speaker_transcript_segments=[{"text": ""}],
+                sample_rate=16000,
+            )
+        )
+
+    def test_build_final_text_transcript_append_request_uses_final_backend(self) -> None:
+        request = build_final_text_transcript_append_request(
+            group_id="g1",
+            session_id="s1",
+            document_path="docs/voice.md",
+            text="  你好   世界 ",
+            sample_rate=16000,
+            language="zh-CN",
+            final_asr_model_id="sense_voice",
+            audio_duration_ms=3200,
+        )
+
+        self.assertIsNotNone(request)
+        assert request is not None
+        args = request["args"]
+        self.assertEqual(request["op"], "assistant_voice_transcript_append")
+        self.assertEqual(args["segment_id"], "final-s1")
+        self.assertEqual(args["text"], "你好 世界")
+        self.assertEqual(args["start_ms"], 0)
+        self.assertEqual(args["end_ms"], 3200)
+        self.assertEqual(args["trigger"]["recognition_backend"], "assistant_service_local_asr_final")
+        self.assertEqual(args["trigger"]["speaker_segment_count"], 0)
+
+    def test_build_final_text_transcript_append_request_skips_without_document_or_text(self) -> None:
+        self.assertIsNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="",
+                text="hello",
+                sample_rate=16000,
+            )
+        )
+        self.assertIsNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="docs/voice.md",
+                text="",
+                sample_rate=16000,
+            )
+        )
+        self.assertIsNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="docs/voice.md",
+                text="I.",
+                sample_rate=16000,
+            )
+        )
+        self.assertIsNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="docs/voice.md",
+                text=".",
+                sample_rate=16000,
+            )
+        )
+        self.assertIsNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="docs/voice.md",
+                text="The. Yeah.",
+                sample_rate=16000,
+            )
+        )
+        self.assertIsNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="docs/voice.md",
+                text="Yeah. Yes.",
+                sample_rate=16000,
+            )
+        )
+        self.assertIsNotNone(
+            build_final_text_transcript_append_request(
+                group_id="g1",
+                session_id="s1",
+                document_path="docs/voice.md",
+                text="the weather",
                 sample_rate=16000,
             )
         )
