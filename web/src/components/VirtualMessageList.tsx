@@ -605,6 +605,23 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   ]);
 
   const handleScroll = useCallback(() => {
+    const currentEl = parentRef.current;
+    if (currentEl && !isContainerResizingRef.current) {
+      const atBottom = checkIsAtBottom();
+      const wasAtBottom = isAtBottomRef.current;
+      setAtBottom(atBottom);
+      if (atBottom) {
+        setFollowMode("follow");
+      } else {
+        setFollowMode("detached");
+        forceStickToBottomUntilRef.current = 0;
+        cancelScheduledScroll();
+      }
+      if (shouldNotifyScrollChange({ wasAtBottom, atBottom, showScrollButton, chatUnreadCount })) {
+        onScrollChange?.(atBottom);
+      }
+    }
+
     if (scrollRafScheduledRef.current) return;
     scrollRafScheduledRef.current = true;
 

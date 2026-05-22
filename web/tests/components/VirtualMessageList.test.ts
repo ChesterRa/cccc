@@ -174,12 +174,25 @@ describe("getAutoFollowTrigger", () => {
 });
 
 describe("shouldDetachChatFollowOnScroll", () => {
-  it("detaches when the user scrolls upward away from bottom", () => {
+  it("detaches whenever the viewport is away from bottom", () => {
     expect(
       shouldDetachChatFollowOnScroll({
         followMode: "follow",
         previousTop: 640,
         currentTop: 560,
+        atBottom: false,
+        isContainerResizing: false,
+        topLoadThresholdPx: 80,
+      }),
+    ).toBe(true);
+  });
+
+  it("detaches even when scroll direction is downward but still not at bottom", () => {
+    expect(
+      shouldDetachChatFollowOnScroll({
+        followMode: "follow",
+        previousTop: 240,
+        currentTop: 320,
         atBottom: false,
         isContainerResizing: false,
         topLoadThresholdPx: 80,

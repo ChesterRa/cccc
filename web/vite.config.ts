@@ -2,6 +2,16 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
+function localProxyHost(host: string | undefined): string {
+  const value = String(host || "").trim();
+  if (!value || value === "0.0.0.0" || value === "::") return "127.0.0.1";
+  return value;
+}
+
+const backendHost = localProxyHost(process.env.CCCC_WEB_HOST);
+const backendPort = Number(process.env.CCCC_WEB_PORT || 8848) || 8848;
+const backendTarget = `http://${backendHost}:${backendPort}`;
+
 export default defineConfig({
   plugins: [react()],
   base: "/ui/",
@@ -66,7 +76,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8848",
+        target: backendTarget,
         changeOrigin: true,
         ws: true,
       },

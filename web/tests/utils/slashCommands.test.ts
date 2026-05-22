@@ -319,6 +319,37 @@ describe("slashCommands", () => {
     expect(filterSlashCommands(commands, "/")).toHaveLength(11);
   });
 
+  it("prioritizes command names over noisy short description matches", () => {
+    const commands = buildSlashCommands({
+      state: {
+        group_id: "g1",
+        actor_id: "user",
+        enabled: [],
+        active_capsule_skills: [
+          {
+            capability_id: "skill:agent_self_proposed:review",
+            name: "review",
+            description_short: "Review code changes",
+          },
+          {
+            capability_id: "skill:agent_self_proposed:writer",
+            name: "writer",
+            description_short: "Use before sending a release note.",
+          },
+        ],
+        dynamic_tools: [],
+      },
+    });
+
+    expect(filterSlashCommands(commands, "/re").map((item) => item.command)).toEqual(["/review"]);
+  });
+
+  it("allows longer description searches after name matches", () => {
+    const commands = buildSlashCommands({ state: null });
+
+    expect(filterSlashCommands(commands, "/repo").map((item) => item.command)).toEqual(["/install"]);
+  });
+
   it("paginates visible slash commands without changing the cached command list", () => {
     const commands = buildSlashCommands({
       state: {

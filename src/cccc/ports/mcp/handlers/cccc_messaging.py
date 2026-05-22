@@ -15,6 +15,18 @@ from ..common import MCPError, _call_daemon_or_raise
 
 _MAX_BLOB_READ_BYTES = 1_000_000
 _DEFAULT_BLOB_READ_BYTES = 200_000
+_FILENAME_MIME_FALLBACKS = {
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+}
+
+
+def _guess_mime_type(filename: str) -> str:
+    mt, _ = mimetypes.guess_type(filename)
+    if mt:
+        return str(mt)
+    suffix = Path(str(filename or "")).suffix.lower()
+    return _FILENAME_MIME_FALLBACKS.get(suffix, "")
 
 
 def _mcp_error(code: str, message: str, recommended_action: str = "") -> MCPError:
@@ -229,12 +241,11 @@ def blob_info(*, group_id: str, rel_path: str) -> Dict[str, Any]:
         size = int(path.stat().st_size)
     except Exception:
         size = 0
-    mt, _ = mimetypes.guess_type(path.name)
     return {
         "path": str(path),
         "rel_path": str(rel_path or "").strip(),
         "title": path.name,
-        "mime_type": str(mt or ""),
+        "mime_type": _guess_mime_type(path.name),
         "bytes": size,
     }
 
@@ -325,8 +336,7 @@ def file_send(
     except Exception as e:
         raise MCPError(code="read_failed", message=str(e))
 
-    mt, _ = mimetypes.guess_type(src.name)
-    att = store_blob_bytes(group, data=raw, filename=src.name, mime_type=str(mt or ""))
+    att = store_blob_bytes(group, data=raw, filename=src.name, mime_type=_guess_mime_type(src.name))
     msg = str(text or "").strip() or f"[file] {att.get('title') or src.name}"
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):

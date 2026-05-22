@@ -8,9 +8,15 @@ from unittest.mock import patch
 class TestRemoteAccessOps(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
+        old_web_host = os.environ.get("CCCC_WEB_HOST")
+        old_web_port = os.environ.get("CCCC_WEB_PORT")
+        old_web_token = os.environ.get("CCCC_WEB_TOKEN")
         td_ctx = tempfile.TemporaryDirectory()
         td = td_ctx.__enter__()
         os.environ["CCCC_HOME"] = td
+        os.environ.pop("CCCC_WEB_HOST", None)
+        os.environ.pop("CCCC_WEB_PORT", None)
+        os.environ.pop("CCCC_WEB_TOKEN", None)
 
         def cleanup() -> None:
             td_ctx.__exit__(None, None, None)
@@ -18,6 +24,15 @@ class TestRemoteAccessOps(unittest.TestCase):
                 os.environ.pop("CCCC_HOME", None)
             else:
                 os.environ["CCCC_HOME"] = old_home
+            for key, old_value in (
+                ("CCCC_WEB_HOST", old_web_host),
+                ("CCCC_WEB_PORT", old_web_port),
+                ("CCCC_WEB_TOKEN", old_web_token),
+            ):
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
 
         return td, cleanup
 

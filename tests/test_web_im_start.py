@@ -331,7 +331,8 @@ class TestWebImStart(unittest.TestCase):
                 self.assertEqual(set_resp.status_code, 200)
                 self.assertTrue(bool(set_resp.json().get("ok")))
 
-                start_resp = client.post("/api/im/start", json={"group_id": gid})
+                with patch("subprocess.Popen", return_value=_AliveProc()):
+                    start_resp = client.post("/api/im/start", json={"group_id": gid})
                 self.assertEqual(start_resp.status_code, 200)
                 self.assertTrue(bool(start_resp.json().get("ok")))
 

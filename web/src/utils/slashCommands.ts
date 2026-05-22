@@ -176,11 +176,24 @@ export function filterSlashCommands(commands: SlashCommandItem[], input: string)
   const query = normalizeCommandToken(firstToken);
   if (!query) return commands.slice();
   return commands
-    .filter((item) => {
-      const haystacks = [item.name, item.toolName || "", item.realToolName || "", item.description || ""]
-        .map((value) => value.toLowerCase());
-      return haystacks.some((value) => value.includes(query));
-    });
+    .map((item, index) => {
+      const commandNames = [item.name, item.toolName || "", item.realToolName || ""]
+        .map(normalizeCommandToken)
+        .filter(Boolean);
+      const description = String(item.description || "").toLowerCase();
+      const score = (() => {
+        if (commandNames.some((value) => value.startsWith(query))) return 0;
+        if (commandNames.some((value) => value.includes(query))) return 1;
+        // Short description matches are noisy: "/re" should find review-like
+        // commands, not every item mentioning "repo", "before", or "requires".
+        if (query.length >= 3 && description.includes(query)) return 2;
+        return -1;
+      })();
+      return { item, index, score };
+    })
+    .filter((row) => row.score >= 0)
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .map((row) => row.item);
 }
 
 export function getVisibleSlashCommandPage(commands: SlashCommandItem[], visibleCount: number): SlashCommandItem[] {

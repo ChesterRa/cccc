@@ -59,10 +59,7 @@ export function shouldDetachChatFollowOnScroll(input: {
 }): boolean {
   if (input.followMode !== "follow") return false;
   if (input.isContainerResizing || input.atBottom) return false;
-
-  const topLoadThresholdPx = Math.max(0, Number(input.topLoadThresholdPx) || 0);
-  if (input.currentTop <= topLoadThresholdPx) return true;
-  return input.currentTop < input.previousTop;
+  return true;
 }
 
 export function shouldNotifyScrollChange(input: {
