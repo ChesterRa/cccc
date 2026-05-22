@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import mimetypes
+import os
 import struct
 import tempfile
 from pathlib import Path
@@ -138,6 +139,20 @@ from .browser_surface_proxy import (
 _VOICE_DIARIZATION_INTERVAL_MS = 8_000
 _VOICE_DIARIZATION_MIN_AUDIO_MS = 10_000
 _VOICE_DIARIZATION_ENABLE_PROVISIONAL = True
+_VOICE_STREAMING_PCM16_DEFAULT_MAX_BYTES = 128 * 1024 * 1024
+
+
+class _VoiceStreamingAudioLimitExceeded(Exception):
+    pass
+
+
+def _voice_streaming_pcm16_max_bytes() -> int:
+    return _safe_int(
+        os.environ.get("CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES"),
+        default=_VOICE_STREAMING_PCM16_DEFAULT_MAX_BYTES,
+        min_value=1,
+        max_value=1024 * 1024 * 1024,
+    )
 _VOICE_PCM16_BYTES_PER_SAMPLE = 2
 _VOICE_PCM16_ACTIVE_THRESHOLD = 800
 WEB_MAX_GROUP_COPY_PACKAGE_BYTES = 100 * 1024 * 1024
@@ -2517,6 +2532,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             nonlocal streaming_pcm16_path, streaming_pcm16_bytes, streaming_audio_level_stats
             if not chunk:
                 return
+            max_bytes = _voice_streaming_pcm16_max_bytes()
+            if streaming_pcm16_bytes + len(chunk) > max_bytes:
+                raise _VoiceStreamingAudioLimitExceeded(
+                    f"streaming PCM16 audio exceeded {max_bytes} bytes"
+                )
             if streaming_pcm16_path is None:
                 tmp = tempfile.NamedTemporaryFile(prefix="cccc-voice-stream-", suffix=".pcm16", delete=False)
                 streaming_pcm16_path = Path(tmp.name)
@@ -2525,6 +2545,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 handle.write(chunk)
             streaming_pcm16_bytes += len(chunk)
             _update_pcm16_audio_level_stats(streaming_audio_level_stats, chunk)
+
+        def read_streaming_pcm16_audio() -> bytes:
+            if streaming_pcm16_path is not None:
+                try:
+                    return streaming_pcm16_path.read_bytes()
+                except Exception:
+                    pass
+            return bytes(streaming_pcm16_audio)
 
         async def cleanup_streaming_state() -> None:
             nonlocal streaming_session, streaming_diarization_task, streaming_pcm16_audio
@@ -2536,15 +2564,290 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 streaming_diarization_task = None
             if streaming_session is not None:
                 await streaming_session.close()
-                streaming_session = None
+            streaming_session = None
             streaming_pcm16_audio = bytearray()
             cleanup_streaming_pcm16()
+
+        async def send_streaming_json(payload: dict[str, Any], *, enabled: bool = True) -> None:
+            if not enabled:
+                return
+            await websocket.send_json(payload)
+
+        async def finalize_streaming_state(
+            *,
+            seq: Any = None,
+            skip_final_document_apply: bool = False,
+            send_client_events: bool = True,
+        ) -> None:
+            nonlocal streaming_diarization_task
+            if streaming_session is None:
+                await send_streaming_json({"type": "closed", "ok": True, "seq": seq}, enabled=send_client_events)
+                return
+            try:
+                await streaming_session.send({"type": "stop", "seq": seq})
+                while True:
+                    event = await streaming_session.receive(timeout=5.0)
+                    event["ok"] = str(event.get("type") or "") != "error"
+                    if str(event.get("type") or "") == "closed":
+                        break
+                    await send_streaming_json(event, enabled=send_client_events)
+                if streaming_diarization_task is not None:
+                    if _VOICE_DIARIZATION_ENABLE_PROVISIONAL and streaming_diarization_task.done():
+                        try:
+                            delta_result = streaming_diarization_task.result()
+                            await send_streaming_json(
+                                {
+                                    "type": "diarization_delta",
+                                    "ok": True,
+                                    "seq": seq,
+                                    "result": delta_result,
+                                    "provisional": True,
+                                },
+                                enabled=send_client_events,
+                            )
+                        except SherpaDiarizationError as exc:
+                            await send_streaming_json(
+                                {
+                                    "type": "diarization_delta",
+                                    "ok": False,
+                                    "seq": seq,
+                                    "error": {"code": exc.code, "message": exc.message, "details": exc.details},
+                                    "provisional": True,
+                                },
+                                enabled=send_client_events,
+                            )
+                        except Exception as exc:
+                            await send_streaming_json(
+                                {
+                                    "type": "diarization_delta",
+                                    "ok": False,
+                                    "seq": seq,
+                                    "error": {"code": "diarization_backend_failed", "message": str(exc), "details": {}},
+                                    "provisional": True,
+                                },
+                                enabled=send_client_events,
+                            )
+                    else:
+                        streaming_diarization_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await streaming_diarization_task
+                    streaming_diarization_task = None
+                if (
+                    streaming_capture_mode == "document"
+                    and streaming_pcm16_path is not None
+                    and streaming_pcm16_bytes > 0
+                    and streaming_diarization_ready
+                    and not skip_final_document_apply
+                ):
+                    audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
+                    audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
+                    persisted_pcm16_path = _persist_voice_meeting_pcm16(
+                        group_id,
+                        streaming_client_session_id,
+                        streaming_pcm16_path,
+                    )
+                    artifact_path = _write_voice_speaker_transcript_artifact(
+                        group_id,
+                        streaming_client_session_id,
+                        {
+                            "status": "separating_speakers",
+                            "sample_rate": streaming_sample_rate,
+                            "audio_duration_ms": audio_duration_ms,
+                            "audio_level": audio_level,
+                            "segments": [],
+                            "speaker_transcript_segments": [],
+                            "speaker_transcript_error": None,
+                            "speaker_transcript_model_id": streaming_final_asr_model_id,
+                        },
+                    )
+                    _write_voice_meeting_session(
+                        group_id,
+                        streaming_client_session_id,
+                        {
+                            "status": "separating_speakers",
+                            "audio_duration_ms": audio_duration_ms,
+                            "audio_level": audio_level,
+                            "audio_path": str(persisted_pcm16_path),
+                            "diarization_artifact_path": artifact_path,
+                            "final_asr_model_id": streaming_final_asr_model_id,
+                            "capture_mode": streaming_capture_mode,
+                        },
+                    )
+                    await send_streaming_json(
+                        {
+                            "type": "diarization_status",
+                            "ok": True,
+                            "seq": seq,
+                            "status": "separating_speakers",
+                            "artifact_path": artifact_path,
+                        },
+                        enabled=send_client_events,
+                    )
+                    asyncio.create_task(
+                        _run_voice_meeting_diarization_background(
+                            daemon=ctx.daemon,
+                            group_id=group_id,
+                            session_id=streaming_client_session_id,
+                            pcm16_path=persisted_pcm16_path,
+                            document_path=streaming_document_path,
+                            selected_model_id=streaming_diarization_model_id,
+                            selected_asr_model_id=streaming_final_asr_model_id,
+                            sample_rate=streaming_sample_rate,
+                            audio_duration_ms=audio_duration_ms,
+                            language=streaming_language,
+                        )
+                    )
+                else:
+                    final_asr_text = ""
+                    final_apply_result: dict[str, Any] = {"ok": True, "result": {"applied": False}}
+                    final_asr_error: dict[str, Any] | None = None
+                    artifact_path = ""
+                    audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
+                    audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
+                    pcm16_audio = read_streaming_pcm16_audio()
+                    if (
+                        streaming_capture_mode in {"instruction", "prompt"}
+                        and pcm16_audio
+                    ):
+                        event = await build_final_asr_text_event(
+                            pcm16_audio,
+                            selected_model_id=streaming_final_asr_model_id,
+                            sample_rate=streaming_sample_rate,
+                            seq=seq,
+                            language=streaming_language,
+                        )
+                        if event is not None and is_meaningful_voice_text(event.get("text")):
+                            await send_streaming_json(event, enabled=send_client_events)
+                    elif (
+                        streaming_capture_mode == "document"
+                        and pcm16_audio
+                        and str(streaming_document_path or "").strip()
+                    ):
+                        event = await build_final_asr_text_event(
+                            pcm16_audio,
+                            selected_model_id=streaming_final_asr_model_id,
+                            sample_rate=streaming_sample_rate,
+                            seq=seq,
+                            language=streaming_language,
+                        )
+                        if event is not None:
+                            raw_final_asr_text = str(event.get("text") or "").strip()
+                            if is_meaningful_voice_text(raw_final_asr_text):
+                                event["text"] = raw_final_asr_text
+                                await send_streaming_json(event, enabled=send_client_events)
+                                final_asr_text = raw_final_asr_text
+                        if final_asr_text and not skip_final_document_apply:
+                            segment_id = f"final-{_safe_voice_session_id(streaming_client_session_id)}"
+                            trigger = {
+                                "mode": "meeting",
+                                "capture_mode": "service",
+                                "trigger_kind": "service_transcript",
+                                "recognition_backend": "assistant_service_local_asr_final",
+                                "client_session_id": streaming_client_session_id,
+                                "final_asr_model_id": streaming_final_asr_model_id,
+                                "sample_rate": streaming_sample_rate,
+                                "document_path": streaming_document_path,
+                            }
+                            _append_voice_meeting_segment(
+                                group_id,
+                                streaming_client_session_id,
+                                {
+                                    "segment_id": segment_id,
+                                    "text": final_asr_text,
+                                    "language": streaming_language,
+                                    "is_final": True,
+                                    "start_ms": 0,
+                                    "end_ms": audio_duration_ms,
+                                    "speaker_label": "",
+                                    "document_path": streaming_document_path,
+                                    "trigger": trigger,
+                                    "by": "user",
+                                },
+                            )
+                            final_apply_result = await apply_final_text_to_document(
+                                ctx.daemon,
+                                group_id=group_id,
+                                session_id=streaming_client_session_id,
+                                document_path=streaming_document_path,
+                                text=final_asr_text,
+                                sample_rate=streaming_sample_rate,
+                                language=streaming_language,
+                                final_asr_model_id=streaming_final_asr_model_id,
+                                audio_duration_ms=audio_duration_ms,
+                            )
+                            if not bool(final_apply_result.get("ok")):
+                                error = final_apply_result.get("error") if isinstance(final_apply_result.get("error"), dict) else {}
+                                final_asr_error = {
+                                    "code": str(error.get("code") or "final_transcript_apply_failed"),
+                                    "message": str(error.get("message") or "final transcript could not be applied"),
+                                    "details": error.get("details") if isinstance(error.get("details"), dict) else {},
+                                }
+                        elif final_asr_text:
+                            final_apply_result = {"ok": True, "result": {"applied": False, "reason": "windowed_checkpoint_already_applied"}}
+                        else:
+                            final_apply_result = {"ok": True, "result": {"applied": False, "reason": "empty_final_transcript"}}
+                        artifact_path = _write_voice_speaker_transcript_artifact(
+                            group_id,
+                            streaming_client_session_id,
+                            {
+                                "status": "failed" if final_asr_error else "closed",
+                                "sample_rate": streaming_sample_rate,
+                                "audio_duration_ms": audio_duration_ms,
+                                "audio_level": audio_level,
+                                "segments": [],
+                                "speaker_transcript_segments": (
+                                    [
+                                        {
+                                            "speaker_label": "",
+                                            "text": final_asr_text,
+                                            "start_ms": 0,
+                                            "end_ms": audio_duration_ms,
+                                        }
+                                    ]
+                                    if final_asr_text and not skip_final_document_apply
+                                    else []
+                                ),
+                                "speaker_transcript_error": final_asr_error,
+                                "speaker_transcript_model_id": streaming_final_asr_model_id,
+                                "final_apply_result": final_apply_result,
+                            },
+                        )
+                    _write_voice_meeting_session(
+                        group_id,
+                        streaming_client_session_id,
+                        {
+                            "status": "failed" if final_asr_error else "closed",
+                            "audio_duration_ms": audio_duration_ms,
+                            "audio_level": audio_level,
+                            "diarization_artifact_path": artifact_path if streaming_capture_mode == "document" else "",
+                            "final_asr_text": final_asr_text,
+                            "final_apply_result": final_apply_result,
+                            "error": final_asr_error,
+                        },
+                    )
+                await send_streaming_json({"type": "closed", "ok": True, "seq": seq}, enabled=send_client_events)
+            except SherpaStreamingAsrError as exc:
+                _write_voice_meeting_session(
+                    group_id,
+                    streaming_client_session_id,
+                    {
+                        "status": "failed",
+                        "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
+                        "audio_level": _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate),
+                        "error": {"code": exc.code, "message": exc.message, "details": exc.details},
+                    },
+                )
+                await send_streaming_json(
+                    {"type": "error", "ok": False, "seq": seq, "error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+                    enabled=send_client_events,
+                )
 
         try:
             while True:
                 try:
                     payload = await websocket.receive_json()
                 except WebSocketDisconnect:
+                    await finalize_streaming_state(send_client_events=False)
                     return
                 except Exception as exc:
                     await websocket.send_json({"type": "error", "ok": False, "error": {"code": "invalid_json", "message": str(exc)}})
@@ -2637,13 +2940,36 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         audio_base64 = str(payload.get("audio_base64") or payload.get("audio_b64") or "")
                         sample_rate = int(payload.get("sample_rate") or 16000)
                         if sample_rate == 16000:
+                            pcm16_chunk = b""
                             try:
                                 pcm16_chunk = base64.b64decode(audio_base64, validate=True)
-                                append_streaming_pcm16(pcm16_chunk)
+                            except Exception:
+                                pcm16_chunk = b""
+                            if pcm16_chunk:
+                                try:
+                                    append_streaming_pcm16(pcm16_chunk)
+                                except _VoiceStreamingAudioLimitExceeded as exc:
+                                    error = {
+                                        "code": "voice_stream_audio_too_large",
+                                        "message": str(exc),
+                                        "details": {"max_bytes": _voice_streaming_pcm16_max_bytes()},
+                                    }
+                                    _write_voice_meeting_session(
+                                        group_id,
+                                        streaming_client_session_id,
+                                        {
+                                            "status": "failed",
+                                            "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
+                                            "audio_level": _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate),
+                                            "error": error,
+                                        },
+                                    )
+                                    await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": error})
+                                    await cleanup_streaming_state()
+                                    await websocket.close(code=1009)
+                                    return
                                 streaming_pcm16_audio.extend(pcm16_chunk)
                                 streaming_sample_rate = sample_rate
-                            except Exception:
-                                pass
                         if _VOICE_DIARIZATION_ENABLE_PROVISIONAL and streaming_diarization_task is not None and streaming_diarization_task.done():
                             try:
                                 delta_result = streaming_diarization_task.result()
@@ -2748,253 +3074,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         payload.get("skip_final_document_apply", payload.get("skipFinalDocumentApply")),
                         default=False,
                     )
-                    if streaming_session is not None:
-                        try:
-                            await streaming_session.send({"type": "stop", "seq": seq})
-                            while True:
-                                event = await streaming_session.receive(timeout=5.0)
-                                event["ok"] = str(event.get("type") or "") != "error"
-                                if str(event.get("type") or "") == "closed":
-                                    break
-                                await websocket.send_json(event)
-                            if streaming_diarization_task is not None:
-                                if _VOICE_DIARIZATION_ENABLE_PROVISIONAL and streaming_diarization_task.done():
-                                    try:
-                                        delta_result = streaming_diarization_task.result()
-                                        await websocket.send_json({
-                                            "type": "diarization_delta",
-                                            "ok": True,
-                                            "seq": seq,
-                                            "result": delta_result,
-                                            "provisional": True,
-                                        })
-                                    except SherpaDiarizationError as exc:
-                                        await websocket.send_json({
-                                            "type": "diarization_delta",
-                                            "ok": False,
-                                            "seq": seq,
-                                            "error": {"code": exc.code, "message": exc.message, "details": exc.details},
-                                            "provisional": True,
-                                        })
-                                    except Exception as exc:
-                                        await websocket.send_json({
-                                            "type": "diarization_delta",
-                                            "ok": False,
-                                            "seq": seq,
-                                            "error": {"code": "diarization_backend_failed", "message": str(exc), "details": {}},
-                                            "provisional": True,
-                                        })
-                                else:
-                                    streaming_diarization_task.cancel()
-                                    with contextlib.suppress(asyncio.CancelledError):
-                                        await streaming_diarization_task
-                                streaming_diarization_task = None
-                            if (
-                                streaming_capture_mode == "document"
-                                and streaming_pcm16_path is not None
-                                and streaming_pcm16_bytes > 0
-                                and streaming_diarization_ready
-                                and not skip_final_document_apply
-                            ):
-                                audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
-                                audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
-                                persisted_pcm16_path = _persist_voice_meeting_pcm16(
-                                    group_id,
-                                    streaming_client_session_id,
-                                    streaming_pcm16_path,
-                                )
-                                artifact_path = _write_voice_speaker_transcript_artifact(
-                                    group_id,
-                                    streaming_client_session_id,
-                                    {
-                                        "status": "separating_speakers",
-                                        "sample_rate": streaming_sample_rate,
-                                        "audio_duration_ms": audio_duration_ms,
-                                        "audio_level": audio_level,
-                                        "segments": [],
-                                        "speaker_transcript_segments": [],
-                                        "speaker_transcript_error": None,
-                                        "speaker_transcript_model_id": streaming_final_asr_model_id,
-                                    },
-                                )
-                                _write_voice_meeting_session(
-                                    group_id,
-                                    streaming_client_session_id,
-                                    {
-                                        "status": "separating_speakers",
-                                        "audio_duration_ms": audio_duration_ms,
-                                        "audio_level": audio_level,
-                                        "audio_path": str(persisted_pcm16_path),
-                                        "diarization_artifact_path": artifact_path,
-                                        "final_asr_model_id": streaming_final_asr_model_id,
-                                        "capture_mode": streaming_capture_mode,
-                                    },
-                                )
-                                await websocket.send_json({
-                                    "type": "diarization_status",
-                                    "ok": True,
-                                    "seq": seq,
-                                    "status": "separating_speakers",
-                                    "artifact_path": artifact_path,
-                                })
-                                asyncio.create_task(_run_voice_meeting_diarization_background(
-                                    daemon=ctx.daemon,
-                                    group_id=group_id,
-                                    session_id=streaming_client_session_id,
-                                    pcm16_path=persisted_pcm16_path,
-                                    document_path=streaming_document_path,
-                                    selected_model_id=streaming_diarization_model_id,
-                                    selected_asr_model_id=streaming_final_asr_model_id,
-                                    sample_rate=streaming_sample_rate,
-                                    audio_duration_ms=audio_duration_ms,
-                                    language=streaming_language,
-                                ))
-                            else:
-                                final_asr_text = ""
-                                final_apply_result: dict[str, Any] = {"ok": True, "result": {"applied": False}}
-                                final_asr_error: dict[str, Any] | None = None
-                                artifact_path = ""
-                                audio_duration_ms = _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate)
-                                audio_level = _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate)
-                                if (
-                                    streaming_capture_mode in {"instruction", "prompt"}
-                                    and streaming_pcm16_audio
-                                ):
-                                    event = await build_final_asr_text_event(
-                                        bytes(streaming_pcm16_audio),
-                                        selected_model_id=streaming_final_asr_model_id,
-                                        sample_rate=streaming_sample_rate,
-                                        seq=seq,
-                                        language=streaming_language,
-                                    )
-                                    if event is not None and is_meaningful_voice_text(event.get("text")):
-                                        await websocket.send_json(event)
-                                elif (
-                                    streaming_capture_mode == "document"
-                                    and streaming_pcm16_audio
-                                    and str(streaming_document_path or "").strip()
-                                ):
-                                    event = await build_final_asr_text_event(
-                                        bytes(streaming_pcm16_audio),
-                                        selected_model_id=streaming_final_asr_model_id,
-                                        sample_rate=streaming_sample_rate,
-                                        seq=seq,
-                                        language=streaming_language,
-                                    )
-                                    if event is not None:
-                                        raw_final_asr_text = str(event.get("text") or "").strip()
-                                        if is_meaningful_voice_text(raw_final_asr_text):
-                                            event["text"] = raw_final_asr_text
-                                            await websocket.send_json(event)
-                                            final_asr_text = raw_final_asr_text
-                                    if final_asr_text and not skip_final_document_apply:
-                                        segment_id = f"final-{_safe_voice_session_id(streaming_client_session_id)}"
-                                        trigger = {
-                                            "mode": "meeting",
-                                            "capture_mode": "service",
-                                            "trigger_kind": "service_transcript",
-                                            "recognition_backend": "assistant_service_local_asr_final",
-                                            "client_session_id": streaming_client_session_id,
-                                            "final_asr_model_id": streaming_final_asr_model_id,
-                                            "sample_rate": streaming_sample_rate,
-                                            "document_path": streaming_document_path,
-                                        }
-                                        _append_voice_meeting_segment(
-                                            group_id,
-                                            streaming_client_session_id,
-                                            {
-                                                "segment_id": segment_id,
-                                                "text": final_asr_text,
-                                                "language": streaming_language,
-                                                "is_final": True,
-                                                "start_ms": 0,
-                                                "end_ms": audio_duration_ms,
-                                                "speaker_label": "",
-                                                "document_path": streaming_document_path,
-                                                "trigger": trigger,
-                                                "by": "user",
-                                            },
-                                        )
-                                        final_apply_result = await apply_final_text_to_document(
-                                            ctx.daemon,
-                                            group_id=group_id,
-                                            session_id=streaming_client_session_id,
-                                            document_path=streaming_document_path,
-                                            text=final_asr_text,
-                                            sample_rate=streaming_sample_rate,
-                                            language=streaming_language,
-                                            final_asr_model_id=streaming_final_asr_model_id,
-                                            audio_duration_ms=audio_duration_ms,
-                                        )
-                                        if not bool(final_apply_result.get("ok")):
-                                            error = final_apply_result.get("error") if isinstance(final_apply_result.get("error"), dict) else {}
-                                            final_asr_error = {
-                                                "code": str(error.get("code") or "final_transcript_apply_failed"),
-                                                "message": str(error.get("message") or "final transcript could not be applied"),
-                                                "details": error.get("details") if isinstance(error.get("details"), dict) else {},
-                                            }
-                                    elif final_asr_text:
-                                        final_apply_result = {"ok": True, "result": {"applied": False, "reason": "windowed_checkpoint_already_applied"}}
-                                    else:
-                                        final_apply_result = {"ok": True, "result": {"applied": False, "reason": "empty_final_transcript"}}
-                                    artifact_path = _write_voice_speaker_transcript_artifact(
-                                        group_id,
-                                        streaming_client_session_id,
-                                        {
-                                            "status": "failed" if final_asr_error else "closed",
-                                            "sample_rate": streaming_sample_rate,
-                                            "audio_duration_ms": audio_duration_ms,
-                                            "audio_level": audio_level,
-                                            "segments": [],
-                                            "speaker_transcript_segments": (
-                                                [
-                                                    {
-                                                        "speaker_label": "",
-                                                        "text": final_asr_text,
-                                                        "start_ms": 0,
-                                                        "end_ms": audio_duration_ms,
-                                                    }
-                                                ]
-                                                if final_asr_text and not skip_final_document_apply
-                                                else []
-                                            ),
-                                            "speaker_transcript_error": final_asr_error,
-                                            "speaker_transcript_model_id": streaming_final_asr_model_id,
-                                            "final_apply_result": final_apply_result,
-                                        },
-                                    )
-                                _write_voice_meeting_session(
-                                    group_id,
-                                    streaming_client_session_id,
-                                    {
-                                        "status": "failed" if final_asr_error else "closed",
-                                        "audio_duration_ms": audio_duration_ms,
-                                        "audio_level": audio_level,
-                                        "diarization_artifact_path": artifact_path if streaming_capture_mode == "document" else "",
-                                        "final_asr_text": final_asr_text,
-                                        "final_apply_result": final_apply_result,
-                                        "error": final_asr_error,
-                                    },
-                                )
-                            await websocket.send_json({"type": "closed", "ok": True, "seq": seq})
-                        except SherpaStreamingAsrError as exc:
-                            _write_voice_meeting_session(
-                                group_id,
-                                streaming_client_session_id,
-                                {
-                                    "status": "failed",
-                                    "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
-                                    "audio_level": _pcm16_audio_level_summary(streaming_audio_level_stats, streaming_sample_rate),
-                                    "error": {"code": exc.code, "message": exc.message, "details": exc.details},
-                                },
-                            )
-                            await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": exc.code, "message": exc.message, "details": exc.details}})
-                        finally:
-                            await cleanup_streaming_state()
-                            await websocket.close(code=1000)
-                        return
-                    await websocket.send_json({"type": "closed", "ok": True, "seq": seq})
-                    await websocket.close(code=1000)
+                    try:
+                        await finalize_streaming_state(
+                            seq=seq,
+                            skip_final_document_apply=skip_final_document_apply,
+                            send_client_events=True,
+                        )
+                    finally:
+                        await cleanup_streaming_state()
+                        await websocket.close(code=1000)
                     return
                 if message_type != "transcribe":
                     await websocket.send_json({"type": "error", "ok": False, "seq": seq, "error": {"code": "unsupported_message", "message": f"unsupported message type: {message_type}"}})
@@ -3017,6 +3105,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     continue
                 await websocket.send_json({"type": "transcript", "ok": True, "seq": seq, "result": resp.get("result") or {}})
         except WebSocketDisconnect:
+            await finalize_streaming_state(send_client_events=False)
             return
         finally:
             await cleanup_streaming_state()

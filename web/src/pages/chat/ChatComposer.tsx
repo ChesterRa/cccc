@@ -1017,14 +1017,10 @@ export function ChatComposer({
                   <button
                     type="button"
                     className={classNames(
-                      "relative flex h-9 w-9 items-center justify-center rounded-lg border text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                      "relative flex h-11 w-11 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-9",
                       petEnabled
-                        ? isDark
-                          ? "border-amber-300/25 bg-amber-300/12 text-amber-100 hover:bg-amber-300/18"
-                          : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                        : isDark
-                          ? "border-white/[0.08] bg-white/[0.04] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-                          : "border-black/[0.06] bg-white hover:bg-black/5 hover:text-gray-800",
+                        ? "border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/15"
+                        : "glass-btn text-[var(--color-text-secondary)]",
                     )}
                     onClick={() => void activatePet()}
                     disabled={!selectedGroupId || busy === "send" || petBusy}

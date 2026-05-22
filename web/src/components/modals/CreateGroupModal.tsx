@@ -4,9 +4,11 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 import { ArrowDownIcon, DownloadIcon, FileIcon, FolderIcon, HomeIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { ModalFrame } from "./ModalFrame";
 
 export interface CreateGroupModalProps {
   isOpen: boolean;
+  isDark: boolean;
   busy: string;
 
   dirSuggestions: DirSuggestion[];
@@ -29,6 +31,7 @@ export interface CreateGroupModalProps {
 
 export function CreateGroupModal({
   isOpen,
+  isDark,
   busy,
   dirSuggestions,
   dirItems,
@@ -63,157 +66,156 @@ export function CreateGroupModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="create-group-title"
-    >
-      <div
-        ref={modalRef}
-        className="w-full h-full sm:h-auto sm:max-w-lg sm:mt-16 shadow-2xl animate-scale-in overflow-hidden flex flex-col sm:max-h-[calc(100vh-8rem)] rounded-none sm:rounded-2xl glass-modal"
-      >
-        <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)] glass-header">
-          <div id="create-group-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
+    <ModalFrame
+      isOpen={isOpen}
+      isDark={isDark}
+      onClose={onCancelAndReset}
+      titleId="create-group-title"
+      title={
+        <div>
+          <div className="text-lg font-semibold text-[var(--color-text-primary)]">
             {t("createGroup.title")}
           </div>
           <div className="text-sm mt-1 text-[var(--color-text-muted)]">{t("createGroup.subtitle")}</div>
         </div>
-        <div className="p-6 space-y-5 overflow-y-auto min-h-0 flex-1 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))] dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]">
-          {dirSuggestions.length > 0 && !createGroupPath && (
-            <div>
-              <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("createGroup.quickSelect")}</label>
-              <div className="grid grid-cols-2 gap-2">
-                {dirSuggestions.slice(0, 6).map((s) => (
-                  <button
-                    key={s.path}
-                    className="flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-left min-h-[56px] glass-card"
-                    onClick={() => {
-                      setCreateGroupPath(s.path);
-                      setCreateGroupName(s.path.split("/").filter(Boolean).pop() || "");
-                      onFetchDirContents(s.path);
-                    }}
-                  >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
-                      {renderDirSuggestionIcon(s)}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate text-[var(--color-text-secondary)]">{s.name}</div>
-                      <div className="text-[10px] truncate text-[var(--color-text-muted)]">{s.path}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("createGroup.projectDirectory")}</label>
-            <div className="flex gap-2">
-              <Input
-                className="flex-1 font-mono"
-                value={createGroupPath}
-                onChange={(e) => {
-                  setCreateGroupPath(e.target.value);
-                  const dirName = e.target.value.split("/").filter(Boolean).pop() || "";
-                  if (!createGroupName || createGroupName === currentDir.split("/").filter(Boolean).pop()) {
-                    setCreateGroupName(dirName);
-                  }
-                }}
-                placeholder={t("createGroup.pathPlaceholder")}
-                autoFocus
-              />
-              <Button
-                variant="secondary"
-                onClick={() => onFetchDirContents(createGroupPath || "~")}
-              >
-                {t("createGroup.browse")}
-              </Button>
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-              {t("createGroup.pathAutoCreateHint")}
-            </div>
-          </div>
-          {showDirBrowser && (
-            <div className={`rounded-xl max-h-48 overflow-auto ${dirBrowseError ? "border border-rose-500/30 bg-rose-500/10" : "glass-panel"}`}>
-              {dirBrowseError ? (
-                <div className="px-3 py-3 text-sm text-rose-600 dark:text-rose-400">{dirBrowseError}</div>
-              ) : (
-                <>
-                  {currentDir && (
-                    <div className="px-3 py-1.5 border-b text-xs font-mono truncate border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
-                      {currentDir}
-                    </div>
-                  )}
-                  {parentDir && (
-                    <button
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left border-b min-h-[44px] hover:bg-[var(--glass-tab-bg-hover)] border-[var(--glass-border-subtle)]"
-                      onClick={() => {
-                        onFetchDirContents(parentDir);
-                        setCreateGroupPath(parentDir);
-                        setCreateGroupName(parentDir.split("/").filter(Boolean).pop() || "");
-                      }}
-                    >
-                      <span className="text-[var(--color-text-muted)]"><FolderIcon size={16} /></span>
-                      <span className="text-sm text-[var(--color-text-muted)]">..</span>
-                    </button>
-                  )}
-                  {dirItems.filter((d) => d.is_dir).length === 0 && (
-                    <div className="px-3 py-4 text-center text-sm text-[var(--color-text-muted)]">{t("createGroup.noSubdirectories")}</div>
-                  )}
-                  {dirItems
-                    .filter((d) => d.is_dir)
-                    .map((item) => (
-                      <button
-                        key={item.path}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left min-h-[44px] hover:bg-[var(--glass-tab-bg-hover)]"
-                        onClick={() => {
-                          setCreateGroupPath(item.path);
-                          setCreateGroupName(item.name);
-                          onFetchDirContents(item.path);
-                        }}
-                      >
-                        <span className="text-[var(--color-text-secondary)]"><FolderIcon size={16} /></span>
-                        <span className="text-sm text-[var(--color-text-secondary)]">{item.name}</span>
-                      </button>
-                    ))}
-                </>
-              )}
-            </div>
-          )}
-          <div>
-            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("createGroup.groupName")}</label>
-            <Input
-              value={createGroupName}
-              onChange={(e) => setCreateGroupName(e.target.value)}
-              placeholder={t("createGroup.groupNamePlaceholder")}
-            />
-          </div>
-
+      }
+      closeAriaLabel={t("common:close")}
+      panelClassName="w-full h-full sm:h-auto sm:max-w-lg sm:mt-16 sm:max-h-[calc(100vh-8rem)]"
+      modalRef={modalRef}
+      footerActions={
+        <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full sm:w-auto transition-all ease-spring duration-300"
+            onClick={onCancelAndReset}
+          >
+            {t("common:cancel")}
+          </Button>
+          <Button
+            type="button"
+            className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
+            onClick={onCreateGroup}
+            disabled={
+              !createGroupPath.trim() ||
+              busy === "create"
+            }
+          >
+            {busy === "create" ? t("createGroup.creating") : t("createGroup.createGroup")}
+          </Button>
         </div>
-        <div className="px-6 py-4 border-t border-[var(--glass-border-subtle)] glass-header">
-          <div className="flex gap-3">
-            <Button
-              className="flex-1"
-              onClick={onCreateGroup}
-              disabled={
-                !createGroupPath.trim() ||
-                busy === "create"
-              }
-            >
-              {busy === "create" ? t("createGroup.creating") : t("createGroup.createGroup")}
-            </Button>
+      }
+    >
+      <div className="p-6 space-y-5 overflow-y-auto min-h-0 flex-1 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))] dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]">
+        {dirSuggestions.length > 0 && !createGroupPath && (
+          <div>
+            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("createGroup.quickSelect")}</label>
+            <div className="grid grid-cols-2 gap-2">
+              {dirSuggestions.slice(0, 6).map((s) => (
+                <button
+                  key={s.path}
+                  className="flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-left min-h-[56px] glass-card"
+                  onClick={() => {
+                    setCreateGroupPath(s.path);
+                    setCreateGroupName(s.path.split("/").filter(Boolean).pop() || "");
+                    onFetchDirContents(s.path);
+                  }}
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
+                    {renderDirSuggestionIcon(s)}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate text-[var(--color-text-secondary)]">{s.name}</div>
+                    <div className="text-[10px] truncate text-[var(--color-text-muted)]">{s.path}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("createGroup.projectDirectory")}</label>
+          <div className="flex gap-2">
+            <Input
+              className="flex-1 font-mono"
+              value={createGroupPath}
+              onChange={(e) => {
+                setCreateGroupPath(e.target.value);
+                const dirName = e.target.value.split("/").filter(Boolean).pop() || "";
+                if (!createGroupName || createGroupName === currentDir.split("/").filter(Boolean).pop()) {
+                  setCreateGroupName(dirName);
+                }
+              }}
+              placeholder={t("createGroup.pathPlaceholder")}
+              autoFocus
+            />
             <Button
               variant="secondary"
-              onClick={onCancelAndReset}
+              onClick={() => onFetchDirContents(createGroupPath || "~")}
             >
-              {t("common:cancel")}
+              {t("createGroup.browse")}
             </Button>
           </div>
+          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            {t("createGroup.pathAutoCreateHint")}
+          </div>
+        </div>
+        {showDirBrowser && (
+          <div className={`rounded-xl max-h-48 overflow-auto ${dirBrowseError ? "border border-rose-500/30 bg-rose-500/10" : "glass-panel"}`}>
+            {dirBrowseError ? (
+              <div className="px-3 py-3 text-sm text-rose-600 dark:text-rose-400">{dirBrowseError}</div>
+            ) : (
+              <>
+                {currentDir && (
+                  <div className="px-3 py-1.5 border-b text-xs font-mono truncate border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
+                    {currentDir}
+                  </div>
+                )}
+                {parentDir && (
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left border-b min-h-[44px] hover:bg-[var(--glass-tab-bg-hover)] border-[var(--glass-border-subtle)]"
+                    onClick={() => {
+                      onFetchDirContents(parentDir);
+                      setCreateGroupPath(parentDir);
+                      setCreateGroupName(parentDir.split("/").filter(Boolean).pop() || "");
+                    }}
+                  >
+                    <span className="text-[var(--color-text-muted)]"><FolderIcon size={16} /></span>
+                    <span className="text-sm text-[var(--color-text-muted)]">..</span>
+                  </button>
+                )}
+                {dirItems.filter((d) => d.is_dir).length === 0 && (
+                  <div className="px-3 py-4 text-center text-sm text-[var(--color-text-muted)]">{t("createGroup.noSubdirectories")}</div>
+                )}
+                {dirItems
+                  .filter((d) => d.is_dir)
+                  .map((item) => (
+                    <button
+                      key={item.path}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left min-h-[44px] hover:bg-[var(--glass-tab-bg-hover)]"
+                      onClick={() => {
+                        setCreateGroupPath(item.path);
+                        setCreateGroupName(item.name);
+                        onFetchDirContents(item.path);
+                      }}
+                    >
+                      <span className="text-[var(--color-text-secondary)]"><FolderIcon size={16} /></span>
+                      <span className="text-sm text-[var(--color-text-secondary)]">{item.name}</span>
+                    </button>
+                  ))}
+              </>
+            )}
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("createGroup.groupName")}</label>
+          <Input
+            value={createGroupName}
+            onChange={(e) => setCreateGroupName(e.target.value)}
+            placeholder={t("createGroup.groupNamePlaceholder")}
+          />
         </div>
       </div>
-    </div>
+    </ModalFrame>
   );
 }

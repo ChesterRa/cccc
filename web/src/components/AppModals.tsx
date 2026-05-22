@@ -3,14 +3,13 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useTranslation } from "react-i18next";
 import { SearchModal } from "./SearchModal";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
-import { AddActorModal } from "./modals/AddActorModal";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
 import {
-  EditActorModal,
+  ActorConfigModal,
   NO_CHANGES_SENTINEL,
   type EditActorSavePayload,
   type SaveActorProfileResult,
-} from "./modals/EditActorModal";
+} from "./modals/ActorConfigModal";
 import { GroupEditModal } from "./modals/GroupEditModal";
 import { InboxModal } from "./modals/InboxModal";
 import { PresentationPinModal } from "./presentation/PresentationPinModal";
@@ -212,7 +211,6 @@ export function AppModals({
     newActorRoleNotes,
     newActorUseProfile,
     newActorProfileId,
-    showAdvancedActor,
     addActorError,
     setNewActorId,
     setNewActorRole,
@@ -225,7 +223,6 @@ export function AppModals({
     setNewActorRoleNotes,
     setNewActorUseProfile,
     setNewActorProfileId,
-    setShowAdvancedActor,
     setAddActorError,
     resetAddActorForm,
     createGroupPath,
@@ -1109,7 +1106,7 @@ export function AppModals({
     }
   };
 
-  // Computed for AddActorModal
+  // Computed for ActorConfigModal create mode
   const suggestedActorId = (() => {
     const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
     const profileRuntime = String(selectedProfile?.runtime || "").trim();
@@ -1158,8 +1155,11 @@ export function AppModals({
   })();
 
   const handleCloseAddActor = useCallback(
-    () => closeModal("addActor"),
-    [closeModal]
+    () => {
+      closeModal("addActor");
+      resetAddActorForm();
+    },
+    [closeModal, resetAddActorForm]
   );
 
   const handleCancelEditActor = useCallback(() => {
@@ -1572,7 +1572,7 @@ export function AppModals({
 
       <RecipientsModal
         isOpen={!!messageMeta}
-        isSmallScreen={isSmallScreen}
+        isDark={isDark}
         toLabel={messageMeta?.toLabel || ""}
         statusKind={messageMeta?.statusKind || "read"}
         entries={(messageMeta?.entries || []) as [string, boolean][]}
@@ -1581,6 +1581,7 @@ export function AppModals({
 
       <InboxModal
         isOpen={modals.inbox}
+        isDark={isDark}
         actorId={inboxActorId}
         actors={actors}
         messages={inboxMessages}
@@ -1591,6 +1592,7 @@ export function AppModals({
 
       <GroupEditModal
         isOpen={modals.groupEdit}
+        isDark={isDark}
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         ccccHome={ccccHome}
@@ -1612,7 +1614,8 @@ export function AppModals({
         onDelete={handleDeleteGroup}
       />
 
-      <EditActorModal
+      <ActorConfigModal
+        mode="edit"
         isOpen={!!editingActor}
         isDark={isDark}
         busy={busy}
@@ -1650,6 +1653,7 @@ export function AppModals({
 
       <CreateGroupModal
         isOpen={modals.createGroup}
+        isDark={isDark}
         busy={busy}
         dirSuggestions={dirSuggestions}
         dirItems={dirItems}
@@ -1671,50 +1675,46 @@ export function AppModals({
         }}
       />
 
-      <AddActorModal
+      <ActorConfigModal
+        mode="create"
         isOpen={modals.addActor}
         isDark={isDark}
         busy={busy}
         hasForeman={hasForeman}
         runtimes={runtimes}
         suggestedActorId={suggestedActorId}
-        newActorId={newActorId}
-        setNewActorId={setNewActorId}
-        newActorRole={newActorRole}
-        setNewActorRole={setNewActorRole}
-        newActorUseProfile={newActorUseProfile}
-        setNewActorUseProfile={setNewActorUseProfile}
-        newActorProfileId={newActorProfileId}
-        setNewActorProfileId={setNewActorProfileId}
+        actorId={newActorId}
+        onChangeActorId={setNewActorId}
+        role={newActorRole}
+        onChangeRole={setNewActorRole}
+        useProfile={newActorUseProfile}
+        onChangeUseProfile={setNewActorUseProfile}
+        profileId={newActorProfileId}
+        onChangeProfileId={setNewActorProfileId}
         actorProfiles={actorProfiles}
         actorProfilesBusy={actorProfilesBusy}
-        newActorRuntime={newActorRuntime}
-        setNewActorRuntime={setNewActorRuntime}
-        newActorRunner={newActorRunner}
-        setNewActorRunner={setNewActorRunner}
-        newActorCommand={newActorCommand}
-        setNewActorCommand={setNewActorCommand}
-        newActorUseDefaultCommand={newActorUseDefaultCommand}
-        setNewActorUseDefaultCommand={setNewActorUseDefaultCommand}
-        newActorSecretsSetText={newActorSecretsSetText}
-        setNewActorSecretsSetText={setNewActorSecretsSetText}
-        newActorCapabilityAutoloadText={newActorCapabilityAutoloadText}
-        setNewActorCapabilityAutoloadText={setNewActorCapabilityAutoloadText}
-        newActorRoleNotes={newActorRoleNotes}
-        setNewActorRoleNotes={setNewActorRoleNotes}
-        showAdvancedActor={showAdvancedActor}
-        setShowAdvancedActor={setShowAdvancedActor}
-        addActorError={addActorError}
-        setAddActorError={setAddActorError}
-        canAddActor={canAddActor}
-        addActorDisabledReason={addActorDisabledReason}
-        onAddActor={handleAddActor}
+        onRequestActorProfiles={loadActorProfiles}
+        runtime={newActorRuntime}
+        onChangeRuntime={setNewActorRuntime}
+        runner={newActorRunner}
+        onChangeRunner={setNewActorRunner}
+        command={newActorCommand}
+        onChangeCommand={setNewActorCommand}
+        useDefaultCommand={newActorUseDefaultCommand}
+        onChangeUseDefaultCommand={setNewActorUseDefaultCommand}
+        secretsSetText={newActorSecretsSetText}
+        onChangeSecretsSetText={setNewActorSecretsSetText}
+        capabilityAutoloadText={newActorCapabilityAutoloadText}
+        onChangeCapabilityAutoloadText={setNewActorCapabilityAutoloadText}
+        roleNotes={newActorRoleNotes}
+        onChangeRoleNotes={setNewActorRoleNotes}
+        error={addActorError}
+        onChangeError={setAddActorError}
+        canSubmit={canAddActor}
+        submitDisabledReason={addActorDisabledReason}
+        onCreate={handleAddActor}
         onSaveAsProfile={handleSaveNewActorAsProfile}
-        onClose={handleCloseAddActor}
-        onCancelAndReset={() => {
-          closeModal("addActor");
-          resetAddActorForm();
-        }}
+        onCancel={handleCloseAddActor}
       />
     </>
   );

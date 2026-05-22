@@ -4,6 +4,7 @@ import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { ModalFrame } from "./ModalFrame";
 
 function formatEventLine(
   ev: LedgerEvent,
@@ -30,6 +31,7 @@ function formatEventLine(
 
 export interface InboxModalProps {
   isOpen: boolean;
+  isDark: boolean;
   actorId: string;
   actors: Actor[];
   messages: LedgerEvent[];
@@ -38,9 +40,19 @@ export interface InboxModalProps {
   onMarkAllRead: () => void;
 }
 
-export function InboxModal({ isOpen, actorId, actors, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+export function InboxModal({
+  isOpen,
+  isDark,
+  actorId,
+  actors,
+  messages,
+  busy,
+  onClose,
+  onMarkAllRead,
+}: InboxModalProps) {
   const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
+
   // Helper to get display name for actor
   const getDisplayName = useMemo(() => {
     const map = new Map<string, string>();
@@ -56,73 +68,67 @@ export function InboxModal({ isOpen, actorId, actors, messages, busy, onClose, o
 
   if (!isOpen) return null;
 
-  return (
-    <div
-      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="inbox-title"
+  const headerActions = (
+    <button
+      className="rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[40px] glass-btn text-[var(--color-text-secondary)]"
+      onClick={onMarkAllRead}
+      disabled={!messages.length || busy.startsWith("inbox")}
     >
-      <div
-        ref={modalRef}
-        className="w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16 shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl glass-modal"
-      >
-        <div className="px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 safe-area-inset-top border-[var(--glass-border-subtle)]">
-          <div className="min-w-0">
-            <div id="inbox-title" className="text-lg font-semibold truncate text-[var(--color-text-primary)]">
-              {t("inbox.title", { actorId })}
-            </div>
-            <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.unreadMessages", { count: messages.length })}</div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              className="rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
-              onClick={onMarkAllRead}
-              disabled={!messages.length || busy.startsWith("inbox")}
-            >
-              {t("inbox.markAllRead")}
-            </button>
-            <button
-              className="rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-primary)]"
-              onClick={onClose}
-            >
-              {t("common:close")}
-            </button>
-          </div>
-        </div>
+      {t("inbox.markAllRead")}
+    </button>
+  );
 
-        <div className="flex-1 min-h-0 overflow-auto p-4 space-y-2">
-          {messages.map((ev, idx) => (
-            <div
-              key={String(ev.id || idx)}
-              className="rounded-xl px-4 py-3 glass-panel"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-xs truncate text-[var(--color-text-muted)]" title={formatFullTime(ev.ts)}>
-                  {formatTime(ev.ts)}
-                </div>
-                <div className="text-xs font-medium truncate text-[var(--color-text-secondary)]">{getDisplayName(ev.by || "") || "—"}</div>
-              </div>
-              <div className="mt-2 text-sm break-words">
-                <LazyMarkdownRenderer
-                  content={formatEventLine(ev, getDisplayName)}
-                  className="text-[var(--color-text-primary)]"
-                  fallback={<div className="whitespace-pre-wrap break-words">{formatEventLine(ev, getDisplayName)}</div>}
-                />
-              </div>
-            </div>
-          ))}
-          {!messages.length && (
-            <div className="text-center py-8">
-              <div className="text-3xl mb-2">📭</div>
-              <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.noUnread")}</div>
-            </div>
-          )}
-        </div>
+  const titleContent = (
+    <div className="min-w-0 pr-2">
+      <div id="inbox-title" className="text-lg font-semibold truncate text-[var(--color-text-primary)]">
+        {t("inbox.title", { actorId })}
+      </div>
+      <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+        {t("inbox.unreadMessages", { count: messages.length })}
       </div>
     </div>
+  );
+
+  return (
+    <ModalFrame
+      isOpen={isOpen}
+      isDark={isDark}
+      onClose={onClose}
+      titleId="inbox-title"
+      title={titleContent}
+      closeAriaLabel={t("common:close")}
+      panelClassName="w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16"
+      headerActions={headerActions}
+      modalRef={modalRef}
+    >
+      <div className="flex-1 min-h-0 overflow-auto p-4 space-y-2">
+        {messages.map((ev, idx) => (
+          <div
+            key={String(ev.id || idx)}
+            className="rounded-xl px-4 py-3 glass-panel"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs truncate text-[var(--color-text-muted)]" title={formatFullTime(ev.ts)}>
+                {formatTime(ev.ts)}
+              </div>
+              <div className="text-xs font-medium truncate text-[var(--color-text-secondary)]">{getDisplayName(ev.by || "") || "—"}</div>
+            </div>
+            <div className="mt-2 text-sm break-words">
+              <LazyMarkdownRenderer
+                content={formatEventLine(ev, getDisplayName)}
+                className="text-[var(--color-text-primary)]"
+                fallback={<div className="whitespace-pre-wrap break-words">{formatEventLine(ev, getDisplayName)}</div>}
+              />
+            </div>
+          </div>
+        ))}
+        {!messages.length && (
+          <div className="text-center py-12">
+            <div className="text-4xl mb-3">📭</div>
+            <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.noUnread")}</div>
+          </div>
+        )}
+      </div>
+    </ModalFrame>
   );
 }

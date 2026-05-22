@@ -1869,6 +1869,71 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_transcript_explicit_document_sidecar_failure_is_logged(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._add_foreman(group_id)
+            repo = Path(os.environ["CCCC_HOME"]) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {
+                        "enabled": True,
+                        "config": {
+                            "auto_document_enabled": False,
+                            "tts_enabled": False,
+                        },
+                    },
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {"group_id": group_id, "by": "user", "title": "Sidecar Notes", "content": "# Notes\n", "create_new": True},
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            document = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            document_path = str(document.get("document_path") or "")
+            self.assertTrue(document_path)
+
+            with patch(
+                "cccc.daemon.assistants.assistant_ops._append_voice_document_transcript",
+                side_effect=RuntimeError("sidecar disk failed"),
+            ), patch("cccc.daemon.assistants.assistant_ops.logger.exception") as log_exception:
+                appended, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "session-sidecar-log",
+                        "segment_id": "seg-sidecar-log",
+                        "document_path": document_path,
+                        "text": "this explicit transcript should not fail silently",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "session-sidecar-log",
+                            "language": "en-US",
+                        },
+                    },
+                )
+            self.assertTrue(appended.ok, getattr(appended, "error", None))
+            self.assertTrue(log_exception.called)
+        finally:
+            cleanup()
+
     def test_voice_transcript_append_creates_repo_backed_working_document_by_default(self) -> None:
         home, cleanup = self._with_home()
         try:

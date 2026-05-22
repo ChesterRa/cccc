@@ -27,7 +27,6 @@ interface FormState {
   newActorRoleNotes: string;
   newActorUseProfile: boolean;
   newActorProfileId: string;
-  showAdvancedActor: boolean;
   addActorError: string;
 
   // Create Group
@@ -63,7 +62,6 @@ interface FormState {
   setNewActorRoleNotes: (v: string) => void;
   setNewActorUseProfile: (v: boolean) => void;
   setNewActorProfileId: (v: string) => void;
-  setShowAdvancedActor: (v: boolean) => void;
   setAddActorError: (v: string) => void;
   resetAddActorForm: () => void;
 
@@ -103,7 +101,6 @@ export const useFormStore = create<FormState>((set) => ({
   newActorRoleNotes: "",
   newActorUseProfile: false,
   newActorProfileId: "",
-  showAdvancedActor: false,
   addActorError: "",
 
   // Initial state - Create Group
@@ -139,7 +136,6 @@ export const useFormStore = create<FormState>((set) => ({
   setNewActorRoleNotes: (v) => set({ newActorRoleNotes: v }),
   setNewActorUseProfile: (v) => set({ newActorUseProfile: v }),
   setNewActorProfileId: (v) => set({ newActorProfileId: v }),
-  setShowAdvancedActor: (v) => set({ showAdvancedActor: v }),
   setAddActorError: (v) => set({ addActorError: v }),
   resetAddActorForm: () =>
     set({
@@ -154,7 +150,6 @@ export const useFormStore = create<FormState>((set) => ({
       newActorUseProfile: false,
       newActorProfileId: "",
       newActorRole: "peer",
-      showAdvancedActor: false,
       addActorError: "",
     }),
 

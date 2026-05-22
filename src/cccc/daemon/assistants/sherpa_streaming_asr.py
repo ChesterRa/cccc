@@ -134,11 +134,24 @@ class SherpaStreamingSession:
             pass
         try:
             await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            return
         except Exception:
             try:
                 self.process.terminate()
             except Exception:
                 pass
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            return
+        except Exception:
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=2.0)
+        except Exception:
+            pass
 
 
 async def open_sherpa_streaming_session(selected_model_id: str = "") -> SherpaStreamingSession:

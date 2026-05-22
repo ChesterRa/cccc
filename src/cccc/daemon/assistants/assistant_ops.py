@@ -4359,7 +4359,13 @@ def handle_assistant_voice_transcript_append(
                 trigger=raw_trigger,
             )
         except Exception:
-            pass
+            logger.exception(
+                "voice secretary transcript sidecar append failed: group_id=%s document_path=%s session_id=%s segment_id=%s",
+                group.group_id,
+                target_document_path,
+                session_id,
+                segment_id,
+            )
     if document_source_text and is_final and auto_document_enabled:
         try:
             document_intent_hint = _infer_voice_transcript_intent(document_source_text, raw_trigger)

@@ -6,9 +6,11 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Surface } from "../ui/surface";
 import { Textarea } from "../ui/textarea";
+import { ModalFrame } from "./ModalFrame";
 
 export interface GroupEditModalProps {
   isOpen: boolean;
+  isDark: boolean;
   busy: string;
   groupId: string;
   ccccHome: string;
@@ -24,6 +26,7 @@ export interface GroupEditModalProps {
 
 export function GroupEditModal({
   isOpen,
+  isDark,
   busy,
   groupId,
   ccccHome,
@@ -82,32 +85,63 @@ export function GroupEditModal({
   ];
 
   return (
-    <div
-      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="group-edit-title"
-    >
-      <div
-        ref={modalRef}
-        className="w-full h-full sm:h-auto sm:max-w-2xl sm:mt-12 sm:max-h-[calc(100dvh-6rem)] shadow-2xl animate-scale-in flex flex-col overflow-hidden rounded-none sm:rounded-2xl glass-modal"
-      >
-        <div className="border-b px-6 py-4 safe-area-inset-top border-[var(--glass-border-subtle)] sm:px-7 glass-header">
-          <div id="group-edit-title" className="text-xl font-semibold text-[var(--color-text-primary)]">
-            {t("groupEdit.title")}
+    <ModalFrame
+      isOpen={isOpen}
+      isDark={isDark}
+      onClose={onCancel}
+      titleId="group-edit-title"
+      title={
+        <div className="text-xl font-semibold text-[var(--color-text-primary)]">
+          {t("groupEdit.title")}
+        </div>
+      }
+      closeAriaLabel={t("common:close")}
+      panelClassName="w-full h-full sm:h-auto sm:max-w-2xl sm:mt-12 sm:max-h-[calc(100dvh-6rem)]"
+      modalRef={modalRef}
+      footerActions={
+        <div className="flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between w-full">
+          <Button
+            type="button"
+            variant="destructive"
+            className="w-full sm:w-auto transition-all ease-spring duration-300"
+            onClick={() => {
+              onCancel();
+              onDelete();
+            }}
+            disabled={busy === "group-delete"}
+            title={t("groupEdit.deleteTitle")}
+          >
+            {t("common:delete")}
+          </Button>
+          <div className="flex flex-col-reverse sm:flex-row gap-3 w-full sm:w-auto sm:justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full sm:w-auto transition-all ease-spring duration-300"
+              onClick={onCancel}
+            >
+              {t("common:cancel")}
+            </Button>
+            <Button
+              type="button"
+              className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
+              onClick={onSave}
+              disabled={!title.trim() || busy === "group-update"}
+            >
+              {t("common:save")}
+            </Button>
           </div>
         </div>
-        <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_28%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))] px-6 pb-6 pt-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:px-7 sm:pb-7 sm:pt-5">
-          <div className="space-y-5">
+      }
+    >
+      <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_28%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))] px-6 pb-6 pt-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:px-7 sm:pb-7 sm:pt-5">
+        <div className="space-y-5">
           <div>
             <label className="mb-2 block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
               {t("groupEdit.nameLabel")}
             </label>
             <Input
-              className="py-3 text-base min-h-[52px]"
+              className="min-h-[44px]"
               value={imeTitle.value}
               onChange={imeTitle.onChange}
               onCompositionStart={imeTitle.onCompositionStart}
@@ -120,7 +154,7 @@ export function GroupEditModal({
               {t("groupEdit.descriptionLabel")}
             </label>
             <Textarea
-              className="min-h-[92px] resize-none px-4 py-3 text-base leading-6"
+              className="min-h-[92px] resize-none text-sm leading-6"
               value={imeTopic.value}
               onChange={imeTopic.onChange}
               onCompositionStart={imeTopic.onCompositionStart}
@@ -170,40 +204,8 @@ export function GroupEditModal({
               ))}
             </div>
           </Surface>
-          <div className="flex flex-wrap items-center gap-3 pt-2">
-            <Button
-              className="min-w-[180px] flex-1 bg-[rgb(35,36,37)] text-white shadow-[0_18px_34px_-22px_rgba(15,23,42,0.52)] hover:bg-black dark:bg-white dark:text-[rgb(20,20,22)] dark:hover:bg-white/92"
-              size="lg"
-              onClick={onSave}
-              disabled={!title.trim() || busy === "group-update"}
-            >
-              {t("common:save")}
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="border-black/10 bg-white/82 text-[rgb(35,36,37)] shadow-[0_10px_24px_-22px_rgba(15,23,42,0.4)] hover:bg-white dark:border-white/12 dark:bg-white/[0.06] dark:text-white dark:hover:bg-white/[0.1]"
-              onClick={onCancel}
-            >
-              {t("common:cancel")}
-            </Button>
-            <Button
-              size="lg"
-              variant="destructive"
-              className="ml-auto border-rose-500/30 bg-rose-500/12 text-rose-600 hover:bg-rose-500/18 dark:text-rose-300"
-              onClick={() => {
-                onCancel();
-                onDelete();
-              }}
-              disabled={busy === "group-delete"}
-              title={t("groupEdit.deleteTitle")}
-            >
-              {t("common:delete")}
-            </Button>
-          </div>
-          </div>
         </div>
       </div>
-    </div>
+    </ModalFrame>
   );
 }

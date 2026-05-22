@@ -147,7 +147,7 @@ def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str,
         minimum=1,
         maximum=600,
     )
-    tmp_path = Path("")
+    tmp_path: Path | None = None
     try:
         fd, raw_tmp = tempfile.mkstemp(prefix="cccc-voice-secretary-", suffix=suffix)
         tmp_path = Path(raw_tmp)
@@ -184,7 +184,7 @@ def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str,
             details={"command": command},
         ) from exc
     finally:
-        if tmp_path:
+        if tmp_path is not None:
             try:
                 tmp_path.unlink()
             except Exception:

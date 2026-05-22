@@ -166,11 +166,24 @@ class SherpaOfflineSession:
             pass
         try:
             await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            return
         except Exception:
             try:
                 self.process.terminate()
             except Exception:
                 pass
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            return
+        except Exception:
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=2.0)
+        except Exception:
+            pass
 
 
 async def open_sherpa_offline_session(

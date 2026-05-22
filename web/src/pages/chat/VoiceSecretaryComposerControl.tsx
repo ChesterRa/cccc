@@ -796,6 +796,7 @@ export function VoiceSecretaryComposerControl({
   const liveTranscriptPreviewRef = useRef<VoiceTranscriptPreview | null>(null);
   const archivedDocumentIdsRef = useRef<Set<string>>(new Set());
   const selectedGroupIdRef = useRef("");
+  const unmountCleanupRef = useRef<() => void>(() => undefined);
   selectedGroupIdRef.current = String(selectedGroupId || "").trim();
   const isCurrentGroup = useCallback((gid: string) => String(gid || "").trim() === selectedGroupIdRef.current, []);
   const releaseDaemonVoiceRecordingLease = useCallback((groupId?: string) => {
@@ -2371,20 +2372,22 @@ export function VoiceSecretaryComposerControl({
     };
   }, [showAssistantModeMenu]);
 
-  useEffect(() => () => {
-    const recognition = recognitionRef.current;
-    recognitionRef.current = null;
-    abortBrowserSpeechRecognition(recognition);
-    browserSpeechStopRequestedRef.current = true;
-    browserSpeechTransientErrorCountRef.current = 0;
-    clearBrowserSpeechRestartTimer();
-    clearBrowserSpeechStopFinalizeTimer();
-    clearTranscriptFlushTimer();
-    clearTranscriptMaxFlushTimer();
-    clearServicePartialCommitTimer();
-    clearServiceDocumentCheckpointTimer();
-    cleanupServiceAudio();
-    releaseVoiceRecordingGuards();
+  useEffect(() => {
+    unmountCleanupRef.current = () => {
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      abortBrowserSpeechRecognition(recognition);
+      browserSpeechStopRequestedRef.current = true;
+      browserSpeechTransientErrorCountRef.current = 0;
+      clearBrowserSpeechRestartTimer();
+      clearBrowserSpeechStopFinalizeTimer();
+      clearTranscriptFlushTimer();
+      clearTranscriptMaxFlushTimer();
+      clearServicePartialCommitTimer();
+      clearServiceDocumentCheckpointTimer();
+      cleanupServiceAudio();
+      releaseVoiceRecordingGuards();
+    };
   }, [
     cleanupServiceAudio,
     clearBrowserSpeechRestartTimer,
@@ -2395,6 +2398,7 @@ export function VoiceSecretaryComposerControl({
     clearTranscriptMaxFlushTimer,
     releaseVoiceRecordingGuards,
   ]);
+  useEffect(() => () => unmountCleanupRef.current(), []);
 
   const startBrowserSpeech = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();

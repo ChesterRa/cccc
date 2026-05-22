@@ -146,9 +146,9 @@
 /* CSS Custom Properties for theming */
 :root {
   /* Light theme (default for prefers-color-scheme: light) */
-  --color-body-bg: #f8f6f2;          /* 温暖温润的画布底色 */
-  --color-sidebar-bg: #f1f0ec;       /* 侧边栏采用略深的暖沙色，增加对比 */
-  --color-chat-bg: rgba(255, 255, 255, 0.85); /* 主聊天面板使用柔和乳白纸张色 */
+  --color-body-bg: #f8f6f2;          /* Warm canvas background */
+  --color-sidebar-bg: #f1f0ec;       /* Slightly deeper sidebar tone for contrast */
+  --color-chat-bg: rgba(255, 255, 255, 0.85); /* Soft paper tone for the main chat panel */
 
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #fbfcfe;
@@ -157,7 +157,7 @@
   --color-bg-overlay: rgba(0, 0, 0, 0.4);
 
   /* Enhanced Liquid Glass Light Theme — Premium (Optimized) */
-  --glass-bg: rgba(241, 240, 236, 0.85); /* 侧边栏毛玻璃基础色 */
+  --glass-bg: rgba(241, 240, 236, 0.85); /* Sidebar glass base color */
   --glass-bg-hover: rgba(241, 240, 236, 0.94);
   --glass-bg-active: rgba(241, 240, 236, 0.98);
   --glass-border: rgba(15, 23, 42, 0.06);
@@ -209,7 +209,7 @@
   --color-border-secondary: rgba(15, 23, 42, 0.1);
   --color-border-focus: rgb(35, 36, 37);
 
-  --color-text-primary: #1c1d21;      /* 炭黑色 */
+  --color-text-primary: #1c1d21;      /* Charcoal black */
   --color-text-secondary: #4a4c54;
   --color-text-tertiary: #767985;
   --color-text-muted: #9b9ea8;
@@ -261,6 +261,7 @@
   --term-bright-magenta: #a855f7;
   --term-bright-cyan: #06b6d4;
   --term-bright-white: #f8fafc;
+  --focus-ring: 0 0 0 2px var(--color-body-bg), 0 0 0 4px rgba(35, 36, 37, 0.15);
   
   color-scheme: light;
 }
@@ -294,6 +295,7 @@
   --glass-glow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   --glass-blur: 20px;
   --glass-blur-lg: 40px;
+  --focus-ring: 0 0 0 2px var(--color-body-bg), 0 0 0 4px rgba(255, 255, 255, 0.25);
 
   /* Tab glass tokens */
   --glass-tab-bg: rgba(24, 24, 30, 0.72);
@@ -489,16 +491,15 @@ select.cccc-group-select option {
    ============================================ */
 
 *:focus-visible {
-  outline: 2px solid var(--color-border-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /* Button focus states */
 button:focus-visible,
 [role="button"]:focus-visible {
-  outline: 2px solid var(--color-border-focus);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(35, 36, 37, 0.16);
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /* Input focus states */
@@ -507,7 +508,7 @@ textarea:focus-visible,
 select:focus-visible {
   outline: none;
   border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 3px rgba(35, 36, 37, 0.12);
+  box-shadow: var(--focus-ring);
 }
 
 /* ============================================

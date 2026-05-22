@@ -165,6 +165,147 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
             cleanup()
 
+    def test_web_voice_secretary_stream_disconnect_finalizes_document_audio(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            class FakeStreamingSession:
+                def __init__(self) -> None:
+                    self.sent: list[dict] = []
+                    self.closed = False
+
+                async def send(self, payload: dict):
+                    self.sent.append(dict(payload))
+
+                async def receive(self, timeout=None):
+                    from cccc.daemon.assistants.sherpa_streaming_asr import SherpaStreamingAsrError
+
+                    if self.sent and self.sent[-1].get("type") == "stop":
+                        return {"type": "closed"}
+                    raise SherpaStreamingAsrError("asr_backend_timeout", "ASR worker timed out")
+
+                async def close(self):
+                    self.closed = True
+
+            fake_session = FakeStreamingSession()
+            apply_calls: list[dict] = []
+
+            async def fake_open_streaming_session(_model_id: str = ""):
+                return fake_session
+
+            async def fake_final_asr_event(*args, **kwargs):
+                return {"type": "final", "text": "final text from disconnected stream"}
+
+            async def fake_apply_final_text(_daemon, **kwargs):
+                apply_calls.append(dict(kwargs))
+                return {"ok": True, "result": {"applied": True}}
+
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
+                side_effect=fake_open_streaming_session,
+            ), patch(
+                "cccc.ports.web.routes.groups.build_final_asr_text_event",
+                side_effect=fake_final_asr_event,
+            ), patch(
+                "cccc.ports.web.routes.groups.apply_final_text_to_document",
+                side_effect=fake_apply_final_text,
+            ):
+                with TestClient(create_app()) as client:
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                    ) as ws:
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "stream-disconnect",
+                                "capture_mode": "document",
+                                "document_path": "docs/meeting.md",
+                                "sample_rate": 16000,
+                                "language": "en-US",
+                            }
+                        )
+                        ready = ws.receive_json()
+                        self.assertEqual(ready.get("type"), "ready")
+                        ws.send_json(
+                            {
+                                "type": "audio",
+                                "seq": 2,
+                                "sample_rate": 16000,
+                                "audio_base64": base64.b64encode(b"\x01\x00" * 8000).decode("ascii"),
+                            }
+                        )
+
+            self.assertTrue(any(item.get("type") == "stop" for item in fake_session.sent))
+            self.assertTrue(fake_session.closed)
+            self.assertEqual(len(apply_calls), 1)
+            self.assertEqual(apply_calls[0].get("document_path"), "docs/meeting.md")
+            self.assertEqual(apply_calls[0].get("text"), "final text from disconnected stream")
+            session_path = Path(home) / "voice-secretary" / group_id / "stream-disconnect" / "session.json"
+            session = json.loads(session_path.read_text(encoding="utf-8"))
+            self.assertEqual(session.get("status"), "closed")
+            self.assertEqual(session.get("final_asr_text"), "final text from disconnected stream")
+        finally:
+            cleanup()
+
+    def test_web_voice_secretary_stream_rejects_oversized_pcm16_audio(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        old_limit = os.environ.get("CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES")
+        os.environ["CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES"] = "4"
+        try:
+            class FakeStreamingSession:
+                def __init__(self) -> None:
+                    self.closed = False
+
+                async def send(self, _payload: dict):
+                    return None
+
+                async def receive(self, timeout=None):
+                    return {"type": "closed"}
+
+                async def close(self):
+                    self.closed = True
+
+            fake_session = FakeStreamingSession()
+
+            async def fake_open_streaming_session(_model_id: str = ""):
+                return fake_session
+
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
+                side_effect=fake_open_streaming_session,
+            ):
+                with TestClient(create_app()) as client:
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                    ) as ws:
+                        ws.send_json({"type": "start", "seq": 1, "session_id": "stream-too-large", "sample_rate": 16000})
+                        ready = ws.receive_json()
+                        self.assertEqual(ready.get("type"), "ready")
+                        ws.send_json(
+                            {
+                                "type": "audio",
+                                "seq": 2,
+                                "sample_rate": 16000,
+                                "audio_base64": base64.b64encode(b"\x01\x00\x02\x00\x03\x00").decode("ascii"),
+                            }
+                        )
+                        error = ws.receive_json()
+                        self.assertFalse(bool(error.get("ok")))
+                        self.assertEqual(((error.get("error") or {}).get("code")), "voice_stream_audio_too_large")
+            self.assertTrue(fake_session.closed)
+        finally:
+            if old_limit is None:
+                os.environ.pop("CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES", None)
+            else:
+                os.environ["CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES"] = old_limit
+            cleanup()
+
     def test_web_voice_secretary_model_install_route_downloads_and_enables_managed_model(self) -> None:
         from cccc.ports.web.app import create_app
 
