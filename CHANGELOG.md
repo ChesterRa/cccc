@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.20] — 2026-05-22
+
+### Added
+- **Voice Secretary recording diagnostics** now report clearer stop reasons for browser and local ASR paths, including microphone track endings, muted tracks, local ASR websocket failures, backend errors, and audio-context interruptions.
+- **Voice Secretary document refresh fallback** now detects external document changes while the Doc panel is open by polling document metadata and loading full content only when the active document revision changes.
+- **Message request lanes and chat diagnostics** add better isolation and evidence for chat send/reply flows, improving durability around concurrent message requests and short-circuit failures.
+- **Actor configuration modal unification** replaces the separate Add Actor modal with a shared add/edit surface, reducing UI drift between actor creation and editing.
+
+### Changed
+- **Local ASR and Browser ASR document-mode stop behavior** is now more consistent: stopping Local ASR can trigger the same final document-refinement path as Browser ASR without requiring a separate manual instruction.
+- **Voice Secretary activity and transcript surfaces** are quieter and denser, focusing Activity on live/request/reply feedback while keeping document transcripts in the document workspace.
+- **Voice Secretary document polling** now uses low-noise metadata-change detection instead of frequent full-content refreshes.
+- **Web UI surfaces** were polished across modals, search, message bubbles, runtime details, sidebar items, typography, and markdown/code-block rendering.
+- **Slash command filtering** now prioritizes command names over noisy short description matches.
+- **Vite development proxying** now honors `CCCC_WEB_HOST` and `CCCC_WEB_PORT`, making local Web development less dependent on the default `127.0.0.1:8848`.
+
+### Fixed
+- Fixed Local ASR normal websocket closes being reported as unexpected recording failures after a successful document-mode stop/save.
+- Fixed Voice Secretary final transcript spacing around ASCII punctuation and improved streaming/offline Sherpa worker shutdown and JSONL handling.
+- Fixed no-op draft handling so empty or meaningless voice input is less likely to pollute composer output.
+- Fixed composer send gating while group actors are still hydrating.
+- Fixed several daemon messaging and ledger reliability issues, including lane isolation, reply idempotency, reverse lookup, compact-threshold behavior, and diagnostics for short-circuit message requests.
+- Fixed MCP blob/file MIME guessing so Markdown attachments are reported as `text/markdown`.
+- Fixed test isolation around remote access environment variables, IM startup process spawning, and pre-commit timeout handling.
+
+### Tests
+- Expanded coverage for Voice Secretary ASR, document finalization, service runtime behavior, chat diagnostics, message lanes, ledger indexing/segmentation, MCP attachment MIME handling, Web UI modal/composer behavior, slash command filtering, and Voice Secretary document polling support.
+
 ## [0.4.19] — 2026-05-19
 
 ### Fixed

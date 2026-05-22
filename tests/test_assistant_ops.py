@@ -5417,6 +5417,86 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_idle_review_follows_local_asr_service_stop(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import assistant_ops
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            old_threshold = assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD
+            old_cooldown = assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS
+            assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = 8
+            assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = 0
+            try:
+                segment, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "local-asr-stop-review-session",
+                        "segment_id": "seg-local-asr-stop-1",
+                        "text": "capture the local ASR stop behavior and produce a polished working document",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "service",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "client_session_id": "local-asr-stop-review-session",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(segment.ok, getattr(segment, "error", None))
+                self.assertTrue(((segment.result or {}).get("input_event") or {}).get("text"))
+
+                stop, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "local-asr-stop-review-session",
+                        "segment_id": "",
+                        "text": "",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "service_transcript",
+                            "capture_mode": "service",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "client_session_id": "local-asr-stop-review-session",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(stop.ok, getattr(stop, "error", None))
+
+                batch, _ = self._call(
+                    "assistant_voice_document_input_read",
+                    {"group_id": group_id, "by": "assistant:voice_secretary"},
+                )
+                self.assertTrue(batch.ok, getattr(batch, "error", None))
+                self.assertEqual((batch.result or {}).get("item_count"), 2, batch.result)
+                input_text = str((batch.result or {}).get("input_text") or "")
+                self.assertIn("capture the local ASR stop behavior", input_text)
+                self.assertIn("Publishable document refinement request", input_text)
+                self.assertIn("coherent publishable artifact", input_text)
+                self.assertIn("detail-rich", input_text)
+            finally:
+                assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = old_threshold
+                assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = old_cooldown
+        finally:
+            cleanup()
+
     def test_voice_idle_review_does_not_advance_cursor_before_readable_input_exists(self) -> None:
         home, cleanup = self._with_home()
         try:
