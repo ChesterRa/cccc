@@ -56,7 +56,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, ChatGPT Web, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, OpenCode, ChatGPT Web, Gemini CLI, and 6 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -142,7 +142,7 @@ graph TB
         A2["Codex CLI"]
         A3["ChatGPT Web<br/>GPT-5.x via MCP"]
         A4["Gemini CLI"]
-        A5["+ 5 more + custom"]
+        A5["+ 6 more + custom"]
     end
 
     subgraph Daemon["CCCC Daemon · single writer"]
@@ -190,7 +190,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 9 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 10 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Command / Surface |
 |---------|-------------|-------------------|
@@ -203,6 +203,7 @@ CCCC orchestrates agents across 9 first-class runtimes, with `custom` available 
 | Auggie | Auto MCP setup | `auggie` |
 | Kimi CLI | Auto MCP setup | `kimi` |
 | Neovate | Auto MCP setup | `neovate` |
+| OpenCode | Auto MCP setup via runtime config | `opencode` |
 | Custom | Manual | Any command |
 
 ```bash

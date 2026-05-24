@@ -135,6 +135,10 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: "# Configure Hermes providers, OAuth, and tools in your Hermes profile.",
     unset: "",
   },
+  opencode: {
+    set: "# Configure OpenCode providers and auth through OpenCode config or environment variables.",
+    unset: "",
+  },
 };
 
 const DEFAULT_SECRETS_PLACEHOLDER = {
@@ -1337,6 +1341,7 @@ function EditActorConfigModal({
                             disabled: !selectable,
                           };
                         })}
+                        searchable
                       />
                     </div>
 

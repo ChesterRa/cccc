@@ -47,7 +47,10 @@ const CommandList = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <CommandPrimitive.List
     ref={ref}
-    className={cn("scrollbar-hide max-h-[18rem] overflow-y-auto overflow-x-hidden", className)}
+    className={cn(
+      "scrollbar-subtle max-h-[min(22rem,calc(100dvh-12rem))] overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]",
+      className
+    )}
     {...props}
   />
 ));

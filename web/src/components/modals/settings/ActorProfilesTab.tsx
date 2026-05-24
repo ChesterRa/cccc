@@ -58,6 +58,7 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   gemini: "gemini --yolo",
   kimi: "kimi --yolo",
   neovate: "neovate",
+  opencode: "opencode",
   web_model: "",
   custom: "",
 };
@@ -280,6 +281,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 }}
                 ariaLabel={t("actorProfiles.runtime")}
                 className={inputClass()}
+                searchable
               />
               {editorIsWebModel ? (
                 <div className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">

@@ -13,6 +13,7 @@ from ...kernel.runtime import runtime_start_preflight_error
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..mcp_install import prepare_runtime_mcp_env
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ..runner_state_ops import web_model_group_running
 from ...util.conv import coerce_bool
@@ -162,17 +163,25 @@ def autostart_running_groups(
 
             ok_mcp = True
             effective_cmd = list(launch_spec["effective_command"])
+
+            def _launch_env() -> Dict[str, str]:
+                return prepare_runtime_mcp_env(
+                    runtime,
+                    inject_actor_context_env(effective_env, group.group_id, actor_id),
+                )
+
             runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
             if runtime_error:
                 logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, runtime_error)
                 continue
             if effective_runner != "headless":
                 try:
+                    mcp_env = _launch_env()
                     ok_mcp = bool(
                         ensure_mcp_installed(
                             runtime,
                             cwd,
-                            env={str(k): str(v) for k, v in effective_env.items() if isinstance(k, str)},
+                            env=mcp_env,
                         )
                     )
                 except Exception:
@@ -216,7 +225,7 @@ def autostart_running_groups(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
-                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        env=_launch_env(),
                         model=model_from_runtime_command(launch_spec["effective_command"]),
                         remote_tui_base_command=list(launch_spec["effective_command"]),
                         max_backlog_bytes=pty_backlog_bytes(),
@@ -226,7 +235,7 @@ def autostart_running_groups(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
-                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        env=_launch_env(),
                         model=model_from_runtime_command(launch_spec["effective_command"]),
                     )
                 elif runtime == "claude" and effective_runner == "headless":
@@ -234,7 +243,7 @@ def autostart_running_groups(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
-                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        env=_launch_env(),
                         model=model_from_runtime_command(launch_spec["effective_command"]),
                     )
                 elif effective_runner == "headless":
@@ -242,7 +251,7 @@ def autostart_running_groups(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
-                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        env=_launch_env(),
                     )
                 else:
                     session = start_pty_actor_with_runtime_resume(
@@ -250,7 +259,7 @@ def autostart_running_groups(
                         actor_id=actor_id,
                         cwd=cwd,
                         base_command=effective_cmd,
-                        env=prepare_pty_env(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        env=prepare_pty_env(_launch_env()),
                         runtime=runtime,
                         model=model_from_runtime_command(effective_cmd),
                         max_backlog_bytes=pty_backlog_bytes(),

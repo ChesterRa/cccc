@@ -299,11 +299,23 @@ SUPPORTED_RUNTIMES = (
     "hermes",
     "kimi",
     "neovate",
+    "opencode",
     "web_model",
     "custom",
 )
 
-AUTO_MCP_RUNTIMES = ("claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "hermes", "kimi")
+AUTO_MCP_RUNTIMES = (
+    "claude",
+    "codex",
+    "droid",
+    "amp",
+    "auggie",
+    "neovate",
+    "gemini",
+    "hermes",
+    "kimi",
+    "opencode",
+)
 
 
 def _normalize_runtime_command(runtime: str, command: list[str]) -> list[str]:

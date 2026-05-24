@@ -121,7 +121,20 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             command = []
         elif runner != "pty":
             raise ValueError("invalid runner (must be 'pty')")
-        if runtime not in ("amp", "auggie", "claude", "codex", "droid", "gemini", "hermes", "kimi", "neovate", "web_model", "custom"):
+        if runtime not in (
+            "amp",
+            "auggie",
+            "claude",
+            "codex",
+            "droid",
+            "gemini",
+            "hermes",
+            "kimi",
+            "neovate",
+            "opencode",
+            "web_model",
+            "custom",
+        ):
             raise ValueError("invalid runtime")
         if runtime == "custom" and not command:
             raise ValueError("custom runtime requires a command (PTY runner)")

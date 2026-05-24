@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from cccc.daemon.mcp_install import ensure_mcp_installed, is_mcp_installed
+from cccc.daemon.mcp_install import ensure_mcp_installed, is_mcp_installed, prepare_runtime_mcp_env
 from cccc.kernel.runtime import get_cccc_mcp_stdio_command
 
 
@@ -20,6 +20,59 @@ class TestMcpInstall(unittest.TestCase):
             with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
                 ok = ensure_mcp_installed("unknown-runtime", cwd, auto_mcp_runtimes=("claude", "codex"))
                 self.assertTrue(ok)
+                mock_run.assert_not_called()
+
+    def test_prepare_runtime_mcp_env_opencode_injects_inline_config(self) -> None:
+        env = {
+            "CCCC_HOME": "/tmp/cccc-home",
+            "CCCC_GROUP_ID": "g_123",
+            "CCCC_ACTOR_ID": "peer1",
+            "OPENCODE_CONFIG_CONTENT": json.dumps({"mcp": {"other": {"type": "local", "command": ["other"]}}}),
+        }
+
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            prepared = prepare_runtime_mcp_env("opencode", env)
+
+        doc = json.loads(prepared["OPENCODE_CONFIG_CONTENT"])
+        self.assertEqual(doc["mcp"]["other"]["command"], ["other"])
+        self.assertEqual(
+            doc["mcp"]["cccc"],
+            {
+                "type": "local",
+                "command": ["/abs/cccc", "mcp"],
+                "enabled": True,
+                "environment": {
+                    "CCCC_HOME": "/tmp/cccc-home",
+                    "CCCC_GROUP_ID": "g_123",
+                    "CCCC_ACTOR_ID": "peer1",
+                },
+            },
+        )
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertTrue(is_mcp_installed("opencode", env=prepared))
+
+    def test_ensure_mcp_installed_opencode_uses_prepared_env_without_cli(self) -> None:
+        env = prepare_runtime_mcp_env(
+            "opencode",
+            {
+                "CCCC_HOME": "/tmp/cccc-home",
+                "CCCC_GROUP_ID": "g_123",
+                "CCCC_ACTOR_ID": "peer1",
+            },
+        )
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                ok = ensure_mcp_installed("opencode", cwd, auto_mcp_runtimes=("opencode",), env=env)
+                self.assertTrue(ok)
+                mock_run.assert_not_called()
+
+    def test_ensure_mcp_installed_opencode_missing_inline_config_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                ok = ensure_mcp_installed("opencode", cwd, auto_mcp_runtimes=("opencode",), env={})
+                self.assertFalse(ok)
                 mock_run.assert_not_called()
 
     def test_build_mcp_add_command_hermes_uses_safe_prepare_wrapper(self) -> None:
