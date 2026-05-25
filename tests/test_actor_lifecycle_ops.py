@@ -491,6 +491,205 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_new_session_clears_runtime_session_and_starts_when_stopped(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-new-session", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.daemon.runtime_session_ops import read_runtime_session, record_pty_runtime_session
+            from cccc.kernel.group import load_group
+
+            record_pty_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="codex",
+                cwd=Path("."),
+                command=["codex"],
+                provider_session_id="019dbe1d-cd97-7d31-9ba6-212d3e57b15c",
+                captured_from="test",
+            )
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            class FakePtySession:
+                pid = 4321
+
+            os.environ.pop("CCCC_RUNTIME_RESUME", None)
+            with patch("cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True), patch(
+                "cccc.daemon.actors.actor_runtime_ops.runtime_start_preflight_error",
+                return_value="",
+            ), patch(
+                "cccc.daemon.runtime_session_ops._schedule_codex_pty_status_capture",
+            ), patch(
+                "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
+                return_value=FakePtySession(),
+            ) as start_actor:
+                new_session, _ = self._call(
+                    "actor_new_session",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertTrue(new_session.ok, getattr(new_session, "error", None))
+            self.assertEqual(read_runtime_session(group_id, "peer1"), {})
+            start_actor.assert_called()
+            command = start_actor.call_args.kwargs.get("command")
+            self.assertIsInstance(command, list)
+            assert isinstance(command, list)
+            self.assertEqual(command[0], "codex")
+            self.assertNotIn("resume", command)
+
+            show, _ = self._call("group_show", {"group_id": group_id})
+            self.assertTrue(show.ok, getattr(show, "error", None))
+            group_doc = (show.result or {}).get("group") if isinstance(show.result, dict) else {}
+            self.assertIsInstance(group_doc, dict)
+            assert isinstance(group_doc, dict)
+            self.assertTrue(bool(group_doc.get("running")))
+        finally:
+            cleanup()
+
+    def test_actor_new_session_stops_running_runtime_before_fresh_start(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-new-session-running", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = True
+            group.save()
+
+            class FakePtySession:
+                pid = 4322
+
+            order: list[str] = []
+
+            def _stop_pty(**_kwargs: object) -> None:
+                order.append("stop")
+
+            def _clear_session(_group_id: str, _actor_id: str) -> None:
+                order.append("clear_session")
+
+            def _start_pty(**_kwargs: object) -> FakePtySession:
+                order.append("start")
+                return FakePtySession()
+
+            with patch("cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True), patch(
+                "cccc.daemon.actors.actor_runtime_ops.runtime_start_preflight_error",
+                return_value="",
+            ), patch(
+                "cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.stop_actor",
+                side_effect=_stop_pty,
+            ), patch(
+                "cccc.daemon.actors.actor_lifecycle_ops.remove_runtime_session",
+                side_effect=_clear_session,
+            ), patch(
+                "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
+                side_effect=_start_pty,
+            ):
+                new_session, _ = self._call(
+                    "actor_new_session",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertTrue(new_session.ok, getattr(new_session, "error", None))
+            self.assertIn("stop", order)
+            self.assertIn("clear_session", order)
+            self.assertIn("start", order)
+            self.assertLess(order.index("stop"), order.index("clear_session"))
+            self.assertLess(order.index("clear_session"), order.index("start"))
+        finally:
+            cleanup()
+
+    def test_actor_new_session_rejects_unsupported_runtime_without_clearing_session(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-new-session-unsupported", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "gemini",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.daemon.runtime_session_ops import read_runtime_session, record_pty_runtime_session
+
+            record_pty_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="gemini",
+                cwd=Path("."),
+                command=["gemini"],
+                provider_session_id="gemini-session-1234",
+                captured_from="test",
+            )
+
+            new_session, _ = self._call(
+                "actor_new_session",
+                {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+            )
+
+            self.assertFalse(new_session.ok)
+            self.assertEqual(getattr(new_session.error, "code", ""), "unsupported_runtime")
+            self.assertEqual(read_runtime_session(group_id, "peer1").get("provider_session_id"), "gemini-session-1234")
+        finally:
+            cleanup()
+
     def test_actor_remove_stops_group_when_last_actor_removed(self) -> None:
         _, cleanup = self._with_home()
         try:

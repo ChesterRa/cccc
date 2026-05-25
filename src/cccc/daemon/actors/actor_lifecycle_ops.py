@@ -16,13 +16,15 @@ from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..mcp_install import prepare_runtime_mcp_env
-from ..runtime_session_ops import start_pty_actor_with_runtime_resume
+from ..runtime_session_ops import remove_runtime_session, start_pty_actor_with_runtime_resume
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
 from ..pet.review_scheduler import request_pet_review
+
+_NEW_SESSION_RUNTIMES = frozenset({"claude", "codex"})
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -494,6 +496,118 @@ def handle_actor_restart(
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
 
+def handle_actor_new_session(
+    args: Dict[str, Any],
+    *,
+    foreman_id: Callable[[Any], str],
+    maybe_reset_automation_on_foreman_change: Callable[..., None],
+    start_actor_process: Callable[..., Dict[str, Any]],
+    remove_headless_state: Callable[[str, str], None],
+    remove_pty_state_if_pid: Callable[..., None],
+    get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
+    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
+) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    actor_id = str(args.get("actor_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    before_foreman = foreman_id(group)
+    caller_context_explicit = "caller_id" in args or "is_admin" in args
+    caller_id = str(args.get("caller_id") or "").strip()
+    is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
+    previous_actor = find_actor(group, actor_id)
+    previous_enabled = (
+        coerce_bool(previous_actor.get("enabled"), default=True)
+        if isinstance(previous_actor, dict)
+        else None
+    )
+    enabled_was_updated = False
+
+    def _restore_previous_enabled() -> None:
+        if not enabled_was_updated or previous_enabled is None:
+            return
+        try:
+            update_actor(group, actor_id, {"enabled": previous_enabled})
+        except Exception:
+            pass
+
+    try:
+        require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
+        actor = update_actor(group, actor_id, {"enabled": True})
+        enabled_was_updated = True
+        actor = resolve_linked_actor_before_start(
+            group,
+            actor_id,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
+            caller_id=caller_id,
+            is_admin=is_admin,
+        )
+        runtime = str(actor.get("runtime") or "codex").strip().lower() or "codex"
+        if runtime not in _NEW_SESSION_RUNTIMES:
+            _restore_previous_enabled()
+            return _error(
+                "unsupported_runtime",
+                "new session is supported only for claude and codex actors",
+                details={
+                    "group_id": group.group_id,
+                    "actor_id": actor_id,
+                    "runtime": runtime,
+                    "supported": sorted(_NEW_SESSION_RUNTIMES),
+                },
+            )
+        _stop_actor_runtime_handles(
+            group.group_id,
+            actor_id,
+            remove_headless_state=remove_headless_state,
+            remove_pty_state_if_pid=remove_pty_state_if_pid,
+        )
+        remove_runtime_session(group.group_id, actor_id)
+    except Exception as e:
+        _restore_previous_enabled()
+        msg = str(e)
+        if "profile not found:" in msg:
+            return _error("profile_not_found", msg)
+        if isinstance(e, ActorProfileAccessDeniedError):
+            return _error("permission_denied", msg)
+        return _error("actor_new_session_failed", msg)
+
+    cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
+    env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
+    runner_kind = str(actor.get("runner") or "pty").strip()
+    runtime = str(actor.get("runtime") or "codex").strip()
+    try:
+        start_result = start_actor_process(
+            group,
+            actor_id,
+            command=list(cmd or []),
+            env=dict(env or {}),
+            runner=runner_kind,
+            runtime=runtime,
+            by=by,
+            caller_id=caller_id,
+            is_admin=is_admin,
+        )
+    except Exception as e:
+        _restore_previous_enabled()
+        return _error("actor_new_session_failed", str(e))
+    if not start_result["success"]:
+        _restore_previous_enabled()
+        return _error("actor_new_session_failed", start_result.get("error") or "unknown error")
+
+    maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    result: Dict[str, Any] = {"actor": actor, "event": start_result["event"], "new_session": True}
+    if start_result.get("effective_runner") != runner_kind:
+        result["runner_effective"] = start_result.get("effective_runner")
+    return DaemonResponse(ok=True, result=result)
+
+
 def try_handle_actor_lifecycle_op(
     op: str,
     args: Dict[str, Any],
@@ -563,5 +677,17 @@ def try_handle_actor_lifecycle_op(
             load_actor_profile_secrets=load_actor_profile_secrets,
             update_actor_private_env=update_actor_private_env,
             supported_runtimes=supported_runtimes,
+        )
+    if op == "actor_new_session":
+        return handle_actor_new_session(
+            args,
+            foreman_id=foreman_id,
+            maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
+            start_actor_process=start_actor_process,
+            remove_headless_state=remove_headless_state,
+            remove_pty_state_if_pid=remove_pty_state_if_pid,
+            get_actor_profile=get_actor_profile,
+            load_actor_profile_secrets=load_actor_profile_secrets,
+            update_actor_private_env=update_actor_private_env,
         )
     return None

@@ -861,6 +861,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
+    @group_router.post("/actors/{actor_id}/new_session")
+    async def actor_new_session(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+        await invalidate_readonly_actor_list(group_id)
+        if not await _developer_mode_enabled() and _is_internal_headless_runtime(await _actor_runtime_meta(group_id, actor_id)):
+            raise _headless_error(source="actor_new_session")
+        return await ctx.daemon(
+            {
+                "op": "actor_new_session",
+                "args": {"group_id": group_id, "actor_id": actor_id, "by": by, **_profile_auth_args(request)},
+            }
+        )
+
     @group_router.get("/actors/{actor_id}/env_private")
     async def actor_env_private_keys(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         """List configured private env keys + masked previews (never returns raw values)."""

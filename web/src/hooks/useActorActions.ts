@@ -84,6 +84,34 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, refreshActors, refreshGroups]
   );
 
+  // Start a fresh runtime session with the actor's current settings.
+  const startNewActorSession = useCallback(
+    async (actor: Actor) => {
+      if (!groupId || !actor) return;
+      const actionKey = `actor-lifecycle:${actor.id}`;
+      if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
+      setBusy(`actor-new-session:${actor.id}`);
+      try {
+        const resp = await api.newActorSession(groupId, actor.id);
+        if (!resp.ok) {
+          await Promise.all([refreshActors(), refreshGroups()]);
+          showError(`${resp.error.code}: ${resp.error.message}`);
+        } else {
+          clearStreamingEventsForActor(actor.id, groupId);
+          await Promise.all([refreshActors(), refreshGroups()]);
+        }
+        setTermEpochByActor((prev) => ({
+          ...prev,
+          [actor.id]: (prev[actor.id] || 0) + 1,
+        }));
+      } finally {
+        endActorAction(actorActionInFlightRef, actionKey);
+        setBusy("");
+      }
+    },
+    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor]
+  );
+
   // Edit actor (initialize form state and open modal).
   const editActor = useCallback(
     (actor: Actor) => {
@@ -158,6 +186,7 @@ export function useActorActions(groupId: string) {
     getTermEpoch,
     toggleActorEnabled,
     relaunchActor,
+    startNewActorSession,
     editActor,
     removeActor,
     openActorInbox,

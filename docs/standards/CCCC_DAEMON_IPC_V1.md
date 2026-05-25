@@ -2139,6 +2139,23 @@ Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 
+#### `actor_new_session`
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string }
+```
+
+Result:
+```ts
+{ actor: Record<string, unknown>; event: CCCSEventV1; new_session: true }
+```
+
+Notes:
+- Supported for `claude` and `codex` actors.
+- Stops the current actor runtime if present, clears CCCC's saved runtime session metadata for that actor, then starts the actor with the same runtime settings.
+- Does not delete provider-side conversation/session history.
+
 #### `runtime_hermes_status`
 
 Return Hermes runtime setup diagnostics for the selected user Hermes profile.

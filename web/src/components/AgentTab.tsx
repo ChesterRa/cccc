@@ -11,7 +11,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
-import { AlertIcon, StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
+import { AlertIcon, StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon, PlusIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
@@ -52,6 +52,7 @@ interface AgentTabProps {
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
+  onNewSession: () => void;
   onEdit: () => void;
   onRemove: () => void;
   onInbox: () => void;
@@ -72,6 +73,7 @@ export function AgentTab({
   onQuit,
   onLaunch,
   onRelaunch,
+  onNewSession,
   onEdit,
   onRemove,
   onInbox,
@@ -86,6 +88,7 @@ export function AgentTab({
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = String(actor.runtime || "").trim().toLowerCase() === "web_model";
+  const canStartNewSession = ["claude", "codex"].includes(String(actor.runtime || "").trim().toLowerCase());
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
@@ -239,6 +242,10 @@ export function AgentTab({
     if (workingState === "working") return t("working");
     return t("running");
   })();
+  const handleNewSession = () => {
+    if (!window.confirm(t('newSessionConfirm'))) return;
+    onNewSession();
+  };
   const stoppedTerminalOutputText = getStoppedTerminalOutputText(stoppedTerminalText, workingState);
   const resumeFailureNotice = hasRuntimeResumeFailure ? (
     <div
@@ -778,6 +785,17 @@ export function AgentTab({
                 <RefreshIcon size={16} />
                 {!isSmallScreen && t('relaunch')}
               </button>
+              {canStartNewSession ? (
+                <button
+                  onClick={handleNewSession}
+                  disabled={isBusy}
+                  className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
+                  aria-label={t('newSessionAgent')}
+                >
+                  <PlusIcon size={16} />
+                  {!isSmallScreen && t('newSession')}
+                </button>
+              ) : null}
               <button
                 onClick={onEdit}
                 disabled={isBusy}
@@ -799,6 +817,17 @@ export function AgentTab({
                 <PlayIcon size={16} />
                 {isBusy ? t('launching') : t('launch')}
               </button>
+              {canStartNewSession ? (
+                <button
+                  onClick={handleNewSession}
+                  disabled={isBusy}
+                  className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
+                  aria-label={t('newSessionAgent')}
+                >
+                  <PlusIcon size={16} />
+                  {t('newSession')}
+                </button>
+              ) : null}
               <button
                 onClick={onEdit}
                 disabled={isBusy}
