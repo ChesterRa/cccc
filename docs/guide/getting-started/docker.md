@@ -143,7 +143,7 @@ docker exec cccc cccc doctor
 | `ANTHROPIC_AUTH_TOKEN` | _(none)_ | Auth token for Claude Code runtime (do not set together with `ANTHROPIC_API_KEY`) |
 | `ANTHROPIC_BASE_URL` | _(none)_ | Custom API endpoint for Claude Code |
 | `OPENAI_API_KEY` | _(none)_ | API key for Codex runtime |
-| `OPENAI_BASE_URL` | _(none)_ | Custom API endpoint for Codex |
+| `OPENAI_BASE_URL` | _(none)_ | CCCC compatibility entry for Codex custom endpoints. CCCC maps this to Codex CLI's `openai_base_url` runtime config when launching Codex actors. |
 | `GEMINI_API_KEY` | _(none)_ | API key for Gemini CLI runtime |
 
 ### Volume Mounts

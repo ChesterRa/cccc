@@ -261,6 +261,22 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
         self.assertEqual(cmd[1:3], ["-c", "shell_environment_policy.inherit=all"])
         self.assertEqual(cmd[3:], ["--search"])
 
+    def test_codex_command_maps_openai_base_url_env_to_runtime_config(self) -> None:
+        from cccc.daemon import server as daemon_server
+
+        cmd = daemon_server._normalize_runtime_command(
+            "codex",
+            ["codex", "--search"],
+            env={"OPENAI_BASE_URL": "https://proxy.example/v1"},
+        )
+
+        self.assertEqual(cmd[0], "codex")
+        self.assertEqual(
+            cmd[1:5],
+            ["-c", 'openai_base_url="https://proxy.example/v1"', "-c", "shell_environment_policy.inherit=all"],
+        )
+        self.assertEqual(cmd[5:], ["--search"])
+
 
 if __name__ == "__main__":
     unittest.main()

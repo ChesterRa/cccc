@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict
 
@@ -37,6 +38,29 @@ class ActorLaunchSpec(ActorLaunchConfig):
     scope_key: str
     cwd: Path
     effective_command: List[str]
+
+
+def _normalize_runtime_command_for_launch(
+    normalize_runtime_command: Callable[..., List[str]],
+    runtime: str,
+    command: List[str],
+    env: Dict[str, Any],
+) -> List[str]:
+    try:
+        signature = inspect.signature(normalize_runtime_command)
+    except (TypeError, ValueError):
+        return normalize_runtime_command(runtime, command)
+    params = signature.parameters
+    if "env" in params or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+        return normalize_runtime_command(runtime, command, env=env)
+    positional_params = [
+        param
+        for param in params.values()
+        if param.kind in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+    ]
+    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in params.values()) or len(positional_params) >= 3:
+        return normalize_runtime_command(runtime, command, env)
+    return normalize_runtime_command(runtime, command)
 
 
 def model_from_runtime_command(command: List[str]) -> str:
@@ -143,7 +167,7 @@ def resolve_actor_launch_spec(
     runtime: str,
     find_scope_url: Callable[[Any, str], str],
     effective_runner_kind: Callable[[str], str],
-    normalize_runtime_command: Callable[[str, List[str]], List[str]],
+    normalize_runtime_command: Callable[..., List[str]],
     supported_runtimes: tuple[str, ...] | list[str],
     caller_id: str = "",
     is_admin: bool = False,
@@ -182,7 +206,12 @@ def resolve_actor_launch_spec(
         raise ValueError(f"unsupported runtime: {launch_config['runtime']}")
 
     runtime = str(launch_config["runtime"] or "").strip()
-    effective_command = normalize_runtime_command(runtime, list(launch_config["command"] or []))
+    effective_command = _normalize_runtime_command_for_launch(
+        normalize_runtime_command,
+        runtime,
+        list(launch_config["command"] or []),
+        dict(launch_config["merged_env"] or {}),
+    )
     return {
         **launch_config,
         "scope_key": scope_key,
@@ -205,7 +234,7 @@ def start_actor_process(
     find_scope_url: Callable[[Any, str], str],
     effective_runner_kind: Callable[[str], str],
     merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
-    normalize_runtime_command: Callable[[str, List[str]], List[str]],
+    normalize_runtime_command: Callable[..., List[str]],
     ensure_mcp_installed: Callable[..., bool],
     inject_actor_context_env: Callable[[Dict[str, Any], str, str], Dict[str, Any]],
     prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, str]],

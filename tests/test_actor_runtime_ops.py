@@ -7,6 +7,45 @@ from unittest.mock import patch
 
 
 class TestActorRuntimeOps(unittest.TestCase):
+    def test_resolve_launch_spec_passes_merged_env_to_command_normalizer(self) -> None:
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        with tempfile.TemporaryDirectory() as td:
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "peer1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "codex",
+                            "command": ["codex"],
+                            "env": {"OPENAI_BASE_URL": "https://proxy.example/v1"},
+                        }
+                    ],
+                },
+            )
+
+            def normalize(_runtime: str, command: list[str], *, env: dict[str, str]) -> list[str]:
+                return [*command, env["OPENAI_BASE_URL"]]
+
+            spec = resolve_actor_launch_spec(
+                group,
+                "peer1",
+                command=[],
+                env={},
+                runner="pty",
+                runtime="codex",
+                find_scope_url=lambda _group, _scope_key: td,
+                effective_runner_kind=lambda runner: runner,
+                normalize_runtime_command=normalize,
+                supported_runtimes=("codex",),
+            )
+
+        self.assertEqual(spec["effective_command"], ["codex", "https://proxy.example/v1"])
+
     def test_resolve_launch_spec_uses_user_hermes_home_by_default(self) -> None:
         import os
 
