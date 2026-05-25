@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.21] — 2026-05-25
+
+### Added
+- **OpenCode runtime support** is now available across actor creation/editing, runtime profiles, CLI runtime choices, setup diagnostics, runtime detection, Web runtime metadata, and Web runtime avatars.
+- **OpenCode MCP runtime injection** configures CCCC's MCP server through OpenCode runtime environment at actor launch time, avoiding global OpenCode config edits.
+- **New Session control for Claude and Codex actors** in the Web actor detail panel starts a fresh runtime session with the same actor settings after confirmation.
+
+### Changed
+- **Codex Docker endpoint configuration** now maps `OPENAI_BASE_URL` to Codex CLI's `openai_base_url` runtime config when Codex actors start, covering both PTY and app-server backed launch paths.
+- **Runtime selection in actor configuration** is searchable, making the full supported runtime list easier to discover.
+- **Docker docs and `.env` examples** now document `OPENAI_BASE_URL` as CCCC's compatibility entry for Codex custom endpoints.
+
+### Fixed
+- Fixed Docker/Compose Codex deployments only honoring `OPENAI_API_KEY` while ignoring custom `OPENAI_BASE_URL` endpoints.
+- Fixed the operator path for stale or unwanted Claude/Codex resume metadata by adding an explicit Web action that clears CCCC's saved session metadata and starts fresh without deleting provider-side history.
+
+### Tests
+- Added coverage for OpenCode runtime/MCP setup, Codex base URL config injection, Web/daemon New Session behavior, unsupported runtime rejection, and related Windows diagnostics.
+
 ## [0.4.20] — 2026-05-22
 
 ### Added

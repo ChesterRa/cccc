@@ -536,15 +536,25 @@ class TestActorLifecycleOps(unittest.TestCase):
             class FakePtySession:
                 pid = 4321
 
+                def remote_tui_pid(self) -> int:
+                    return self.pid
+
+            def _start_fresh_pty_app(**kwargs: object) -> FakePtySession:
+                self.assertEqual(read_runtime_session(group_id, "peer1"), {})
+                base_command = kwargs.get("remote_tui_base_command")
+                self.assertIsInstance(base_command, list)
+                assert isinstance(base_command, list)
+                self.assertEqual(base_command[0], "codex")
+                self.assertNotIn("resume", base_command)
+                return FakePtySession()
+
             os.environ.pop("CCCC_RUNTIME_RESUME", None)
             with patch("cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True), patch(
                 "cccc.daemon.actors.actor_runtime_ops.runtime_start_preflight_error",
                 return_value="",
             ), patch(
-                "cccc.daemon.runtime_session_ops._schedule_codex_pty_status_capture",
-            ), patch(
-                "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
-                return_value=FakePtySession(),
+                "cccc.daemon.actors.actor_runtime_ops.codex_app_supervisor.start_pty_app_actor",
+                side_effect=_start_fresh_pty_app,
             ) as start_actor:
                 new_session, _ = self._call(
                     "actor_new_session",
@@ -554,11 +564,6 @@ class TestActorLifecycleOps(unittest.TestCase):
             self.assertTrue(new_session.ok, getattr(new_session, "error", None))
             self.assertEqual(read_runtime_session(group_id, "peer1"), {})
             start_actor.assert_called()
-            command = start_actor.call_args.kwargs.get("command")
-            self.assertIsInstance(command, list)
-            assert isinstance(command, list)
-            self.assertEqual(command[0], "codex")
-            self.assertNotIn("resume", command)
 
             show, _ = self._call("group_show", {"group_id": group_id})
             self.assertTrue(show.ok, getattr(show, "error", None))
@@ -604,6 +609,9 @@ class TestActorLifecycleOps(unittest.TestCase):
             class FakePtySession:
                 pid = 4322
 
+                def remote_tui_pid(self) -> int:
+                    return self.pid
+
             order: list[str] = []
 
             def _stop_pty(**_kwargs: object) -> None:
@@ -626,7 +634,7 @@ class TestActorLifecycleOps(unittest.TestCase):
                 "cccc.daemon.actors.actor_lifecycle_ops.remove_runtime_session",
                 side_effect=_clear_session,
             ), patch(
-                "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
+                "cccc.daemon.actors.actor_runtime_ops.codex_app_supervisor.start_pty_app_actor",
                 side_effect=_start_pty,
             ):
                 new_session, _ = self._call(
