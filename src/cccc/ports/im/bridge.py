@@ -1737,6 +1737,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
             app_secret=dingtalk_app_secret,
             robot_code=dingtalk_robot_code,
             log_path=log_path,
+            session_state_path=state_dir / "im_dingtalk_sessions.json",
         )
     elif platform.lower() == "wecom":
         from .adapters.wecom import WecomAdapter

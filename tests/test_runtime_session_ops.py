@@ -911,9 +911,11 @@ class TestRuntimeSessionOps(unittest.TestCase):
         home, cleanup = self._with_home()
         try:
             from cccc.daemon.runtime_session_ops import (
+                mark_runtime_session_auth_failed,
                 prepare_codex_app_thread_resume,
                 prepare_headless_runtime_resume,
                 prepare_pty_resume_command,
+                read_runtime_session,
                 record_codex_app_thread_runtime_session,
                 record_pty_runtime_session,
                 runtime_session_command_fingerprint,
@@ -968,6 +970,26 @@ class TestRuntimeSessionOps(unittest.TestCase):
             )
             self.assertEqual(command, ["codex"])
             self.assertIsNone(resume_doc)
+
+            mark_runtime_session_auth_failed(
+                group_id="g1",
+                actor_id="codex-peer",
+                error="failed to connect to websocket: HTTP error: 401 Unauthorized",
+            )
+            stored = read_runtime_session("g1", "codex-peer")
+            self.assertEqual(stored.get("status"), "auth_failed")
+            self.assertFalse(bool(stored.get("resume_eligible")))
+            self.assertEqual(stored.get("failure_count"), 1)
+            self.assertIn("401 Unauthorized", str(stored.get("last_resume_error") or ""))
+            self.assertEqual(
+                prepare_codex_app_thread_resume(
+                    group_id="g1",
+                    actor_id="codex-peer",
+                    cwd=cwd,
+                    command=["codex", "app-server", "--listen", "stdio://"],
+                ),
+                {},
+            )
 
             write_runtime_session(
                 "g1",

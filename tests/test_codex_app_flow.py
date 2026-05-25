@@ -4481,6 +4481,60 @@ class TestCodexAppFlow(unittest.TestCase):
                 session.stop()
             cleanup()
 
+    def test_codex_app_stderr_401_marks_runtime_session_auth_failed(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            record_codex_app_thread_runtime_session(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                command=["codex", "app-server", "--listen", "ws://127.0.0.1:12345"],
+                provider_thread_id="thr-stale",
+                runner="pty",
+                status="usable",
+                captured_from="app_server_thread_start",
+                resume_eligible=True,
+            )
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+                listen_url="ws://127.0.0.1:12345",
+                transport="websocket",
+                persist_headless_state=False,
+                start_remote_tui=True,
+                remote_tui_base_command=["codex", "--search"],
+            )
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO(
+                    "failed to connect to websocket: HTTP error: 401 Unauthorized, "
+                    "url: wss://api.openai.com/v1/responses\n"
+                )
+
+                def poll(self):
+                    return None
+
+            session._proc = FakeProc()  # type: ignore[assignment]
+            session._running = True
+            session._stderr_loop()
+
+            stored = read_runtime_session("g_test", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr-stale")
+            self.assertEqual(stored.get("status"), "auth_failed")
+            self.assertFalse(bool(stored.get("resume_eligible")))
+            self.assertIn("401 Unauthorized", str(stored.get("last_resume_error") or ""))
+        finally:
+            cleanup()
+
     def test_codex_pty_app_resume_launches_remote_tui_with_thread_id(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session

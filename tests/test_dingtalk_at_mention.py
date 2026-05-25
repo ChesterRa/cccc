@@ -310,6 +310,107 @@ class TestSendMessageAtResolution:
         payload = json.loads(captured["body"]["msgParam"])
         assert payload["at"]["atUserIds"] == ["staff_001"]
 
+    def test_p2p_cid_conversation_fallback_uses_oto_api(self, adapter: DingTalkAdapter) -> None:
+        """DingTalk 1:1 conversationIds can start with cid and must not use group API."""
+        captured: Dict[str, Any] = {}
+        chat_id = "cidP2PFromDingTalk"
+        event = _make_inbound_event(
+            conversation_id=chat_id,
+            sender_staff_id="staff_p2p",
+            sender_nick="Shirley",
+            conversation_type="1",
+        )
+        adapter._enqueue_message(event)
+        adapter.poll()
+        adapter._session_webhook_cache.clear()
+
+        def mock_api_new(method, endpoint, body, timeout=15):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["body"] = body
+            return {"processQueryKey": "ok"}
+
+        with patch.object(adapter, "_api_new", side_effect=mock_api_new):
+            ok = adapter.send_message(chat_id, "Hello p2p")
+
+        assert ok is True
+        assert captured["endpoint"] == "/v1.0/robot/oToMessages/batchSend"
+        assert captured["body"]["userIds"] == ["staff_p2p"]
+        assert "openConversationId" not in captured["body"]
+
+    def test_group_cid_conversation_fallback_uses_group_api(self, adapter: DingTalkAdapter) -> None:
+        """DingTalk group conversations still use groupMessages fallback."""
+        captured: Dict[str, Any] = {}
+        chat_id = "cidGroupApi"
+        event = _make_inbound_event(
+            conversation_id=chat_id,
+            sender_staff_id="staff_group",
+            conversation_type="2",
+        )
+        adapter._enqueue_message(event)
+        adapter.poll()
+        adapter._session_webhook_cache.clear()
+
+        def mock_api_new(method, endpoint, body, timeout=15):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["body"] = body
+            return {"processQueryKey": "ok"}
+
+        with patch.object(adapter, "_api_new", side_effect=mock_api_new):
+            ok = adapter.send_message(chat_id, "Hello group")
+
+        assert ok is True
+        assert captured["endpoint"] == "/v1.0/robot/groupMessages/send"
+        assert captured["body"]["openConversationId"] == chat_id
+        assert "userIds" not in captured["body"]
+
+    def test_restart_restores_session_webhook_and_p2p_route(self, tmp_path: Path) -> None:
+        """A restarted adapter should keep unexpired webhook and p2p routing state."""
+        state_path = tmp_path / "dingtalk_sessions.json"
+        chat_id = "cidP2PRestart"
+        first = DingTalkAdapter(
+            app_key="test_key",
+            app_secret="test_secret",
+            robot_code="test_robot",
+            log_path=tmp_path / "first.log",
+            session_state_path=state_path,
+        )
+        first._connected = True
+        event = _make_inbound_event(
+            conversation_id=chat_id,
+            sender_staff_id="staff_restart",
+            conversation_type="1",
+        )
+        first._enqueue_message(event)
+        first.poll()
+
+        second = DingTalkAdapter(
+            app_key="test_key",
+            app_secret="test_secret",
+            robot_code="test_robot",
+            log_path=tmp_path / "second.log",
+            session_state_path=state_path,
+        )
+        second._connected = True
+
+        captured_webhook: List[str] = []
+
+        def mock_webhook(self_adapter, url, text, at_user_ids=None):
+            _ = self_adapter
+            _ = text
+            _ = at_user_ids
+            captured_webhook.append(url)
+            return True
+
+        with patch.object(type(second), "_send_via_webhook", mock_webhook):
+            ok = second.send_message(chat_id, "after restart")
+
+        assert ok is True
+        assert captured_webhook == [f"https://oapi.dingtalk.com/robot/sendBySession/{chat_id}"]
+        assert second._conversation_chat_type(chat_id) == "p2p"
+        assert second._conversation_user_id(chat_id) == "staff_restart"
+
     def test_legacy_api_fallback_includes_at(self, adapter: DingTalkAdapter) -> None:
         """Legacy /chat/send fallback should carry msg.at.atUserIds."""
         captured: Dict[str, Any] = {}

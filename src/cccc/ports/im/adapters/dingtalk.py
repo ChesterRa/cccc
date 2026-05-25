@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .base import IMAdapter, OutboundStreamHandle
+from .dingtalk_session import DingTalkConversationStore
 
 # DingTalk API limits
 DINGTALK_MAX_MESSAGE_LENGTH = 4096
@@ -90,6 +91,7 @@ class DingTalkAdapter(IMAdapter):
         app_secret: str,
         robot_code: str = "",
         log_path: Optional[Path] = None,
+        session_state_path: Optional[Path] = None,
         max_chars: int = DEFAULT_MAX_CHARS,
         max_lines: int = DEFAULT_MAX_LINES,
     ):
@@ -120,8 +122,11 @@ class DingTalkAdapter(IMAdapter):
         # Cache for conversation info
         self._conversation_cache: Dict[str, str] = {}
 
-        # Cache for session webhooks (conversation_id -> (webhook_url, expires_at))
-        self._session_webhook_cache: Dict[str, tuple[str, float]] = {}
+        if session_state_path is None and log_path is not None:
+            session_state_path = log_path.parent / "im_dingtalk_sessions.json"
+        self._conversation_store = DingTalkConversationStore(session_state_path)
+        # Backward-compatible alias for existing tests and internal callers.
+        self._session_webhook_cache = self._conversation_store._webhooks
 
         # Cache for seen message IDs (survives reconnect to deduplicate SDK-resent messages)
         # Key: "{conversation_id}:{msg_id}", Value: timestamp
@@ -149,6 +154,48 @@ class DingTalkAdapter(IMAdapter):
                     f.write(f"{ts} [dingtalk] {msg}\n")
             except Exception:
                 pass
+
+    def _remember_conversation(
+        self,
+        conversation_id: str,
+        chat_type: str,
+        user_id: str = "",
+        session_webhook: str = "",
+        session_expires: Any = 0,
+    ) -> None:
+        """Remember routing and reply metadata from an inbound DingTalk event."""
+        chat_id = str(conversation_id or "").strip()
+        if not chat_id:
+            return
+        self._conversation_store.remember(
+            chat_id,
+            chat_type=chat_type,
+            user_id=user_id,
+            session_webhook=session_webhook,
+            session_expires=session_expires,
+        )
+        if session_webhook:
+            try:
+                expires_raw = float(session_expires or 0.0)
+            except Exception:
+                expires_raw = 0.0
+            expires_at = expires_raw / 1000.0 if expires_raw > 1e10 else expires_raw
+            self._log(f"[webhook] Cached: id={chat_id}, expires_raw={session_expires}, expires_at={expires_at:.0f}")
+
+    def _forget_session_webhook(self, chat_id: str) -> None:
+        self._conversation_store.forget_webhook(chat_id)
+
+    def _session_webhook_entry(self, chat_id: str) -> Optional[tuple[str, float]]:
+        return self._conversation_store.webhook_entry(chat_id)
+
+    def _conversation_chat_type(self, chat_id: str) -> str:
+        return self._conversation_store.chat_type(chat_id)
+
+    def _conversation_user_id(self, chat_id: str) -> str:
+        return self._conversation_store.user_id(chat_id)
+
+    def _is_group_conversation(self, chat_id: str) -> bool:
+        return self._conversation_store.is_group(chat_id)
 
     def _get_token(self) -> str:
         """Get valid access_token, refreshing if needed."""
@@ -674,18 +721,20 @@ class DingTalkAdapter(IMAdapter):
             if not chat_title:
                 chat_title = self._get_conversation_title_cached(conversation_id)
 
-            # Cache sessionWebhook for this conversation (for replying)
+            # Cache sessionWebhook and routing metadata for this conversation (for replying)
             session_webhook = event.get("sessionWebhook", "")
             session_expires = event.get("sessionWebhookExpiredTime", 0)
-            if session_webhook and conversation_id:
-                # Convert ms to seconds
-                expires_at = session_expires / 1000.0 if session_expires > 1e10 else float(session_expires)
-                self._session_webhook_cache[conversation_id] = (session_webhook, expires_at)
-                self._log(f"[webhook] Cached: id={conversation_id}, expires_raw={session_expires}, expires_at={expires_at:.0f}")
+            self._remember_conversation(
+                conversation_id,
+                chat_type,
+                sender_display_id,
+                session_webhook,
+                session_expires,
+            )
 
             # Cache sender for outbound @mention fallback (group chats only).
             # senderId is not necessarily a valid atUserIds target, so only keep staffId.
-            if sender_staff_id and conversation_id:
+            if chat_type == "group" and sender_staff_id and conversation_id:
                 # Evict oldest entries when cache is full
                 if len(self._last_sender) >= self._LAST_SENDER_MAX:
                     try:
@@ -851,7 +900,7 @@ class DingTalkAdapter(IMAdapter):
             at_user_ids = cleaned_explicit_ids or None
         else:
             at_user_ids = None
-            if chat_id.startswith("cid") and chat_id in self._last_sender:
+            if self._is_group_conversation(chat_id) and chat_id in self._last_sender:
                 staff_id, _nick = self._last_sender[chat_id]
                 if staff_id:
                     at_user_ids = [staff_id]
@@ -862,22 +911,18 @@ class DingTalkAdapter(IMAdapter):
             # Rate limit
             self._rate_limiter.wait_and_acquire(chat_id)
 
-            # Try sessionWebhook first (most reliable for group messages)
-            if chat_id in self._session_webhook_cache:
-                webhook_url, expires_at = self._session_webhook_cache[chat_id]
-                current_time = time.time()
-                if current_time < expires_at:
-                    if self._send_via_webhook(webhook_url, chunk, at_user_ids=chunk_at_user_ids):
-                        continue
-                    self._log("[send] Webhook failed, falling back to API...")
-                else:
-                    # Webhook expired, remove from cache
-                    del self._session_webhook_cache[chat_id]
+            # Try sessionWebhook first (most reliable for recent conversations)
+            webhook = self._session_webhook_entry(chat_id)
+            if webhook:
+                webhook_url, _expires_at = webhook
+                if self._send_via_webhook(webhook_url, chunk, at_user_ids=chunk_at_user_ids):
+                    continue
+                self._log("[send] Webhook failed, falling back to API...")
             else:
                 self._log("[send] No cached sessionWebhook; falling back to API.")
 
             if not self.robot_code:
-                if chat_id.startswith("cid"):
+                if self._is_group_conversation(chat_id):
                     self._log("[send] Missing robot_code; cannot use new API fallback. Trying legacy API.")
                     if self._send_message_legacy(chat_id, chunk, at_user_ids=chunk_at_user_ids):
                         continue
@@ -893,14 +938,14 @@ class DingTalkAdapter(IMAdapter):
                 "msgParam": json.dumps(markdown_payload, ensure_ascii=False),
             }
 
-            # Determine if group or 1:1
-            if chat_id.startswith("cid"):
+            if self._is_group_conversation(chat_id):
                 # Group conversation
                 body["openConversationId"] = chat_id
                 endpoint = "/v1.0/robot/groupMessages/send"
             else:
-                # 1:1 conversation - need user ID
-                body["userIds"] = [chat_id]
+                # 1:1 conversation - OpenAPI needs userId, not conversationId.
+                user_id = self._conversation_user_id(chat_id) or chat_id
+                body["userIds"] = [user_id]
                 endpoint = "/v1.0/robot/oToMessages/batchSend"
 
             resp = self._api_new("POST", endpoint, body)
@@ -1268,13 +1313,14 @@ class DingTalkAdapter(IMAdapter):
         }
 
         # Determine endpoint based on chat type
-        if chat_id.startswith("cid"):
+        if self._is_group_conversation(chat_id):
             # Group conversation
             body["openConversationId"] = chat_id
             endpoint = "/v1.0/robot/groupMessages/send"
         else:
             # 1:1 conversation
-            body["userIds"] = [chat_id]
+            user_id = self._conversation_user_id(chat_id) or chat_id
+            body["userIds"] = [user_id]
             endpoint = "/v1.0/robot/oToMessages/batchSend"
 
         resp = self._api_new("POST", endpoint, body)
@@ -1319,19 +1365,15 @@ class DingTalkAdapter(IMAdapter):
         safe_fn = (filename or file_path.name or "file").replace("\\", "_").replace("/", "_")
         is_image = self._is_image_file(safe_fn)
 
-        # Try sessionWebhook first (most reliable for group messages)
-        if chat_id in self._session_webhook_cache:
-            webhook_url, expires_at = self._session_webhook_cache[chat_id]
-            current_time = time.time()
-            if current_time < expires_at:
-                if self._send_file_via_webhook(webhook_url, raw, safe_fn, is_image):
-                    if caption:
-                        self.send_message(chat_id, caption, mention_user_ids=mention_user_ids)
-                    return True
-                self._log("[send_file] Webhook failed, falling back to API...")
-            else:
-                # Webhook expired, remove from cache
-                del self._session_webhook_cache[chat_id]
+        # Try sessionWebhook first (most reliable for recent conversations)
+        webhook = self._session_webhook_entry(chat_id)
+        if webhook:
+            webhook_url, _expires_at = webhook
+            if self._send_file_via_webhook(webhook_url, raw, safe_fn, is_image):
+                if caption:
+                    self.send_message(chat_id, caption, mention_user_ids=mention_user_ids)
+                return True
+            self._log("[send_file] Webhook failed, falling back to API...")
         else:
             self._log("[send_file] No cached sessionWebhook; using API.")
 

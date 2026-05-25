@@ -840,6 +840,29 @@ def mark_runtime_session_resume_failed(
     return next_doc
 
 
+def mark_runtime_session_auth_failed(
+    *,
+    group_id: str,
+    actor_id: str,
+    error: str,
+) -> Dict[str, Any]:
+    doc = read_runtime_session(group_id, actor_id)
+    if not doc:
+        return {}
+    next_doc = dict(doc)
+    try:
+        failure_count = int(next_doc.get("failure_count") or 0)
+    except Exception:
+        failure_count = 0
+    next_doc["status"] = "auth_failed"
+    next_doc["resume_eligible"] = False
+    next_doc["failure_count"] = failure_count + 1
+    next_doc["last_resume_error"] = str(error or "").strip()[:1000]
+    next_doc["updated_at"] = utc_now_iso()
+    write_runtime_session(group_id, actor_id, next_doc)
+    return next_doc
+
+
 def _verify_pty_resume_start(
     *,
     group_id: str,
