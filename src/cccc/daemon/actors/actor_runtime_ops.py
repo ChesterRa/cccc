@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict
 
@@ -91,6 +92,12 @@ def _coerce_string_env(raw: Any) -> Dict[str, str]:
 def _coerce_command(raw: Any, fallback: List[str]) -> List[str]:
     source = raw if isinstance(raw, list) else fallback
     return [str(item) for item in source if isinstance(item, str) and str(item).strip()]
+
+
+def _command_normalizer_env(actor_env: Dict[str, Any]) -> Dict[str, Any]:
+    env = dict(os.environ)
+    env.update(dict(actor_env or {}))
+    return env
 
 
 def resolve_actor_launch_config(
@@ -210,7 +217,7 @@ def resolve_actor_launch_spec(
         normalize_runtime_command,
         runtime,
         list(launch_config["command"] or []),
-        dict(launch_config["merged_env"] or {}),
+        _command_normalizer_env(dict(launch_config["merged_env"] or {})),
     )
     return {
         **launch_config,

@@ -46,6 +46,98 @@ class TestActorRuntimeOps(unittest.TestCase):
 
         self.assertEqual(spec["effective_command"], ["codex", "https://proxy.example/v1"])
 
+    def test_resolve_launch_spec_passes_daemon_env_to_command_normalizer(self) -> None:
+        import os
+
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        old_base_url = os.environ.get("OPENAI_BASE_URL")
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENAI_BASE_URL"] = "https://daemon.example/v1"
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "peer1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "codex",
+                            "command": ["codex"],
+                            "env": {},
+                        }
+                    ],
+                },
+            )
+
+            try:
+                spec = resolve_actor_launch_spec(
+                    group,
+                    "peer1",
+                    command=[],
+                    env={},
+                    runner="pty",
+                    runtime="codex",
+                    find_scope_url=lambda _group, _scope_key: td,
+                    effective_runner_kind=lambda runner: runner,
+                    normalize_runtime_command=lambda _runtime, command, *, env: [*command, env["OPENAI_BASE_URL"]],
+                    supported_runtimes=("codex",),
+                )
+            finally:
+                if old_base_url is None:
+                    os.environ.pop("OPENAI_BASE_URL", None)
+                else:
+                    os.environ["OPENAI_BASE_URL"] = old_base_url
+
+        self.assertEqual(spec["effective_command"], ["codex", "https://daemon.example/v1"])
+
+    def test_resolve_launch_spec_actor_env_overrides_daemon_env_for_command_normalizer(self) -> None:
+        import os
+
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        old_base_url = os.environ.get("OPENAI_BASE_URL")
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["OPENAI_BASE_URL"] = "https://daemon.example/v1"
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "peer1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "codex",
+                            "command": ["codex"],
+                            "env": {"OPENAI_BASE_URL": "https://actor.example/v1"},
+                        }
+                    ],
+                },
+            )
+
+            try:
+                spec = resolve_actor_launch_spec(
+                    group,
+                    "peer1",
+                    command=[],
+                    env={},
+                    runner="pty",
+                    runtime="codex",
+                    find_scope_url=lambda _group, _scope_key: td,
+                    effective_runner_kind=lambda runner: runner,
+                    normalize_runtime_command=lambda _runtime, command, *, env: [*command, env["OPENAI_BASE_URL"]],
+                    supported_runtimes=("codex",),
+                )
+            finally:
+                if old_base_url is None:
+                    os.environ.pop("OPENAI_BASE_URL", None)
+                else:
+                    os.environ["OPENAI_BASE_URL"] = old_base_url
+
+        self.assertEqual(spec["effective_command"], ["codex", "https://actor.example/v1"])
+
     def test_resolve_launch_spec_uses_user_hermes_home_by_default(self) -> None:
         import os
 
