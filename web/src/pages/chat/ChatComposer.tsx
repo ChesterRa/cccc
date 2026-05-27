@@ -15,6 +15,7 @@ import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../store
 import { getComposerDestGroupDisplayValue } from "../../stores/useComposerStore";
 import { filterSlashCommands, getVisibleSlashCommandPage, type SlashCommandItem } from "../../utils/slashCommands";
 import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
+import { ComposerFilePreview } from "./ComposerFilePreview";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 
@@ -726,35 +727,12 @@ export function ChatComposer({
         {composerFiles.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
             {composerFiles.map((f, idx) => (
-              <div
+              <ComposerFilePreview
                 key={`${f.name}:${idx}`}
-                className={classNames(
-                  "inline-flex max-w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-xs shadow-sm transition-all",
-                  "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"
-                )}
-              >
-                <AttachmentIcon
-                  size={12}
-                  className="flex-shrink-0 text-[var(--color-text-tertiary)]"
-                />
-                <span
-                  className="truncate font-medium text-[var(--color-text-primary)]"
-                  title={f.name}
-                >
-                  {f.name}
-                </span>
-                <button
-                  className={classNames(
-                    "flex-shrink-0 p-1.5 -mr-1 rounded-full",
-                    "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
-                  )}
-                  onClick={() => onRemoveComposerFile(idx)}
-                  aria-label={t('removeAttachment', { name: f.name })}
-                  title={t('removeAttachment', { name: f.name })}
-                >
-                  <CloseIcon size={14} />
-                </button>
-              </div>
+                file={f}
+                onRemove={() => onRemoveComposerFile(idx)}
+                removeLabel={t('removeAttachment', { name: f.name })}
+              />
             ))}
           </div>
         )}
