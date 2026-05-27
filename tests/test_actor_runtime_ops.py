@@ -184,6 +184,87 @@ class TestActorRuntimeOps(unittest.TestCase):
         self.assertEqual(spec["merged_env"]["A"], "1")
         self.assertNotIn("HERMES_HOME", spec["merged_env"])
 
+    def test_resolve_launch_spec_adds_hermes_tui_pty_defaults(self) -> None:
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        with tempfile.TemporaryDirectory() as td:
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "hermes-1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "hermes",
+                            "command": ["hermes", "--tui", "--yolo"],
+                            "env": {},
+                        }
+                    ],
+                },
+            )
+            spec = resolve_actor_launch_spec(
+                group,
+                "hermes-1",
+                command=[],
+                env={},
+                runner="pty",
+                runtime="hermes",
+                find_scope_url=lambda _group, _scope_key: td,
+                effective_runner_kind=lambda runner: runner,
+                normalize_runtime_command=lambda _runtime, command: list(command),
+                supported_runtimes=("hermes",),
+            )
+
+        self.assertEqual(spec["merged_env"]["HERMES_TUI_DISABLE_MOUSE"], "1")
+        self.assertEqual(spec["merged_env"]["HERMES_TUI_INLINE"], "1")
+        self.assertEqual(spec["merged_env"]["TERM"], "xterm-256color")
+        self.assertEqual(spec["merged_env"]["COLORTERM"], "truecolor")
+
+    def test_resolve_launch_spec_preserves_explicit_hermes_tui_env(self) -> None:
+        from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
+
+        with tempfile.TemporaryDirectory() as td:
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={
+                    "active_scope_key": "scope1",
+                    "actors": [
+                        {
+                            "id": "hermes-1",
+                            "default_scope_key": "scope1",
+                            "runner": "pty",
+                            "runtime": "hermes",
+                            "command": ["hermes", "--tui", "--yolo"],
+                            "env": {
+                                "HERMES_TUI_DISABLE_MOUSE": "0",
+                                "HERMES_TUI_INLINE": "0",
+                                "TERM": "vt100",
+                                "COLORTERM": "false",
+                            },
+                        }
+                    ],
+                },
+            )
+            spec = resolve_actor_launch_spec(
+                group,
+                "hermes-1",
+                command=[],
+                env={},
+                runner="pty",
+                runtime="hermes",
+                find_scope_url=lambda _group, _scope_key: td,
+                effective_runner_kind=lambda runner: runner,
+                normalize_runtime_command=lambda _runtime, command: list(command),
+                supported_runtimes=("hermes",),
+            )
+
+        self.assertEqual(spec["merged_env"]["HERMES_TUI_DISABLE_MOUSE"], "0")
+        self.assertEqual(spec["merged_env"]["HERMES_TUI_INLINE"], "0")
+        self.assertEqual(spec["merged_env"]["TERM"], "vt100")
+        self.assertEqual(spec["merged_env"]["COLORTERM"], "false")
+
     def test_resolve_launch_spec_preserves_explicit_hermes_profile(self) -> None:
         import os
 

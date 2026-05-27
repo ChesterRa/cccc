@@ -100,6 +100,21 @@ def _command_normalizer_env(actor_env: Dict[str, Any]) -> Dict[str, Any]:
     return env
 
 
+def _apply_runtime_launch_env_defaults(
+    *,
+    runtime: str,
+    effective_runner: str,
+    env: Dict[str, Any],
+) -> Dict[str, Any]:
+    out = dict(env or {})
+    if str(runtime or "").strip().lower() == "hermes" and str(effective_runner or "pty").strip().lower() != "headless":
+        out.setdefault("HERMES_TUI_DISABLE_MOUSE", "1")
+        out.setdefault("HERMES_TUI_INLINE", "1")
+        out.setdefault("TERM", "xterm-256color")
+        out.setdefault("COLORTERM", "truecolor")
+    return out
+
+
 def resolve_actor_launch_config(
     group: Any,
     actor_id: str,
@@ -149,6 +164,11 @@ def resolve_actor_launch_config(
         merged_env.update(private_env)
     else:
         merged_env = dict(public_env)
+    merged_env = _apply_runtime_launch_env_defaults(
+        runtime=resolved_runtime,
+        effective_runner=effective_runner,
+        env=merged_env,
+    )
 
     return {
         "actor": dict(actor),

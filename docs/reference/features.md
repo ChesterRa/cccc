@@ -216,7 +216,7 @@ Notes:
 
 | Config | Default | Description |
 |--------|---------|-------------|
-| `auto_mark_on_delivery` | `false` | Automatically advance the read cursor after a PTY delivery succeeds |
+| `auto_mark_on_delivery` | `true` | Automatically advance the read cursor after a PTY delivery succeeds |
 
 Low-level delivery throttling via `min_interval_seconds` remains supported in daemon/API settings for compatibility, but it is no longer exposed in the default Web settings UI.
 

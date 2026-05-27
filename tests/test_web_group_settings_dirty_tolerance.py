@@ -21,6 +21,27 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
 
         return td, cleanup
 
+    def test_group_settings_get_defaults_auto_mark_on_delivery_to_true(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="web-settings-defaults", topic="")
+
+            app = create_app()
+            client = TestClient(app)
+            resp = client.get(f"/api/v1/groups/{group.group_id}/settings")
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(body.get("ok"))
+            settings = ((body.get("result") or {}).get("settings") or {})
+            self.assertTrue(bool(settings.get("auto_mark_on_delivery")))
+        finally:
+            cleanup()
+
     def test_group_settings_get_tolerates_dirty_numeric_values(self) -> None:
         from cccc.kernel.group import create_group, load_group
         from cccc.kernel.registry import load_registry

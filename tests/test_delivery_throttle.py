@@ -53,6 +53,26 @@ class TestDeliveryThrottle(unittest.TestCase):
         self.assertEqual(cfg.get("min_interval_seconds"), 0)
         self.assertTrue(bool(cfg.get("auto_mark_on_delivery")))
 
+    def test_get_delivery_config_defaults_auto_mark_on_delivery_to_true(self) -> None:
+        from cccc.daemon.messaging.delivery import _get_delivery_config, should_auto_mark_on_delivery
+
+        class _G:
+            doc = {}
+
+        cfg = _get_delivery_config(_G())
+        self.assertTrue(bool(cfg.get("auto_mark_on_delivery")))
+        self.assertTrue(should_auto_mark_on_delivery(_G()))
+
+    def test_get_delivery_config_preserves_explicit_auto_mark_false(self) -> None:
+        from cccc.daemon.messaging.delivery import _get_delivery_config, should_auto_mark_on_delivery
+
+        class _G:
+            doc = {"delivery": {"auto_mark_on_delivery": False}}
+
+        cfg = _get_delivery_config(_G())
+        self.assertFalse(bool(cfg.get("auto_mark_on_delivery")))
+        self.assertFalse(should_auto_mark_on_delivery(_G()))
+
     def test_get_delivery_config_clamps_negative_min_interval(self) -> None:
         from cccc.daemon.messaging.delivery import _get_delivery_config
 

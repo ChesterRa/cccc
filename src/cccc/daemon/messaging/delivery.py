@@ -32,6 +32,7 @@ logger = logging.getLogger("cccc.delivery")
 
 from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
+from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ...kernel.group import Group, get_group_state, load_group, set_group_state
 from ...kernel.inbox import get_cursor, is_message_for_actor, set_cursor
 from ...kernel.ledger import append_event
@@ -41,7 +42,6 @@ from ...runners import pty as pty_runner
 from ...runners import headless as headless_runner
 from ...util.fs import atomic_write_text, read_json
 from ...util.time import parse_utc_iso, utc_now_iso
-from ...util.conv import coerce_bool
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 
 
@@ -78,16 +78,13 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
     min_interval = max(0, min_interval)
     return {
         "min_interval_seconds": min_interval,
-        "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
+        "auto_mark_on_delivery": auto_mark_on_delivery_from_doc(delivery),
     }
 
 
 def _get_auto_mark_on_delivery(group: Group) -> bool:
     """Get auto_mark_on_delivery setting from group.yaml delivery config."""
-    delivery = group.doc.get("delivery")
-    if not isinstance(delivery, dict):
-        return False
-    return coerce_bool(delivery.get("auto_mark_on_delivery"), default=False)
+    return auto_mark_on_delivery_from_doc(group.doc.get("delivery"))
 
 
 def should_auto_mark_on_delivery(group: Group) -> bool:

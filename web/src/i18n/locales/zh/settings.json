@@ -848,7 +848,7 @@
     "title": "消息投递",
     "description": "控制 PTY 投递成功后会发生什么。",
     "autoMarkRead": "将已投递消息标记为已读",
-    "autoMarkReadHelp": "开启后，PTY 成功收到消息时会自动推进已读光标。关闭后，消息会保持未读，直到被显式标记为已读。",
+    "autoMarkReadHelp": "默认开启。PTY 成功收到消息时会自动推进已读光标。关闭后，消息会保持未读，直到被显式标记为已读。",
     "saveDelivery": "保存投递设置"
   },
   "messaging": {

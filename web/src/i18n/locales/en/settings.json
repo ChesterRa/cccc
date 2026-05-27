@@ -848,7 +848,7 @@
     "title": "Delivery",
     "description": "Control what happens after a PTY delivery succeeds.",
     "autoMarkRead": "Mark delivered messages as read",
-    "autoMarkReadHelp": "When enabled, successful PTY delivery advances the read cursor automatically. When disabled, messages remain unread until they are marked read explicitly.",
+    "autoMarkReadHelp": "Enabled by default. Successful PTY delivery advances the read cursor automatically. When disabled, messages remain unread until they are marked read explicitly.",
     "saveDelivery": "Save Delivery Settings"
   },
   "messaging": {

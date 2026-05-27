@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc, coerce_auto_mark_on_delivery
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.messaging import get_default_send_to
@@ -133,7 +134,7 @@ def handle_group_settings_update(
             delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
             for key, value in delivery_patch.items():
                 if key == "auto_mark_on_delivery":
-                    delivery[key] = coerce_bool(value, default=False)
+                    delivery[key] = coerce_auto_mark_on_delivery(value)
                 else:
                     delivery[key] = int(value)
             group.doc["delivery"] = delivery
@@ -351,7 +352,7 @@ def handle_group_settings_update(
         ),
         "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
         "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),
-        "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
+        "auto_mark_on_delivery": auto_mark_on_delivery_from_doc(delivery),
         "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
         "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
         "terminal_transcript_notify_lines": _safe_int(

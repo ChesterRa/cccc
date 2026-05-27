@@ -96,7 +96,7 @@ export function SettingsModal({
   const [silenceSeconds, setSilenceSeconds] = useState(0);
   const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
   const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
-  const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(false);
+  const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(true);
 
   // Messaging policy
   const [defaultSendTo, setDefaultSendTo] = useState<"foreman" | "broadcast">("foreman");
@@ -190,7 +190,7 @@ export function SettingsModal({
       setSilenceSeconds(settings.silence_timeout_seconds);
       setHelpNudgeIntervalSeconds(settings.help_nudge_interval_seconds ?? 600);
       setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
-      setAutoMarkOnDelivery(Boolean(settings.auto_mark_on_delivery));
+      setAutoMarkOnDelivery(settings.auto_mark_on_delivery ?? true);
       setDefaultSendTo(settings.default_send_to || "foreman");
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
       setTerminalNotifyTail(Boolean(settings.terminal_transcript_notify_tail));

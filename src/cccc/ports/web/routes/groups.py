@@ -59,6 +59,7 @@ from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_s
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
+from ....kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ....kernel.headless_events import headless_events_path, read_headless_replay_events, read_headless_replay_lines
 from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
@@ -2318,7 +2319,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "help_nudge_interval_seconds": _safe_int(automation.get("help_nudge_interval_seconds", 600), default=600, min_value=0),
                     "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
                     "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),
-                    "auto_mark_on_delivery": coerce_bool(delivery.get("auto_mark_on_delivery"), default=False),
+                    "auto_mark_on_delivery": auto_mark_on_delivery_from_doc(delivery),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),

@@ -4,6 +4,46 @@ import unittest
 
 
 class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
+    def test_group_settings_update_defaults_auto_mark_on_delivery_to_true(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+
+                create_resp, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {"op": "group_create", "args": {"title": "daemon-settings-defaults", "topic": "", "by": "user"}}
+                    )
+                )
+                self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+                group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+                self.assertTrue(group_id)
+
+                update_resp, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {
+                            "op": "group_settings_update",
+                            "args": {
+                                "group_id": group_id,
+                                "by": "user",
+                                "patch": {"default_send_to": "foreman"},
+                            },
+                        }
+                    )
+                )
+                self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
+
+                settings = ((update_resp.result or {}).get("settings") or {})
+                self.assertTrue(bool(settings.get("auto_mark_on_delivery")))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_group_settings_update_tolerates_dirty_numeric_values(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.server import handle_request
