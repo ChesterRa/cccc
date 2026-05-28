@@ -10,7 +10,7 @@ import {
   reuseSharedReadRequest,
 } from "./base";
 
-export type ProfileView = "global" | "my" | "all";
+export type ProfileView = "global" | "my" | "all" | "accessible";
 export type ProfileScope = "global" | "user";
 
 type ProfileLookupOptions = {
@@ -288,12 +288,11 @@ export async function deleteProfile(profileId: string, opts?: ProfileDeleteOptio
 }
 
 export async function listActorProfiles(): Promise<ApiResponse<{ profiles: ActorProfile[] }>> {
-  const [globalRes, myRes] = await Promise.all([listProfiles("global"), listProfiles("my")]);
-  if (!globalRes.ok) return globalRes;
-  if (!myRes.ok) return myRes;
+  const accessibleRes = await listProfiles("accessible");
+  if (!accessibleRes.ok) return accessibleRes;
   const seen = new Set<string>();
   const profiles: ActorProfile[] = [];
-  for (const profile of [...globalRes.result.profiles, ...myRes.result.profiles]) {
+  for (const profile of accessibleRes.result.profiles) {
     const key = actorProfileIdentityKey(profile);
     if (!seen.has(key)) {
       seen.add(key);

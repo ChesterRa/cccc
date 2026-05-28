@@ -170,6 +170,39 @@ describe("api.fetchActors", () => {
   });
 });
 
+describe("api.listActorProfiles", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  afterEach(async () => {
+    const api = await import("../../src/services/api");
+    api.clearAuthToken();
+  });
+
+  it("requests profiles through the server-side accessible view", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { profiles: [] } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.listActorProfiles();
+
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/profiles?view=accessible",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "content-type": "application/json" }),
+      }),
+    );
+  });
+});
+
 describe("api.fetchPresentation", () => {
   beforeEach(() => {
     vi.resetModules();

@@ -382,6 +382,13 @@ class ProfileResolver:
             if not caller:
                 return []
             return _sort_profile_models([item for item in profiles if item.scope == "user" and item.owner_id == caller])
+        if normalized_view == "accessible":
+            if is_admin:
+                return _sort_profile_models(profiles)
+            visible = [item for item in profiles if item.scope == "global"]
+            if caller:
+                visible.extend(item for item in profiles if item.scope == "user" and item.owner_id == caller)
+            return _sort_profile_models(visible)
         if normalized_view == "all":
             return _sort_profile_models(profiles) if is_admin else []
         raise ValueError("invalid profile view")

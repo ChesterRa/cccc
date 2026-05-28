@@ -103,6 +103,22 @@ class TestWebActorProfilesApi(unittest.TestCase):
                     sorted((item.get("id"), item.get("scope"), item.get("owner_id")) for item in all_profiles),
                     [("global-profile", "global", ""), ("member-profile", "user", "member-user")],
                 )
+
+                member_accessible_resp = client.get("/api/v1/profiles?view=accessible", headers={"Authorization": f"Bearer {member}"})
+                self.assertEqual(member_accessible_resp.status_code, 200)
+                member_accessible_profiles = (((member_accessible_resp.json().get("result") or {}).get("profiles")) or [])
+                self.assertEqual(
+                    sorted((item.get("id"), item.get("scope"), item.get("owner_id")) for item in member_accessible_profiles),
+                    [("global-profile", "global", ""), ("member-profile", "user", "member-user")],
+                )
+
+                admin_accessible_resp = client.get("/api/v1/profiles?view=accessible", headers={"Authorization": f"Bearer {admin}"})
+                self.assertEqual(admin_accessible_resp.status_code, 200)
+                admin_accessible_profiles = (((admin_accessible_resp.json().get("result") or {}).get("profiles")) or [])
+                self.assertEqual(
+                    sorted((item.get("id"), item.get("scope"), item.get("owner_id")) for item in admin_accessible_profiles),
+                    [("global-profile", "global", ""), ("member-profile", "user", "member-user")],
+                )
         finally:
             cleanup()
 

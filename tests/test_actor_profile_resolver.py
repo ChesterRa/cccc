@@ -90,6 +90,18 @@ class TestActorProfileResolver(unittest.TestCase):
             my_list = resolver.list_profiles("my", caller_id="user-a", is_admin=False)
             self.assertEqual([(item.id, item.scope, item.owner_id) for item in my_list], [("shared", "user", "user-a")])
 
+            accessible_member = resolver.list_profiles("accessible", caller_id="user-a", is_admin=False)
+            self.assertEqual(
+                [(item.id, item.scope, item.owner_id) for item in accessible_member],
+                [("shared", "global", ""), ("shared", "user", "user-a")],
+            )
+
+            accessible_admin = resolver.list_profiles("accessible", caller_id="admin-user", is_admin=True)
+            self.assertEqual(
+                sorted((item.id, item.scope, item.owner_id) for item in accessible_admin),
+                [("shared", "global", ""), ("shared", "user", "user-a")],
+            )
+
             denied = resolver.resolve(
                 ActorProfileRef(profile_id="shared", profile_scope="user", profile_owner="user-a"),
                 caller_id="user-b",
