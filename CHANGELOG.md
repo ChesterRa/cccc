@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.22] — 2026-05-29
+
+### Added
+- **Accessible actor profile listing** lets non-admin users see global profiles and their own user-scoped profiles through one server-enforced view, making profile selection simpler without exposing other users' private profiles.
+- **Image attachment hover previews** in the chat composer show a bounded preview before sending supported image files.
+- **Persistent DingTalk conversation routing** keeps recent reply webhook and 1:1/group routing metadata across bridge restarts.
+
+### Changed
+- **Delivered runtime messages are now marked read by default** after successful PTY delivery, keeping actor unread state aligned with what has already been handed to the runtime. Existing explicit `auto_mark_on_delivery=false` settings are still respected.
+- **Codex command normalization now sees the daemon environment**, so daemon/Docker-level `OPENAI_BASE_URL` and related environment values can affect Codex launch config without being repeated per actor. Actor-specific environment still takes precedence.
+- **Hermes PTY actors now receive safer terminal defaults** for the TUI launch path while preserving explicit user overrides.
+
+### Fixed
+- **Codex app-server authentication failures** are detected from 401 stderr output and recorded as non-resumable runtime session state instead of leaving stale resume metadata looking usable.
+- **DingTalk 1:1 reply fallback** now uses DingTalk's one-to-one API even when the conversation id looks like a group-style `cid`, reducing failed replies after webhook expiry.
+
+### Tests
+- Added coverage for Codex auth-failure session state, DingTalk conversation persistence and routing, Codex daemon environment command normalization, Hermes PTY environment defaults, delivery auto-read defaults and explicit opt-out behavior, actor profile accessible views, and composer image preview positioning.
+
 ## [0.4.21] — 2026-05-25
 
 ### Added
