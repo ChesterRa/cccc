@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -1026,6 +1028,161 @@ class TestRuntimeSessionOps(unittest.TestCase):
             )
             self.assertEqual(command, ["codex"])
             self.assertIsNone(resume_doc)
+        finally:
+            cleanup()
+
+    def test_runtime_session_auth_failure_can_require_emitting_session_identity(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import (
+                mark_runtime_session_auth_failed,
+                read_runtime_session,
+                record_codex_app_thread_runtime_session,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            command = ["codex", "app-server", "--listen", "ws://127.0.0.1:12345", "--model", "gpt-5"]
+            record_codex_app_thread_runtime_session(
+                group_id="g1",
+                actor_id="codex-peer",
+                cwd=cwd,
+                command=command,
+                provider_thread_id="thread-fresh",
+                runner="pty",
+                captured_from="app_server_thread_start",
+            )
+
+            stale_command_result = mark_runtime_session_auth_failed(
+                group_id="g1",
+                actor_id="codex-peer",
+                error="failed to connect to websocket: HTTP error: 401 Unauthorized",
+                expected_command=["codex", "app-server", "--listen", "ws://127.0.0.1:12345", "--model", "gpt-4"],
+            )
+            self.assertEqual(stale_command_result, {})
+            stored = read_runtime_session("g1", "codex-peer")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+
+            unproven_thread_result = mark_runtime_session_auth_failed(
+                group_id="g1",
+                actor_id="codex-peer",
+                error="failed to connect to websocket: HTTP error: 401 Unauthorized",
+                expected_command=command,
+                require_provider_thread_id_match=True,
+            )
+            self.assertEqual(unproven_thread_result, {})
+            stored = read_runtime_session("g1", "codex-peer")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+
+            stale_thread_result = mark_runtime_session_auth_failed(
+                group_id="g1",
+                actor_id="codex-peer",
+                error="failed to connect to websocket: HTTP error: 401 Unauthorized",
+                expected_command=command,
+                expected_provider_thread_id="thread-stale",
+            )
+            self.assertEqual(stale_thread_result, {})
+            stored = read_runtime_session("g1", "codex-peer")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+
+            marked = mark_runtime_session_auth_failed(
+                group_id="g1",
+                actor_id="codex-peer",
+                error="failed to connect to websocket: HTTP error: 401 Unauthorized",
+                expected_command=command,
+                expected_provider_thread_id="thread-fresh",
+            )
+            self.assertEqual(marked.get("status"), "auth_failed")
+            stored = read_runtime_session("g1", "codex-peer")
+            self.assertEqual(stored.get("status"), "auth_failed")
+            self.assertFalse(bool(stored.get("resume_eligible")))
+            self.assertEqual(stored.get("failure_count"), 1)
+        finally:
+            cleanup()
+
+    def test_runtime_session_auth_failure_write_is_serialized_with_fresh_record(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon import runtime_session_ops
+            from cccc.daemon.runtime_session_ops import (
+                mark_runtime_session_auth_failed,
+                read_runtime_session,
+                record_codex_app_thread_runtime_session,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            command = ["codex", "app-server", "--listen", "ws://127.0.0.1:12345"]
+            record_codex_app_thread_runtime_session(
+                group_id="g1",
+                actor_id="codex-peer",
+                cwd=cwd,
+                command=command,
+                provider_thread_id="thread-stale",
+                runner="pty",
+                captured_from="app_server_thread_start",
+            )
+
+            real_atomic_write_json = runtime_session_ops.atomic_write_json
+            auth_write_started = threading.Event()
+            release_auth_write = threading.Event()
+            errors: list[BaseException] = []
+
+            def delayed_atomic_write(path, payload, *args, **kwargs):
+                if isinstance(payload, dict) and payload.get("status") == "auth_failed":
+                    auth_write_started.set()
+                    if not release_auth_write.wait(2.0):
+                        errors.append(AssertionError("timed out waiting to release auth write"))
+                return real_atomic_write_json(path, payload, *args, **kwargs)
+
+            def mark_stale_auth_failure() -> None:
+                try:
+                    mark_runtime_session_auth_failed(
+                        group_id="g1",
+                        actor_id="codex-peer",
+                        error="failed to connect to websocket: HTTP error: 401 Unauthorized",
+                        expected_command=command,
+                        expected_provider_thread_id="thread-stale",
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            def record_fresh_session() -> None:
+                try:
+                    record_codex_app_thread_runtime_session(
+                        group_id="g1",
+                        actor_id="codex-peer",
+                        cwd=cwd,
+                        command=command,
+                        provider_thread_id="thread-fresh",
+                        runner="pty",
+                        captured_from="app_server_thread_start",
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with patch("cccc.daemon.runtime_session_ops.atomic_write_json", side_effect=delayed_atomic_write):
+                stale_thread = threading.Thread(target=mark_stale_auth_failure)
+                stale_thread.start()
+                self.assertTrue(auth_write_started.wait(2.0))
+
+                fresh_thread = threading.Thread(target=record_fresh_session)
+                fresh_thread.start()
+                time.sleep(0.05)
+                release_auth_write.set()
+                stale_thread.join(2.0)
+                fresh_thread.join(2.0)
+
+            self.assertFalse(stale_thread.is_alive())
+            self.assertFalse(fresh_thread.is_alive())
+            self.assertEqual(errors, [])
+            stored = read_runtime_session("g1", "codex-peer")
+            self.assertEqual(stored.get("provider_thread_id"), "thread-fresh")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
         finally:
             cleanup()
 

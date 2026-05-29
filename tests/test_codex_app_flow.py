@@ -4367,6 +4367,97 @@ class TestCodexAppFlow(unittest.TestCase):
             manager.stop_actor(group_id="g_test", actor_id="peer1")
             cleanup()
 
+    def test_codex_app_start_waits_beyond_initial_refused_connections(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        session = None
+        try:
+            cwd = Path(home)
+            requests: list[str] = []
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            class FakeWs:
+                def send(self, data):
+                    return None
+
+                def recv(self):
+                    return ""
+
+                def close(self):
+                    return None
+
+            attempts = {"count": 0}
+
+            def connect_after_cold_start(url: str, *, timeout: float):
+                attempts["count"] += 1
+                if attempts["count"] <= 55:
+                    raise ConnectionRefusedError(111, "Connection refused")
+                return FakeWs()
+
+            def fake_request(method, params, *, timeout):
+                requests.append(method)
+                if method == "initialize":
+                    return {}
+                if method == "thread/start":
+                    return {"thread": {"id": "thread-after-cold-start"}}
+                raise AssertionError(f"unexpected request: {method}")
+
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+                listen_url="ws://127.0.0.1:12345",
+                transport="websocket",
+                persist_headless_state=False,
+                start_remote_tui=False,
+            )
+
+            with (
+                patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()),
+                patch("cccc.daemon.codex_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch("cccc.daemon.codex_app_sessions._connect_websocket", side_effect=connect_after_cold_start),
+                patch("cccc.daemon.codex_app_sessions.resolve_subprocess_argv", side_effect=lambda argv: list(argv or [])),
+                patch("cccc.daemon.codex_app_sessions.time.sleep", return_value=None),
+                patch.object(session, "_request", side_effect=fake_request),
+            ):
+                session.start()
+
+            self.assertEqual(attempts["count"], 56)
+            self.assertTrue(session.is_running())
+            self.assertEqual(requests, ["initialize", "thread/start"])
+        finally:
+            if session is not None:
+                session.stop()
+            cleanup()
+
     def test_codex_pty_app_missing_resume_records_fresh_thread_from_remote_tui_status(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session
@@ -4525,6 +4616,7 @@ class TestCodexAppFlow(unittest.TestCase):
 
             session._proc = FakeProc()  # type: ignore[assignment]
             session._running = True
+            session._runtime_provider_thread_id = "thr-stale"
             session._stderr_loop()
 
             stored = read_runtime_session("g_test", "peer1")
@@ -4533,6 +4625,181 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertFalse(bool(stored.get("resume_eligible")))
             self.assertIn("401 Unauthorized", str(stored.get("last_resume_error") or ""))
         finally:
+            cleanup()
+
+    def test_codex_app_stale_stderr_401_does_not_mark_fresh_runtime_session(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session
+
+        home, cleanup = self._with_home()
+        try:
+            cwd = Path(home)
+            command = ["codex", "app-server", "--listen", "ws://127.0.0.1:12345"]
+            record_codex_app_thread_runtime_session(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                command=command,
+                provider_thread_id="thr-fresh",
+                runner="pty",
+                status="usable",
+                captured_from="app_server_thread_start",
+                resume_eligible=True,
+            )
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+                listen_url="ws://127.0.0.1:12345",
+                transport="websocket",
+                persist_headless_state=False,
+                start_remote_tui=True,
+                remote_tui_base_command=["codex", "--search"],
+            )
+            session._runtime_command = command
+            session._runtime_provider_thread_id = "thr-stale"
+
+            class FakeProc:
+                pid = 12346
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO(
+                    "failed to connect to websocket: HTTP error: 401 Unauthorized, "
+                    "url: wss://api.openai.com/v1/responses\n"
+                )
+
+                def poll(self):
+                    return None
+
+            session._proc = FakeProc()  # type: ignore[assignment]
+            session._running = True
+            session._stderr_loop()
+
+            stored = read_runtime_session("g_test", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr-fresh")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
+            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
+        finally:
+            cleanup()
+
+    def test_codex_app_startup_401_marks_existing_resume_session_auth_failed(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.daemon.runtime_session_ops import read_runtime_session, record_codex_app_thread_runtime_session
+
+        home, cleanup = self._with_home()
+        session = None
+        try:
+            cwd = Path(home)
+            command = ["codex", "app-server", "--listen", "ws://127.0.0.1:12345"]
+            record_codex_app_thread_runtime_session(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                command=command,
+                provider_thread_id="thr-existing",
+                runner="pty",
+                status="usable",
+                captured_from="app_server_thread_start",
+                resume_eligible=True,
+            )
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=cwd,
+                env={},
+                listen_url="ws://127.0.0.1:12345",
+                transport="websocket",
+                persist_headless_state=False,
+                start_remote_tui=True,
+                remote_tui_base_command=["codex", "--search"],
+            )
+
+            class FakeProc:
+                pid = 12347
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO(
+                    "failed to connect to websocket: HTTP error: 401 Unauthorized, "
+                    "url: wss://api.openai.com/v1/responses\n"
+                )
+
+                def poll(self):
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    name = str(self.kwargs.get("name") or "")
+                    target = self.kwargs.get("target")
+                    if "cccc-codex-err:" in name and callable(target):
+                        target()
+
+            class FakeWs:
+                def send(self, data):
+                    return None
+
+                def recv(self):
+                    return ""
+
+                def close(self):
+                    return None
+
+            requests: list[str] = []
+            started_pty: list[dict] = []
+
+            def fake_request(method, params, *, timeout):
+                requests.append(method)
+                if method == "initialize":
+                    return {}
+                raise AssertionError(f"unexpected request after startup 401: {method}")
+
+            def fake_start_actor(**kwargs):
+                started_pty.append(dict(kwargs))
+
+                class _PtySession:
+                    pid = 22222
+
+                    def is_running(self):
+                        return True
+
+                return _PtySession()
+
+            with (
+                patch("cccc.daemon.codex_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.subprocess.Popen", return_value=FakeProc()),
+                patch("cccc.daemon.codex_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch("cccc.daemon.codex_app_sessions._connect_websocket", return_value=FakeWs()),
+                patch("cccc.daemon.codex_app_sessions.resolve_subprocess_argv", side_effect=lambda argv: list(argv or [])),
+                patch.object(session, "_request", side_effect=fake_request),
+                patch("cccc.daemon.codex_app_sessions.pty_runner.SUPERVISOR.start_actor", side_effect=fake_start_actor),
+            ):
+                session.start()
+
+            self.assertEqual(requests, ["initialize"])
+            self.assertEqual(len(started_pty), 1)
+            self.assertNotIn("resume", started_pty[0]["command"])
+            stored = read_runtime_session("g_test", "peer1")
+            self.assertEqual(stored.get("provider_thread_id"), "thr-existing")
+            self.assertEqual(stored.get("status"), "auth_failed")
+            self.assertFalse(bool(stored.get("resume_eligible")))
+            self.assertIn("401 Unauthorized", str(stored.get("last_resume_error") or ""))
+        finally:
+            if session is not None:
+                session.stop()
             cleanup()
 
     def test_codex_pty_app_resume_launches_remote_tui_with_thread_id(self) -> None:

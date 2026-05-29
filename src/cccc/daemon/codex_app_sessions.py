@@ -29,6 +29,7 @@ from .codex_app_thread_ops import prepare_codex_app_tui_resume, start_codex_app_
 from .codex_config_ops import inject_codex_openai_base_url_config
 from .runtime_session_ops import (
     mark_runtime_session_auth_failed,
+    prepare_codex_app_thread_resume,
     record_codex_app_thread_runtime_session,
     runtime_resume_enabled,
 )
@@ -52,6 +53,9 @@ logger = logging.getLogger(__name__)
 _TURN_STALL_SECONDS = 45.0
 _TURN_WAIT_POLL_SECONDS = 5.0
 _WEBSOCKET_CLOSE_TIMEOUT_SECONDS = 0.2
+_CODEX_APP_SERVER_CONNECT_TIMEOUT_SECONDS = 30.0
+_CODEX_APP_SERVER_CONNECT_POLL_SECONDS = 0.1
+_CODEX_APP_SERVER_STDERR_TAIL_LINES = 20
 
 
 def _free_loopback_ws_url() -> str:
@@ -385,6 +389,8 @@ class CodexAppSession:
         self._last_turn_event_monotonic = 0.0
         self._active_stalled_emitted = False
         self._runtime_command: list[str] = []
+        self._runtime_provider_thread_id = ""
+        self._stderr_tail: list[str] = []
 
     def request_stop(self) -> None:
         """Mark this session as intentionally stopping before transports close."""
@@ -442,6 +448,8 @@ class CodexAppSession:
                 captured_from=captured_from,
                 resume_eligible=True,
             )
+            with self._lock:
+                self._runtime_provider_thread_id = thread_id
         except Exception:
             logger.debug(
                 "failed to record remote TUI codex thread: group=%s actor=%s thread=%s",
@@ -450,6 +458,42 @@ class CodexAppSession:
                 thread_id,
                 exc_info=True,
             )
+
+    def _runtime_session_auth_failure_guard(self) -> tuple[list[str], str]:
+        with self._lock:
+            command = list(self._runtime_command)
+            provider_thread_id = str(self._runtime_provider_thread_id or "").strip()
+        if not command:
+            command = ["codex", "app-server", "--listen", self.listen_url]
+        return command, provider_thread_id
+
+    def _resume_provider_thread_id_for_runtime_command(self, command: list[str]) -> str:
+        if not command or not runtime_resume_enabled():
+            return ""
+        try:
+            resume_doc = prepare_codex_app_thread_resume(
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                cwd=self.cwd,
+                command=command,
+                model=self.model,
+            )
+        except Exception:
+            return ""
+        return str(resume_doc.get("provider_thread_id") or "").strip()
+
+    def _remember_stderr_line(self, line: str) -> None:
+        normalized = str(line or "").strip()
+        if not normalized:
+            return
+        with self._lock:
+            self._stderr_tail.append(normalized)
+            if len(self._stderr_tail) > _CODEX_APP_SERVER_STDERR_TAIL_LINES:
+                del self._stderr_tail[: len(self._stderr_tail) - _CODEX_APP_SERVER_STDERR_TAIL_LINES]
+
+    def _stderr_tail_text(self) -> str:
+        with self._lock:
+            return "\n".join(self._stderr_tail[-_CODEX_APP_SERVER_STDERR_TAIL_LINES:]).strip()
 
     def _emit_activity(
         self,
@@ -663,6 +707,8 @@ class CodexAppSession:
             if self._running:
                 return
             self._stop_requested = False
+            self._runtime_provider_thread_id = ""
+            self._stderr_tail = []
             env = os.environ.copy()
             env.update(self.env)
             env.setdefault("CCCC_HOME", str(ensure_home()))
@@ -674,6 +720,9 @@ class CodexAppSession:
             self._runtime_command = inject_codex_openai_base_url_config(
                 ["codex", "app-server", "--listen", self.listen_url],
                 env,
+            )
+            self._runtime_provider_thread_id = self._resume_provider_thread_id_for_runtime_command(
+                self._runtime_command
             )
             popen_command = resolve_subprocess_argv(self._runtime_command)
             self._proc = subprocess.Popen(
@@ -687,30 +736,51 @@ class CodexAppSession:
                 bufsize=1,
             )
             self._running = True
+            self._stderr_thread = threading.Thread(
+                target=self._stderr_loop,
+                name=f"cccc-codex-err:{self.group_id}:{self.actor_id}",
+                daemon=True,
+            )
 
+        self._stderr_thread.start()
         if self.transport == "websocket":
             last_exc: Optional[Exception] = None
-            for _ in range(50):
+            exit_code: Optional[int] = None
+            deadline = time.monotonic() + _CODEX_APP_SERVER_CONNECT_TIMEOUT_SECONDS
+            while time.monotonic() < deadline:
+                proc = self._proc
+                if proc is not None:
+                    exit_code = proc.poll()
+                    if exit_code is not None:
+                        break
                 try:
                     self._ws = _connect_websocket(self.listen_url, timeout=1.0)
                     last_exc = None
+                    exit_code = None
                     break
                 except Exception as exc:
                     last_exc = exc
-                    time.sleep(0.1)
-            if last_exc is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(_CODEX_APP_SERVER_CONNECT_POLL_SECONDS, remaining))
+            if self._ws is None:
+                stderr_tail = self._stderr_tail_text()
                 self.stop()
-                raise RuntimeError(f"failed to connect codex app-server websocket: {last_exc}") from last_exc
+                detail = f"failed to connect codex app-server websocket: {last_exc or 'timed out'}"
+                if exit_code is not None:
+                    detail += f"; app-server exited with code {exit_code}"
+                if stderr_tail:
+                    detail += f"; stderr: {stderr_tail[-1000:]}"
+                raise RuntimeError(detail) from last_exc
             self._ws_thread = threading.Thread(target=self._websocket_loop, name=f"cccc-codex-ws:{self.group_id}:{self.actor_id}", daemon=True)
         else:
             self._stdout_thread = threading.Thread(target=self._stdout_loop, name=f"cccc-codex-out:{self.group_id}:{self.actor_id}", daemon=True)
-        self._stderr_thread = threading.Thread(target=self._stderr_loop, name=f"cccc-codex-err:{self.group_id}:{self.actor_id}", daemon=True)
         self._turn_thread = threading.Thread(target=self._turn_loop, name=f"cccc-codex-turn:{self.group_id}:{self.actor_id}", daemon=True)
         if self._stdout_thread is not None:
             self._stdout_thread.start()
         if self._ws_thread is not None:
             self._ws_thread.start()
-        self._stderr_thread.start()
         try:
             self._request(
                 "initialize",
@@ -745,6 +815,8 @@ class CodexAppSession:
                 self._session_state.thread_id = thread_id or None
                 self._session_state.status = "idle"
                 self._session_state.updated_at = utc_now_iso()
+                if thread_id:
+                    self._runtime_provider_thread_id = thread_id
             self._persist_state()
             if thread_id:
                 self._emit("headless.thread.resumed" if resumed else "headless.thread.started", {"thread_id": thread_id})
@@ -1151,9 +1223,22 @@ class CodexAppSession:
             for raw_line in proc.stderr:
                 line = str(raw_line or "").rstrip()
                 if line:
+                    self._remember_stderr_line(line)
                     _safe_logger_call("info", "[codex-app %s/%s] %s", self.group_id, self.actor_id, line)
                     if _is_codex_app_server_auth_failure_line(line):
-                        mark_runtime_session_auth_failed(group_id=self.group_id, actor_id=self.actor_id, error=line)
+                        with self._lock:
+                            stop_requested = bool(self._stop_requested)
+                        if stop_requested:
+                            continue
+                        expected_command, expected_provider_thread_id = self._runtime_session_auth_failure_guard()
+                        mark_runtime_session_auth_failed(
+                            group_id=self.group_id,
+                            actor_id=self.actor_id,
+                            error=line,
+                            expected_command=expected_command,
+                            expected_provider_thread_id=expected_provider_thread_id,
+                            require_provider_thread_id_match=True,
+                        )
         except Exception as exc:
             if _is_closed_stream_logging_error(exc):
                 return

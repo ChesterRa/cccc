@@ -37,6 +37,7 @@ _DEFAULT_CODEX_STATUS_CAPTURE_SECONDS = 8.0
 _DEFAULT_CODEX_STATUS_SUBMIT_DELAY_SECONDS = 1.5
 _DEFAULT_PTY_RESUME_VERIFY_SECONDS = 20.0
 _DEFAULT_PTY_RESUME_FOREGROUND_VERIFY_SECONDS = 2.0
+_RUNTIME_SESSION_WRITE_LOCK = threading.RLock()
 _CODEX_KNOWN_SUBCOMMANDS = {
     "app-server",
     "completion",
@@ -86,12 +87,14 @@ def write_runtime_session(group_id: str, actor_id: str, payload: Dict[str, Any])
     out["group_id"] = str(group_id)
     out["actor_id"] = str(actor_id)
     out.setdefault("updated_at", utc_now_iso())
-    atomic_write_json(path, out, indent=2)
+    with _RUNTIME_SESSION_WRITE_LOCK:
+        atomic_write_json(path, out, indent=2)
 
 
 def remove_runtime_session(group_id: str, actor_id: str) -> None:
     try:
-        runtime_session_path(group_id, actor_id).unlink(missing_ok=True)
+        with _RUNTIME_SESSION_WRITE_LOCK:
+            runtime_session_path(group_id, actor_id).unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -845,22 +848,37 @@ def mark_runtime_session_auth_failed(
     group_id: str,
     actor_id: str,
     error: str,
+    expected_command: Iterable[str] = (),
+    expected_provider_thread_id: str = "",
+    require_provider_thread_id_match: bool = False,
 ) -> Dict[str, Any]:
-    doc = read_runtime_session(group_id, actor_id)
-    if not doc:
-        return {}
-    next_doc = dict(doc)
-    try:
-        failure_count = int(next_doc.get("failure_count") or 0)
-    except Exception:
-        failure_count = 0
-    next_doc["status"] = "auth_failed"
-    next_doc["resume_eligible"] = False
-    next_doc["failure_count"] = failure_count + 1
-    next_doc["last_resume_error"] = str(error or "").strip()[:1000]
-    next_doc["updated_at"] = utc_now_iso()
-    write_runtime_session(group_id, actor_id, next_doc)
-    return next_doc
+    with _RUNTIME_SESSION_WRITE_LOCK:
+        doc = read_runtime_session(group_id, actor_id)
+        if not doc:
+            return {}
+        expected_command_items = [str(part) for part in (expected_command or [])]
+        if expected_command_items:
+            expected_fingerprint = runtime_session_command_fingerprint(expected_command_items)
+            if str(doc.get("command_fingerprint") or "") != expected_fingerprint:
+                return {}
+        expected_thread = str(expected_provider_thread_id or "").strip()
+        current_thread = str(doc.get("provider_thread_id") or "").strip()
+        if expected_thread and current_thread != expected_thread:
+            return {}
+        if bool(require_provider_thread_id_match) and current_thread and not expected_thread:
+            return {}
+        next_doc = dict(doc)
+        try:
+            failure_count = int(next_doc.get("failure_count") or 0)
+        except Exception:
+            failure_count = 0
+        next_doc["status"] = "auth_failed"
+        next_doc["resume_eligible"] = False
+        next_doc["failure_count"] = failure_count + 1
+        next_doc["last_resume_error"] = str(error or "").strip()[:1000]
+        next_doc["updated_at"] = utc_now_iso()
+        write_runtime_session(group_id, actor_id, next_doc)
+        return next_doc
 
 
 def _verify_pty_resume_start(
