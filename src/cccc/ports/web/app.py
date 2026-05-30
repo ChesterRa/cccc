@@ -340,14 +340,18 @@ def create_app() -> FastAPI:
                     str(name): str(value)
                     for name, value in obs.get("logger_levels", {}).items()
                 }
+            for noisy_logger in (
+                "httpcore",
+                "httpx",
+                "notebooklm",
+                "cccc.providers.notebooklm._vendor.notebooklm",
+            ):
+                logger_levels.setdefault(noisy_logger, "WARNING")
             if effective_level == "DEBUG":
                 logger_levels.setdefault("cccc", "DEBUG")
                 for noisy_logger in (
                     "asyncio",
-                    "httpcore",
-                    "httpx",
                     "cccc.delivery",
-                    "cccc.providers.notebooklm._vendor.notebooklm",
                 ):
                     logger_levels.setdefault(noisy_logger, "INFO")
         _apply_web_logging(home=home, level=level, logger_levels=logger_levels)

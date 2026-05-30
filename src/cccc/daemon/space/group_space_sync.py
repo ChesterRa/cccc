@@ -997,6 +997,56 @@ def _write_remote_source_snapshots(space_root: Path, *, provider: str, remote_sp
     return changed
 
 
+def read_cached_remote_source_snapshots(
+    space_root: Path,
+    *,
+    provider: str,
+    remote_space_id: str,
+) -> Dict[str, Any]:
+    """Return the last locally synced source list for a bound remote notebook."""
+    state = _load_state(space_root)
+    if str(state.get("provider") or "") != str(provider or ""):
+        return {"available": False, "sources": [], "updated_at": ""}
+    if str(state.get("remote_space_id") or "") != str(remote_space_id or ""):
+        return {"available": False, "sources": [], "updated_at": ""}
+
+    source_dir = space_root / _REMOTE_SYNC_DIR / _REMOTE_SOURCES_DIR
+    if not source_dir.exists() or not source_dir.is_dir():
+        return {"available": False, "sources": [], "updated_at": str(state.get("last_run_at") or "")}
+
+    sources: List[Dict[str, Any]] = []
+    for path in sorted(source_dir.glob("*.json")):
+        if not path.is_file():
+            continue
+        row = read_json(path)
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("provider") or "") != str(provider or ""):
+            continue
+        if str(row.get("remote_space_id") or "") != str(remote_space_id or ""):
+            continue
+        sid = str(row.get("source_id") or "").strip()
+        if not sid:
+            continue
+        sources.append(
+            {
+                "source_id": sid,
+                "title": str(row.get("title") or ""),
+                "kind": str(row.get("kind") or ""),
+                "status": row.get("status"),
+                "url": str(row.get("url") or ""),
+                "synced_at": str(row.get("synced_at") or ""),
+            }
+        )
+    sources.sort(key=lambda item: (str(item.get("title") or "").lower(), str(item.get("source_id") or "")))
+    return {
+        "available": True,
+        "sources": sources,
+        "updated_at": str(state.get("last_run_at") or ""),
+        "remote_space_id": str(remote_space_id or ""),
+    }
+
+
 def _materialize_remote_source_texts(
     space_root: Path,
     *,
@@ -1006,6 +1056,7 @@ def _materialize_remote_source_texts(
     previous_entries: Dict[str, Dict[str, Any]],
     local_files: Dict[str, Dict[str, Any]],
     mapped_entries: Dict[str, Dict[str, Any]],
+    force_fulltext: bool = False,
 ) -> Tuple[int, Dict[str, Dict[str, Any]], List[Dict[str, str]]]:
     root = space_root / _REMOTE_SOURCE_TEXT_ROOT
     root.mkdir(parents=True, exist_ok=True)
@@ -1063,7 +1114,8 @@ def _materialize_remote_source_texts(
         full_title = title or source_id
         full_url = str(row.get("url") or "")
         content = ""
-        if _source_is_ready(status_raw):
+        fetched_fulltext = False
+        if force_fulltext and _source_is_ready(status_raw):
             try:
                 full = provider_get_source_fulltext(
                     provider,
@@ -1074,6 +1126,7 @@ def _materialize_remote_source_texts(
                 full_url = str(full.get("url") or full_url)
                 kind = _normalize_source_kind(full.get("kind") or kind)
                 content = str(full.get("content") or "")
+                fetched_fulltext = True
             except Exception as e:
                 code = "space_provider_upstream_error"
                 if isinstance(e, SpaceProviderError):
@@ -1118,6 +1171,11 @@ def _materialize_remote_source_texts(
             "display_name": display_name,
             "mode": "remote_mirror",
             "read_only": True,
+            "content_status": (
+                "ready"
+                if fetched_fulltext and content.strip()
+                else ("empty" if fetched_fulltext else ("deferred" if _source_is_ready(status_raw) else "processing"))
+            ),
         }
         try:
             prev_doc = read_json(descriptor_path)
@@ -1143,6 +1201,14 @@ def _materialize_remote_source_texts(
                 kind=kind or "unknown",
                 url=full_url,
                 content=content,
+            )
+        elif _source_is_ready(status_raw) and not force_fulltext:
+            rendered = (
+                "[Remote source text not fetched during background sync]\n"
+                + f"source_id={source_id}\n"
+                + f"title={full_title}\n"
+                + f"kind={kind or 'unknown'}\n"
+                + f"url={full_url}\n"
             )
         else:
             rendered = (
@@ -1249,6 +1315,56 @@ def _load_remote_artifacts_manifest(space_root: Path) -> Dict[str, Dict[str, Any
             continue
         out[k] = dict(item)
     return out
+
+
+def read_cached_remote_artifacts(
+    space_root: Path,
+    *,
+    provider: str,
+    remote_space_id: str,
+    kind: str = "",
+) -> Dict[str, Any]:
+    manifest_path = space_root / _REMOTE_SYNC_DIR / _REMOTE_ARTIFACTS_MANIFEST
+    raw = read_json(manifest_path)
+    if not isinstance(raw, dict):
+        return {"available": False, "artifacts": [], "updated_at": ""}
+    if str(raw.get("provider") or "") != str(provider or ""):
+        return {"available": False, "artifacts": [], "updated_at": str(raw.get("updated_at") or "")}
+    if str(raw.get("remote_space_id") or "") != str(remote_space_id or ""):
+        return {"available": False, "artifacts": [], "updated_at": str(raw.get("updated_at") or "")}
+
+    wanted_kind = _normalize_artifact_kind(kind)
+    entries = raw.get("entries") if isinstance(raw.get("entries"), dict) else {}
+    artifacts: List[Dict[str, Any]] = []
+    for item in entries.values():
+        if not isinstance(item, dict):
+            continue
+        artifact_kind = _normalize_artifact_kind(item.get("kind"))
+        if wanted_kind and artifact_kind != wanted_kind:
+            continue
+        aid = str(item.get("artifact_id") or "").strip()
+        if not aid:
+            continue
+        artifacts.append(
+            {
+                "artifact_id": aid,
+                "id": aid,
+                "kind": artifact_kind,
+                "title": str(item.get("title") or ""),
+                "status": str(item.get("status") or ""),
+                "created_at": str(item.get("created_at") or ""),
+                "url": str(item.get("url") or ""),
+                "local_path": str(item.get("local_path") or ""),
+                "downloaded": bool(item.get("downloaded")),
+            }
+        )
+    artifacts.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("title") or "")), reverse=True)
+    return {
+        "available": True,
+        "artifacts": artifacts,
+        "updated_at": str(raw.get("updated_at") or ""),
+        "remote_space_id": str(remote_space_id or ""),
+    }
 
 
 def _save_remote_artifacts_manifest(
@@ -1924,6 +2040,7 @@ def sync_group_space_files(
                 previous_entries=entries,
                 local_files=local_files,
                 mapped_entries=new_entries,
+                force_fulltext=force,
             )
             materialized_sources += source_text_changed
             for item in materialize_errors:

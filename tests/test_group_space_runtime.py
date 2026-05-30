@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -188,6 +190,48 @@ class TestGroupSpaceRuntime(unittest.TestCase):
 
             post = get_space_job(job_id) or {}
             self.assertEqual(str(post.get("state") or ""), "canceled")
+        finally:
+            cleanup()
+
+    def test_queue_summary_reconciles_stale_running_jobs(self) -> None:
+        from cccc.daemon.space.group_space_store import (
+            enqueue_space_job,
+            get_space_job,
+            mark_space_job_running,
+            space_queue_summary,
+        )
+
+        home, cleanup = self._with_home()
+        try:
+            job, _ = enqueue_space_job(
+                group_id="g_stale_running",
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_stale_running",
+                kind="context_sync",
+                payload={"summary": {"tasks": []}},
+                idempotency_key="stale-running-job",
+            )
+            job_id = str(job.get("job_id") or "")
+            self.assertTrue(job_id)
+            mark_space_job_running(job_id)
+
+            jobs_path = Path(home) / "state" / "space" / "jobs.json"
+            doc = json.loads(jobs_path.read_text(encoding="utf-8"))
+            doc["jobs"][job_id]["updated_at"] = "2026-01-01T00:00:00Z"
+            jobs_path.write_text(json.dumps(doc), encoding="utf-8")
+
+            summary = space_queue_summary(
+                group_id="g_stale_running",
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_stale_running",
+            )
+            self.assertEqual(int(summary.get("running") or 0), 0)
+            self.assertEqual(int(summary.get("failed") or 0), 1)
+            updated = get_space_job(job_id) or {}
+            self.assertEqual(str(updated.get("state") or ""), "failed")
+            self.assertEqual(str((updated.get("last_error") or {}).get("code") or ""), "space_job_stale_running")
         finally:
             cleanup()
 

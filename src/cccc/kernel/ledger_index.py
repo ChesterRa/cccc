@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from .ledger_segments import ACTIVE_SOURCE_SEQ, iter_source_lines, list_ledger_sources, open_ledger_source_text
 
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _DEFAULT_TIMEOUT_SECONDS = 5.0
 _EVENTS_REQUIRED_COLUMNS = {
     "event_id",
@@ -20,6 +20,12 @@ _EVENTS_REQUIRED_COLUMNS = {
     "source_path",
     "line_no",
     "offset_bytes",
+}
+_CHAT_ACK_REQUIRED_COLUMNS = {
+    "event_id",
+    "actor_id",
+    "ack_event_id",
+    "source_path",
 }
 
 
@@ -63,15 +69,17 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
 
 def _reset_legacy_schema(conn: sqlite3.Connection) -> bool:
     columns = _table_columns(conn, "events")
-    if not columns:
-        return False
-    if _EVENTS_REQUIRED_COLUMNS.issubset(columns):
+    ack_columns = _table_columns(conn, "chat_ack")
+    events_current = not columns or _EVENTS_REQUIRED_COLUMNS.issubset(columns)
+    ack_current = not ack_columns or _CHAT_ACK_REQUIRED_COLUMNS.issubset(ack_columns)
+    if events_current and ack_current:
         return False
     conn.execute("DROP INDEX IF EXISTS idx_events_reply_to")
     conn.execute("DROP INDEX IF EXISTS idx_events_ts")
     conn.execute("DROP INDEX IF EXISTS idx_events_kind_ts")
     conn.execute("DROP INDEX IF EXISTS idx_events_by_ts")
     conn.execute("DROP INDEX IF EXISTS idx_events_source_line")
+    conn.execute("DROP INDEX IF EXISTS idx_chat_ack_target_actor")
     conn.execute("DROP TABLE IF EXISTS chat_ack")
     conn.execute("DROP TABLE IF EXISTS event_search")
     conn.execute("DROP TABLE IF EXISTS source_state")
@@ -85,6 +93,7 @@ def _rebuild_events_indexes(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts, source_seq, line_no)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_by_ts ON events(by_actor, ts, source_seq, line_no)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source_line ON events(source_path, line_no)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_ack_target_actor ON chat_ack(event_id, actor_id)")
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -111,7 +120,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS chat_ack (
             event_id TEXT NOT NULL,
             actor_id TEXT NOT NULL,
-            PRIMARY KEY (event_id, actor_id)
+            ack_event_id TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            PRIMARY KEY (ack_event_id)
         );
 
         CREATE TABLE IF NOT EXISTS source_state (
@@ -153,7 +164,7 @@ def _source_stat(path: Path) -> tuple[int, int]:
 
 def _delete_source_rows(conn: sqlite3.Connection, source_path: str) -> None:
     conn.execute("DELETE FROM event_search WHERE event_id IN (SELECT event_id FROM events WHERE source_path = ?)", (source_path,))
-    conn.execute("DELETE FROM chat_ack WHERE event_id IN (SELECT event_id FROM events WHERE source_path = ?)", (source_path,))
+    conn.execute("DELETE FROM chat_ack WHERE source_path = ?", (source_path,))
     conn.execute("DELETE FROM events WHERE source_path = ?", (source_path,))
     conn.execute("DELETE FROM source_state WHERE source_path = ?", (source_path,))
 
@@ -216,8 +227,15 @@ def _index_event(
         ack_actor_id = str(data.get("actor_id") or "").strip()
         if ack_event_id and ack_actor_id:
             conn.execute(
-                "INSERT OR IGNORE INTO chat_ack(event_id, actor_id) VALUES(?, ?)",
-                (ack_event_id, ack_actor_id),
+                """
+                INSERT INTO chat_ack(event_id, actor_id, ack_event_id, source_path)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(ack_event_id) DO UPDATE SET
+                    event_id=excluded.event_id,
+                    actor_id=excluded.actor_id,
+                    source_path=excluded.source_path
+                """,
+                (ack_event_id, ack_actor_id, event_id, source_path),
             )
 
 
@@ -485,6 +503,34 @@ def _read_event_from_source(group_path: Path, *, source_path: str, line_no: int,
     return None
 
 
+def _read_compressed_events_by_line(
+    group_path: Path,
+    *,
+    source_path: str,
+    line_numbers: set[int],
+) -> dict[int, Dict[str, Any]]:
+    abs_path = group_path / source_path
+    wanted = {max(1, int(line_no or 0)) for line_no in line_numbers if int(line_no or 0) > 0}
+    if not wanted or not abs_path.exists():
+        return {}
+
+    out: dict[int, Dict[str, Any]] = {}
+    current_line = 0
+    for raw_line in iter_source_lines(abs_path):
+        current_line += 1
+        if current_line not in wanted:
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict):
+            out[current_line] = obj
+        if len(out) >= len(wanted):
+            break
+    return out
+
+
 def lookup_event_by_id(ledger_path: Path, event_id: str) -> Optional[Dict[str, Any]]:
     wanted = str(event_id or "").strip()
     if not wanted:
@@ -573,7 +619,7 @@ def lookup_events_by_ids(ledger_path: Path, event_ids: list[str]) -> list[Option
     finally:
         conn.close()
 
-    found: dict[str, Optional[Dict[str, Any]]] = {}
+    rows_by_source: dict[str, list[tuple[str, int, int]]] = {}
     for row in rows:
         event_id = str(row[0] or "").strip()
         if not event_id:
@@ -581,13 +627,101 @@ def lookup_events_by_ids(ledger_path: Path, event_ids: list[str]) -> list[Option
         source_path = str(row[1] or "").strip()
         line_no = int(row[2] or 0)
         offset_bytes = int(row[3] or 0)
-        found[event_id] = _read_event_from_source(
-            ledger_path.parent,
-            source_path=source_path,
-            line_no=line_no,
-            offset_bytes=offset_bytes,
-        )
+        if not source_path:
+            continue
+        rows_by_source.setdefault(source_path, []).append((event_id, line_no, offset_bytes))
+
+    found: dict[str, Optional[Dict[str, Any]]] = {}
+    for source_path, source_rows in rows_by_source.items():
+        if str(source_path).endswith(".gz"):
+            event_ids_by_line: dict[int, list[str]] = {}
+            for event_id, line_no, _offset_bytes in source_rows:
+                if line_no <= 0:
+                    continue
+                event_ids_by_line.setdefault(line_no, []).append(event_id)
+            events_by_line = _read_compressed_events_by_line(
+                ledger_path.parent,
+                source_path=source_path,
+                line_numbers=set(event_ids_by_line.keys()),
+            )
+            for line_no, ids_for_line in event_ids_by_line.items():
+                event = events_by_line.get(line_no)
+                for event_id in ids_for_line:
+                    found[event_id] = event
+            continue
+
+        for event_id, line_no, offset_bytes in source_rows:
+            found[event_id] = _read_event_from_source(
+                ledger_path.parent,
+                source_path=source_path,
+                line_no=line_no,
+                offset_bytes=offset_bytes,
+            )
     return [found.get(event_id) if event_id else None for event_id in wanted_ids]
+
+
+def _chunks(items: list[str], size: int = 500) -> list[list[str]]:
+    chunk_size = max(1, int(size or 500))
+    return [items[idx : idx + chunk_size] for idx in range(0, len(items), chunk_size)]
+
+
+def lookup_chat_ack_actor_ids(ledger_path: Path, event_ids: set[str]) -> dict[str, set[str]]:
+    unique_ids = [str(event_id or "").strip() for event_id in dict.fromkeys(event_ids) if str(event_id or "").strip()]
+    if not unique_ids:
+        return {}
+
+    catch_up_ledger_index(ledger_path)
+    index_path = _index_path_for_ledger(ledger_path)
+    conn = _connect(index_path)
+    out: dict[str, set[str]] = {}
+    try:
+        _ensure_schema(conn)
+        for chunk in _chunks(unique_ids):
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT event_id, actor_id FROM chat_ack WHERE event_id IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                event_id = str(row[0] or "").strip()
+                actor_id = str(row[1] or "").strip()
+                if event_id and actor_id:
+                    out.setdefault(event_id, set()).add(actor_id)
+    finally:
+        conn.close()
+    return out
+
+
+def lookup_chat_reply_actor_ids(ledger_path: Path, event_ids: set[str]) -> dict[str, set[str]]:
+    unique_ids = [str(event_id or "").strip() for event_id in dict.fromkeys(event_ids) if str(event_id or "").strip()]
+    if not unique_ids:
+        return {}
+
+    catch_up_ledger_index(ledger_path)
+    index_path = _index_path_for_ledger(ledger_path)
+    conn = _connect(index_path)
+    out: dict[str, set[str]] = {}
+    try:
+        _ensure_schema(conn)
+        for chunk in _chunks(unique_ids):
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"""
+                SELECT reply_to, by_actor
+                FROM events
+                WHERE kind = 'chat.message'
+                  AND reply_to IN ({placeholders})
+                """,
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                event_id = str(row[0] or "").strip()
+                actor_id = str(row[1] or "").strip()
+                if event_id and actor_id:
+                    out.setdefault(event_id, set()).add(actor_id)
+    finally:
+        conn.close()
+    return out
 
 
 def has_chat_ack_indexed(ledger_path: Path, *, event_id: str, actor_id: str) -> bool:

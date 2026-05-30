@@ -131,6 +131,95 @@ class TestLedgerSearchIndex(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_lookup_events_by_ids_batches_compressed_source_reads(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.contracts.v1 import ChatMessageData
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import create_group
+            from cccc.kernel.ledger import append_event
+            from cccc.kernel.ledger_segments import compress_sealed_segments, rotate_active_ledger
+            from cccc.kernel.registry import load_registry
+
+            reg = load_registry()
+            group = create_group(reg, title="compressed-lookup")
+            event_ids: list[str] = []
+            for idx in range(30):
+                event = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data=ChatMessageData(text=f"gz {idx}", to=["user"]).model_dump(),
+                )
+                event_ids.append(str(event.get("id") or ""))
+
+            rotation = rotate_active_ledger(group.path, reason="test")
+            self.assertTrue(rotation.get("rotated"))
+            compressed = compress_sealed_segments(group.path, keep_recent=0, force=True)
+            self.assertEqual(int(compressed.get("count") or 0), 1)
+
+            ledger_index.catch_up_ledger_index(group.ledger_path)
+            wanted = [event_ids[3], event_ids[17], event_ids[7], event_ids[29]]
+            with patch.object(ledger_index, "iter_source_lines", wraps=ledger_index.iter_source_lines) as iter_source_lines:
+                events = ledger_index.lookup_events_by_ids(group.ledger_path, wanted)
+
+            self.assertEqual([str((ev or {}).get("id") or "") for ev in events], wanted)
+            self.assertEqual(iter_source_lines.call_count, 1)
+        finally:
+            cleanup()
+
+    def test_chat_ack_index_survives_target_message_compression(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.contracts.v1 import ChatMessageData
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import create_group
+            from cccc.kernel.ledger import append_event
+            from cccc.kernel.ledger_segments import compress_sealed_segments, rotate_active_ledger
+            from cccc.kernel.registry import load_registry
+
+            reg = load_registry()
+            group = create_group(reg, title="compressed-ack-index")
+            msg = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data=ChatMessageData(
+                    text="ack after rotate",
+                    to=["peer1"],
+                    priority="attention",
+                    reply_required=True,
+                ).model_dump(),
+            )
+            msg_id = str(msg.get("id") or "")
+            self.assertTrue(msg_id)
+
+            rotation = rotate_active_ledger(group.path, reason="test")
+            self.assertTrue(rotation.get("rotated"))
+            ledger_index.catch_up_ledger_index(group.ledger_path)
+
+            append_event(
+                group.ledger_path,
+                kind="chat.ack",
+                group_id=group.group_id,
+                scope_key="",
+                by="peer1",
+                data={"actor_id": "peer1", "event_id": msg_id},
+            )
+
+            compressed = compress_sealed_segments(group.path, keep_recent=0, force=True)
+            self.assertEqual(int(compressed.get("count") or 0), 1)
+
+            acks = ledger_index.lookup_chat_ack_actor_ids(group.ledger_path, {msg_id})
+
+            self.assertEqual(acks, {msg_id: {"peer1"}})
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

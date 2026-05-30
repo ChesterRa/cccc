@@ -686,7 +686,7 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(result.get("requested_source_ids"), ["src_intel_1"])
             self.assertEqual(result.get("referenced_source_ids"), ["src_intel_1"])
             self.assertEqual(bool(result.get("references_match_requested")), True)
-            self.assertEqual(str(result.get("latest_context_sync_at") or ""), "2026-03-08T10:00:00Z")
+            self.assertNotIn("latest_context_sync_at", result)
         finally:
             cleanup_stub()
             cleanup()
@@ -735,8 +735,8 @@ class TestGroupSpaceOps(unittest.TestCase):
             result = query.result if isinstance(query.result, dict) else {}
             self.assertEqual(int(result.get("reference_count", -1)), 0)
             self.assertEqual(str(result.get("binding_status") or ""), "bound")
-            self.assertEqual(str(result.get("source_basis_hint") or ""), "context_sync_only")
-            self.assertEqual(str(result.get("latest_context_sync_at") or ""), "2026-03-08T10:00:00Z")
+            self.assertEqual(str(result.get("source_basis_hint") or ""), "unknown")
+            self.assertNotIn("latest_context_sync_at", result)
             self.assertEqual(int(result.get("remote_sources", -1)), 0)
             self.assertEqual(int(result.get("materialized_sources", -1)), 0)
         finally:
@@ -811,7 +811,7 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertTrue(query.ok, getattr(query, "error", None))
             result = query.result if isinstance(query.result, dict) else {}
             self.assertEqual(str(result.get("source_basis_hint") or ""), "unknown")
-            self.assertEqual(str(result.get("latest_context_sync_at") or ""), "")
+            self.assertNotIn("latest_context_sync_at", result)
         finally:
             cleanup_stub()
             cleanup()

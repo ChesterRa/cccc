@@ -7,6 +7,40 @@ from unittest.mock import patch
 
 
 class TestAutomationNudgeDigest(unittest.TestCase):
+    def test_nudge_scan_is_throttled_between_due_windows(self) -> None:
+        from cccc.daemon.automation import AutomationManager, _cfg
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+
+                reg = load_registry()
+                group = create_group(reg, title="test")
+                add_actor(group, actor_id="peer1", runtime="codex", runner="pty", enabled=True)
+
+                manager = AutomationManager()
+                cfg = _cfg(group)
+                t0 = datetime.now(timezone.utc)
+
+                with (
+                    patch("cccc.daemon.automation.pty_runner.SUPERVISOR.actor_running", return_value=True),
+                    patch("cccc.daemon.automation.engine.iter_events", return_value=[]) as iter_events,
+                ):
+                    manager._check_nudge(group, cfg, t0)
+                    manager._check_nudge(group, cfg, t0 + timedelta(seconds=5))
+                    manager._check_nudge(group, cfg, t0 + timedelta(seconds=35))
+
+                self.assertEqual(iter_events.call_count, 2)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_min_interval_prevents_repeat_count_growth(self) -> None:
         from cccc.contracts.v1 import ChatMessageData
         from cccc.daemon.automation import AutomationManager, _cfg

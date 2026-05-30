@@ -1309,14 +1309,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     str(name): str(value)
                     for name, value in obs.get("logger_levels", {}).items()
                 } if isinstance(obs.get("logger_levels"), dict) else {}
+                for noisy_logger in (
+                    "httpcore",
+                    "httpx",
+                    "notebooklm",
+                    "cccc.providers.notebooklm._vendor.notebooklm",
+                ):
+                    logger_levels.setdefault(noisy_logger, "WARNING")
                 if effective_level == "DEBUG":
                     logger_levels.setdefault("cccc", "DEBUG")
                     for noisy_logger in (
                         "asyncio",
-                        "httpcore",
-                        "httpx",
                         "cccc.delivery",
-                        "cccc.providers.notebooklm._vendor.notebooklm",
                     ):
                         logger_levels.setdefault(noisy_logger, "INFO")
                 ctx.apply_web_logging(home=ctx.home, level=level, logger_levels=logger_levels)

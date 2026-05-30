@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestMessageObligation(unittest.TestCase):
@@ -129,6 +130,58 @@ class TestMessageObligation(unittest.TestCase):
             peer3 = st3.get(msg_id, {}).get("peer1", {})
             self.assertEqual(peer3.get("replied"), True)
             self.assertEqual(peer3.get("acked"), True)
+        finally:
+            cleanup()
+
+    def test_obligation_status_uses_indexed_ack_and_reply_lookup(self) -> None:
+        from cccc.contracts.v1 import ChatMessageData
+        from cccc.kernel.inbox import get_obligation_status_batch
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group, _group_id = self._create_group_with_peer()
+
+            msg = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data=ChatMessageData(
+                    text="need indexed status",
+                    to=["peer1"],
+                    priority="attention",
+                    reply_required=True,
+                ).model_dump(),
+            )
+            msg_id = str(msg.get("id") or "")
+            self.assertTrue(msg_id)
+
+            append_event(
+                group.ledger_path,
+                kind="chat.ack",
+                group_id=group.group_id,
+                scope_key="",
+                by="peer1",
+                data={"actor_id": "peer1", "event_id": msg_id},
+            )
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="peer1",
+                data=ChatMessageData(text="done", to=["user"], reply_to=msg_id).model_dump(),
+            )
+
+            with patch("cccc.kernel.inbox.iter_events", side_effect=AssertionError("status lookup should use ledger index")):
+                status = get_obligation_status_batch(group, [msg])
+
+            peer = status.get(msg_id, {}).get("peer1", {})
+            self.assertEqual(peer.get("acked"), True)
+            self.assertEqual(peer.get("replied"), True)
+            self.assertEqual(peer.get("reply_required"), True)
         finally:
             cleanup()
 

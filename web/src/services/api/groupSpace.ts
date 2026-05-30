@@ -117,7 +117,19 @@ export async function queryGroupSpace(args: {
   });
 }
 
-export async function fetchGroupSpaceSources(groupId: string, provider: string = "notebooklm", lane: "work" | "memory") {
+export async function fetchGroupSpaceSources(
+  groupId: string,
+  provider: string = "notebooklm",
+  lane: "work" | "memory",
+  opts?: { fresh?: boolean },
+) {
+  const params = new URLSearchParams({
+    provider: String(provider || "notebooklm"),
+    lane: String(lane),
+  });
+  if (opts?.fresh) {
+    params.set("fresh", "true");
+  }
   return apiJson<{
     group_id: string;
     provider: string;
@@ -127,7 +139,7 @@ export async function fetchGroupSpaceSources(groupId: string, provider: string =
     sources: GroupSpaceSource[];
     list_result?: Record<string, unknown>;
   }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?provider=${encodeURIComponent(provider)}&lane=${encodeURIComponent(lane)}`,
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?${params.toString()}`,
   );
 }
 
@@ -167,6 +179,7 @@ export async function fetchGroupSpaceArtifacts(
   provider: string = "notebooklm",
   lane: "work" | "memory",
   kind: string = "",
+  opts?: { fresh?: boolean },
 ) {
   const params = new URLSearchParams({
     provider: String(provider || "notebooklm"),
@@ -174,6 +187,9 @@ export async function fetchGroupSpaceArtifacts(
   });
   if (String(kind || "").trim()) {
     params.set("kind", String(kind || "").trim().toLowerCase());
+  }
+  if (opts?.fresh) {
+    params.set("fresh", "true");
   }
   return apiJson<{
     group_id: string;

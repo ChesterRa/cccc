@@ -768,6 +768,7 @@ class AutomationManager:
         self._lock = threading.Lock()
         self._memory_auto_in_flight: set[str] = set()
         self._group_tick_at: dict[str, float] = {}
+        self._nudge_scan_at: dict[str, float] = {}
 
     def _group_tick_due(self, group_id: str, *, now_monotonic: float, min_interval_seconds: float) -> bool:
         gid = str(group_id or "").strip()
@@ -779,6 +780,38 @@ class AutomationManager:
             if last_at > 0.0 and (now_monotonic - last_at) < interval:
                 return False
             self._group_tick_at[gid] = now_monotonic
+            return True
+
+    def _nudge_scan_due(self, group_id: str, *, now: datetime, cfg: AutomationConfig) -> bool:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        due_after_values = (
+            cfg.reply_required_nudge_after_seconds,
+            cfg.attention_ack_nudge_after_seconds,
+            cfg.unread_nudge_after_seconds,
+            cfg.nudge_after_seconds,
+        )
+        positive_due_after: List[int] = []
+        for value in due_after_values:
+            try:
+                n = int(value or 0)
+            except Exception:
+                n = 0
+            if n > 0:
+                positive_due_after.append(n)
+        if positive_due_after:
+            interval = min(30.0, max(1.0, float(min(positive_due_after)) / 10.0))
+        else:
+            interval = 1.0
+
+        now_dt = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+        now_ts = float(now_dt.timestamp())
+        with self._lock:
+            last_at = float(self._nudge_scan_at.get(gid) or 0.0)
+            if last_at > 0.0 and now_ts >= last_at and (now_ts - last_at) < interval:
+                return False
+            self._nudge_scan_at[gid] = now_ts
             return True
 
     def on_resume(self, group: Group) -> None:
@@ -917,6 +950,9 @@ class AutomationManager:
         except Exception:
             roster = []
         if not roster:
+            return
+
+        if not self._nudge_scan_due(group.group_id, now=now, cfg=cfg):
             return
 
         # Scan visible chat/system events once and compute obligation status in batch.

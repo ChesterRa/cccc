@@ -46,7 +46,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
         )
         self.assertTrue(resp.ok, getattr(resp, "error", None))
 
-    def test_curated_context_change_enqueues_group_space_sync_job(self) -> None:
+    def test_curated_context_change_does_not_enqueue_group_space_sync_job_by_default(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -62,10 +62,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
             result = sync_resp.result if isinstance(sync_resp.result, dict) else {}
-            space_sync = result.get("space_sync") if isinstance(result.get("space_sync"), dict) else {}
-            self.assertEqual(bool(space_sync.get("queued")), True)
-            self.assertEqual(bool(space_sync.get("deduped")), False)
-            self.assertTrue(str(space_sync.get("job_id") or "").strip())
+            self.assertNotIn("space_sync", result)
 
             jobs_resp, _ = self._call(
                 "group_space_jobs",
@@ -75,13 +72,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             jobs = (jobs_resp.result or {}).get("jobs") if isinstance(jobs_resp.result, dict) else []
             self.assertIsInstance(jobs, list)
             assert isinstance(jobs, list)
-            self.assertGreaterEqual(len(jobs), 1)
-            job = jobs[0] if isinstance(jobs[0], dict) else {}
-            self.assertEqual(str(job.get("kind") or ""), "context_sync")
-            payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
-            summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-            tasks = summary.get("tasks") if isinstance(summary.get("tasks"), list) else []
-            self.assertTrue(any(isinstance(t, dict) and t.get("title") == "ship this" for t in tasks))
+            self.assertEqual(len(jobs), 0)
         finally:
             cleanup()
 
@@ -113,7 +104,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_context_sync_reports_not_bound_without_failing(self) -> None:
+    def test_context_sync_does_not_report_space_sync_when_not_bound(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -127,13 +118,11 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
             result = sync_resp.result if isinstance(sync_resp.result, dict) else {}
-            space_sync = result.get("space_sync") if isinstance(result.get("space_sync"), dict) else {}
-            self.assertEqual(bool(space_sync.get("queued")), False)
-            self.assertEqual(str(space_sync.get("reason") or ""), "not_bound")
+            self.assertNotIn("space_sync", result)
         finally:
             cleanup()
 
-    def test_same_context_version_dedupes_context_sync_job(self) -> None:
+    def test_repeated_context_changes_do_not_create_context_sync_jobs(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -149,9 +138,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             )
             self.assertTrue(first.ok, getattr(first, "error", None))
             first_result = first.result if isinstance(first.result, dict) else {}
-            first_space = first_result.get("space_sync") if isinstance(first_result.get("space_sync"), dict) else {}
-            self.assertEqual(bool(first_space.get("queued")), True)
-            self.assertEqual(bool(first_space.get("deduped")), False)
+            self.assertNotIn("space_sync", first_result)
 
             second, _ = self._call(
                 "context_sync",
@@ -163,8 +150,15 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             )
             self.assertTrue(second.ok, getattr(second, "error", None))
             second_result = second.result if isinstance(second.result, dict) else {}
-            second_space = second_result.get("space_sync") if isinstance(second_result.get("space_sync"), dict) else {}
-            self.assertEqual(bool(second_space.get("queued")), False)
+            self.assertNotIn("space_sync", second_result)
+
+            jobs_resp, _ = self._call(
+                "group_space_jobs",
+                {"group_id": gid, "provider": "notebooklm", "lane": "work", "action": "list"},
+            )
+            self.assertTrue(jobs_resp.ok, getattr(jobs_resp, "error", None))
+            jobs = (jobs_resp.result or {}).get("jobs") if isinstance(jobs_resp.result, dict) else []
+            self.assertEqual(len(jobs), 0)
         finally:
             cleanup()
 

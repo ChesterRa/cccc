@@ -55,6 +55,8 @@ from .group_space_memory_sync import (
 from .group_space_sync import (
     group_space_local_file_policy,
     mark_group_space_sync_pending,
+    read_cached_remote_artifacts,
+    read_cached_remote_source_snapshots,
     restore_group_space_sync_state,
     read_group_space_sync_state,
     sync_group_space_files,
@@ -595,35 +597,6 @@ def _release_query_slot(*, lane_key: str) -> None:
         _QUERY_ACTIVE_BY_LANE[lane_key] = active - 1
 
 
-def _latest_context_sync_at(*, group_id: str, provider: str) -> str:
-    binding = get_space_binding(group_id, provider=provider, lane="work") or {}
-    binding_status = str(binding.get("status") or "").strip().lower()
-    bound_remote_id = str(binding.get("remote_space_id") or "").strip()
-    if binding_status != "bound" or not bound_remote_id:
-        return ""
-    fallback = ""
-    for item in list_space_jobs(
-        group_id=group_id,
-        provider=provider,
-        lane="work",
-        state="",
-        remote_space_id=bound_remote_id,
-        limit=20,
-    ):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("kind") or "").strip() != "context_sync":
-            continue
-        updated_at = str(item.get("updated_at") or "").strip()
-        if not updated_at:
-            continue
-        if not fallback:
-            fallback = updated_at
-        if str(item.get("state") or "").strip() == "succeeded":
-            return updated_at
-    return fallback
-
-
 def _requested_query_source_ids(options: Any) -> List[str]:
     if not isinstance(options, dict):
         return []
@@ -787,7 +760,6 @@ def _build_space_query_diagnostics(
         referenced_source_ids=referenced_source_ids,
     )
     if lane == "work":
-        latest_context_sync_at = _latest_context_sync_at(group_id=group_id, provider=provider)
         sync_state = _live_work_sync_state(group_id=group_id, provider=provider, binding=binding)
         has_sync_state = bool(sync_state.get("available")) or any(
             key in sync_state for key in ("remote_sources", "materialized_sources")
@@ -797,16 +769,10 @@ def _build_space_query_diagnostics(
             out["remote_sources"] = int(sync_state.get("remote_sources") or 0)
             materialized_sources = int(sync_state.get("materialized_sources") or 0)
             out["materialized_sources"] = materialized_sources
-        if latest_context_sync_at:
-            out["latest_context_sync_at"] = latest_context_sync_at
         if explicit_hint:
             out["source_basis_hint"] = explicit_hint
-        elif materialized_sources is not None and materialized_sources > 0 and latest_context_sync_at:
-            out["source_basis_hint"] = "mixed"
         elif materialized_sources is not None and materialized_sources > 0:
             out["source_basis_hint"] = "materialized_sources_present"
-        elif latest_context_sync_at:
-            out["source_basis_hint"] = "context_sync_only"
         else:
             out["source_basis_hint"] = "unknown"
         return out
@@ -1760,6 +1726,7 @@ def handle_group_space_sources(args: Dict[str, Any]) -> DaemonResponse:
     action_raw = args.get("action")
     source_id = str(args.get("source_id") or "").strip()
     new_title = str(args.get("new_title") or "").strip()
+    fresh = _bool_or_default(args.get("fresh"), default=False)
     try:
         group = _require_group(group_id)
         provider = _provider_or_error(provider_raw)
@@ -1778,6 +1745,33 @@ def handle_group_space_sources(args: Dict[str, Any]) -> DaemonResponse:
             return _error("space_provider_disabled", "provider is disabled")
 
         if action == "list":
+            if not fresh:
+                space_root = resolve_space_root_from_group(group, create=False)
+                if space_root is not None:
+                    cached = read_cached_remote_source_snapshots(
+                        space_root,
+                        provider=provider,
+                        remote_space_id=remote_space_id,
+                    )
+                    if bool(cached.get("available")):
+                        sources = cached.get("sources") if isinstance(cached.get("sources"), list) else []
+                        return DaemonResponse(
+                            ok=True,
+                            result={
+                                "group_id": group.group_id,
+                                "provider": provider,
+                                "lane": lane,
+                                "provider_mode": provider_mode,
+                                "binding": binding,
+                                "action": action,
+                                "sources": sources,
+                                "list_result": {
+                                    "cached": True,
+                                    "sources": sources,
+                                    "updated_at": str(cached.get("updated_at") or ""),
+                                },
+                            },
+                        )
             listed = provider_list_sources(provider, remote_space_id=remote_space_id)
             sources = listed.get("sources") if isinstance(listed.get("sources"), list) else []
             return DaemonResponse(
@@ -1889,6 +1883,7 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
     artifact_id = str(args.get("artifact_id") or "").strip()
     save_to_space = _bool_or_default(args.get("save_to_space"), default=True)
     wait_for_completion = _bool_or_default(args.get("wait"), default=True)
+    fresh = _bool_or_default(args.get("fresh"), default=False)
     timeout_seconds = _float_or_default(args.get("timeout_seconds"), default=600.0, lo=10.0, hi=3600.0)
     initial_interval = _float_or_default(args.get("initial_interval"), default=2.0, lo=0.5, hi=60.0)
     max_interval = _float_or_default(args.get("max_interval"), default=10.0, lo=1.0, hi=120.0)
@@ -1917,6 +1912,35 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
 
         if action == "list":
             kind = _artifact_kind_or_error(kind_raw, allow_empty=True)
+            if not fresh:
+                space_root = resolve_space_root_from_group(group, create=False)
+                if space_root is not None:
+                    cached = read_cached_remote_artifacts(
+                        space_root,
+                        provider=provider,
+                        remote_space_id=remote_space_id,
+                        kind=kind,
+                    )
+                    if bool(cached.get("available")):
+                        artifacts = cached.get("artifacts") if isinstance(cached.get("artifacts"), list) else []
+                        return DaemonResponse(
+                            ok=True,
+                            result={
+                                "group_id": group.group_id,
+                                "provider": provider,
+                                "lane": space_lane,
+                                "provider_mode": provider_mode,
+                                "binding": binding,
+                                "action": action,
+                                "kind": kind,
+                                "artifacts": artifacts,
+                                "list_result": {
+                                    "cached": True,
+                                    "artifacts": artifacts,
+                                    "updated_at": str(cached.get("updated_at") or ""),
+                                },
+                            },
+                        )
             listed = provider_list_artifacts(provider, remote_space_id=remote_space_id, kind=kind)
             artifacts = listed.get("artifacts") if isinstance(listed.get("artifacts"), list) else []
             return DaemonResponse(

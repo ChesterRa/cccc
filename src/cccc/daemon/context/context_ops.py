@@ -62,14 +62,8 @@ from ...kernel.prompt_files import (
 from ...kernel.working_state import derive_effective_working_state
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
-from ..space.group_space_projection import sync_group_space_projection
-from ..space.group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
 from ..pet.profile_refresh import mark_pet_profile_refresh_applied
 from ..pet.review_scheduler import request_pet_review
-_CURATED_SPACE_SYNC_PREFIXES = (
-    "coordination.",
-    "task.",
-)
 
 logger = logging.getLogger(__name__)
 _CONTEXT_DETAIL_FULL = "full"
@@ -529,85 +523,6 @@ def _tasks_summary(tasks: List[Task], *, attention: Optional[Dict[str, List[Dict
         "waiting_user": len(att.get("waiting_user") or []),
         "pending_handoffs": len(att.get("pending_handoffs") or []),
         "root_count": sum(1 for task in tasks if task.is_root and task.status != TaskStatus.ARCHIVED),
-    }
-
-
-def _should_trigger_group_space_context_sync(changes: List[Dict[str, Any]]) -> bool:
-    for item in changes:
-        if not isinstance(item, dict):
-            continue
-        op_name = str(item.get("op") or "").strip()
-        if op_name and any(op_name.startswith(prefix) for prefix in _CURATED_SPACE_SYNC_PREFIXES):
-            return True
-    return False
-
-
-def _queue_group_space_context_sync(
-    *,
-    group_id: str,
-    version: str,
-    context: Context,
-    tasks_by_id: Dict[str, Task],
-    changes: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    binding = get_space_binding(group_id, provider="notebooklm", lane="work")
-    if not isinstance(binding, dict):
-        return {"queued": False, "reason": "not_bound"}
-    if str(binding.get("status") or "") != "bound":
-        return {"queued": False, "reason": "binding_inactive"}
-    remote_space_id = str(binding.get("remote_space_id") or "").strip()
-    if not remote_space_id:
-        return {"queued": False, "reason": "missing_remote_space_id"}
-
-    provider_state = get_space_provider_state("notebooklm")
-    if not bool(provider_state.get("enabled")) or str(provider_state.get("mode") or "") == "disabled":
-        return {"queued": False, "reason": "provider_disabled"}
-
-    brief = context.coordination.brief if isinstance(context.coordination, Coordination) else CoordinationBrief()
-    payload = {
-        "group_id": group_id,
-        "context_version": str(version or "").strip(),
-        "synced_at": _utc_now_iso(),
-        "summary": {
-            "coordination_brief": {
-                "objective": brief.objective,
-                "current_focus": brief.current_focus,
-                "constraints": list(brief.constraints or []),
-                "project_brief": brief.project_brief,
-                "project_brief_stale": bool(brief.project_brief_stale),
-            },
-            "tasks": [_task_to_dict(task) for task in _sort_tasks(list(tasks_by_id.values()))],
-            "recent_decisions": [_note_to_dict(note) for note in context.coordination.recent_decisions[:5]],
-            "recent_handoffs": [_note_to_dict(note) for note in context.coordination.recent_handoffs[:5]],
-        },
-        "changes": [
-            {
-                "index": int(item.get("index") or 0),
-                "op": str(item.get("op") or ""),
-                "detail": str(item.get("detail") or ""),
-            }
-            for item in changes
-            if isinstance(item, dict)
-        ],
-    }
-
-    idem = f"context_sync:{group_id}:{version}"
-    job, deduped = enqueue_space_job(
-        group_id=group_id,
-        provider="notebooklm",
-        lane="work",
-        remote_space_id=remote_space_id,
-        kind="context_sync",
-        payload=payload,
-        idempotency_key=idem,
-    )
-    return {
-        "queued": True,
-        "deduped": bool(deduped),
-        "job_id": str(job.get("job_id") or ""),
-        "provider": "notebooklm",
-        "kind": "context_sync",
-        "idempotency_key": idem,
     }
 
 
@@ -1820,32 +1735,12 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 except Exception:
                     logger.exception("pet_review_request_failed group_id=%s reason=%s", group_id, reason)
 
-        space_sync: Optional[Dict[str, Any]] = None
-        if not dry_run and changes and _should_trigger_group_space_context_sync(changes):
-            try:
-                space_sync = _queue_group_space_context_sync(
-                    group_id=group_id,
-                    version=version,
-                    context=context,
-                    tasks_by_id=tasks_by_id,
-                    changes=changes,
-                )
-            except Exception as exc:
-                space_sync = {"queued": False, "reason": "enqueue_failed", "error": str(exc)}
-
         result: Dict[str, Any] = {
             "success": True,
             "dry_run": dry_run,
             "changes": changes,
             "version": version,
         }
-        if isinstance(space_sync, dict):
-            result["space_sync"] = space_sync
-            if bool(space_sync.get("queued")):
-                try:
-                    _ = sync_group_space_projection(group_id, provider="notebooklm")
-                except Exception:
-                    pass
         return DaemonResponse(ok=True, result=result)
 
     except ValueError as exc:

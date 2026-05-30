@@ -431,11 +431,31 @@ def _jobs_retention_days() -> int:
     return max(1, min(value, 365))
 
 
+def _running_job_stale_seconds() -> int:
+    raw = str(os.environ.get("CCCC_SPACE_RUNNING_JOB_STALE_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else 6 * 3600
+    except Exception:
+        value = 6 * 3600
+    return max(600, min(value, 30 * 86400))
+
+
+def _running_job_is_stale(item: Dict[str, Any], *, now_ts: Optional[float] = None) -> bool:
+    if str(item.get("state") or "").strip().lower() != "running":
+        return False
+    updated_ts = _job_updated_ts(item)
+    if updated_ts <= 0:
+        return True
+    current_ts = datetime.now(timezone.utc).timestamp() if now_ts is None else float(now_ts)
+    return (current_ts - updated_ts) >= float(_running_job_stale_seconds())
+
+
 def _jobs_doc_needs_compaction(doc: Dict[str, Any]) -> bool:
     jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
     terminal_count = 0
     keep_limit = _jobs_retention_limit()
     cutoff_ts = datetime.now(timezone.utc).timestamp() - (_jobs_retention_days() * 86400)
+    now_ts = datetime.now(timezone.utc).timestamp()
     for item in jobs.values():
         if not isinstance(item, dict):
             continue
@@ -443,6 +463,8 @@ def _jobs_doc_needs_compaction(doc: Dict[str, Any]) -> bool:
         if payload:
             return True
         state = str(item.get("state") or "").strip().lower()
+        if state == "running" and _running_job_is_stale(item, now_ts=now_ts):
+            return True
         if state in _JOB_TERMINAL_STATES:
             terminal_count += 1
             if terminal_count > keep_limit or _job_updated_ts(item) < cutoff_ts:
@@ -460,10 +482,24 @@ def _compact_jobs_doc(path: Path, doc: Dict[str, Any], *, force: bool = False) -
     home = ensure_home()
     keep_limit = _jobs_retention_limit()
     cutoff_ts = datetime.now(timezone.utc).timestamp() - (_jobs_retention_days() * 86400)
+    now_iso = utc_now_iso()
+    now_dt = parse_utc_iso(now_iso)
+    now_ts = now_dt.timestamp() if now_dt is not None else datetime.now(timezone.utc).timestamp()
     terminal_items: List[Tuple[str, Dict[str, Any]]] = []
     active_items: List[Tuple[str, Dict[str, Any]]] = []
     for job_id, item in jobs.items():
         if not isinstance(item, dict):
+            continue
+        if _running_job_is_stale(item, now_ts=now_ts):
+            stale = dict(item)
+            stale["state"] = "failed"
+            stale["next_run_at"] = None
+            stale["updated_at"] = now_iso
+            stale["last_error"] = {
+                "code": "space_job_stale_running",
+                "message": "running job was left active by an earlier daemon process",
+            }
+            terminal_items.append((job_id, stale))
             continue
         state = str(item.get("state") or "").strip().lower()
         if state in _JOB_TERMINAL_STATES:

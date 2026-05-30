@@ -13,6 +13,8 @@ from ..util.time import parse_utc_iso, utc_now_iso
 from .actors import find_actor, get_effective_role, is_internal_actor, list_actors
 from .group import Group
 from .ledger_index import (
+    lookup_chat_ack_actor_ids,
+    lookup_chat_reply_actor_ids,
     lookup_event_by_id,
     lookup_event_with_chat_ack_indexed,
     lookup_events_by_ids,
@@ -478,6 +480,10 @@ def _collect_chat_acks(group: Group, *, event_ids: set[str]) -> Dict[str, set[st
     out: Dict[str, set[str]] = {}
     if not event_ids:
         return out
+    try:
+        return lookup_chat_ack_actor_ids(group.ledger_path, event_ids)
+    except Exception:
+        pass
 
     for ev in iter_events(group.ledger_path):
         if str(ev.get("kind") or "") != "chat.ack":
@@ -505,6 +511,10 @@ def _collect_chat_replies(group: Group, *, event_ids: set[str]) -> Dict[str, set
     out: Dict[str, set[str]] = {}
     if not event_ids:
         return out
+    try:
+        return lookup_chat_reply_actor_ids(group.ledger_path, event_ids)
+    except Exception:
+        pass
 
     for ev in iter_events(group.ledger_path):
         if str(ev.get("kind") or "") != "chat.message":

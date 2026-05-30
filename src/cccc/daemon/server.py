@@ -195,14 +195,18 @@ def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
         str(name): str(level)
         for name, level in (obs.get("logger_levels") or {}).items()
     } if isinstance(obs.get("logger_levels"), dict) else {}
+    for noisy_logger in (
+        "httpcore",
+        "httpx",
+        "notebooklm",
+        "cccc.providers.notebooklm._vendor.notebooklm",
+    ):
+        logger_levels.setdefault(noisy_logger, "WARNING")
     if effective_level == "DEBUG":
         logger_levels.setdefault("cccc", "DEBUG")
         for noisy_logger in (
             "asyncio",
-            "httpcore",
-            "httpx",
             "cccc.delivery",
-            "cccc.providers.notebooklm._vendor.notebooklm",
         ):
             logger_levels.setdefault(noisy_logger, "INFO")
     setup_root_json_logging(component="daemon", level=root_level, force=True)

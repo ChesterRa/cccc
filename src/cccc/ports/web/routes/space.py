@@ -127,7 +127,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/space/sources")
-    async def group_space_sources_list(group_id: str, provider: str = "notebooklm", lane: str = Query(...)) -> Dict[str, Any]:
+    async def group_space_sources_list(
+        group_id: str,
+        provider: str = "notebooklm",
+        lane: str = Query(...),
+        fresh: bool = False,
+    ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
                 "op": "group_space_sources",
@@ -136,6 +141,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "provider": str(provider or "notebooklm").strip() or "notebooklm",
                     "lane": str(lane).strip(),
                     "action": "list",
+                    "fresh": bool(fresh),
                 },
             }
         )
@@ -171,6 +177,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         provider: str = "notebooklm",
         lane: str = Query(...),
         kind: str = "",
+        fresh: bool = False,
     ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
@@ -181,6 +188,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "lane": str(lane).strip(),
                     "action": "list",
                     "kind": str(kind or "").strip().lower(),
+                    "fresh": bool(fresh),
                 },
             }
         )

@@ -571,6 +571,93 @@ class TestGroupSpaceFileSync(unittest.TestCase):
             project_ctx.__exit__(None, None, None)
             cleanup()
 
+    def test_background_sync_uses_cached_remote_lists_without_fulltext(self) -> None:
+        _, cleanup = self._with_home()
+        project_ctx = tempfile.TemporaryDirectory()
+        project_dir = Path(project_ctx.__enter__()).resolve()
+        try:
+            gid = self._create_group("space-sync-cache-lists")
+            self._attach(gid, project_dir)
+            self._bind(gid, "nb_sync_cache_lists")
+
+            space_dir = project_dir / "space"
+            space_dir.mkdir(parents=True, exist_ok=True)
+            remote_sources = [
+                {
+                    "source_id": "src_cached_1",
+                    "title": "Cached Source",
+                    "kind": "web_page",
+                    "status": 2,
+                    "url": "https://example.com/cached",
+                }
+            ]
+            remote_artifacts = [
+                {
+                    "artifact_id": "art_cached_1",
+                    "title": "Cached Artifact",
+                    "kind": "ArtifactType.INFOGRAPHIC",
+                    "status": "completed",
+                    "created_at": "2026-02-23T00:00:00Z",
+                    "url": "https://example.com/artifact",
+                }
+            ]
+
+            def _list_sources(provider: str, *, remote_space_id: str):
+                _ = provider, remote_space_id
+                return {"sources": list(remote_sources)}
+
+            def _list_artifacts(provider: str, *, remote_space_id: str, kind: str = ""):
+                _ = provider, remote_space_id, kind
+                return {"artifacts": list(remote_artifacts)}
+
+            with patch("cccc.daemon.space.group_space_sync.provider_list_sources", side_effect=_list_sources), \
+                 patch("cccc.daemon.space.group_space_sync.provider_get_source_fulltext", side_effect=AssertionError("fulltext should be explicit")), \
+                 patch("cccc.daemon.space.group_space_sync.provider_list_artifacts", side_effect=_list_artifacts):
+                from cccc.daemon.space.group_space_sync import sync_group_space_files
+
+                result = sync_group_space_files(gid, provider="notebooklm", force=False)
+
+            self.assertTrue(bool(result.get("ok")))
+            self.assertEqual(int(result.get("remote_sources") or 0), 1)
+            self.assertEqual(int(result.get("remote_artifacts") or 0), 1)
+            desc = self._find_descriptor_by_source_id(space_dir, "src_cached_1")
+            self.assertIsNotNone(desc)
+            desc = desc or (space_dir / "sources" / "missing.source.json")
+            self.assertEqual(json.loads(desc.read_text(encoding="utf-8")).get("content_status"), "deferred")
+
+            with patch("cccc.daemon.space.group_space_ops.provider_list_sources", side_effect=AssertionError("sources should come from cache")):
+                sources_resp, _ = self._call(
+                    "group_space_sources",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "action": "list",
+                    },
+                )
+            self.assertTrue(sources_resp.ok, getattr(sources_resp, "error", None))
+            sources_result = sources_resp.result if isinstance(sources_resp.result, dict) else {}
+            self.assertEqual(str(((sources_result.get("sources") or [{}])[0]).get("source_id") or ""), "src_cached_1")
+            self.assertTrue(bool((sources_result.get("list_result") or {}).get("cached")))
+
+            with patch("cccc.daemon.space.group_space_ops.provider_list_artifacts", side_effect=AssertionError("artifacts should come from cache")):
+                artifacts_resp, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "action": "list",
+                    },
+                )
+            self.assertTrue(artifacts_resp.ok, getattr(artifacts_resp, "error", None))
+            artifacts_result = artifacts_resp.result if isinstance(artifacts_resp.result, dict) else {}
+            self.assertEqual(str(((artifacts_result.get("artifacts") or [{}])[0]).get("artifact_id") or ""), "art_cached_1")
+            self.assertTrue(bool((artifacts_result.get("list_result") or {}).get("cached")))
+        finally:
+            project_ctx.__exit__(None, None, None)
+            cleanup()
+
     def test_sync_reports_materialize_fulltext_failures(self) -> None:
         _, cleanup = self._with_home()
         project_ctx = tempfile.TemporaryDirectory()

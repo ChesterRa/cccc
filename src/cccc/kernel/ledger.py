@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 import hashlib
 import json
 import logging
@@ -24,6 +23,8 @@ AppendHook = Callable[[Dict[str, Any]], None]
 
 _APPEND_HOOK: Optional[AppendHook] = None
 LOGGER = logging.getLogger(__name__)
+_TAIL_READ_BLOCK_SIZE = 8192
+_TAIL_READ_MAX_BLOCK_SIZE = 1024 * 1024
 
 
 def set_append_hook(hook: Optional[AppendHook]) -> None:
@@ -129,16 +130,47 @@ def read_last_lines(path: Path, n: int) -> list[str]:
     try:
         if not path.exists():
             return []
-        keep = deque(maxlen=n)
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for raw_line in handle:
-                line = raw_line.rstrip("\n")
-                if line:
-                    keep.append(line)
-        return list(keep)
+        return _read_last_lines_from_regular_file(path, n)
     except Exception as e:
         LOGGER.error("failed to read text tail: path=%s err=%s", path, e)
         return []
+
+
+def _read_last_lines_from_regular_file(path: Path, n: int, *, block_size: int = _TAIL_READ_BLOCK_SIZE) -> list[str]:
+    if n <= 0:
+        return []
+
+    chunks: list[bytes] = []
+    position = path.stat().st_size
+    size = max(1, int(block_size))
+    with path.open("rb") as handle:
+        while position > 0:
+            read_size = min(size, position)
+            position -= read_size
+            handle.seek(position)
+            chunks.insert(0, handle.read(read_size))
+
+            data = b"".join(chunks)
+            candidate = data
+            if position > 0:
+                first_newline = candidate.find(b"\n")
+                candidate = candidate[first_newline + 1 :] if first_newline >= 0 else b""
+            parts = candidate.split(b"\n")
+            if parts and parts[-1] == b"":
+                parts = parts[:-1]
+            if sum(1 for part in parts if part) >= n:
+                break
+            size = min(size * 2, _TAIL_READ_MAX_BLOCK_SIZE)
+
+    data = b"".join(chunks)
+    if position > 0:
+        first_newline = data.find(b"\n")
+        data = data[first_newline + 1 :] if first_newline >= 0 else b""
+    parts = data.split(b"\n")
+    if parts and parts[-1] == b"":
+        parts = parts[:-1]
+    lines = [part.decode("utf-8", errors="replace") for part in parts if part]
+    return lines[-n:]
 
 
 def follow(path: Path, *, sleep_seconds: float = 0.2) -> Iterable[str]:

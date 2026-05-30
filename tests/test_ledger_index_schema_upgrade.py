@@ -124,9 +124,12 @@ class TestLedgerIndexSchemaUpgrade(unittest.TestCase):
             try:
                 columns = [str(row[1] or "") for row in conn.execute("PRAGMA table_info(events)").fetchall()]
                 self.assertIn("source_seq", columns)
+                ack_columns = [str(row[1] or "") for row in conn.execute("PRAGMA table_info(chat_ack)").fetchall()]
+                self.assertIn("ack_event_id", ack_columns)
+                self.assertIn("source_path", ack_columns)
                 schema_row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
                 self.assertIsNotNone(schema_row)
-                self.assertEqual(str(schema_row[0] or ""), "4")
+                self.assertEqual(str(schema_row[0] or ""), "5")
             finally:
                 conn.close()
         finally:
