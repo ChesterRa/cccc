@@ -329,15 +329,20 @@ class PtySession:
 
     def _reader_loop(self) -> None:
         try:
-            while self._running and self._proc_alive():
+            while self._running:
+                proc_alive = self._proc_alive()
                 try:
                     chunk = self._proc.read(65536)
                 except Exception as e:
                     if _looks_like_timeout(e):
+                        if not proc_alive:
+                            break
                         continue
                     break
                 data = _coerce_bytes(chunk)
                 if not data:
+                    if not proc_alive:
+                        break
                     time.sleep(0.01)
                     continue
                 self._maybe_reply_to_terminal_queries(data)
@@ -705,8 +710,6 @@ class PtySession:
     def _loop(self) -> None:
         try:
             while self._running:
-                if not self._proc_alive() and self._output_q.empty():
-                    break
                 for key, mask in self._selector.select(timeout=0.1):
                     kind, meta = key.data if isinstance(key.data, tuple) else ("", None)
                     if kind == "wake":
