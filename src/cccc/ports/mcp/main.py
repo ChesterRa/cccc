@@ -164,10 +164,10 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
             limit = 100
         limit = max(1, min(limit, 200))
         page = tools[cursor : cursor + limit]
-        next_cursor = ""
+        result_payload: Dict[str, Any] = {"tools": page}
         if cursor + limit < len(tools):
-            next_cursor = _encode_cursor(cursor + limit)
-        return _make_response(req_id, {"tools": page, "nextCursor": next_cursor})
+            result_payload["nextCursor"] = _encode_cursor(cursor + limit)
+        return _make_response(req_id, result_payload)
 
     # Optional MCP surfaces (return empty to avoid noisy "Method not found" in some runtimes)
     if method == "resources/list":
