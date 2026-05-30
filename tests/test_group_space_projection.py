@@ -81,7 +81,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
             project_ctx.__exit__(None, None, None)
             cleanup()
 
-    def test_context_sync_updates_projection_latest_context_sync(self) -> None:
+    def test_context_sync_does_not_enqueue_projection_context_sync_by_default(self) -> None:
         _, cleanup = self._with_home()
         project_ctx = tempfile.TemporaryDirectory()
         project_dir = Path(project_ctx.__enter__()).resolve()
@@ -126,15 +126,16 @@ class TestGroupSpaceProjection(unittest.TestCase):
             self.assertTrue(manifest.exists())
             doc = json.loads(manifest.read_text(encoding="utf-8"))
             latest = doc.get("latest_context_sync") if isinstance(doc.get("latest_context_sync"), dict) else {}
-            self.assertTrue(str(latest.get("job_id") or "").strip())
-            self.assertEqual(str(latest.get("state") or ""), "pending")
+            self.assertEqual(latest, {})
             queue = (((doc.get("queue_summary") or {}).get("work")) if isinstance(doc.get("queue_summary"), dict) else {})
-            self.assertGreaterEqual(int(queue.get("pending") or 0), 1)
+            self.assertEqual(int(queue.get("pending") or 0), 0)
+            self.assertEqual(int(queue.get("running") or 0), 0)
+            self.assertEqual(int(queue.get("failed") or 0), 0)
         finally:
             project_ctx.__exit__(None, None, None)
             cleanup()
 
-    def test_worker_execution_refreshes_projection_state(self) -> None:
+    def test_worker_execution_refreshes_projection_state_for_explicit_job(self) -> None:
         _, cleanup = self._with_home()
         project_ctx = tempfile.TemporaryDirectory()
         project_dir = Path(project_ctx.__enter__()).resolve()
@@ -159,18 +160,21 @@ class TestGroupSpaceProjection(unittest.TestCase):
             )
             self.assertTrue(bind_resp.ok, getattr(bind_resp, "error", None))
 
-            sync_resp, _ = self._call(
-                "context_sync",
-                {
-                    "group_id": gid,
-                    "by": "user",
-                    "ops": [{"op": "task.create", "title": "worker refresh", "goal": "test"}],
-                },
-            )
-            self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
-
+            from cccc.daemon.space.group_space_store import enqueue_space_job
             from cccc.daemon.space.group_space_runtime import process_due_space_jobs
             from cccc.kernel.group import load_group
+
+            job, deduped = enqueue_space_job(
+                group_id=gid,
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_projection_3",
+                kind="context_sync",
+                payload={"summary": {"tasks": [{"title": "worker refresh"}]}},
+                idempotency_key="projection-worker-explicit",
+            )
+            self.assertFalse(deduped)
+            self.assertTrue(str(job.get("job_id") or "").strip())
 
             with patch("cccc.daemon.space.group_space_runtime.provider_ingest", return_value={"ok": True}):
                 tick = process_due_space_jobs(limit=20)
@@ -297,15 +301,19 @@ class TestGroupSpaceProjection(unittest.TestCase):
             )
             self.assertTrue(bind_resp.ok, getattr(bind_resp, "error", None))
 
-            sync_resp, _ = self._call(
-                "context_sync",
-                {
-                    "group_id": gid,
-                    "by": "user",
-                    "ops": [{"op": "task.create", "title": "projection stale", "goal": "test"}],
-                },
+            from cccc.daemon.space.group_space_store import enqueue_space_job
+
+            job, deduped = enqueue_space_job(
+                group_id=gid,
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_projection_queue",
+                kind="context_sync",
+                payload={"summary": {"tasks": [{"title": "projection stale"}]}},
+                idempotency_key="projection-unbind-stale",
             )
-            self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
+            self.assertFalse(deduped)
+            self.assertTrue(str(job.get("job_id") or "").strip())
 
             unbind_resp, _ = self._call(
                 "group_space_bind",
