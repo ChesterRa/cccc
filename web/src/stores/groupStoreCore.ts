@@ -84,7 +84,7 @@ export const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   isChatWindowLoading: false,
 };
 
-export const INITIAL_LEDGER_TAIL_LIMIT = 60;
+export const INITIAL_LEDGER_TAIL_LIMIT = 300;
 export const MAX_UI_EVENTS = 800;
 const GROUP_VIEW_CACHE_TTL_MS = 300_000;
 const GROUP_ORDER_KEY = "cccc-group-order";

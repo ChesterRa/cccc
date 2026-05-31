@@ -1090,8 +1090,6 @@ def find_event_with_chat_ack(group: Group, *, event_id: str, actor_id: str) -> T
         return None, False
 
     found_event, found_ack = lookup_event_with_chat_ack_indexed(group.ledger_path, event_id=wanted, actor_id=actor)
-    if found_event is None and _is_full_event_id(raw_event_id):
-        return None, found_ack
     if found_event is not None:
         return found_event, found_ack
 

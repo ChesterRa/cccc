@@ -131,6 +131,60 @@ class TestLedgerSearchIndex(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_search_messages_repairs_stale_plain_source_index_bounds(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            import sqlite3
+
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+            from cccc.kernel.ledger_index import catch_up_ledger_index
+
+            create, _ = self._call("group_create", {"title": "search-repair", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            for idx in range(12):
+                sent, _ = self._call(
+                    "send",
+                    {
+                        "group_id": group_id,
+                        "text": f"repair {idx}",
+                        "by": "user",
+                        "to": ["user"],
+                    },
+                )
+                self.assertTrue(sent.ok, getattr(sent, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            catch_up_ledger_index(group.ledger_path)
+
+            index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            file_size = group.ledger_path.stat().st_size
+            conn = sqlite3.connect(str(index_path))
+            try:
+                conn.execute("DELETE FROM events WHERE source_path = 'ledger.jsonl' AND line_no > 3")
+                conn.execute("DELETE FROM event_search WHERE event_id NOT IN (SELECT event_id FROM events)")
+                conn.execute("UPDATE events SET line_no = line_no + 20 WHERE source_path = 'ledger.jsonl'")
+                conn.execute("UPDATE source_state SET file_size = ?, last_offset_bytes = ?, last_line_no = 3 WHERE source_path = 'ledger.jsonl'", (file_size, file_size))
+                conn.commit()
+            finally:
+                conn.close()
+
+            events, has_more = search_messages(group, query="", kind_filter="chat", limit=20)
+
+            self.assertFalse(has_more)
+            self.assertEqual(len(events), 12)
+            self.assertEqual(
+                [str((event.get("data") or {}).get("text") or "") for event in events[:3]],
+                ["repair 11", "repair 10", "repair 9"],
+            )
+        finally:
+            cleanup()
+
     def test_lookup_events_by_ids_batches_compressed_source_reads(self) -> None:
         _, cleanup = self._with_home()
         try:

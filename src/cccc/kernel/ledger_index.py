@@ -162,6 +162,16 @@ def _source_stat(path: Path) -> tuple[int, int]:
         return 0, 0
 
 
+def _plain_source_index_bounds(conn: sqlite3.Connection, source_path: str) -> tuple[int, int]:
+    row = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(line_no), 0) FROM events WHERE source_path = ?",
+        (source_path,),
+    ).fetchone()
+    if row is None:
+        return 0, 0
+    return max(0, int(row[0] or 0)), max(0, int(row[1] or 0))
+
+
 def _delete_source_rows(conn: sqlite3.Connection, source_path: str) -> None:
     conn.execute("DELETE FROM event_search WHERE event_id IN (SELECT event_id FROM events WHERE source_path = ?)", (source_path,))
     conn.execute("DELETE FROM chat_ack WHERE source_path = ?", (source_path,))
@@ -331,12 +341,21 @@ def _catch_up_plain_source(conn: sqlite3.Connection, ledger_path: Path, source: 
         last_offset = int(row[3] or 0)
         last_line_no = int(row[4] or 0)
     except Exception:
-        _reindex_source(conn, abs_path, source)
+        _reindex_source(conn, ledger_path, source)
         return
     if compressed or size_bytes < last_offset or prev_mtime_ns > mtime_ns:
-        _reindex_source(conn, abs_path, source)
+        _reindex_source(conn, ledger_path, source)
         return
-    if size_bytes == prev_size and mtime_ns == prev_mtime_ns:
+    if size_bytes <= last_offset:
+        indexed_count, indexed_max_line = _plain_source_index_bounds(conn, source_path)
+        if indexed_count > last_line_no or indexed_max_line > last_line_no:
+            _reindex_source(conn, ledger_path, source)
+            return
+        if size_bytes == prev_size and mtime_ns == prev_mtime_ns:
+            return
+        _reindex_source(conn, ledger_path, source)
+        return
+    elif size_bytes == prev_size and mtime_ns == prev_mtime_ns:
         return
     line_no = last_line_no
     with abs_path.open("rb") as handle:

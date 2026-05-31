@@ -75,22 +75,23 @@ class TestInboxReverseLookup(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_full_event_id_lookup_does_not_scan_when_index_misses(self) -> None:
+    def test_full_event_id_lookup_falls_back_to_scan_when_index_misses(self) -> None:
         from cccc.kernel.inbox import find_event_with_chat_ack
 
         group = SimpleNamespace(ledger_path=Path("/tmp/cccc-test-ledger.jsonl"))
         full_id = "a" * 32
+        event = {"id": full_id, "kind": "chat.message", "data": {"text": "target"}}
         with (
             patch("cccc.kernel.inbox.resolve_event_id") as resolve_event_id,
             patch("cccc.kernel.inbox.lookup_event_with_chat_ack_indexed", return_value=(None, False)),
-            patch("cccc.kernel.inbox.iter_events_reverse") as iter_reverse,
+            patch("cccc.kernel.inbox.iter_events_reverse", return_value=iter([event])) as iter_reverse,
         ):
             found, found_ack = find_event_with_chat_ack(group, event_id=full_id, actor_id="user")
 
-        self.assertIsNone(found)
+        self.assertIs(found, event)
         self.assertFalse(found_ack)
         resolve_event_id.assert_not_called()
-        iter_reverse.assert_not_called()
+        iter_reverse.assert_called_once()
 
     def test_find_event_with_chat_ack_uses_single_index_catch_up(self) -> None:
         from cccc.contracts.v1 import ChatMessageData, DaemonRequest
