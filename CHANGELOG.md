@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.23] — 2026-06-01
+
+### Changed
+- **Web chat history now uses a single chronological search contract** for initial tails and older-history pagination, so the latest message window and follow-up history loads connect in normal conversation order.
+- **NotebookLM work notebook sync is explicit by default**: plain `context_sync` no longer uploads repeated internal context snapshots into the work notebook.
+- **Group Space source and artifact lists can use cached remote snapshots**, reducing routine NotebookLM provider calls while keeping explicit fresh reads available.
+- **Automation nudge scans are throttled per group**, lowering repeated obligation-scan load without changing configured nudge windows.
+- **Daemon logging is quieter for HTTP and NotebookLM provider internals**, making debug logs easier to read.
+
+### Fixed
+- **Ledger history recovery is more robust** when the sqlite ledger index becomes stale or incomplete while the append-only ledger still contains the messages.
+- **Full event-id lookups can fall back to the ledger** after an index miss instead of treating the event as absent.
+- **Windows ConPTY sessions now drain final output from fast-exiting commands**, fixing cases where quick commands appeared to emit only terminal control sequences.
+- **Copy Groups zip downloads now use Unicode-safe download headers** with an ASCII fallback and `filename*` value.
+- **Stale Group Space jobs left running by an earlier daemon** are reconciled into a failed state with a clear stale-job reason.
+
+### Tests
+- Added coverage for ledger index repair, chat history ordering and pagination, Copy Groups Unicode download headers, NotebookLM/Group Space cached lists and stale job reconciliation, automation nudge throttling, and Windows ConPTY fast-exit output draining.
+
 ## [0.4.22] — 2026-05-29
 
 ### Added
