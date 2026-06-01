@@ -47,6 +47,47 @@ cccc group start
 - Use different runtimes for diverse perspectives
 - Keep tasks focused and specific
 
+## Pull Request Review with Codex
+
+Use this pattern when you want Codex to act as a reviewer while another agent or human prepares the change.
+
+### Setup
+
+```bash
+cccc actor add implementer --runtime claude
+cccc actor add codex-reviewer --runtime codex
+cccc group start
+```
+
+### Workflow
+
+1. Send the implementation task to `@implementer` with explicit acceptance criteria
+2. Ask `@codex-reviewer` to inspect the diff before you open or merge the pull request
+3. Include the target branch, changed files, test command, and risk areas in the review request
+4. Require the reviewer to separate blocking findings from suggestions
+5. Apply fixes, rerun validation, and ask for one final review pass
+
+### Example
+
+```bash
+cccc tracked-send "Implement the smallest safe fix for the failing login test. Reply with changed files and validation evidence." \
+  --to implementer \
+  --title "Fix login regression" \
+  --outcome "The login regression is fixed, tests pass, and risks are documented"
+
+cccc tracked-send "Review the current git diff for correctness, missing tests, and release risk. Report blocking findings first, then suggestions." \
+  --to codex-reviewer \
+  --title "Review login regression fix" \
+  --outcome "Blocking findings and non-blocking suggestions are reported with file references"
+```
+
+### Tips
+
+- Keep the review request tied to the current diff or branch
+- Ask for evidence: failing test, passing test, or exact command output
+- Route follow-up fixes back to the implementer instead of letting review feedback sprawl
+- Use `reply_required` or task-backed delegation for release-critical reviews
+
 ## Multi-Agent Team
 
 For complex projects, use multiple specialized agents.
