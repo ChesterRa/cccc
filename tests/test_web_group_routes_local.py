@@ -108,6 +108,10 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                         export_resp = client.get(f"/api/v1/groups/{group_id}/copy/export")
                         self.assertEqual(export_resp.status_code, 200)
                         self.assertEqual(export_resp.headers.get("content-type"), "application/zip")
+                        content_disposition = str(export_resp.headers.get("content-disposition") or "")
+                        content_disposition.encode("latin-1")
+                        self.assertIn("filename=", content_disposition)
+                        self.assertIn("filename*=UTF-8''", content_disposition)
                         package_bytes = export_resp.content
                         self.assertGreater(len(package_bytes), 0)
 
@@ -136,6 +140,15 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                         self.assertNotEqual(imported_id, group_id)
         finally:
             cleanup()
+
+    def test_copy_export_content_disposition_supports_unicode_filename(self) -> None:
+        from cccc.ports.web.routes.groups import _download_content_disposition
+
+        header = _download_content_disposition("cccc-group--中文项目--g_123.zip")
+
+        header.encode("latin-1")
+        self.assertIn('filename="cccc-group--____--g_123.zip"', header)
+        self.assertIn("filename*=UTF-8''cccc-group--%E4%B8%AD%E6%96%87%E9%A1%B9%E7%9B%AE--g_123.zip", header)
 
     def test_headless_snapshot_replays_recent_completed_turn(self) -> None:
         _, cleanup = self._with_home()

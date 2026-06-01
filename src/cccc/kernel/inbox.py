@@ -1285,6 +1285,8 @@ def search_messages(
             for ev in lookup_events_by_ids(group.ledger_path, event_ids):
                 if isinstance(ev, dict):
                     events.append(ev)
+            if not before_id and not after_id:
+                events.reverse()
             return events, has_more
         if before_id or after_id:
             return [], False
@@ -1313,6 +1315,8 @@ def search_messages(
                     continue
                 events.append(ev)
         if events:
+            if not before_id and not after_id:
+                events.reverse()
             return events, has_more
         if before_id or after_id:
             return [], False

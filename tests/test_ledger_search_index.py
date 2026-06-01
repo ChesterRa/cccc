@@ -179,9 +179,61 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertFalse(has_more)
             self.assertEqual(len(events), 12)
             self.assertEqual(
-                [str((event.get("data") or {}).get("text") or "") for event in events[:3]],
-                ["repair 11", "repair 10", "repair 9"],
+                [str((event.get("data") or {}).get("text") or "") for event in events],
+                [f"repair {idx}" for idx in range(12)],
             )
+        finally:
+            cleanup()
+
+    def test_search_messages_default_tail_preserves_chronological_order_for_history_paging(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+
+            create, _ = self._call("group_create", {"title": "search-tail-order", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            for idx in range(6):
+                sent, _ = self._call(
+                    "send",
+                    {
+                        "group_id": group_id,
+                        "text": f"ordered {idx}",
+                        "by": "user",
+                        "to": ["user"],
+                    },
+                )
+                self.assertTrue(sent.ok, getattr(sent, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            events, has_more = search_messages(group, query="", kind_filter="chat", limit=3)
+
+            texts = [
+                str((ev.get("data") if isinstance(ev.get("data"), dict) else {}).get("text") or "")
+                for ev in events
+            ]
+            self.assertEqual(texts, ["ordered 3", "ordered 4", "ordered 5"])
+            self.assertTrue(has_more)
+
+            older, older_has_more = search_messages(
+                group,
+                query="",
+                kind_filter="chat",
+                before_id=str(events[0].get("id") or ""),
+                limit=3,
+            )
+            older_texts = [
+                str((ev.get("data") if isinstance(ev.get("data"), dict) else {}).get("text") or "")
+                for ev in older
+            ]
+            self.assertEqual(older_texts, ["ordered 0", "ordered 1", "ordered 2"])
+            self.assertFalse(older_has_more)
         finally:
             cleanup()
 

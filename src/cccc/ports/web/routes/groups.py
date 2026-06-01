@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 import time
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
@@ -729,6 +729,22 @@ _CONTEXT_INFLIGHT: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
 _CONTEXT_GENERATION: Dict[str, int] = {}
 _CONTEXT_LOCK = asyncio.Lock()
 logger = logging.getLogger("cccc.web.groups")
+
+
+def _download_content_disposition(filename: str) -> str:
+    raw = str(filename or "").strip() or "download"
+    fallback_chars: list[str] = []
+    for char in raw:
+        code = ord(char)
+        if char in {'"', "\\", "/", "\r", "\n"}:
+            fallback_chars.append("_")
+        elif 32 <= code <= 126:
+            fallback_chars.append(char)
+        else:
+            fallback_chars.append("_")
+    fallback = "".join(fallback_chars).strip(" .") or "download"
+    encoded = quote(raw, safe="")
+    return f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 def _actor_running_local(group_id: str, actor: Any) -> bool:
@@ -1473,7 +1489,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         except Exception:
             return {"ok": False, "error": {"code": "copy_export_invalid", "message": "daemon returned invalid copy package"}}
         filename = str((result or {}).get("filename") or f"cccc-group--{group_id}.zip")
-        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers = {"Content-Disposition": _download_content_disposition(filename)}
         return StreamingResponse(iter([package_bytes]), media_type="application/zip", headers=headers)
 
     @group_router.get("/tasks")
@@ -3640,7 +3656,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     after_id="",
                     limit=effective_limit,
                 )
-                events = list(reversed(events))
             else:
                 raw_lines = read_last_lines(group.ledger_path, effective_limit)
                 events = []
