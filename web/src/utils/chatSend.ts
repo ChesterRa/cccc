@@ -15,8 +15,8 @@ export function isFormalChatMessageEvent(event: LedgerEvent): boolean {
 
 export function getGroupSendBlockedReason({
   lifecycleState,
-  runtimeRunning,
-  actorCount,
+  runtimeRunning: _runtimeRunning,
+  actorCount: _actorCount,
 }: {
   lifecycleState?: unknown;
   runtimeRunning: boolean;
@@ -25,7 +25,6 @@ export function getGroupSendBlockedReason({
   const state = String(lifecycleState || "").trim().toLowerCase();
   if (state === "paused") return "paused";
   if (state === "stopped") return "stopped";
-  if (actorCount > 0 && !runtimeRunning) return "stopped";
   return null;
 }
 

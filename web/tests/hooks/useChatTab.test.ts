@@ -341,7 +341,7 @@ describe("isFormalChatMessageEvent", () => {
 });
 
 describe("group send blocked state", () => {
-  it("blocks paused and stopped groups before optimistic send feedback", () => {
+  it("blocks only explicit paused and stopped lifecycle states before optimistic send feedback", () => {
     expect(getGroupSendBlockedReason({
       lifecycleState: "paused",
       runtimeRunning: true,
@@ -349,6 +349,11 @@ describe("group send blocked state", () => {
     })).toBe("paused");
     expect(getGroupSendBlockedReason({
       lifecycleState: "active",
+      runtimeRunning: false,
+      actorCount: 2,
+    })).toBeNull();
+    expect(getGroupSendBlockedReason({
+      lifecycleState: "stopped",
       runtimeRunning: false,
       actorCount: 2,
     })).toBe("stopped");
