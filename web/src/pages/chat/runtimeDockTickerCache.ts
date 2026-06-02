@@ -45,6 +45,21 @@ export function createRuntimeDockTickerCache(): RuntimeDockTickerCache {
   };
 }
 
+export function hasRuntimeDockTickerWork(cache: RuntimeDockTickerCache): boolean {
+  if (cache.entries.size > 0) return true;
+  for (const source of cache.messageSources.values()) {
+    const pendingText = String(source.pendingText || "").trim();
+    if (!pendingText) continue;
+    if (source.drainingBacklog || source.lastEntry?.completed) return true;
+    const length = getTickerMessageLength(pendingText);
+    if (length >= TICKER_MESSAGE_CHUNK_CHAR_LIMIT) return true;
+    if (hasTickerMessageHardBoundary(pendingText)) return true;
+    if (length >= TICKER_MESSAGE_MIN_BOUNDARY_FLUSH_CHARS && hasTickerMessageSoftBoundary(pendingText)) return true;
+    if (length >= TICKER_MESSAGE_MIN_TIMED_FLUSH_CHARS) return true;
+  }
+  return false;
+}
+
 function getTickerTimestampMs(value: string): number | null {
   const timestamp = String(value || "").trim();
   if (!timestamp) return null;

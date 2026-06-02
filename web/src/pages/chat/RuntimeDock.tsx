@@ -10,6 +10,7 @@ import { classNames } from "../../utils/classNames";
 import type { LiveWorkCard } from "./liveWorkCards";
 import {
   createRuntimeDockTickerCache,
+  hasRuntimeDockTickerWork,
   pruneRuntimeDockTickerCache,
   upsertRuntimeDockTickerCache,
   type RuntimeDockTickerCache,
@@ -197,20 +198,26 @@ function RuntimeDockTicker({
 }) {
   const cacheRef = useRef<RuntimeDockTickerCache>(createRuntimeDockTickerCache());
   const [visibleEntries, setVisibleEntries] = useState<RuntimeDockTickerEntry[]>([]);
+  const [tickerWorkPending, setTickerWorkPending] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setVisibleEntries(upsertRuntimeDockTickerCache(cacheRef.current, entries, Date.now()));
+      const nextEntries = upsertRuntimeDockTickerCache(cacheRef.current, entries, Date.now());
+      setVisibleEntries(nextEntries);
+      setTickerWorkPending(hasRuntimeDockTickerWork(cacheRef.current));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [entries]);
 
   useEffect(() => {
+    if (!tickerWorkPending) return;
     const timer = window.setInterval(() => {
-      setVisibleEntries(pruneRuntimeDockTickerCache(cacheRef.current, Date.now()));
+      const nextEntries = pruneRuntimeDockTickerCache(cacheRef.current, Date.now());
+      setVisibleEntries(nextEntries);
+      setTickerWorkPending(hasRuntimeDockTickerWork(cacheRef.current));
     }, 250);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [tickerWorkPending]);
 
   if (visibleEntries.length <= 0) return null;
   return (

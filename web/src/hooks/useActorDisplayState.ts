@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { getTerminalSignalKey, useTerminalSignalsStore } from "../stores";
+import type { TerminalSignal } from "../stores/useTerminalSignalsStore";
 import type { Actor } from "../types";
-import { getActorDisplayWorkingState } from "../utils/terminalWorkingState";
+import { getActorDisplayWorkingState, IDLE_PROMPT_TTL_MS, WORKING_OUTPUT_TTL_MS } from "../utils/terminalWorkingState";
 import { getActorTabIndicatorState, type ActorTabIndicator } from "../components/tabBarIndicator";
 
 export type ActorDisplayState = {
@@ -19,6 +20,22 @@ type UseActorDisplayStateInput = {
   selectedGroupActorsHydrating?: boolean;
 };
 
+const TERMINAL_SIGNAL_REFRESH_SKEW_MS = 50;
+
+export function getTerminalSignalRefreshDelayMs(
+  signal: TerminalSignal | null | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  if (!signal) return null;
+  const ttlMs = signal.kind === "idle_prompt"
+    ? IDLE_PROMPT_TTL_MS
+    : signal.kind === "working_output"
+      ? WORKING_OUTPUT_TTL_MS
+      : 0;
+  if (ttlMs <= 0) return null;
+  return Math.max(0, signal.updatedAt + ttlMs + TERMINAL_SIGNAL_REFRESH_SKEW_MS - nowMs);
+}
+
 export function useActorDisplayState({
   groupId,
   actor,
@@ -29,11 +46,12 @@ export function useActorDisplayState({
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!terminalSignal) return;
-    const timer = window.setInterval(() => {
+    const delayMs = getTerminalSignalRefreshDelayMs(terminalSignal);
+    if (delayMs === null) return;
+    const timer = window.setTimeout(() => {
       setNow(Date.now());
-    }, 1000);
-    return () => window.clearInterval(timer);
+    }, delayMs);
+    return () => window.clearTimeout(timer);
   }, [terminalSignal]);
 
   return useMemo(() => {

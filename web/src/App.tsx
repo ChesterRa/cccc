@@ -31,6 +31,7 @@ import {
 } from "./stores";
 import { useChatOutboxStore } from "./stores/chatOutboxStore";
 import type { ChatMessageData, LedgerEvent } from "./types";
+import { shouldMountAppModals, shouldMountWebPet } from "./utils/appLazyMount";
 import { publishCapabilityChanged } from "./utils/capabilityEvents";
 import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 
@@ -91,8 +92,18 @@ export default function App() {
   const sseStatus = useUIStore((s) => s.sseStatus);
 
   const openModal = useModalStore((s) => s.openModal);
-  const modalFlags = useModalStore((s) => s.modals);
+  const groupEditOpen = useModalStore((s) => s.modals.groupEdit);
+  const addActorOpen = useModalStore((s) => s.modals.addActor);
   const editingActor = useModalStore((s) => s.editingActor);
+  const shouldRenderAppModals = useModalStore((s) =>
+    shouldMountAppModals({
+      modals: s.modals,
+      recipientsEventId: s.recipientsEventId,
+      presentationViewer: s.presentationViewer,
+      presentationPin: s.presentationPin,
+      editingActor: s.editingActor,
+    })
+  );
   const peerRuntimeVisibility = useObservabilityStore((state) => state.peerRuntimeVisibility);
   const petRuntimeVisibility = useObservabilityStore((state) => state.petRuntimeVisibility);
 
@@ -286,8 +297,8 @@ export default function App() {
     setSmallScreen,
     showError,
     setDirSuggestions,
-    groupEditOpen: modalFlags.groupEdit,
-    addActorOpen: modalFlags.addActor,
+    groupEditOpen,
+    addActorOpen,
     editingActor,
   });
 
@@ -321,6 +332,10 @@ export default function App() {
 
   const hasReplyTarget = !!replyTarget;
   const hasComposerFiles = composerFiles.length > 0;
+  const shouldRenderWebPet = shouldMountWebPet({
+    groupId: selectedGroupId,
+    desktopPetEnabled: groupSettings?.desktop_pet_enabled,
+  });
 
   useAppGroupLifecycle({
     selectedGroupId,
@@ -442,7 +457,7 @@ export default function App() {
         onTouchEnd={handleTouchEnd}
       />
 
-      {selectedGroupId ? (
+      {shouldRenderWebPet ? (
         <Suspense fallback={null}>
           <WebPet groupId={selectedGroupId} />
         </Suspense>
@@ -457,24 +472,26 @@ export default function App() {
         dismissNotice={dismissNotice}
       />
 
-      <Suspense fallback={null}>
-        <AppModals
-          isDark={isDark}
-          theme={theme}
-          textScale={textScale}
-          readOnly={webReadOnly}
-          ccccHome={ccccHome}
-          composerRef={composerRef}
-          onStartReply={startReply}
-          onThemeChange={setTheme}
-          onTextScaleChange={setTextScale}
-          onStartGroup={handleStartGroup}
-          onStopGroup={handleStopGroup}
-          onSetGroupState={handleSetGroupState}
-          fetchContext={fetchContext}
-          canManageGroups={canManageGroups}
-        />
-      </Suspense>
+      {shouldRenderAppModals ? (
+        <Suspense fallback={null}>
+          <AppModals
+            isDark={isDark}
+            theme={theme}
+            textScale={textScale}
+            readOnly={webReadOnly}
+            ccccHome={ccccHome}
+            composerRef={composerRef}
+            onStartReply={startReply}
+            onThemeChange={setTheme}
+            onTextScaleChange={setTextScale}
+            onStartGroup={handleStartGroup}
+            onStopGroup={handleStopGroup}
+            onSetGroupState={handleSetGroupState}
+            fetchContext={fetchContext}
+            canManageGroups={canManageGroups}
+          />
+        </Suspense>
+      ) : null}
 
       <DropOverlay isOpen={dropOverlayOpen} isDark={isDark} maxFileMb={WEB_MAX_FILE_MB} />
     </div>

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { createRuntimeDockTickerCache, pruneRuntimeDockTickerCache, upsertRuntimeDockTickerCache } from "../../../src/pages/chat/runtimeDockTickerCache";
+import {
+  createRuntimeDockTickerCache,
+  hasRuntimeDockTickerWork,
+  pruneRuntimeDockTickerCache,
+  upsertRuntimeDockTickerCache,
+} from "../../../src/pages/chat/runtimeDockTickerCache";
 import { buildRuntimeDockTickerEntries } from "../../../src/pages/chat/runtimeDockTickerEntries";
 import type { RuntimeDockTickerEntry } from "../../../src/pages/chat/runtimeDockTickerEntries";
 import type { LiveWorkCard } from "../../../src/pages/chat/liveWorkCards";
@@ -527,6 +532,30 @@ describe("runtimeDockItems", () => {
 
     expect(upsertRuntimeDockTickerCache(cache, [entry], 1000)).toEqual([]);
     expect(pruneRuntimeDockTickerCache(cache, 1421)).toEqual([]);
+    expect(hasRuntimeDockTickerWork(cache)).toBe(false);
+  });
+
+  it("keeps ticker work pending only while buffered text can advance or visible entries can expire", () => {
+    const cache = createRuntimeDockTickerCache();
+    const entry: RuntimeDockTickerEntry = {
+      id: "message:active:pending:block",
+      kind: "message",
+      actorId: "active",
+      actorLabel: "Active",
+      text: "investigating ticker rendering",
+      updatedAt: "2025-01-02T12:00:00Z",
+      sourceId: "message:active:pending:block",
+      completed: false,
+    };
+
+    expect(upsertRuntimeDockTickerCache(cache, [entry], 1000)).toEqual([]);
+    expect(hasRuntimeDockTickerWork(cache)).toBe(true);
+    expect(pruneRuntimeDockTickerCache(cache, 1420).map((visibleEntry) => visibleEntry.text)).toEqual([
+      "investigating ticker rendering",
+    ]);
+    expect(hasRuntimeDockTickerWork(cache)).toBe(true);
+    expect(pruneRuntimeDockTickerCache(cache, 6421)).toEqual([]);
+    expect(hasRuntimeDockTickerWork(cache)).toBe(false);
   });
 
   it("flushes a short message when the stream marks it completed", () => {

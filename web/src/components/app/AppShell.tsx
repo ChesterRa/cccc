@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
@@ -83,6 +83,22 @@ type AppShellProps = {
   onTouchStart: (event: React.TouchEvent) => void;
   onTouchEnd: (event: React.TouchEvent) => void;
 };
+
+type MountedRuntimeActorSnapshot = {
+  groupId: string | null;
+  actorsById: Record<string, Actor>;
+};
+
+function areMountedRuntimeActorSnapshotsEqual(
+  left: MountedRuntimeActorSnapshot,
+  right: MountedRuntimeActorSnapshot,
+): boolean {
+  if (left.groupId !== right.groupId) return false;
+  const leftIds = Object.keys(left.actorsById);
+  const rightIds = Object.keys(right.actorsById);
+  if (leftIds.length !== rightIds.length) return false;
+  return leftIds.every((actorId) => left.actorsById[actorId] === right.actorsById[actorId]);
+}
 
 function RuntimeInspectorModal({
   isOpen,
@@ -195,62 +211,27 @@ export function AppShell({
   const shellStyle = {
     "--sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth}px`,
   } as CSSProperties;
-  const mountedRuntimeActorsRef = useRef<{ groupId: string | null; actorsById: Record<string, Actor> }>({
+  const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] = useState<MountedRuntimeActorSnapshot>({
     groupId: null,
     actorsById: {},
   });
 
   useEffect(() => {
-    if (!selectedGroupId || runtimeActors.length === 0) return;
-    if (typeof window === "undefined") return;
-
-    const nav = navigator as Navigator & {
-      connection?: {
-        saveData?: boolean;
-        effectiveType?: string;
-      };
-    };
-    const connection = nav.connection;
-    if (connection?.saveData) return;
-    if (typeof connection?.effectiveType === "string" && /(^|-)2g$/.test(connection.effectiveType)) return;
-
-    let cancelled = false;
-    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
-    let idleId: number | null = null;
-    const preloadActorTab = () => {
-      void import("../AgentTab").then(() => {
-        if (cancelled) return;
+    const timer = window.setTimeout(() => {
+      setMountedRuntimeActorsSnapshot((current) => {
+        const nextActorsById = current.groupId === selectedGroupId ? { ...current.actorsById } : {};
+        for (const actor of runtimeActors) {
+          const actorId = String(actor.id || "").trim();
+          if (actorId) nextActorsById[actorId] = actor;
+        }
+        const nextSnapshot = {
+          groupId: selectedGroupId || null,
+          actorsById: nextActorsById,
+        };
+        return areMountedRuntimeActorSnapshotsEqual(current, nextSnapshot) ? current : nextSnapshot;
       });
-    };
-
-    if ("requestIdleCallback" in window) {
-      idleId = window.requestIdleCallback(() => preloadActorTab(), { timeout: 1500 });
-    } else {
-      timeoutId = globalThis.setTimeout(() => preloadActorTab(), 600);
-    }
-
-    return () => {
-      cancelled = true;
-      if (idleId !== null && "cancelIdleCallback" in window) {
-        window.cancelIdleCallback(idleId);
-      }
-      if (timeoutId !== null) {
-        globalThis.clearTimeout(timeoutId);
-      }
-    };
-  }, [selectedGroupId, runtimeActors.length]);
-
-  useEffect(() => {
-    const current = mountedRuntimeActorsRef.current;
-    const next = current.groupId === selectedGroupId ? { ...current.actorsById } : {};
-    for (const actor of runtimeActors) {
-      const actorId = String(actor.id || "").trim();
-      if (actorId) next[actorId] = actor;
-    }
-    mountedRuntimeActorsRef.current = {
-      groupId: selectedGroupId || null,
-      actorsById: next,
-    };
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [runtimeActors, selectedGroupId]);
 
   return (
@@ -349,7 +330,7 @@ export function AppShell({
 
           {renderedActorIds.map((actorId) => {
             const mountedRuntimeActors =
-              mountedRuntimeActorsRef.current.groupId === selectedGroupId ? mountedRuntimeActorsRef.current.actorsById : {};
+              mountedRuntimeActorsSnapshot.groupId === selectedGroupId ? mountedRuntimeActorsSnapshot.actorsById : {};
             const actor = resolveRuntimeInspectorActor(actorId, runtimeActors, mountedRuntimeActors);
             const isVisible = activeTab === actorId && activeTab !== "chat";
             const agentState =
