@@ -1644,6 +1644,25 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
+    @group_router.get("/terminal/snapshot")
+    async def terminal_snapshot(
+        group_id: str,
+        actor_id: str,
+        limit_bytes: int = 160_000,
+    ) -> Dict[str, Any]:
+        """Read a rendered screen snapshot plus cursor for live attach."""
+        return await ctx.daemon(
+            {
+                "op": "terminal_snapshot",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "limit_bytes": int(limit_bytes or 160_000),
+                    "by": "user",
+                },
+            }
+        )
+
     @group_router.post("/terminal/clear")
     async def terminal_clear(group_id: str, actor_id: str) -> Dict[str, Any]:
         """Clear (truncate) an actor's in-memory terminal transcript ring buffer."""

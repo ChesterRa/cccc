@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Terminal } from "@xterm/xterm";
 
-import { fetchTerminalHistory, fetchTerminalTail, withAuthToken } from "../../services/api";
+import { fetchTerminalSnapshot, fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
 import {
@@ -66,7 +66,7 @@ export function useAgentTerminalConnection(args: {
   const terminalSignalBufferRef = useRef("");
   const terminalAttachNoRetryRef = useRef(false);
   const terminalAttachStartupRaceRef = useRef(false);
-  const terminalHistoryPreloadedRef = useRef(false);
+  const terminalSnapshotPreloadedRef = useRef(false);
   const lastTermEpochRef = useRef(termEpoch);
 
   const isRunningRef = useRef(isRunning);
@@ -92,12 +92,12 @@ export function useAgentTerminalConnection(args: {
   useEffect(() => {
     if (isRunning && !isHeadless) return;
     terminalSignalBufferRef.current = "";
-    terminalHistoryPreloadedRef.current = false;
+    terminalSnapshotPreloadedRef.current = false;
     clearTerminalSignalRef.current(groupId, actorId);
   }, [actorId, groupId, isHeadless, isRunning]);
 
   useEffect(() => {
-    terminalHistoryPreloadedRef.current = false;
+    terminalSnapshotPreloadedRef.current = false;
   }, [actorId, groupId, termEpoch]);
 
   const requestReconnect = useCallback(() => {
@@ -138,14 +138,15 @@ export function useAgentTerminalConnection(args: {
     let disposable: { dispose: () => void } | null = null;
     let resizeDisposable: { dispose: () => void } | null = null;
 
-    const writeAttachHistory = async (text: string): Promise<void> => {
-      if (!text || terminalHistoryPreloadedRef.current || disposed) return;
+    const writeAttachSnapshot = async (text: string): Promise<void> => {
+      if (terminalSnapshotPreloadedRef.current || disposed) return;
       const term = terminalRef.current;
       if (!term) return;
-      terminalHistoryPreloadedRef.current = true;
+      terminalSnapshotPreloadedRef.current = true;
       await new Promise<void>((resolve) => {
         try {
-          term.write(text, resolve);
+          term.clear();
+          term.write(text ? `\x1b[H${text}` : "", resolve);
         } catch {
           resolve();
         }
@@ -154,13 +155,9 @@ export function useAgentTerminalConnection(args: {
 
     const readAttachCursor = async (): Promise<number | null> => {
       try {
-        const resp = await fetchTerminalHistory(groupId, actorId, {
-          limitBytes: terminalHistoryPreloadedRef.current ? 1 : TERMINAL_ATTACH_HISTORY_LIMIT_BYTES,
-          stripAnsi: false,
-          compact: false,
-        });
+        const resp = await fetchTerminalSnapshot(groupId, actorId, TERMINAL_ATTACH_HISTORY_LIMIT_BYTES);
         if (!resp.ok) return null;
-        await writeAttachHistory(String(resp.result?.text || ""));
+        await writeAttachSnapshot(String(resp.result?.text || ""));
         const cursor = Number(resp.result?.end_cursor);
         return Number.isFinite(cursor) ? cursor : null;
       } catch {

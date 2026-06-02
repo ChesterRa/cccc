@@ -106,6 +106,10 @@ def _erase_in_display(buf: list[list[str]], row: int, col: int, mode: int) -> No
         buf[r] = []
 
 
+def _clone_screen(buf: list[list[str]]) -> list[list[str]]:
+    return [list(line) for line in (buf or [[]])]
+
+
 def _compact_consecutive_duplicate_lines(lines: list[str]) -> list[str]:
     if not lines:
         return []
@@ -187,6 +191,10 @@ def render_transcript(text: str, *, compact: bool = True) -> str:
     col = 0
     saved_row = 0
     saved_col = 0
+    main_buf: Optional[list[list[str]]] = None
+    main_row = 0
+    main_col = 0
+    in_alt_screen = False
 
     i = 0
     n = len(s)
@@ -228,8 +236,27 @@ def render_transcript(text: str, *, compact: bool = True) -> str:
                 final = s[j]
                 params = _parse_csi_params(s[param_start:j])
 
-                # Private modes: ignore (e.g. bracketed paste / alt screen toggles).
+                # Alternate screen buffers are transient TUI state. Preserve the main screen so
+                # snapshots after vim/less/top exits do not include stale full-screen content.
                 if private:
+                    if final in ("h", "l") and 1049 in params:
+                        if final == "h" and not in_alt_screen:
+                            main_buf = _clone_screen(buf)
+                            main_row = row
+                            main_col = col
+                            buf = [[]]
+                            row = 0
+                            col = 0
+                            saved_row = 0
+                            saved_col = 0
+                            in_alt_screen = True
+                        elif final == "l" and in_alt_screen:
+                            buf = _clone_screen(main_buf or [[]])
+                            row = main_row
+                            col = main_col
+                            saved_row = row
+                            saved_col = col
+                            in_alt_screen = False
                     i = j + 1
                     continue
 
