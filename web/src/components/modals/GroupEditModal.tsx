@@ -6,6 +6,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Surface } from "../ui/surface";
 import { Textarea } from "../ui/textarea";
+import { HoverTooltip } from "../HoverTooltip";
 import { ModalFrame } from "./ModalFrame";
 
 export interface GroupEditModalProps {
@@ -104,32 +105,45 @@ export function GroupEditModal({
         <div className="flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between w-full">
           <div className="flex flex-col gap-2 w-full sm:w-auto">
             <div className="flex flex-col gap-3 sm:flex-row">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full sm:w-auto transition-all ease-spring duration-300"
-                onClick={onReset}
-                disabled={busy === "group-reset"}
-                title={t("groupEdit.resetTitle")}
-              >
-                {t("groupEdit.resetGroup")}
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                className="w-full sm:w-auto transition-all ease-spring duration-300"
-                onClick={() => {
-                  onCancel();
-                  onDelete();
-                }}
-                disabled={busy === "group-delete"}
-                title={t("groupEdit.deleteTitle")}
-              >
-                {t("groupEdit.deleteGroup")}
-              </Button>
-            </div>
-            <div className="max-w-sm text-xs leading-5 text-[var(--color-text-muted)]">
-              {t("groupEdit.resetHint")}
+              <HoverTooltip label={t("groupEdit.resetHint")}>
+                {(getReferenceProps, setReference) => (
+                  <span
+                    ref={setReference}
+                    {...getReferenceProps({ className: "inline-flex w-full sm:w-auto" })}
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full sm:w-auto transition-all ease-spring duration-300"
+                      onClick={onReset}
+                      disabled={busy === "group-reset"}
+                    >
+                      {t("groupEdit.resetGroup")}
+                    </Button>
+                  </span>
+                )}
+              </HoverTooltip>
+              <HoverTooltip label={t("groupEdit.deleteTitle")}>
+                {(getReferenceProps, setReference) => (
+                  <span
+                    ref={setReference}
+                    {...getReferenceProps({ className: "inline-flex w-full sm:w-auto" })}
+                  >
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="w-full sm:w-auto transition-all ease-spring duration-300"
+                      onClick={() => {
+                        onCancel();
+                        onDelete();
+                      }}
+                      disabled={busy === "group-delete"}
+                    >
+                      {t("groupEdit.deleteGroup")}
+                    </Button>
+                  </span>
+                )}
+              </HoverTooltip>
             </div>
           </div>
           <div className="flex flex-col-reverse sm:flex-row gap-3 w-full sm:w-auto sm:justify-end">

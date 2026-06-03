@@ -33,7 +33,7 @@
     "resetGroup": "Reset group",
     "deleteGroup": "Delete group",
     "resetTitle": "Create a clean replacement and delete this group",
-    "resetHint": "Keeps the group name, project scope, actors, stored secrets, and automation rules/settings. Message history, memory, context, runtime sessions, and provider state are not copied.",
+    "resetHint": "Reset group creates a clean replacement and deletes the current group. It keeps the name, project scope, actors, stored secrets, and automation rules/settings; it does not copy message history, memory, context, runtime sessions, or provider state.",
     "deleteTitle": "Delete this group permanently"
   },
   "inbox": {

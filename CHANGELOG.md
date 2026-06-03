@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.24] — 2026-06-04
+
+### Added
+- **Grok Build runtime support** is available across runtime detection, actor creation/editing, CLI setup, daemon runtime metadata, MCP setup checks, Web runtime selectors, runtime logos, and tests.
+- **Reset group** is available from Web and CLI for creating a clean replacement group without manually deleting and recreating the group.
+
+### Changed
+- **MCP stdio framing now follows the client's inbound framing**, improving compatibility with plain newline-JSON MCP clients while keeping Content-Length framing for clients that use it.
+- **Reset group preserves high-effort group configuration** such as actors, project scopes, stored secrets, and automation rules/settings, while intentionally leaving message history, memory, context, runtime sessions, and provider state behind.
+- **The Web reset/delete group controls use a consistent tooltip style**, with reset guidance moved out of the modal footer into contextual hover help.
+
+### Fixed
+- **`cccc attach .` and `cccc group use` now resolve CLI paths before crossing the daemon boundary**, so running them from a project console no longer depends on the daemon's current working directory.
+- **Web attach requests reject relative paths with a clear error**, avoiding accidental interpretation relative to `CCCC_HOME` or the daemon process directory.
+
+### Tests
+- Added and updated coverage for Grok runtime defaults and MCP setup, MCP stdio framing, reset group behavior and permissions, CLI active-group handling after reset, and attach path resolution through CLI and Web routes.
+
 ## [0.4.23] — 2026-06-01
 
 ### Changed

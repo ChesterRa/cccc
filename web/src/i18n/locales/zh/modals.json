@@ -33,7 +33,7 @@
     "resetGroup": "重置工作组",
     "deleteGroup": "删除工作组",
     "resetTitle": "创建干净的新工作组并删除当前工作组",
-    "resetHint": "保留工作组名称、项目 scope、智能体、本地密钥和 automation 规则/设置；不会复制消息历史、memory、context、运行会话和 provider 状态。",
+    "resetHint": "重置工作组会创建一个干净的新工作组并删除当前工作组。它会保留名称、项目 scope、智能体、本地密钥和 automation 规则/设置；不会复制消息历史、memory、context、运行会话和 provider 状态。",
     "deleteTitle": "永久删除此工作组"
   },
   "inbox": {
