@@ -48,6 +48,42 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
         resp, _ = handle_request(request)
         return resp.model_dump(exclude_none=True)
 
+    def test_group_attach_rejects_relative_web_path(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=AssertionError("relative attach should not call daemon")):
+                with self._client() as client:
+                    resp = client.post(f"/api/v1/groups/{group_id}/attach", json={"path": ".", "by": "user"})
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertFalse(bool(body.get("ok")))
+            self.assertEqual(str((body.get("error") or {}).get("code") or ""), "invalid_scope_path")
+        finally:
+            cleanup()
+
+    def test_group_attach_sends_absolute_web_path_to_daemon(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            with tempfile.TemporaryDirectory(prefix="cccc_web_attach_") as project_dir:
+                captured: dict = {}
+
+                def _fake_call_daemon(req: dict):
+                    captured.update(req)
+                    return {"ok": True, "result": {"group_id": group_id, "scope_key": "s_web"}}
+
+                with patch("cccc.ports.web.app.call_daemon", side_effect=_fake_call_daemon):
+                    with self._client() as client:
+                        resp = client.post(f"/api/v1/groups/{group_id}/attach", json={"path": project_dir, "by": "user"})
+                self.assertEqual(resp.status_code, 200)
+                body = resp.json()
+                self.assertTrue(bool(body.get("ok")), body)
+                self.assertEqual(captured.get("op"), "attach")
+                self.assertEqual(str((captured.get("args") or {}).get("path") or ""), str(Path(project_dir).resolve()))
+        finally:
+            cleanup()
+
     def test_group_show_reads_local_projection_without_daemon(self) -> None:
         _, cleanup = self._with_home()
         try:

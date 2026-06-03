@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from argparse import Namespace
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -30,6 +31,51 @@ class TestCliDaemonFallback(unittest.TestCase):
         reg = load_registry()
         group = create_group(reg, title="cli-daemon-fallback", topic="")
         return group.group_id
+
+    def test_attach_sends_absolute_path_to_daemon(self) -> None:
+        from cccc import cli
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix="cccc_cli_attach_") as project_dir:
+            try:
+                os.chdir(project_dir)
+                resp = {"ok": True, "result": {"group_id": "g_cli"}}
+                args = Namespace(path=".", group_id="")
+
+                with patch.object(cli, "_ensure_daemon_running", return_value=True), \
+                     patch.object(cli, "call_daemon", return_value=resp) as call_daemon, \
+                     patch.object(cli, "set_active_group_id"), \
+                     patch.object(cli, "_print_json"):
+                    code = cli.cmd_attach(args)
+
+                self.assertEqual(code, 0)
+                req = call_daemon.call_args.args[0]
+                self.assertEqual(req.get("op"), "attach")
+                self.assertEqual(str((req.get("args") or {}).get("path") or ""), str(Path(project_dir).resolve()))
+            finally:
+                os.chdir(old_cwd)
+
+    def test_group_use_sends_absolute_path_to_daemon(self) -> None:
+        from cccc import cli
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix="cccc_cli_group_use_") as project_dir:
+            try:
+                os.chdir(project_dir)
+                resp = {"ok": True, "result": {"group_id": "g_cli", "active_scope_key": "s_cli"}}
+                args = Namespace(group_id="g_cli", path=".")
+
+                with patch.object(cli, "_ensure_daemon_running", return_value=True), \
+                     patch.object(cli, "call_daemon", return_value=resp) as call_daemon, \
+                     patch.object(cli, "_print_json"):
+                    code = cli.cmd_group_use(args)
+
+                self.assertEqual(code, 0)
+                req = call_daemon.call_args.args[0]
+                self.assertEqual(req.get("op"), "group_use")
+                self.assertEqual(str((req.get("args") or {}).get("path") or ""), str(Path(project_dir).resolve()))
+            finally:
+                os.chdir(old_cwd)
 
     def test_send_does_not_fallback_after_daemon_rejection(self) -> None:
         from cccc import cli

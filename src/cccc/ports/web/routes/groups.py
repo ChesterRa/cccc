@@ -173,6 +173,22 @@ def _response_to_dict(resp: Any) -> Dict[str, Any]:
     return {"ok": False, "error": {"code": "internal_error", "message": f"invalid response type: {type(resp).__name__}"}}
 
 
+def _normalize_web_attach_path(raw: Any) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
+    text = str(raw or "").strip()
+    if not text:
+        return None, {"ok": False, "error": {"code": "missing_path", "message": "missing workspace path"}}
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        return None, {
+            "ok": False,
+            "error": {
+                "code": "invalid_scope_path",
+                "message": "workspace path must be absolute when attaching from Web; use the directory picker or enter an absolute path",
+            },
+        }
+    return str(path.resolve()), None
+
+
 def _safe_voice_session_id(value: Any) -> str:
     raw = str(value or "").strip() or "session"
     safe = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in raw).strip(".-")[:96]
@@ -3635,7 +3651,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.post("/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
+        path, error = _normalize_web_attach_path(req.path)
+        if error is not None:
+            return error
+        return await ctx.daemon({"op": "attach", "args": {"path": path, "by": req.by, "group_id": group_id}})
 
     @group_router.delete("/scopes/{scope_key}")
     async def group_detach_scope(group_id: str, scope_key: str, by: str = "user") -> Dict[str, Any]:
