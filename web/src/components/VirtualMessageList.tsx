@@ -911,7 +911,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       // Observe the message content layer rather than the scroll container.
       // Images, streaming text, and expanded attachment lists change content height
       // without changing the container size; observing only the container misses bottom-follow updates.
-      isContainerResizingRef.current = true;
       lastScrollTopRef.current = scrollEl.scrollTop;
 
       if (shouldAutoScrollNow()) {
@@ -923,10 +922,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
       window.requestAnimationFrame(() => {
         lastScrollTopRef.current = scrollEl.scrollTop;
-        window.requestAnimationFrame(() => {
-          isContainerResizingRef.current = false;
-          lastScrollTopRef.current = scrollEl.scrollTop;
-        });
       });
     });
     observer.observe(observedEl);
