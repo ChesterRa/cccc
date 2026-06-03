@@ -9,6 +9,7 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   codex: "logos/codex.png",
   droid: "logos/droid.png",
   gemini: "logos/gemini.png",
+  grok: "logos/grok.svg",
   hermes: "logos/hermes.svg",
   kimi: "logos/kimi.png",
   neovate: "logos/neovate.png",

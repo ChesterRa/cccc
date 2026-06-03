@@ -449,6 +449,78 @@ class TestActorRuntimeOps(unittest.TestCase):
         self.assertEqual(doc["mcp"]["cccc"]["environment"]["CCCC_GROUP_ID"], "g-test")
         self.assertEqual(doc["mcp"]["cccc"]["environment"]["CCCC_ACTOR_ID"], "open-1")
 
+    def test_grok_actor_start_uses_generic_pty_mcp_env(self) -> None:
+        from cccc.daemon.actors import actor_runtime_ops
+
+        captured: dict[str, object] = {}
+
+        def fake_start_pty_actor_with_runtime_resume(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(pid=1234)
+
+        def inject_context(env, gid, aid):
+            out = dict(env)
+            out["CCCC_HOME"] = "/tmp/cccc-home"
+            out["CCCC_GROUP_ID"] = gid
+            out["CCCC_ACTOR_ID"] = aid
+            return out
+
+        with tempfile.TemporaryDirectory() as td:
+            ledger_path = Path(td) / "ledger.jsonl"
+            group = SimpleNamespace(
+                group_id="g-test",
+                doc={"active_scope_key": "scope1", "state": "active", "running": False},
+                save=lambda: None,
+                ledger_path=ledger_path,
+            )
+            actor = {
+                "id": "grok-1",
+                "default_scope_key": "scope1",
+                "runner": "pty",
+                "runtime": "grok",
+                "command": ["grok"],
+                "env": {},
+            }
+
+            with (
+                patch.object(actor_runtime_ops, "find_actor", return_value=actor),
+                patch.object(actor_runtime_ops.pty_runner, "PTY_SUPPORTED", True),
+                patch.object(actor_runtime_ops, "runtime_start_preflight_error", return_value=""),
+                patch.object(actor_runtime_ops, "start_pty_actor_with_runtime_resume", side_effect=fake_start_pty_actor_with_runtime_resume),
+                patch.object(actor_runtime_ops, "request_pet_review"),
+            ):
+                result = actor_runtime_ops.start_actor_process(
+                    group,
+                    "grok-1",
+                    command=[],
+                    env={},
+                    runner="pty",
+                    runtime="grok",
+                    by="user",
+                    find_scope_url=lambda _group, _scope_key: td,
+                    effective_runner_kind=lambda runner: runner,
+                    merge_actor_env_with_private=lambda _gid, _aid, env: dict(env),
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    ensure_mcp_installed=lambda runtime, _cwd, **kwargs: runtime == "grok"
+                    and kwargs.get("env", {}).get("CCCC_GROUP_ID") == "g-test"
+                    and "OPENCODE_CONFIG_CONTENT" not in kwargs.get("env", {}),
+                    inject_actor_context_env=inject_context,
+                    prepare_pty_env=lambda env: dict(env),
+                    pty_backlog_bytes=lambda: 1024,
+                    write_headless_state=lambda _gid, _aid: None,
+                    write_pty_state=lambda _gid, _aid, _pid: None,
+                    clear_preamble_sent=lambda _group, _aid: None,
+                    throttle_reset_actor=lambda _gid, _aid: None,
+                    supported_runtimes=("grok",),
+                )
+
+        self.assertTrue(bool(result.get("success")), result.get("error"))
+        self.assertEqual(captured.get("base_command"), ["grok"])
+        env = captured.get("env") if isinstance(captured.get("env"), dict) else {}
+        self.assertEqual(env.get("CCCC_GROUP_ID"), "g-test")
+        self.assertEqual(env.get("CCCC_ACTOR_ID"), "grok-1")
+        self.assertNotIn("OPENCODE_CONFIG_CONTENT", env)
+
 
 if __name__ == "__main__":
     unittest.main()

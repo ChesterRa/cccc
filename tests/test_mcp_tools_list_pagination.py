@@ -41,7 +41,7 @@ class TestMcpToolsListPagination(unittest.TestCase):
             result2 = r2.get("result") if isinstance(r2.get("result"), dict) else {}
             tools2 = result2.get("tools") if isinstance(result2.get("tools"), list) else []
             self.assertEqual(len(tools2), 1)
-            self.assertEqual(result2.get("nextCursor"), "")
+            self.assertNotIn("nextCursor", result2)  # omitted when no more pages (per MCP convention)
 
 
 if __name__ == "__main__":

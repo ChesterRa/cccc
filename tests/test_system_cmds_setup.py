@@ -35,6 +35,7 @@ class TestSystemCmdsSetup(unittest.TestCase):
                 "auggie",
                 "neovate",
                 "gemini",
+                "grok",
                 "hermes",
                 "kimi",
                 "opencode",

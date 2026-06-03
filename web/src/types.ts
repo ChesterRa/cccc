@@ -1384,6 +1384,7 @@ export const SUPPORTED_RUNTIMES = [
   "auggie",
   "neovate",
   "gemini",
+  "grok",
   "hermes",
   "kimi",
   "opencode",
@@ -1400,6 +1401,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   codex: { label: "Codex CLI", desc: "" },
   droid: { label: "Droid", desc: "" },
   gemini: { label: "Gemini CLI", desc: "" },
+  grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
   kimi: { label: "Kimi CLI", desc: "" },
   neovate: { label: "Neovate Code", desc: "" },
@@ -1446,6 +1448,10 @@ export const RUNTIME_COLORS: Record<string, {
   gemini: {
     bg: "bg-yellow-900/30", text: "text-yellow-300", border: "border-yellow-600/50", dot: "bg-yellow-400",
     bgLight: "bg-yellow-50", textLight: "text-yellow-700", borderLight: "border-yellow-300", dotLight: "bg-yellow-500"
+  },
+  grok: {
+    bg: "bg-neutral-900/40", text: "text-neutral-200", border: "border-neutral-500/60", dot: "bg-neutral-300",
+    bgLight: "bg-neutral-100", textLight: "text-neutral-800", borderLight: "border-neutral-300", dotLight: "bg-neutral-600"
   },
   hermes: {
     bg: "bg-cyan-900/30", text: "text-cyan-300", border: "border-cyan-600/50", dot: "bg-cyan-400",

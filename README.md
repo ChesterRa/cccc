@@ -56,7 +56,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, OpenCode, ChatGPT Web, Gemini CLI, and 6 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, Gemini CLI, and 6 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -190,7 +190,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 10 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 12 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Command / Surface |
 |---------|-------------|-------------------|
@@ -198,6 +198,8 @@ CCCC orchestrates agents across 10 first-class runtimes, with `custom` available
 | Codex CLI | Auto MCP setup | `codex` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
 | Gemini CLI | Auto MCP setup | `gemini` |
+| Grok Build | Auto MCP setup | `grok` |
+| Hermes Agent | Auto MCP setup | `hermes` |
 | Droid | Auto MCP setup | `droid` |
 | Amp | Auto MCP setup | `amp` |
 | Auggie | Auto MCP setup | `auggie` |

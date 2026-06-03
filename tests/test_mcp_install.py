@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from cccc.daemon.mcp_install import ensure_mcp_installed, is_mcp_installed, prepare_runtime_mcp_env
+from cccc.daemon.mcp_install import build_mcp_add_command, ensure_mcp_installed, is_mcp_installed, prepare_runtime_mcp_env
 from cccc.kernel.runtime import get_cccc_mcp_stdio_command
 
 
@@ -76,13 +76,83 @@ class TestMcpInstall(unittest.TestCase):
                 mock_run.assert_not_called()
 
     def test_build_mcp_add_command_hermes_uses_safe_prepare_wrapper(self) -> None:
-        from cccc.daemon.mcp_install import build_mcp_add_command
-
         with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
             self.assertEqual(
                 build_mcp_add_command("hermes"),
                 ["cccc", "runtime", "hermes", "prepare", "--yes"],
             )
+
+    def test_build_mcp_add_command_grok_uses_command_args_and_unbuffered_env(self) -> None:
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertEqual(
+                build_mcp_add_command("grok"),
+                [
+                    "grok",
+                    "mcp",
+                    "add",
+                    "cccc",
+                    "--command",
+                    "/abs/cccc",
+                    "--args",
+                    "mcp",
+                    "--env",
+                    "PYTHONUNBUFFERED=1",
+                ],
+            )
+
+    def test_build_mcp_add_command_grok_handles_python_module_fallback_args(self) -> None:
+        with patch(
+            "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+            return_value=["/usr/bin/python", "-m", "cccc.ports.mcp.main"],
+        ):
+            self.assertEqual(
+                build_mcp_add_command("grok"),
+                [
+                    "grok",
+                    "mcp",
+                    "add",
+                    "cccc",
+                    "--command",
+                    "/usr/bin/python",
+                    "--args=-m",
+                    "--args=cccc.ports.mcp.main",
+                    "--env",
+                    "PYTHONUNBUFFERED=1",
+                ],
+            )
+
+    def test_is_mcp_installed_grok_reads_json_list_and_validates_env(self) -> None:
+        payload = [
+            {
+                "name": "cccc",
+                "command": "/abs/cccc",
+                "args": ["mcp"],
+                "env": {"PYTHONUNBUFFERED": "1"},
+                "enabled": True,
+            }
+        ]
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+        ) as mock_run:
+            self.assertTrue(is_mcp_installed("grok"))
+        mock_run.assert_called_once_with(["grok", "mcp", "list", "--json"], timeout=10, env=None)
+
+    def test_is_mcp_installed_grok_rejects_missing_unbuffered_env(self) -> None:
+        payload = [
+            {
+                "name": "cccc",
+                "command": "/abs/cccc",
+                "args": ["mcp"],
+                "env": {},
+                "enabled": True,
+            }
+        ]
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+        ):
+            self.assertFalse(is_mcp_installed("grok"))
 
     def test_is_mcp_installed_kimi_reads_config_and_validates_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -154,6 +224,42 @@ class TestMcpInstall(unittest.TestCase):
                         cwd=str(cwd),
                         timeout=30,
                     )
+
+    def test_ensure_mcp_installed_grok_adds_cccc_stdio(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            env = {"HOME": str(Path(td) / "home")}
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["missing", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("grok", cwd, auto_mcp_runtimes=("grok",), env=env)
+                    self.assertTrue(ok)
+                    mock_run.assert_called_once()
+                    self.assertEqual(
+                        mock_run.call_args.args[0],
+                        [
+                            "grok",
+                            "mcp",
+                            "add",
+                            "cccc",
+                            "--command",
+                            "/abs/cccc",
+                            "--args",
+                            "mcp",
+                            "--env",
+                            "PYTHONUNBUFFERED=1",
+                        ],
+                    )
+                    self.assertEqual(mock_run.call_args.kwargs.get("capture_output"), True)
+                    self.assertEqual(mock_run.call_args.kwargs.get("text"), True)
+                    self.assertEqual(mock_run.call_args.kwargs.get("cwd"), str(cwd))
+                    self.assertEqual(mock_run.call_args.kwargs.get("timeout"), 30)
+                    run_env = mock_run.call_args.kwargs.get("env")
+                    self.assertIsInstance(run_env, dict)
+                    self.assertEqual((run_env or {}).get("HOME"), env["HOME"])
 
     def test_ensure_mcp_installed_gemini_verifies_against_actor_home_env(self) -> None:
         with tempfile.TemporaryDirectory() as td:

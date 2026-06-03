@@ -37,6 +37,7 @@ describe("supportsStandardWebHeadlessRuntime", () => {
   it("rejects unsupported runtimes", () => {
     expect(supportsStandardWebHeadlessRuntime("custom")).toBe(false);
     expect(supportsStandardWebHeadlessRuntime("gemini")).toBe(false);
+    expect(supportsStandardWebHeadlessRuntime("grok")).toBe(false);
     expect(supportsStandardWebHeadlessRuntime("")).toBe(false);
   });
 });

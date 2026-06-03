@@ -131,6 +131,10 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: 'GOOGLE_API_KEY="..."',
     unset: "GOOGLE_API_KEY",
   },
+  grok: {
+    set: "# Configure Grok providers and auth through Grok config or environment variables.",
+    unset: "",
+  },
   hermes: {
     set: "# Configure Hermes providers, OAuth, and tools in your Hermes profile.",
     unset: "",

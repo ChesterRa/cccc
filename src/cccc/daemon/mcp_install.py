@@ -125,6 +125,26 @@ def _mcp_command_array_matches_expected(command: Any, expected_cmd: list[str]) -
     return actual[1:] == expected[1:]
 
 
+def _grok_mcp_entry_matches_expected(entry: Any, expected_cmd: list[str]) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if str(entry.get("name") or "").strip() != "cccc":
+        return False
+    if coerce_bool(entry.get("enabled"), default=True) is False:
+        return False
+    if not _entry_command_matches_expected(
+        entry.get("command", ""),
+        entry.get("args", []),
+        expected_cmd,
+        strict=sys.platform.startswith("win"),
+    ):
+        return False
+    env = entry.get("env")
+    if not isinstance(env, dict):
+        return False
+    return str(env.get("PYTHONUNBUFFERED") or "").strip() == "1"
+
+
 def _runtime_expected_cccc_command(runtime: str) -> list[str]:
     cmd = list(get_cccc_mcp_stdio_command())
     if sys.platform.startswith("win") and runtime == "droid" and cmd:
@@ -281,6 +301,17 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
         return ["neovate", "mcp", "add", "-g", "cccc", *cccc_cmd]
     if runtime == "gemini":
         return ["gemini", "mcp", "add", "-s", "user", "cccc", *cccc_cmd]
+    if runtime == "grok":
+        command = cccc_cmd[0] if cccc_cmd else "cccc"
+        args = cccc_cmd[1:] if len(cccc_cmd) > 1 else ["mcp"]
+        argv = ["grok", "mcp", "add", "cccc", "--command", command]
+        if len(args) == 1 and not str(args[0]).startswith("-"):
+            argv.extend(["--args", str(args[0])])
+        else:
+            for arg in args:
+                argv.append(f"--args={arg}")
+        argv.extend(["--env", "PYTHONUNBUFFERED=1"])
+        return argv
     if runtime == "hermes":
         return ["cccc", "runtime", "hermes", "prepare", "--yes"]
     if runtime == "kimi":
@@ -293,6 +324,8 @@ def build_mcp_remove_command(runtime: str) -> list[str] | None:
         return ["claude", "mcp", "remove", "cccc", "-s", "user"]
     if runtime == "droid":
         return ["droid", "mcp", "remove", "cccc"]
+    if runtime == "grok":
+        return ["grok", "mcp", "remove", "cccc"]
     return None
 
 
@@ -408,6 +441,27 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
 
     if runtime == "gemini":
         return _json_mcp_state((_home_dir(env) / ".gemini" / "settings.json",), expected_cmd)
+
+    if runtime == "grok":
+        result = _run_cli(["grok", "mcp", "list", "--json"], timeout=10, env=env)
+        if result.returncode != 0:
+            return "missing"
+        try:
+            entries = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError:
+            return "missing"
+        if not isinstance(entries, list):
+            return "missing"
+        state = "missing"
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("name") or "").strip() != "cccc":
+                continue
+            if _grok_mcp_entry_matches_expected(entry, expected_cmd):
+                return "ready"
+            state = "stale"
+        return state
 
     if runtime == "hermes":
         status = hermes_runtime_status(

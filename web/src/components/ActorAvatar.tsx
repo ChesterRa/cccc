@@ -44,6 +44,8 @@ export const ActorAvatar = memo(function ActorAvatar({
   const customAvatarFailed = !!customAvatarSrc && failedCustomAvatarSrc === customAvatarSrc;
 
   const usesInlineClaudeLogo = !isUser && String(runtime || "").trim().toLowerCase() === "claude";
+  const runtimeKey = String(runtime || "").trim().toLowerCase();
+  const logoClassName = runtimeKey === "grok" ? "h-[68%] w-[68%] object-contain" : "h-full w-full object-contain";
 
   const logoSrc = useMemo(() => {
     if (isUser || usesInlineClaudeLogo) return null;
@@ -82,7 +84,7 @@ export const ActorAvatar = memo(function ActorAvatar({
         <ClaudeLogo className="h-3/5 w-3/5" />
       ) : logoSrc ? (
         <span className="flex h-full w-full items-center justify-center bg-white">
-          <img src={logoSrc} alt="" className="h-full w-full object-contain" />
+          <img src={logoSrc} alt="" className={logoClassName} />
         </span>
       ) : (
         fallbackText
