@@ -95,6 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_group_delete.add_argument("--by", default="user", help="Requester (default: user)")
     p_group_delete.set_defaults(func=cmd_group_delete)
 
+    p_group_reset = group_sub.add_parser("reset", help="Reset a group by creating a clean replacement")
+    p_group_reset.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_reset.add_argument("--confirm", default="", help="Type the group_id to confirm reset")
+    p_group_reset.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_reset.set_defaults(func=cmd_group_reset)
+
     p_group_use = group_sub.add_parser("use", help="Set group's active scope (must already be attached)")
     p_group_use.add_argument("group_id", help="Target group_id")
     p_group_use.add_argument("path", nargs="?", default=".", help="Path inside target scope (default: .)")

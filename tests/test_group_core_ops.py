@@ -159,6 +159,198 @@ class TestGroupCoreOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_reset_creates_clean_replacement_and_deletes_old(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env, update_actor_private_env
+        from cccc.kernel.active import load_active, set_active_group_id
+        from cccc.kernel.group import load_group
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        with tempfile.TemporaryDirectory(prefix="cccc_scope_") as scope_dir_raw:
+            try:
+                create_resp, _ = self._call("group_create", {"title": "reset-me", "topic": "topic-a", "by": "user"})
+                self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+                group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+                self.assertTrue(group_id)
+
+                attach_resp, _ = self._call("attach", {"group_id": group_id, "path": scope_dir_raw, "by": "user"})
+                self.assertTrue(attach_resp.ok, getattr(attach_resp, "error", None))
+                scope_key = str((attach_resp.result or {}).get("scope_key") or "").strip()
+                self.assertTrue(scope_key)
+
+                custom_rule = {
+                    "id": "daily_check",
+                    "enabled": True,
+                    "scope": "group",
+                    "owner_actor_id": None,
+                    "to": ["@foreman"],
+                    "trigger": {"kind": "interval", "every_seconds": 60},
+                    "action": {
+                        "kind": "notify",
+                        "priority": "normal",
+                        "requires_ack": False,
+                        "title": "Daily check",
+                        "message": "check progress",
+                    },
+                }
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.doc["actors"] = [
+                    {
+                        "id": "peer1",
+                        "title": "Peer One",
+                        "command": ["codex"],
+                        "env": {"PUBLIC_FLAG": "1"},
+                        "default_scope_key": scope_key,
+                        "runner": "pty",
+                        "runtime": "codex",
+                        "enabled": True,
+                        "avatar_asset_path": str(group.path / "blobs" / "avatars" / "peer1.png"),
+                        "created_at": "2026-01-01T00:00:00Z",
+                    }
+                ]
+                group.doc["messaging"] = {"default_send_to": "broadcast"}
+                group.doc["delivery"] = {"min_interval_seconds": 42, "auto_mark_on_delivery": "read"}
+                group.doc["terminal_transcript"] = {
+                    "visibility": "all",
+                    "notify_tail": True,
+                    "notify_lines": 12,
+                }
+                group.doc["features"] = {"desktop_pet_enabled": True, "panorama_enabled": True}
+                group.doc["automation"] = {
+                    "version": 7,
+                    "rules": [custom_rule],
+                    "snippets": {"custom_note": "custom automation note"},
+                    "snippet_overrides": {"standup": "custom standup"},
+                    "nudge_after_seconds": 123,
+                    "keepalive_delay_seconds": 456,
+                    "runtime_last_tick": "should not be copied",
+                }
+                group.save()
+                state_path = group.path / "state" / "automation.json"
+                state_path.write_text('{"runtime_marker": true}\n', encoding="utf-8")
+                update_actor_private_env(
+                    group_id,
+                    "peer1",
+                    set_vars={"API_KEY": "secret-value"},
+                    unset_keys=[],
+                    clear=False,
+                )
+                append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group_id,
+                    scope_key=scope_key,
+                    by="user",
+                    data={"text": "old history should not be copied"},
+                )
+                set_active_group_id(group_id)
+
+                reset_resp, _ = self._call(
+                    "group_reset",
+                    {"group_id": group_id, "confirm": group_id, "by": "user"},
+                )
+                self.assertTrue(reset_resp.ok, getattr(reset_resp, "error", None))
+                result = reset_resp.result if isinstance(reset_resp.result, dict) else {}
+                new_group_id = str(result.get("new_group_id") or "").strip()
+                self.assertTrue(new_group_id)
+                self.assertNotEqual(new_group_id, group_id)
+                self.assertTrue(bool(result.get("deleted_old")))
+
+                self.assertIsNone(load_group(group_id))
+                replacement = load_group(new_group_id)
+                self.assertIsNotNone(replacement)
+                assert replacement is not None
+                self.assertEqual(replacement.doc.get("title"), "reset-me")
+                self.assertEqual(replacement.doc.get("topic"), "topic-a")
+                self.assertEqual(str(replacement.doc.get("active_scope_key") or ""), scope_key)
+                scopes = replacement.doc.get("scopes") if isinstance(replacement.doc.get("scopes"), list) else []
+                self.assertEqual(len(scopes), 1)
+                self.assertEqual(str(scopes[0].get("scope_key") or ""), scope_key)
+
+                actors = replacement.doc.get("actors") if isinstance(replacement.doc.get("actors"), list) else []
+                self.assertEqual(len(actors), 1)
+                self.assertEqual(str(actors[0].get("id") or ""), "peer1")
+                self.assertEqual(str(actors[0].get("runtime") or ""), "codex")
+                self.assertEqual(str(actors[0].get("avatar_asset_path") or ""), "")
+                self.assertEqual(load_actor_private_env(new_group_id, "peer1"), {"API_KEY": "secret-value"})
+                self.assertEqual(load_actor_private_env(group_id, "peer1"), {})
+                automation = (
+                    replacement.doc.get("automation") if isinstance(replacement.doc.get("automation"), dict) else {}
+                )
+                self.assertEqual(int(automation.get("version") or 0), 7)
+                self.assertEqual(automation.get("rules"), [custom_rule])
+                self.assertEqual(automation.get("snippets"), {"custom_note": "custom automation note"})
+                self.assertEqual(automation.get("snippet_overrides"), {"standup": "custom standup"})
+                self.assertEqual(int(automation.get("nudge_after_seconds") or 0), 123)
+                self.assertEqual(int(automation.get("keepalive_delay_seconds") or 0), 456)
+                self.assertNotIn("runtime_last_tick", automation)
+                self.assertNotIn("messaging", replacement.doc)
+                self.assertNotIn("delivery", replacement.doc)
+                self.assertNotIn("terminal_transcript", replacement.doc)
+                self.assertNotIn("features", replacement.doc)
+                self.assertFalse((replacement.path / "state" / "automation.json").exists())
+
+                ledger_text = replacement.ledger_path.read_text(encoding="utf-8")
+                self.assertIn("group.create", ledger_text)
+                self.assertNotIn("old history should not be copied", ledger_text)
+                self.assertEqual(str(load_active().get("active_group_id") or ""), new_group_id)
+                self.assertEqual(load_registry().defaults.get(scope_key), new_group_id)
+            finally:
+                cleanup()
+
+    def test_group_reset_non_active_group_does_not_switch_active_group(self) -> None:
+        from cccc.kernel.active import load_active, set_active_group_id
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            target_resp, _ = self._call("group_create", {"title": "reset-target", "topic": "", "by": "user"})
+            self.assertTrue(target_resp.ok, getattr(target_resp, "error", None))
+            target_group_id = str((target_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(target_group_id)
+
+            active_resp, _ = self._call("group_create", {"title": "keep-active", "topic": "", "by": "user"})
+            self.assertTrue(active_resp.ok, getattr(active_resp, "error", None))
+            active_group_id = str((active_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(active_group_id)
+            self.assertNotEqual(active_group_id, target_group_id)
+            set_active_group_id(active_group_id)
+
+            reset_resp, _ = self._call(
+                "group_reset",
+                {"group_id": target_group_id, "confirm": target_group_id, "by": "user"},
+            )
+            self.assertTrue(reset_resp.ok, getattr(reset_resp, "error", None))
+            result = reset_resp.result if isinstance(reset_resp.result, dict) else {}
+            new_group_id = str(result.get("new_group_id") or "").strip()
+            self.assertTrue(new_group_id)
+            self.assertNotIn("active_group_id", result)
+            self.assertIsNone(load_group(target_group_id))
+            self.assertIsNotNone(load_group(new_group_id))
+            self.assertEqual(str(load_active().get("active_group_id") or ""), active_group_id)
+        finally:
+            cleanup()
+
+    def test_group_reset_requires_matching_confirm(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "reset-confirm", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            reset_resp, _ = self._call("group_reset", {"group_id": group_id, "confirm": "wrong", "by": "user"})
+            self.assertFalse(reset_resp.ok)
+            self.assertEqual((reset_resp.error.code if reset_resp.error else ""), "confirm_required")
+            self.assertIsNotNone(load_group(group_id))
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

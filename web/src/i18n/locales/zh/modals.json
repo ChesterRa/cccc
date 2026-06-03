@@ -30,6 +30,10 @@
     "copyDataDir": "复制工作组数据目录",
     "copyConfigFile": "复制工作组配置文件路径",
     "copyLedgerFile": "复制工作组日志文件路径",
+    "resetGroup": "重置工作组",
+    "deleteGroup": "删除工作组",
+    "resetTitle": "创建干净的新工作组并删除当前工作组",
+    "resetHint": "保留工作组名称、项目 scope、智能体、本地密钥和 automation 规则/设置；不会复制消息历史、memory、context、运行会话和 provider 状态。",
     "deleteTitle": "永久删除此工作组"
   },
   "inbox": {

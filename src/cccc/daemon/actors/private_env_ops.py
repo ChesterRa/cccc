@@ -176,6 +176,36 @@ def delete_group_private_env(group_id: str) -> None:
         pass
 
 
+def copy_group_private_env(source_group_id: str, target_group_id: str) -> int:
+    """Copy actor private-env files between groups without exposing secret values."""
+    try:
+        home = ensure_home()
+        src = _private_env_group_dir(home, group_id=source_group_id)
+        dst = _private_env_group_dir(home, group_id=target_group_id)
+    except Exception:
+        return 0
+    if not src.exists() or not src.is_dir():
+        return 0
+
+    count = 0
+    _ensure_private_env_dir(_private_env_root(home))
+    _ensure_private_env_dir(dst)
+    for path in sorted(src.iterdir(), key=lambda item: item.name):
+        if not path.is_file() or path.suffix != ".json":
+            continue
+        raw = read_json(path)
+        if not isinstance(raw, dict):
+            continue
+        target = dst / path.name
+        atomic_write_json(target, raw, indent=2)
+        try:
+            os.chmod(target, 0o600)
+        except Exception:
+            pass
+        count += 1
+    return count
+
+
 def merge_actor_env_with_private(group_id: str, actor_id: str, env: Dict[str, Any]) -> Dict[str, Any]:
     base = dict(env or {})
     try:

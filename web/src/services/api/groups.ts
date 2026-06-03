@@ -1518,6 +1518,22 @@ export async function deleteGroup(groupId: string) {
   );
 }
 
+export interface GroupResetResult {
+  old_group_id?: string;
+  new_group_id?: string;
+  group_id?: string;
+  deleted_old?: boolean;
+}
+
+export async function resetGroup(groupId: string) {
+  clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
+  return apiJson<GroupResetResult>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/reset?confirm=${encodeURIComponent(groupId)}&by=user`,
+    { method: "POST" },
+  );
+}
+
 export async function attachScope(groupId: string, path: string) {
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/attach`, {
     method: "POST",

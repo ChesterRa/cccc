@@ -580,6 +580,39 @@ export function AppModals({
     }
   };
 
+  const handleResetGroup = async () => {
+    if (!selectedGroupId) return;
+    if (!window.confirm(t('resetGroupConfirm', { name: groupDoc?.title || selectedGroupId }))) return;
+    const oldGroupId = selectedGroupId;
+    setBusy("group-reset");
+    try {
+      const resp = await api.resetGroup(oldGroupId);
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      const result = resp.result || {};
+      const newGroupId = String(result.new_group_id || result.group_id || "").trim();
+      if (!newGroupId) {
+        showError("group_reset_failed: missing new_group_id");
+        return;
+      }
+      closeModal("groupEdit");
+      useGroupStore.getState().setEvents([]);
+      useGroupStore.getState().setActors([]);
+      setGroupContext(null);
+      setGroupSettings(null);
+      await refreshGroups();
+      setSelectedGroupId(newGroupId);
+      await loadGroup(newGroupId);
+      if (result.deleted_old === false) {
+        showNotice({ message: t("resetGroupOldDeleteFailed") });
+      }
+    } finally {
+      setBusy("");
+    }
+  };
+
   const handleSaveEditActor = async (
     payload: EditActorSavePayload,
     options: { restart: boolean }
@@ -1611,6 +1644,7 @@ export function AppModals({
         onChangeTopic={setEditGroupTopic}
         onSave={handleSaveGroupEdit}
         onCancel={() => closeModal("groupEdit")}
+        onReset={handleResetGroup}
         onDelete={handleDeleteGroup}
       />
 

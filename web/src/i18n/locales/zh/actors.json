@@ -135,6 +135,8 @@
   "failedToLoadSecrets": "加载密钥元数据失败",
   "secretsStoredLocallyEdit": "存储在本地 <1>CCCC_HOME/state/…</1> 下（不在组账本中）。",
   "deleteGroupConfirm": "删除工作组 \"{{name}}\"？",
+  "resetGroupConfirm": "重置工作组 \"{{name}}\"？这会用相同核心配置创建一个新的干净工作组，删除当前工作组，并改变工作组 ID。",
+  "resetGroupOldDeleteFailed": "已创建干净的新工作组，但旧工作组未能自动删除。",
   "saveAndRestartConfirm": "保存更改并重启 \"{{label}}\"？这将中断正在进行的工作。",
   "saveSecretsAndRestartConfirm": "保存更改、应用密钥并重启 \"{{label}}\"？这将中断正在进行的工作。",
   "nothingToSave": "没有可保存的更改。",

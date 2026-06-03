@@ -135,6 +135,8 @@
   "failedToLoadSecrets": "シークレット環境メタデータのロードに失敗しました",
   "secretsStoredLocallyEdit": "<1>CCCC_HOME/state/…</1> にローカル保存されます（グループ台帳には含まれません）。",
   "deleteGroupConfirm": "グループ「{{name}}」を削除しますか？",
+  "resetGroupConfirm": "グループ「{{name}}」をリセットしますか？同じ主要設定のクリーンな新規グループを作成し、現在のグループを削除して、グループIDが変わります。",
+  "resetGroupOldDeleteFailed": "クリーンな新規グループは作成されましたが、古いグループを自動削除できませんでした。",
   "saveAndRestartConfirm": "変更を保存して「{{label}}」を今すぐ再起動しますか？これにより、実行中の作業が中断されます。",
   "saveSecretsAndRestartConfirm": "変更を保存し、シークレットを適用して、「{{label}}」を今すぐ再起動しますか？これにより、実行中の作業が中断されます。",
   "nothingToSave": "保存する変更がありません。",

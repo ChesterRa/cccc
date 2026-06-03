@@ -21,6 +21,7 @@ export interface GroupEditModalProps {
   onChangeTopic: (topic: string) => void;
   onSave: () => void;
   onCancel: () => void;
+  onReset: () => void;
   onDelete: () => void;
 }
 
@@ -37,6 +38,7 @@ export function GroupEditModal({
   onChangeTopic,
   onSave,
   onCancel,
+  onReset,
   onDelete,
 }: GroupEditModalProps) {
   const { t } = useTranslation("modals");
@@ -100,19 +102,36 @@ export function GroupEditModal({
       modalRef={modalRef}
       footerActions={
         <div className="flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between w-full">
-          <Button
-            type="button"
-            variant="destructive"
-            className="w-full sm:w-auto transition-all ease-spring duration-300"
-            onClick={() => {
-              onCancel();
-              onDelete();
-            }}
-            disabled={busy === "group-delete"}
-            title={t("groupEdit.deleteTitle")}
-          >
-            {t("common:delete")}
-          </Button>
+          <div className="flex flex-col gap-2 w-full sm:w-auto">
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto transition-all ease-spring duration-300"
+                onClick={onReset}
+                disabled={busy === "group-reset"}
+                title={t("groupEdit.resetTitle")}
+              >
+                {t("groupEdit.resetGroup")}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="w-full sm:w-auto transition-all ease-spring duration-300"
+                onClick={() => {
+                  onCancel();
+                  onDelete();
+                }}
+                disabled={busy === "group-delete"}
+                title={t("groupEdit.deleteTitle")}
+              >
+                {t("groupEdit.deleteGroup")}
+              </Button>
+            </div>
+            <div className="max-w-sm text-xs leading-5 text-[var(--color-text-muted)]">
+              {t("groupEdit.resetHint")}
+            </div>
+          </div>
           <div className="flex flex-col-reverse sm:flex-row gap-3 w-full sm:w-auto sm:justify-end">
             <Button
               type="button"

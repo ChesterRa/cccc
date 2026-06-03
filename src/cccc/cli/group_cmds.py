@@ -11,6 +11,7 @@ __all__ = [
     "cmd_group_update",
     "cmd_group_detach_scope",
     "cmd_group_delete",
+    "cmd_group_reset",
     "cmd_group_use",
     "cmd_group_start",
     "cmd_group_stop",
@@ -208,6 +209,33 @@ def cmd_group_delete(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
         return 2
     resp = call_daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+def cmd_group_reset(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+    confirm = str(args.confirm or "").strip()
+    if confirm != group_id:
+        _print_json({"ok": False, "error": {"code": "confirm_required", "message": f"pass --confirm {group_id} to reset"}})
+        return 2
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_reset", "args": {"group_id": group_id, "confirm": confirm, "by": by}})
+    if resp.get("ok"):
+        try:
+            result = (resp.get("result") or {}) if isinstance(resp.get("result"), dict) else {}
+            new_group_id = str(result.get("new_group_id") or "").strip()
+            active_group_id = str(result.get("active_group_id") or "").strip()
+            if new_group_id and active_group_id == new_group_id:
+                set_active_group_id(new_group_id)
+        except Exception:
+            pass
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 

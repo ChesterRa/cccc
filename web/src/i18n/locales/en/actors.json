@@ -135,6 +135,8 @@
   "failedToLoadSecrets": "Failed to load secret env metadata",
   "secretsStoredLocallyEdit": "Stored locally under <1>CCCC_HOME/state/…</1> (not in group ledger).",
   "deleteGroupConfirm": "Delete group \"{{name}}\"?",
+  "resetGroupConfirm": "Reset group \"{{name}}\"? This creates a clean replacement with the same core configuration, deletes this group, and changes the group ID.",
+  "resetGroupOldDeleteFailed": "Reset created a clean replacement, but the old group could not be deleted automatically.",
   "saveAndRestartConfirm": "Save changes and restart \"{{label}}\" now? This will interrupt any running work.",
   "saveSecretsAndRestartConfirm": "Save changes, apply secrets, and restart \"{{label}}\" now? This will interrupt any running work.",
   "nothingToSave": "No changes to save.",

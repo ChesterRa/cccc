@@ -30,6 +30,10 @@
     "copyDataDir": "グループデータディレクトリのパスをコピー",
     "copyConfigFile": "グループ設定ファイルのパスをコピー",
     "copyLedgerFile": "グループ台帳ファイルのパスをコピー",
+    "resetGroup": "グループをリセット",
+    "deleteGroup": "グループを削除",
+    "resetTitle": "クリーンな新規グループを作成し、このグループを削除します",
+    "resetHint": "グループ名、プロジェクトスコープ、エージェント、保存済みシークレット、automation ルール/設定を保持します。メッセージ履歴、memory、context、ランタイムセッション、provider状態はコピーされません。",
     "deleteTitle": "このグループを完全に削除します"
   },
   "inbox": {

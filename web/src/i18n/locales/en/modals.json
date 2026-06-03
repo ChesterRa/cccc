@@ -30,6 +30,10 @@
     "copyDataDir": "Copy group data directory",
     "copyConfigFile": "Copy group config file path",
     "copyLedgerFile": "Copy group ledger file path",
+    "resetGroup": "Reset group",
+    "deleteGroup": "Delete group",
+    "resetTitle": "Create a clean replacement and delete this group",
+    "resetHint": "Keeps the group name, project scope, actors, stored secrets, and automation rules/settings. Message history, memory, context, runtime sessions, and provider state are not copied.",
     "deleteTitle": "Delete this group permanently"
   },
   "inbox": {

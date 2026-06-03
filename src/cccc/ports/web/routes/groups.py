@@ -1450,6 +1450,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             await close_sse_tailers_under(group.path)
         return await ctx.daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
 
+    @group_router.post("/reset")
+    async def group_reset(request: Request, group_id: str, confirm: str = "", by: str = "user") -> Dict[str, Any]:
+        """Reset a group by creating a clean replacement and deleting the old one."""
+        require_admin(request)
+        if confirm != group_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "confirmation_required", "message": f"confirm must equal group_id: {group_id}"}
+            )
+        group = load_group(group_id)
+        if group is not None:
+            from ..streams import close_sse_tailers_under
+
+            await close_sse_tailers_under(group.path)
+        return await ctx.daemon({"op": "group_reset", "args": {"group_id": group_id, "confirm": confirm, "by": by}})
+
     @group_router.get("/context")
     async def group_context(group_id: str, fresh: bool = False, detail: str = "summary") -> Dict[str, Any]:
         """Get a group context view (summary by default, full when requested)."""

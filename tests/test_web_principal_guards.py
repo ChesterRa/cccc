@@ -224,6 +224,21 @@ class TestWebPrincipalGuards(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_reset_requires_admin_even_with_group_scope(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("g1")
+            token = str(create_access_token("user-a", allowed_groups=[gid], is_admin=False).get("token") or "")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._create_client()
+                resp = client.post(f"/api/v1/groups/{gid}/reset?confirm={gid}", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 403)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "permission_denied")
+        finally:
+            cleanup()
+
     def test_admin_can_delete_group(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
@@ -236,6 +251,28 @@ class TestWebPrincipalGuards(unittest.TestCase):
                 resp = client.delete(f"/api/v1/groups/{gid}?confirm={gid}", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(bool(resp.json().get("ok")))
+        finally:
+            cleanup()
+
+    def test_admin_can_reset_group(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("g1")
+            token = str(create_access_token("admin-user", is_admin=True).get("token") or "")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._create_client()
+                resp = client.post(f"/api/v1/groups/{gid}/reset?confirm={gid}", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertTrue(bool(payload.get("ok")))
+            new_gid = str(((payload.get("result") or {}) if isinstance(payload.get("result"), dict) else {}).get("new_group_id") or "")
+            self.assertTrue(new_gid)
+            self.assertNotEqual(new_gid, gid)
+            self.assertIsNone(load_group(gid))
+            self.assertIsNotNone(load_group(new_gid))
         finally:
             cleanup()
 
