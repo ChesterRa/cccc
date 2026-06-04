@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.25] — 2026-06-04
+
+### Changed
+- **The Web UI background no longer runs continuous decorative blob animations while idle**, reducing baseline GPU work and improving responsiveness on older desktops and integrated GPUs.
+
+### Tests
+- Validated the Web typecheck and production build after the background rendering change.
+
 ## [0.4.24] — 2026-06-04
 
 ### Added

@@ -20,7 +20,7 @@ export function AppBackground({ isDark }: AppBackgroundProps) {
               ? "bg-gradient-to-bl from-[rgba(226,232,240,0.04)] via-[rgba(148,163,184,0.025)] to-transparent"
               : "bg-gradient-to-bl from-[rgba(233,236,240,0.36)] via-[rgba(222,227,232,0.14)] to-transparent"
           }`}
-          style={{ animationDelay: "-3s", opacity: isDark ? 0.58 : 0.7 }}
+          style={{ opacity: isDark ? 0.58 : 0.7 }}
         />
         <div
           className={`absolute -bottom-20 left-1/3 h-72 w-72 rounded-full liquid-blob ${
@@ -28,7 +28,7 @@ export function AppBackground({ isDark }: AppBackgroundProps) {
               ? "bg-gradient-to-tr from-[rgba(231,229,228,0.04)] via-[rgba(255,255,255,0.018)] to-transparent"
               : "bg-gradient-to-tr from-[rgba(236,233,228,0.3)] via-[rgba(228,232,236,0.12)] to-transparent"
           }`}
-          style={{ animationDelay: "-5s", opacity: isDark ? 0.54 : 0.62 }}
+          style={{ opacity: isDark ? 0.54 : 0.62 }}
         />
       </div>
 
