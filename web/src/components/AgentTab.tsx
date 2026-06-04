@@ -420,6 +420,7 @@ export function AgentTab({
   const {
     connectionStatus,
     terminalReady,
+    terminalWritable,
     requestReconnect,
     sendInterrupt,
   } = useAgentTerminalConnection({
@@ -483,7 +484,7 @@ export function AgentTab({
   useEffect(() => {
     if (!canControl) return;
     if (!isVisible) return;
-    if (!terminalReady) return;
+    if (!terminalReady || !terminalWritable) return;
     if (isSmallScreen) return;
     const term = terminalRef.current;
     if (!term) return;
@@ -495,7 +496,7 @@ export function AgentTab({
       }
     }, 0);
     return () => clearTimeout(t);
-  }, [canControl, isVisible, isSmallScreen, terminalReady]);
+  }, [canControl, isVisible, isSmallScreen, terminalReady, terminalWritable]);
 
   const stateHeadline = String(agentState?.hot?.focus || agentState?.hot?.next_action || "").trim() || t('noAgentStateYet');
   const stateTask = String(agentState?.hot?.active_task_id || "").trim();
@@ -703,6 +704,11 @@ export function AgentTab({
                 )}
               </div>
             )}
+            {canControl && connectionStatus === 'connected' && terminalReady && !terminalWritable ? (
+              <div className="absolute right-4 top-4 z-10 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-200">
+                {t('terminalReadOnlyNotice', { defaultValue: 'Terminal is connected read-only. Reconnect to take control.' })}
+              </div>
+            ) : null}
           </>
         ) : (
           // Stopped agent
@@ -769,7 +775,7 @@ export function AgentTab({
               </button>
               <button
                 onClick={sendInterrupt}
-                disabled={connectionStatus !== 'connected'}
+                disabled={connectionStatus !== 'connected' || !terminalWritable}
                 className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 title={t('sendInterruptTitle')}
                 aria-label={t('sendInterruptLabel')}

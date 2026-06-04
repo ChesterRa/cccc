@@ -9,8 +9,12 @@ import {
   buildTerminalWebSocketUrl,
   buildTerminalConnectionKey,
   createTerminalAttachCursorResolver,
+  decodeTerminalJsonFrame,
+  encodeTerminalInputFrame,
+  encodeTerminalResizeFrame,
   isTerminalAttachNonRetryableErrorCode,
   isTerminalAttachStartupRaceErrorCode,
+  parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
 } from "../../utils/terminalConnection";
 
@@ -58,6 +62,7 @@ export function useAgentTerminalConnection(args: {
 
   const [connectionStatus, setConnectionStatus] = useState<AgentTerminalConnectionStatus>("disconnected");
   const [terminalReady, setTerminalReady] = useState(false);
+  const [terminalWritable, setTerminalWritable] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,7 +92,10 @@ export function useAgentTerminalConnection(args: {
       terminalAttachNoRetryRef.current = false;
       terminalAttachStartupRaceRef.current = false;
     }
-  }, [actorRuntime, canControl, clearTerminalSignal, isRunning, onStatusChange, setTerminalSignal]);
+    if (!isRunning || isHeadless || !canControl) {
+      setTerminalWritable(false);
+    }
+  }, [actorRuntime, canControl, clearTerminalSignal, isHeadless, isRunning, onStatusChange, setTerminalSignal]);
 
   useEffect(() => {
     if (isRunning && !isHeadless) return;
@@ -110,7 +118,7 @@ export function useAgentTerminalConnection(args: {
     if (!canControlRef.current) return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ t: "i", d: "\x03" }));
+    ws.send(encodeTerminalInputFrame("\x03"));
   }, []);
 
   const terminalConnectionKey = buildTerminalConnectionKey({
@@ -197,6 +205,8 @@ export function useAgentTerminalConnection(args: {
           groupId,
           actorId,
           since,
+          mode: canControlRef.current ? "control" : "viewer",
+          takeover: canControlRef.current,
         });
 
         const ws = new WebSocket(withAuthToken(wsUrl));
@@ -209,6 +219,7 @@ export function useAgentTerminalConnection(args: {
             return;
           }
           setConnectionStatus("connected");
+          setTerminalWritable(false);
           reconnectAttemptRef.current = 0;
           outputFilterTailRef.current = "";
           terminalSignalBufferRef.current = "";
@@ -243,7 +254,7 @@ export function useAgentTerminalConnection(args: {
           if (canControlRef.current) {
             const term = terminalRef.current;
             if (term && term.cols >= 10 && term.rows >= 2) {
-              ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
+              ws.send(encodeTerminalResizeFrame(term.cols, term.rows));
             }
           }
         };
@@ -285,12 +296,51 @@ export function useAgentTerminalConnection(args: {
           if (disposed) return;
 
           if (event.data instanceof ArrayBuffer) {
-            handleDecoded(new TextDecoder().decode(event.data));
+            const frame = parseTerminalBinaryFrame(event.data);
+            if (!frame) {
+              handleDecoded(new TextDecoder().decode(event.data));
+              return;
+            }
+            if (frame.type === "output") {
+              handleDecoded(new TextDecoder().decode(frame.payload));
+              return;
+            }
+            if (frame.type === "attach") {
+              const result = decodeTerminalJsonFrame<Record<string, unknown>>(frame.payload) || {};
+              const writable = Boolean(result.terminal_writable);
+              setTerminalWritable(writable);
+              if (canControlRef.current && !writable) {
+                handleDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
+              }
+              return;
+            }
+            if (frame.type === "input_ack") {
+              const msg = decodeTerminalJsonFrame<{ ok?: boolean; error?: { message?: string } }>(frame.payload);
+              if (msg?.ok === false) {
+                const message = String(msg.error?.message || "Terminal input was rejected.");
+                handleDecoded(`\r\n[terminal] ${message}\r\n`);
+              }
+              return;
+            }
           } else if (event.data instanceof Blob) {
             void event.data.arrayBuffer().then((buf) => handleDecoded(new TextDecoder().decode(buf)));
           } else if (typeof event.data === "string") {
             try {
               const msg = JSON.parse(event.data);
+              if (msg.type === "terminal.attach" && msg.ok === true) {
+                const result = msg.result && typeof msg.result === "object" ? msg.result : {};
+                const writable = Boolean(result.terminal_writable);
+                setTerminalWritable(writable);
+                if (canControlRef.current && !writable) {
+                  handleDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
+                }
+                return;
+              }
+              if (msg.type === "terminal.input_ack" && msg.ok === false) {
+                const message = String(msg.error?.message || "Terminal input was rejected.");
+                handleDecoded(`\r\n[terminal] ${message}\r\n`);
+                return;
+              }
               if (msg.ok === false && msg.error) {
                 const code = String(msg.error.code || "").trim();
                 if (!shouldSuppressTerminalAttachErrorOutput(code)) {
@@ -364,12 +414,12 @@ export function useAgentTerminalConnection(args: {
                 updatedAt: Date.now(),
               });
             }
-            ws.send(JSON.stringify({ t: "i", d: data }));
+            ws.send(encodeTerminalInputFrame(data));
           });
 
           resizeDisposable = term.onResize(({ cols, rows }) => {
             if (ws.readyState === WebSocket.OPEN && cols >= 10 && rows >= 2) {
-              ws.send(JSON.stringify({ t: "r", c: cols, r: rows }));
+              ws.send(encodeTerminalResizeFrame(cols, rows));
             }
           });
         }
@@ -400,6 +450,7 @@ export function useAgentTerminalConnection(args: {
       }
       setConnectionStatus("disconnected");
       setTerminalReady(false);
+      setTerminalWritable(false);
     };
   }, [
     activated,
@@ -422,6 +473,7 @@ export function useAgentTerminalConnection(args: {
   return {
     connectionStatus,
     terminalReady,
+    terminalWritable,
     requestReconnect,
     sendInterrupt,
   };

@@ -19,11 +19,13 @@ class TestAsyncFirstDelivery(unittest.TestCase):
 
         def fake_submit(_group, *, actor_id: str, text: str, file_fallback: bool = False, wait_for_submit: bool = False) -> bool:
             self.assertEqual(actor_id, "peer1")
-            if wait_for_submit:
+            if text == "SYSTEM PROMPT":
+                self.assertTrue(wait_for_submit)
                 prompt_started.set()
                 time.sleep(0.2)
                 return True
             self.assertIn("hello first", text)
+            self.assertTrue(wait_for_submit)
             message_sent.set()
             return True
 
@@ -75,10 +77,12 @@ class TestAsyncFirstDelivery(unittest.TestCase):
 
         def fake_submit(_group, *, actor_id: str, text: str, file_fallback: bool = False, wait_for_submit: bool = False) -> bool:
             self.assertEqual(actor_id, "peer1")
-            if wait_for_submit:
+            if text == "SYSTEM PROMPT":
+                self.assertTrue(wait_for_submit)
                 prompt_started.set()
                 self.assertTrue(release_prompt.wait(1.0))
                 return True
+            self.assertTrue(wait_for_submit)
             sent_messages.append(text)
             if "hello second" in text:
                 second_sent.set()

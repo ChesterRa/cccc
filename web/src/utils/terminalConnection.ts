@@ -24,12 +24,82 @@ export function buildTerminalWebSocketUrl(args: {
   groupId: string;
   actorId: string;
   since?: number | string | null;
+  mode?: "control" | "viewer";
+  takeover?: boolean;
 }): string {
   const protocol = args.protocol === "https:" ? "wss:" : "ws:";
   const url = `${protocol}//${args.host}/api/v1/groups/${encodeURIComponent(args.groupId)}/actors/${encodeURIComponent(args.actorId)}/term`;
+  const params = new URLSearchParams();
+  params.set("mode", args.mode === "viewer" ? "viewer" : "control");
+  if (args.takeover) params.set("takeover", "true");
   const since = args.since;
-  if (since === null || since === undefined || !String(since).trim()) return url;
-  return `${url}?since=${encodeURIComponent(String(since))}`;
+  if (since !== null && since !== undefined && String(since).trim()) {
+    params.set("since", String(since));
+  }
+  return `${url}?${params.toString()}`;
+}
+
+export const TERMINAL_FRAME_INPUT = 48; // "0"
+export const TERMINAL_FRAME_OUTPUT = 49; // "1"
+export const TERMINAL_FRAME_RESIZE = 50; // "2"
+export const TERMINAL_FRAME_ATTACH = 51; // "3"
+export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
+
+const terminalTextEncoder = new TextEncoder();
+const terminalTextDecoder = new TextDecoder();
+
+export type TerminalBinaryFrame =
+  | { type: "input"; payload: Uint8Array }
+  | { type: "output"; payload: Uint8Array }
+  | { type: "resize"; payload: Uint8Array }
+  | { type: "attach"; payload: Uint8Array }
+  | { type: "input_ack"; payload: Uint8Array };
+
+function buildTerminalFrame(opcode: number, payload?: Uint8Array): Uint8Array {
+  const body = payload || new Uint8Array();
+  const out = new Uint8Array(body.length + 1);
+  out[0] = opcode;
+  out.set(body, 1);
+  return out;
+}
+
+export function encodeTerminalInputFrame(data: string): Uint8Array {
+  return buildTerminalFrame(TERMINAL_FRAME_INPUT, terminalTextEncoder.encode(String(data || "")));
+}
+
+export function encodeTerminalResizeFrame(cols: number, rows: number): Uint8Array {
+  return buildTerminalFrame(
+    TERMINAL_FRAME_RESIZE,
+    terminalTextEncoder.encode(JSON.stringify({ cols: Math.max(0, Math.floor(cols)), rows: Math.max(0, Math.floor(rows)) })),
+  );
+}
+
+export function decodeTerminalJsonFrame<T = Record<string, unknown>>(payload: Uint8Array): T | null {
+  try {
+    return JSON.parse(terminalTextDecoder.decode(payload)) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function parseTerminalBinaryFrame(data: ArrayBuffer): TerminalBinaryFrame | null {
+  const bytes = new Uint8Array(data);
+  if (bytes.length <= 0) return null;
+  const payload = bytes.slice(1);
+  switch (bytes[0]) {
+    case TERMINAL_FRAME_INPUT:
+      return { type: "input", payload };
+    case TERMINAL_FRAME_OUTPUT:
+      return { type: "output", payload };
+    case TERMINAL_FRAME_RESIZE:
+      return { type: "resize", payload };
+    case TERMINAL_FRAME_ATTACH:
+      return { type: "attach", payload };
+    case TERMINAL_FRAME_INPUT_ACK:
+      return { type: "input_ack", payload };
+    default:
+      return null;
+  }
 }
 
 export function createTerminalAttachCursorResolver(readCursor: () => Promise<number | null>): {

@@ -46,6 +46,7 @@ def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
 @dataclass
 class _PtyClient:
     sock: socket.socket
+    control: bool
     writer: bool
     outbuf: bytearray
 
@@ -329,15 +330,62 @@ class PtySession:
         except Exception:
             pass
 
-    def attach_client(self, sock: socket.socket, *, since: Optional[int] = None) -> None:
+    def attach_client(
+        self,
+        sock: socket.socket,
+        *,
+        since: Optional[int] = None,
+        mode: str = "control",
+        takeover: bool = False,
+    ) -> Dict[str, object]:
+        requested_mode = str(mode or "control").strip().lower()
+        control = requested_mode != "viewer"
+        fileno = int(sock.fileno())
+        writable = False
+        writer_replaced = False
+        previous_writer_fd: Optional[int] = None
+        with self._lock:
+            if control and fileno >= 0:
+                previous_writer_fd = self._writer_fd
+                if self._writer_fd is None or self._writer_fd == fileno:
+                    self._writer_fd = fileno
+                    writable = True
+                elif takeover:
+                    old_writer = self._clients.get(self._writer_fd)
+                    if old_writer is not None:
+                        old_writer.writer = False
+                    self._writer_fd = fileno
+                    writable = True
+                    writer_replaced = True
         try:
-            self._attach_q.put_nowait((sock, since))
+            self._attach_q.put_nowait((sock, since, control))
         except Exception:
-            return
+            with self._lock:
+                if self._writer_fd == fileno:
+                    self._writer_fd = previous_writer_fd
+                    if previous_writer_fd is not None:
+                        previous_writer = self._clients.get(previous_writer_fd)
+                        if previous_writer is not None:
+                            previous_writer.writer = True
+            return {
+                "mode": "control" if control else "viewer",
+                "writable": False,
+                "writer_replaced": False,
+                "attached_clients": self.client_count(),
+                "error": "attach_queue_failed",
+            }
         try:
             os.write(self._cmd_w, b"x")
         except Exception:
             pass
+        with self._lock:
+            attached_clients = len(self._clients)
+        return {
+            "mode": "control" if control else "viewer",
+            "writable": writable,
+            "writer_replaced": writer_replaced,
+            "attached_clients": attached_clients,
+        }
 
     def detach_client(self, fileno: int) -> None:
         with self._lock:
@@ -362,6 +410,8 @@ class PtySession:
             if self._writer_fd is not None:
                 return
             for fd, c in self._clients.items():
+                if not c.control:
+                    continue
                 self._writer_fd = fd
                 c.writer = True
                 try:
@@ -544,12 +594,14 @@ class PtySession:
             except queue.Empty:
                 return
             if isinstance(item, tuple):
-                sock, since = item
+                sock = item[0]
+                since = item[1] if len(item) > 1 else None
+                control = bool(item[2]) if len(item) > 2 else True
             else:
-                sock, since = item, None
-            self._attach_client_now(sock, since=since)
+                sock, since, control = item, None, True
+            self._attach_client_now(sock, since=since, control=control)
 
-    def _attach_client_now(self, sock: socket.socket, *, since: Optional[int] = None) -> None:
+    def _attach_client_now(self, sock: socket.socket, *, since: Optional[int] = None, control: bool = True) -> None:
         fileno = int(sock.fileno())
         if fileno < 0:
             try:
@@ -565,7 +617,7 @@ class PtySession:
         with self._lock:
             if fileno in self._clients:
                 return
-            writer = self._writer_fd is None
+            writer = bool(control and (self._writer_fd is None or self._writer_fd == fileno))
             if writer:
                 self._writer_fd = fileno
             data = b"".join(self._backlog) if self._backlog else b""
@@ -585,7 +637,7 @@ class PtySession:
                 else:
                     backlog = data[max(0, cursor - start):]
             outbuf = bytearray(backlog)
-            client = _PtyClient(sock=sock, writer=writer, outbuf=outbuf)
+            client = _PtyClient(sock=sock, control=bool(control), writer=writer, outbuf=outbuf)
             self._clients[fileno] = client
 
         # Always register READ so the socket stays attached and disconnects can be observed.
@@ -675,6 +727,10 @@ class PtySession:
                     self._on_exit(self)
                 except Exception:
                     pass
+
+    def client_count(self) -> int:
+        with self._lock:
+            return len(self._clients)
 
 
 class PtySupervisor:
@@ -833,13 +889,22 @@ class PtySupervisor:
             except Exception:
                 pass
 
-    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket, since: Optional[int] = None) -> None:
+    def attach(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        sock: socket.socket,
+        since: Optional[int] = None,
+        mode: str = "control",
+        takeover: bool = False,
+    ) -> Dict[str, object]:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             s = self._sessions.get(key)
         if s is None or not s.is_running():
             raise RuntimeError("actor not running")
-        s.attach_client(sock, since=since)
+        return s.attach_client(sock, since=since, mode=mode, takeover=takeover)
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())

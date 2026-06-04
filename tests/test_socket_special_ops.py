@@ -92,6 +92,79 @@ class TestSocketSpecialOps(unittest.TestCase):
         self.assertTrue(handled)
         self.assertEqual(attached, [("g1", "a1", 42)])
 
+    def test_term_attach_forwards_control_takeover_and_reports_writable(self) -> None:
+        req = DaemonRequest.model_validate(
+            {
+                "op": "term_attach",
+                "args": {
+                    "group_id": "g1",
+                    "actor_id": "a1",
+                    "since": 42,
+                    "mode": "control",
+                    "takeover": True,
+                },
+            }
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+        attached = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            attach_actor_socket=lambda gid, aid, _sock, since=None, mode="control", takeover=False: (
+                attached.append((gid, aid, since, mode, takeover))
+            ),
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(attached, [("g1", "a1", 42, "control", True)])
+        self.assertTrue(sent and bool(sent[0].get("ok")))
+        result = sent[0].get("result") or {}
+        self.assertEqual(result.get("terminal_mode"), "control")
+        self.assertTrue(result.get("terminal_writable"))
+        self.assertTrue(result.get("writer_replaced"))
+
+    def test_term_attach_viewer_reports_read_only(self) -> None:
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1", "mode": "viewer", "takeover": True}}
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+        attached = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            attach_actor_socket=lambda gid, aid, _sock, since=None, mode="control", takeover=False: (
+                attached.append((gid, aid, since, mode, takeover))
+            ),
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(attached, [("g1", "a1", None, "viewer", False)])
+        result = sent[0].get("result") or {}
+        self.assertEqual(result.get("terminal_mode"), "viewer")
+        self.assertFalse(result.get("terminal_writable"))
+
     def test_events_stream_invalid_kinds_returns_error(self) -> None:
         req = DaemonRequest.model_validate(
             {"op": "events_stream", "args": {"group_id": "g1", "kinds": ["unknown.kind"]}}

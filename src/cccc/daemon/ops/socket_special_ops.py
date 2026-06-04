@@ -40,7 +40,7 @@ def try_handle_socket_special_op(
     dump_response: Callable[[DaemonResponse], Dict[str, Any]],
     error: Callable[[str, str, Optional[Dict[str, Any]]], DaemonResponse],
     actor_running: Callable[[str, str], bool],
-    attach_actor_socket: Callable[[str, str, Any, Optional[int]], None],
+    attach_actor_socket: Callable[..., Any],
     load_group: Callable[[str], Any],
     find_actor: Callable[[Any, str], Any],
     effective_runner_kind: Callable[[str], str],
@@ -54,6 +54,10 @@ def try_handle_socket_special_op(
         group_id = str(args.get("group_id") or "").strip()
         actor_id = str(args.get("actor_id") or "").strip()
         since_raw = args.get("since")
+        mode = str(args.get("mode") or "control").strip().lower()
+        if mode not in {"control", "viewer"}:
+            mode = "control"
+        takeover = bool(args.get("takeover")) if mode == "control" else False
         since: Optional[int] = None
         if since_raw is not None and str(since_raw).strip() != "":
             try:
@@ -89,10 +93,24 @@ def try_handle_socket_special_op(
                     else:
                         resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
         try:
+            if resp.ok:
+                base_result = resp.result if isinstance(resp.result, dict) else {}
+                resp = DaemonResponse(
+                    ok=True,
+                    result={
+                        **base_result,
+                        "terminal_mode": mode,
+                        "terminal_writable": mode == "control",
+                        "writer_replaced": bool(takeover),
+                    },
+                )
             send_json(conn, dump_response(resp))
             if resp.ok:
                 _set_blocking_io(conn)
-                attach_actor_socket(group_id, actor_id, conn, since)
+                try:
+                    attach_actor_socket(group_id, actor_id, conn, since, mode, takeover)
+                except TypeError:
+                    attach_actor_socket(group_id, actor_id, conn, since)
                 return True
         except Exception:
             pass

@@ -68,8 +68,19 @@ class PtySupervisor:
     def stop_all(self) -> None:
         return None
 
-    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket, since: Optional[int] = None) -> None:
+    def attach(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        sock: socket.socket,
+        since: Optional[int] = None,
+        mode: str = "control",
+        takeover: bool = False,
+    ) -> dict[str, object]:
         _ = since
+        _ = mode
+        _ = takeover
         raise RuntimeError(pty_support_error_message() or "PTY runner is not supported in this environment.")
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
