@@ -392,79 +392,6 @@ def handle_terminal_history(
         return _error("terminal_history_failed", str(e))
 
 
-def handle_terminal_snapshot(
-    args: Dict[str, Any],
-    *,
-    can_read_terminal_transcript: Callable[[Any, str, str], bool],
-    pty_backlog_bytes: Callable[[], int],
-) -> DaemonResponse:
-    group_id = str(args.get("group_id") or "").strip()
-    actor_id = str(args.get("actor_id") or "").strip()
-    by = str(args.get("by") or "user").strip()
-    limit_bytes = _safe_int(args.get("limit_bytes")) or 160_000
-    if limit_bytes <= 0:
-        limit_bytes = 160_000
-    if limit_bytes > 500_000:
-        limit_bytes = 500_000
-    if not group_id:
-        return _error("missing_group_id", "missing group_id")
-    if not actor_id:
-        return _error("missing_actor_id", "missing actor_id")
-    group = load_group(group_id)
-    if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
-    if not can_read_terminal_transcript(group, by, actor_id):
-        tt = get_terminal_transcript_settings(group.doc)
-        role = get_effective_role(group, by) if by and by != "user" else ""
-        return _error(
-            "permission_denied",
-            "terminal transcript is restricted by group settings",
-            details={
-                "visibility": str(tt.get("visibility") or "foreman"),
-                "by": by,
-                "by_role": role,
-                "target_actor_id": actor_id,
-                "how_to_enable": "Ask user/foreman to change Settings → Transcript → Visibility.",
-            },
-        )
-    actor = find_actor(group, actor_id)
-    if not isinstance(actor, dict):
-        return _error("actor_not_found", f"actor not found: {actor_id}")
-    runner_kind = str(actor.get("runner") or "pty").strip()
-    if runner_kind != "pty":
-        return _error("not_pty_actor", "terminal snapshot is only available for PTY actors", details={"runner": runner_kind})
-    if not pty_runner.SUPERVISOR.actor_running(group_id, actor_id):
-        return _error("actor_not_running", "actor is not running (no live snapshot available)")
-    try:
-        page = pty_runner.SUPERVISOR.history_page(
-            group_id=group_id,
-            actor_id=actor_id,
-            before=None,
-            limit_bytes=min(limit_bytes, pty_backlog_bytes()),
-        )
-        raw = page.get("data") if isinstance(page, dict) else b""
-        if not isinstance(raw, bytes):
-            raw = bytes(str(raw or ""), encoding="utf-8", errors="replace")
-        raw_text = raw.decode("utf-8", errors="replace")
-        text = render_transcript(raw_text, compact=False)
-        text = strip_codex_working_status_lines(text, runtime=str(actor.get("runtime") or ""))
-        return DaemonResponse(
-            ok=True,
-            result={
-                "group_id": group_id,
-                "actor_id": actor_id,
-                "warning": "Terminal snapshot is a rendered screen approximation; raw history remains available for diagnostics.",
-                "hint": "",
-                "text": text,
-                "start_cursor": _safe_int(page.get("start_cursor") if isinstance(page, dict) else 0),
-                "end_cursor": _safe_int(page.get("end_cursor") if isinstance(page, dict) else 0),
-                "cursor_expired": bool(page.get("cursor_expired") if isinstance(page, dict) else False),
-            },
-        )
-    except Exception as e:
-        return _error("terminal_snapshot_failed", str(e))
-
-
 def handle_terminal_clear(
     args: Dict[str, Any],
     *,
@@ -610,12 +537,6 @@ def try_handle_diagnostics_op(
         )
     if op == "terminal_history":
         return handle_terminal_history(
-            args,
-            can_read_terminal_transcript=can_read_terminal_transcript,
-            pty_backlog_bytes=pty_backlog_bytes,
-        )
-    if op == "terminal_snapshot":
-        return handle_terminal_snapshot(
             args,
             can_read_terminal_transcript=can_read_terminal_transcript,
             pty_backlog_bytes=pty_backlog_bytes,

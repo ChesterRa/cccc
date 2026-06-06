@@ -2,13 +2,12 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Terminal } from "@xterm/xterm";
 
-import { fetchTerminalSnapshot, fetchTerminalTail, withAuthToken } from "../../services/api";
+import { fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
 import {
   buildTerminalWebSocketUrl,
   buildTerminalConnectionKey,
-  createTerminalAttachCursorResolver,
   decodeTerminalJsonFrame,
   encodeTerminalInputFrame,
   encodeTerminalResizeFrame,
@@ -25,7 +24,6 @@ const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const STARTUP_RACE_RECONNECT_DELAY_MS = 750;
-const TERMINAL_ATTACH_HISTORY_LIMIT_BYTES = 160_000;
 
 export function useAgentTerminalConnection(args: {
   activated: boolean;
@@ -38,6 +36,7 @@ export function useAgentTerminalConnection(args: {
   termEpoch: number;
   reconnectTrigger: number;
   terminalRef: RefObject<Terminal | null>;
+  fitBeforeAttach?: () => void;
   onStatusChange?: () => void;
   setTerminalSignal: (groupId: string, actorId: string, signal: TerminalSignal) => void;
   clearTerminalSignal: (groupId: string, actorId: string) => void;
@@ -54,6 +53,7 @@ export function useAgentTerminalConnection(args: {
     termEpoch,
     reconnectTrigger,
     terminalRef,
+    fitBeforeAttach,
     onStatusChange,
     setTerminalSignal,
     clearTerminalSignal,
@@ -71,7 +71,6 @@ export function useAgentTerminalConnection(args: {
   const terminalSignalBufferRef = useRef("");
   const terminalAttachNoRetryRef = useRef(false);
   const terminalAttachStartupRaceRef = useRef(false);
-  const terminalSnapshotPreloadedRef = useRef(false);
   const lastTermEpochRef = useRef(termEpoch);
 
   const isRunningRef = useRef(isRunning);
@@ -93,20 +92,16 @@ export function useAgentTerminalConnection(args: {
       terminalAttachStartupRaceRef.current = false;
     }
     if (!isRunning || isHeadless || !canControl) {
-      setTerminalWritable(false);
+      const timer = window.setTimeout(() => setTerminalWritable(false), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [actorRuntime, canControl, clearTerminalSignal, isHeadless, isRunning, onStatusChange, setTerminalSignal]);
 
   useEffect(() => {
     if (isRunning && !isHeadless) return;
     terminalSignalBufferRef.current = "";
-    terminalSnapshotPreloadedRef.current = false;
     clearTerminalSignalRef.current(groupId, actorId);
   }, [actorId, groupId, isHeadless, isRunning]);
-
-  useEffect(() => {
-    terminalSnapshotPreloadedRef.current = false;
-  }, [actorId, groupId, termEpoch]);
 
   const requestReconnect = useCallback(() => {
     reconnectAttemptRef.current = 0;
@@ -145,34 +140,32 @@ export function useAgentTerminalConnection(args: {
     let disposed = false;
     let disposable: { dispose: () => void } | null = null;
     let resizeDisposable: { dispose: () => void } | null = null;
+    // Absolute offset (in raw PTY bytes) of everything delivered so far this
+    // mount. null until the first attach. The first attach replays the full
+    // backlog (current screen); transient reconnects resume from this exact
+    // cursor so output produced while disconnected is delivered, not skipped,
+    // and the whole ring isn't re-streamed/re-cleared on every blip.
+    let deliveredCursor: number | null = null;
 
-    const writeAttachSnapshot = async (text: string): Promise<void> => {
-      if (terminalSnapshotPreloadedRef.current || disposed) return;
-      const term = terminalRef.current;
-      if (!term) return;
-      terminalSnapshotPreloadedRef.current = true;
-      await new Promise<void>((resolve) => {
+    // Seed the delivered-byte cursor from the daemon's attach frame. If the daemon
+    // replayed from earlier than we asked (our cursor fell out of the ring buffer),
+    // reset so the replay rebuilds the screen cleanly instead of appending onto
+    // stale content.
+    const seedCursorFromAttach = (
+      result: Record<string, unknown>,
+      current: number | null,
+    ): number | null => {
+      const rc = Number(result?.replay_cursor);
+      if (!Number.isFinite(rc)) return current;
+      if (current !== null && rc > current) {
         try {
-          term.clear();
-          term.write(text ? `\x1b[H${text}` : "", resolve);
+          terminalRef.current?.reset();
         } catch {
-          resolve();
+          // ignore
         }
-      });
-    };
-
-    const readAttachCursor = async (): Promise<number | null> => {
-      try {
-        const resp = await fetchTerminalSnapshot(groupId, actorId, TERMINAL_ATTACH_HISTORY_LIMIT_BYTES);
-        if (!resp.ok) return null;
-        await writeAttachSnapshot(String(resp.result?.text || ""));
-        const cursor = Number(resp.result?.end_cursor);
-        return Number.isFinite(cursor) ? cursor : null;
-      } catch {
-        return null;
       }
+      return rc;
     };
-    const attachCursorResolver = createTerminalAttachCursorResolver(readAttachCursor);
 
     const connect = () => {
       if (disposed) return;
@@ -197,14 +190,20 @@ export function useAgentTerminalConnection(args: {
 
       setConnectionStatus("connecting");
 
-      const openWebSocket = (since: number | null) => {
+      const openWebSocket = (isFirstAttach: boolean) => {
         if (disposed) return;
+        // First attach (since=null): full backlog replay so xterm — a real
+        // terminal emulator — reconstructs the current screen (wide chars, SGR,
+        // alt-screen). We let xterm own all emulation instead of pre-rendering a
+        // lossy snapshot. Reconnect (since=deliveredCursor): the daemon sends
+        // exactly the bytes produced since we left off, so nothing is skipped and
+        // the whole ring isn't re-streamed.
         const wsUrl = buildTerminalWebSocketUrl({
           protocol: window.location.protocol,
           host: window.location.host,
           groupId,
           actorId,
-          since,
+          since: isFirstAttach ? null : deliveredCursor,
           mode: canControlRef.current ? "control" : "viewer",
           takeover: canControlRef.current,
         });
@@ -223,6 +222,17 @@ export function useAgentTerminalConnection(args: {
           reconnectAttemptRef.current = 0;
           outputFilterTailRef.current = "";
           terminalSignalBufferRef.current = "";
+          // Reset only on the first (full-backlog) attach so the replay rebuilds
+          // the exact current screen with no duplicated scrollback. Reconnects are
+          // tail-only and must NOT reset — that would clear the user's screen and
+          // scroll position on every transient websocket blip.
+          if (isFirstAttach) {
+            try {
+              terminalRef.current?.reset();
+            } catch {
+              // ignore
+            }
+          }
 
           if (terminalReadyTimeoutRef.current) {
             clearTimeout(terminalReadyTimeoutRef.current);
@@ -298,15 +308,21 @@ export function useAgentTerminalConnection(args: {
           if (event.data instanceof ArrayBuffer) {
             const frame = parseTerminalBinaryFrame(event.data);
             if (!frame) {
+              if (deliveredCursor !== null) deliveredCursor += event.data.byteLength;
               handleDecoded(new TextDecoder().decode(event.data));
               return;
             }
             if (frame.type === "output") {
+              // Advance the delivered-byte cursor by the raw PTY bytes received
+              // (matches the daemon's offset accounting) so reconnects can resume
+              // from exactly here.
+              if (deliveredCursor !== null) deliveredCursor += frame.payload.byteLength;
               handleDecoded(new TextDecoder().decode(frame.payload));
               return;
             }
             if (frame.type === "attach") {
               const result = decodeTerminalJsonFrame<Record<string, unknown>>(frame.payload) || {};
+              deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
               const writable = Boolean(result.terminal_writable);
               setTerminalWritable(writable);
               if (canControlRef.current && !writable) {
@@ -323,12 +339,16 @@ export function useAgentTerminalConnection(args: {
               return;
             }
           } else if (event.data instanceof Blob) {
-            void event.data.arrayBuffer().then((buf) => handleDecoded(new TextDecoder().decode(buf)));
+            void event.data.arrayBuffer().then((buf) => {
+              if (deliveredCursor !== null) deliveredCursor += buf.byteLength;
+              handleDecoded(new TextDecoder().decode(buf));
+            });
           } else if (typeof event.data === "string") {
             try {
               const msg = JSON.parse(event.data);
               if (msg.type === "terminal.attach" && msg.ok === true) {
                 const result = msg.result && typeof msg.result === "object" ? msg.result : {};
+                deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
                 const writable = Boolean(result.terminal_writable);
                 setTerminalWritable(writable);
                 if (canControlRef.current && !writable) {
@@ -355,6 +375,7 @@ export function useAgentTerminalConnection(args: {
                 onStatusChangeRef.current?.();
               }
             } catch {
+              if (deliveredCursor !== null) deliveredCursor += new TextEncoder().encode(event.data).length;
               handleDecoded(event.data);
             }
           }
@@ -425,7 +446,13 @@ export function useAgentTerminalConnection(args: {
         }
       };
 
-      void attachCursorResolver.resolve().then(openWebSocket);
+      // Fit once so the initial resize frame (sent on open) matches the visible
+      // size; xterm renders the replayed backlog correctly regardless, and the
+      // resize SIGWINCH prompts the runtime to repaint at the right dimensions.
+      fitBeforeAttach?.();
+      // First attach (no delivered cursor yet) replays the full backlog; later
+      // reconnects resume from the cursor we've tracked.
+      openWebSocket(deliveredCursor === null);
     };
 
     connect();
@@ -459,6 +486,7 @@ export function useAgentTerminalConnection(args: {
     groupId,
     isHeadless,
     isRunning,
+    fitBeforeAttach,
     terminalConnectionKey,
     terminalRef,
   ]);

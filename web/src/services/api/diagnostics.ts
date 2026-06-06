@@ -51,14 +51,6 @@ export interface TerminalHistoryPage {
   cursor_expired: boolean;
 }
 
-export interface TerminalSnapshot {
-  text: string;
-  hint: string;
-  start_cursor: number;
-  end_cursor: number;
-  cursor_expired: boolean;
-}
-
 export async function fetchTerminalHistory(
   groupId: string,
   actorId: string,
@@ -81,20 +73,6 @@ export async function fetchTerminalHistory(
   }
   return apiJson<TerminalHistoryPage>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/terminal/history?${params.toString()}`,
-  );
-}
-
-export async function fetchTerminalSnapshot(
-  groupId: string,
-  actorId: string,
-  limitBytes = 160000,
-) {
-  const params = new URLSearchParams({
-    actor_id: actorId,
-    limit_bytes: String(limitBytes || 160000),
-  });
-  return apiJson<TerminalSnapshot>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/terminal/snapshot?${params.toString()}`,
   );
 }
 

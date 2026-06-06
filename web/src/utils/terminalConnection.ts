@@ -102,23 +102,6 @@ export function parseTerminalBinaryFrame(data: ArrayBuffer): TerminalBinaryFrame
   }
 }
 
-export function createTerminalAttachCursorResolver(readCursor: () => Promise<number | null>): {
-  resolve: () => Promise<number | null>;
-} {
-  let cursorPromise: Promise<number | null> | null = null;
-
-  return {
-    resolve: () => {
-      if (!cursorPromise) {
-        cursorPromise = readCursor().finally(() => {
-          cursorPromise = null;
-        });
-      }
-      return cursorPromise;
-    },
-  };
-}
-
 export function isTerminalAttachNonRetryableErrorCode(code: unknown): boolean {
   const normalized = String(code || "").trim();
   return [

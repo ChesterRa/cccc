@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -26,6 +26,20 @@ const EMPTY_HEADLESS_RAW_EVENTS: HeadlessStreamEvent[] = [];
 const STOPPED_TAIL_FETCH_DELAY_MS = 350;
 
 const copyToClipboard = copyTextToClipboard;
+
+function fitTerminalToContainer(
+  fitAddon: FitAddon | null,
+  container: HTMLDivElement | null,
+): boolean {
+  if (!fitAddon || !container) return false;
+  if (container.clientWidth <= 50 || container.clientHeight <= 50) return false;
+  try {
+    fitAddon.fit();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function actorHasRuntimeResumeFailure(actor: Pick<Actor, "runtime_session_status">): boolean {
   return String(actor.runtime_session_status || "").trim().toLowerCase() === "resume_failed";
@@ -152,12 +166,17 @@ export function AgentTab({
   // Activate the terminal only after the user has visited this actor tab at least once.
   // Once activated, keep the PTY session connected even when the tab is hidden to avoid backlog replay and scroll jumps.
   useEffect(() => {
-    if (isVisible) setActivated(true);
+    if (!isVisible) return;
+    const timer = window.setTimeout(() => setActivated(true), 0);
+    return () => window.clearTimeout(timer);
   }, [isVisible]);
 
   useEffect(() => {
     let cancelled = false;
-    setStoppedTerminalText("");
+    let loadingTimer: number | null = null;
+    const clearTextTimer = window.setTimeout(() => {
+      if (!cancelled) setStoppedTerminalText("");
+    }, 0);
     if (
       !shouldFetchStoppedTerminalTail({
         activated,
@@ -168,13 +187,19 @@ export function AgentTab({
         isActorBusy: isBusy,
       })
     ) {
-      setStoppedTerminalLoading(false);
+      loadingTimer = window.setTimeout(() => {
+        if (!cancelled) setStoppedTerminalLoading(false);
+      }, 0);
       return () => {
         cancelled = true;
+        window.clearTimeout(clearTextTimer);
+        if (loadingTimer) window.clearTimeout(loadingTimer);
       };
     }
 
-    setStoppedTerminalLoading(true);
+    loadingTimer = window.setTimeout(() => {
+      if (!cancelled) setStoppedTerminalLoading(true);
+    }, 0);
     const timer = window.setTimeout(() => {
       fetchTerminalTail(groupId, actor.id, 8000, true, true)
         .then((resp) => {
@@ -191,6 +216,8 @@ export function AgentTab({
 
     return () => {
       cancelled = true;
+      window.clearTimeout(clearTextTimer);
+      if (loadingTimer) window.clearTimeout(loadingTimer);
       window.clearTimeout(timer);
     };
   }, [activated, actor.id, groupId, isBusy, isHeadless, isRunning, termEpoch, workingState]);
@@ -399,14 +426,22 @@ export function AgentTab({
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Initial fit — use requestAnimationFrame to wait for layout completion
-    requestAnimationFrame(() => {
-      if (termRef.current && termRef.current.clientWidth > 50) {
-        fitAddon.fit();
-      }
-    });
+    // Initial fit: group/actor switches can mount the terminal before the dock
+    // has its final dimensions. Retry across a few frames so xterm does not
+    // keep a stale tiny geometry until the next manual resize.
+    let fitFrame = 0;
+    let fitAttempts = 0;
+    const scheduleInitialFit = () => {
+      fitFrame = requestAnimationFrame(() => {
+        fitAttempts += 1;
+        const fitted = fitTerminalToContainer(fitAddon, termRef.current);
+        if (!fitted && fitAttempts < 8) scheduleInitialFit();
+      });
+    };
+    scheduleInitialFit();
 
     return () => {
+      if (fitFrame) cancelAnimationFrame(fitFrame);
       term.element?.removeEventListener("contextmenu", onContextMenu);
       term.element?.removeEventListener("mousedown", onPointerDown);
       term.element?.removeEventListener("touchstart", onPointerDown);
@@ -414,8 +449,11 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled in a dedicated effect; avoid re-creating the terminal.
-  }, [isHeadless, isRunning, activated]);
+  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl, isDark, terminalScrollbackLines]);
+
+  const fitTerminalBeforeAttach = useCallback(() => {
+    fitTerminalToContainer(fitAddonRef.current, termRef.current);
+  }, []);
 
   const {
     connectionStatus,
@@ -434,6 +472,7 @@ export function AgentTab({
     termEpoch,
     reconnectTrigger,
     terminalRef,
+    fitBeforeAttach: fitTerminalBeforeAttach,
     onStatusChange,
     setTerminalSignal,
     clearTerminalSignal,
@@ -447,9 +486,7 @@ export function AgentTab({
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const fit = () => {
-      if (fitAddonRef.current && termRef.current && termRef.current.clientWidth > 0) {
-        fitAddonRef.current.fit();
-      }
+      fitTerminalToContainer(fitAddonRef.current, termRef.current);
     };
 
     // Debounced fit to prevent jitter during rapid resize events
@@ -458,8 +495,13 @@ export function AgentTab({
       resizeTimeout = setTimeout(fit, 100);
     };
 
-    // Fit when becoming visible
-    setTimeout(fit, 50);
+    // Fit when becoming visible. Multiple frames cover group switches where the
+    // inspector is visible before its flex container has settled.
+    const initialTimers = [
+      window.setTimeout(fit, 0),
+      window.setTimeout(fit, 50),
+      window.setTimeout(fit, 160),
+    ];
 
     // Fit on window resize (debounced)
     window.addEventListener("resize", debouncedFit);
@@ -476,8 +518,9 @@ export function AgentTab({
       window.removeEventListener("resize", debouncedFit);
       if (ro) ro.disconnect();
       if (resizeTimeout) clearTimeout(resizeTimeout);
+      for (const timer of initialTimers) window.clearTimeout(timer);
     };
-  }, [isVisible]);
+  }, [actor.id, groupId, isRunning, isVisible]);
 
   // UX: when the user switches to an agent tab (ops mode), focus the terminal automatically.
   // This avoids "typing into nowhere" if the chat composer was previously focused.
