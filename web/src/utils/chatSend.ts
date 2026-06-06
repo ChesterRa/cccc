@@ -1,7 +1,7 @@
 import type { Actor, LedgerEvent } from "../types";
 
 export type ChatTFunction = (key: string, options?: Record<string, unknown>) => string;
-export type GroupSendBlockedReason = "paused" | "stopped";
+export type GroupSendBlockedReason = "paused";
 
 export function supportsChatStreamingPlaceholder(actor: Pick<Actor, "runtime" | "runner" | "runner_effective">): boolean {
   const runtime = String(actor.runtime || "").trim();
@@ -24,18 +24,12 @@ export function getGroupSendBlockedReason({
 }): GroupSendBlockedReason | null {
   const state = String(lifecycleState || "").trim().toLowerCase();
   if (state === "paused") return "paused";
-  if (state === "stopped") return "stopped";
   return null;
 }
 
 export function getGroupSendBlockedMessage(reason: GroupSendBlockedReason, t: ChatTFunction): string {
-  if (reason === "paused") {
-    return t("sendBlockedGroupPaused", {
-      defaultValue: "This group is paused. Resume the group before sending a message to agents.",
-    });
-  }
-  return t("sendBlockedGroupStopped", {
-    defaultValue: "This group is not running. Start the group before sending a message to agents.",
+  return t("sendBlockedGroupPaused", {
+    defaultValue: "This group is paused. Resume the group before sending a message to agents.",
   });
 }
 
