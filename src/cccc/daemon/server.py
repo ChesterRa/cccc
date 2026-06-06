@@ -1179,6 +1179,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                         mode=mode,
                         takeover=takeover,
                     ),
+                    backlog_start_offset=lambda group_id, actor_id: pty_runner.SUPERVISOR.backlog_start_offset(
+                        group_id=group_id,
+                        actor_id=actor_id,
+                    ),
                     load_group=load_group,
                     find_actor=find_actor,
                     effective_runner_kind=_effective_runner_kind,

@@ -250,6 +250,15 @@ class PtySession:
             "cursor_expired": False,
         }
 
+    def backlog_start_offset(self) -> int:
+        """Absolute offset of the oldest byte still in the backlog ring.
+
+        Reported to the client on attach so it can seed its delivered-byte cursor
+        and resume from the exact gap on reconnect (no replay, no data loss).
+        """
+        with self._lock:
+            return int(getattr(self, "_backlog_start_offset", 0) or 0)
+
     def history_since(self, since: Optional[int]) -> bytes:
         data, start, end = self._backlog_snapshot()
         if since is None:
@@ -810,6 +819,20 @@ class PtySupervisor:
             return s.history_page(before=before, limit_bytes=int(limit_bytes or 0))
         except Exception:
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+
+    def backlog_start_offset(self, *, group_id: str, actor_id: str) -> int:
+        """Oldest retained backlog offset for an actor (0 if unknown)."""
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return 0
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None:
+            return 0
+        try:
+            return s.backlog_start_offset()
+        except Exception:
+            return 0
 
     def clear_backlog(self, *, group_id: str, actor_id: str) -> bool:
         """Clear an actor's PTY backlog (returns False if actor not running)."""

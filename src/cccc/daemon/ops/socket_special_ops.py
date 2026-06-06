@@ -41,6 +41,7 @@ def try_handle_socket_special_op(
     error: Callable[[str, str, Optional[Dict[str, Any]]], DaemonResponse],
     actor_running: Callable[[str, str], bool],
     attach_actor_socket: Callable[..., Any],
+    backlog_start_offset: Callable[[str, str], int],
     load_group: Callable[[str], Any],
     find_actor: Callable[[Any, str], Any],
     effective_runner_kind: Callable[[str], str],
@@ -95,6 +96,16 @@ def try_handle_socket_special_op(
         try:
             if resp.ok:
                 base_result = resp.result if isinstance(resp.result, dict) else {}
+                # Absolute offset of the first byte the client is about to receive.
+                # The client seeds its delivered-byte cursor from this and resumes
+                # from the exact gap on reconnect (no replay, no data loss). Using
+                # the ring start as a lower bound makes a stale cursor re-send a few
+                # duplicate bytes (safe) rather than skip output (loss).
+                try:
+                    start_offset = int(backlog_start_offset(group_id, actor_id))
+                except Exception:
+                    start_offset = 0
+                replay_cursor = max(int(since) if since is not None else 0, start_offset)
                 resp = DaemonResponse(
                     ok=True,
                     result={
@@ -102,6 +113,7 @@ def try_handle_socket_special_op(
                         "terminal_mode": mode,
                         "terminal_writable": mode == "control",
                         "writer_replaced": bool(takeover),
+                        "replay_cursor": replay_cursor,
                     },
                 )
             send_json(conn, dump_response(resp))

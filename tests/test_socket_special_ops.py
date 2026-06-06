@@ -29,6 +29,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: False,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: None,
             find_actor=lambda _group, _by: None,
@@ -54,6 +55,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid)),
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
@@ -81,6 +83,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid, since)),
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
@@ -91,6 +94,96 @@ class TestSocketSpecialOps(unittest.TestCase):
 
         self.assertTrue(handled)
         self.assertEqual(attached, [("g1", "a1", 42)])
+
+    def test_term_attach_reports_replay_cursor_at_ring_start_for_full_attach(self) -> None:
+        # First attach (no since): the client seeds its delivered-byte cursor from
+        # replay_cursor, which must be the ring start so it can later resume the gap.
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1"}}
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+        attached = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 100,
+            attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid, since)),
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(attached, [("g1", "a1", None)])
+        self.assertEqual((sent[0].get("result") or {}).get("replay_cursor"), 100)
+
+    def test_term_attach_replay_cursor_honors_in_ring_since(self) -> None:
+        # Reconnect with a cursor still inside the ring: replay_cursor == since, so
+        # the client keeps counting from where it left off (exact gap resume).
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1", "since": 42}}
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+        attached = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 10,
+            attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid, since)),
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(attached, [("g1", "a1", 42)])
+        self.assertEqual((sent[0].get("result") or {}).get("replay_cursor"), 42)
+
+    def test_term_attach_replay_cursor_clamps_to_ring_start_when_cursor_expired(self) -> None:
+        # Reconnect with a cursor that fell out of the ring: replay_cursor clamps up
+        # to the ring start, signalling the client to reset (data was dropped).
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1", "since": 5}}
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+        attached = []
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 100,
+            attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid, since)),
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(attached, [("g1", "a1", 5)])
+        self.assertEqual((sent[0].get("result") or {}).get("replay_cursor"), 100)
 
     def test_term_attach_forwards_control_takeover_and_reports_writable(self) -> None:
         req = DaemonRequest.model_validate(
@@ -116,6 +209,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda gid, aid, _sock, since=None, mode="control", takeover=False: (
                 attached.append((gid, aid, since, mode, takeover))
             ),
@@ -149,6 +243,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda gid, aid, _sock, since=None, mode="control", takeover=False: (
                 attached.append((gid, aid, since, mode, takeover))
             ),
@@ -179,6 +274,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: False,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _by: {"id": "x"},
@@ -208,6 +304,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: False,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _by: {"id": "x"},
@@ -236,6 +333,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             dump_response=lambda resp: resp.model_dump(),
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: False,
+            backlog_start_offset=lambda _gid, _aid: 0,
             attach_actor_socket=lambda _gid, _aid, _sock: None,
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _aid: {"id": "a1", "runner": "headless"},
