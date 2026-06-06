@@ -54,14 +54,14 @@ const ACCENT_BORDER_CLASSES: Record<string, string> = {
 };
 
 const TASK_REF_STATE_TONE_CLASS: Record<TaskRefStateKey, string> = {
-    planned: "border-slate-300/70 bg-slate-100/90 text-slate-700 dark:border-white/10 dark:bg-white/[0.08] dark:text-slate-300",
-    active: "border-emerald-300/70 bg-emerald-100/90 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/12 dark:text-emerald-300",
-    handoff: "border-sky-300/70 bg-sky-100/90 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/12 dark:text-sky-300",
-    waiting_user: "border-amber-300/70 bg-amber-100/90 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/12 dark:text-amber-300",
-    blocked: "border-rose-300/70 bg-rose-100/90 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/12 dark:text-rose-300",
-    done: "border-emerald-300/60 bg-emerald-50/95 text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300",
-    archived: "border-slate-300/70 bg-slate-100/90 text-slate-600 dark:border-white/10 dark:bg-white/[0.07] dark:text-slate-400",
-    linked: "border-slate-300/70 bg-slate-100/90 text-slate-700 dark:border-white/10 dark:bg-white/[0.08] dark:text-slate-300",
+    planned: "border-slate-300/70 bg-slate-100/90 text-slate-800 dark:border-slate-300/30 dark:bg-slate-950/80 dark:text-slate-100",
+    active: "border-emerald-300/70 bg-emerald-100/90 text-emerald-800 dark:border-emerald-300/35 dark:bg-emerald-950/80 dark:text-emerald-100",
+    handoff: "border-sky-300/70 bg-sky-100/90 text-sky-800 dark:border-sky-300/35 dark:bg-sky-950/80 dark:text-sky-100",
+    waiting_user: "border-amber-300/70 bg-amber-100/90 text-amber-800 dark:border-amber-300/35 dark:bg-amber-950/80 dark:text-amber-100",
+    blocked: "border-rose-300/70 bg-rose-100/90 text-rose-800 dark:border-rose-300/35 dark:bg-rose-950/80 dark:text-rose-100",
+    done: "border-emerald-300/60 bg-emerald-50/95 text-emerald-800 dark:border-emerald-300/30 dark:bg-emerald-950/75 dark:text-emerald-100",
+    archived: "border-slate-300/70 bg-slate-100/90 text-slate-700 dark:border-slate-300/25 dark:bg-slate-950/75 dark:text-slate-200",
+    linked: "border-slate-300/70 bg-slate-100/90 text-slate-800 dark:border-slate-300/30 dark:bg-slate-950/80 dark:text-slate-100",
 };
 
 const TASK_REF_STATE_DOT_CLASS: Record<TaskRefStateKey, string> = {
