@@ -34,6 +34,7 @@ import {
   parseComposerRecipientTokens,
   restoreFailedSendComposerState,
   sortChatMessages,
+  shouldLockChatToBottomForSend,
   shouldRestoreDetachedScrollSnapshot,
 } from "../../src/hooks/useChatTab";
 import {
@@ -341,7 +342,7 @@ describe("isFormalChatMessageEvent", () => {
 });
 
 describe("group send blocked state", () => {
-  it("blocks paused and stopped groups before optimistic send feedback", () => {
+  it("blocks only explicit paused and stopped lifecycle states before optimistic send feedback", () => {
     expect(getGroupSendBlockedReason({
       lifecycleState: "paused",
       runtimeRunning: true,
@@ -349,6 +350,11 @@ describe("group send blocked state", () => {
     })).toBe("paused");
     expect(getGroupSendBlockedReason({
       lifecycleState: "active",
+      runtimeRunning: false,
+      actorCount: 2,
+    })).toBeNull();
+    expect(getGroupSendBlockedReason({
+      lifecycleState: "stopped",
       runtimeRunning: false,
       actorCount: 2,
     })).toBe("stopped");
@@ -1220,6 +1226,60 @@ describe("shouldRestoreDetachedScrollSnapshot", () => {
       anchorId: "",
       updatedAt: now,
     }, now)).toBe(false);
+  });
+});
+
+describe("shouldLockChatToBottomForSend", () => {
+  it("locks to bottom only when the current chat is cleanly following", () => {
+    const now = 1_700_000_000_000;
+
+    expect(shouldLockChatToBottomForSend({
+      currentAtBottom: true,
+      showScrollButton: false,
+      chatUnreadCount: 0,
+      scrollSnapshot: null,
+      now,
+    })).toBe(true);
+
+    expect(shouldLockChatToBottomForSend({
+      currentAtBottom: false,
+      showScrollButton: false,
+      chatUnreadCount: 0,
+      scrollSnapshot: null,
+      now,
+    })).toBe(false);
+  });
+
+  it("does not force bottom while the user is browsing detached history", () => {
+    const now = 1_700_000_000_000;
+
+    expect(shouldLockChatToBottomForSend({
+      currentAtBottom: true,
+      showScrollButton: true,
+      chatUnreadCount: 0,
+      scrollSnapshot: null,
+      now,
+    })).toBe(false);
+
+    expect(shouldLockChatToBottomForSend({
+      currentAtBottom: true,
+      showScrollButton: false,
+      chatUnreadCount: 2,
+      scrollSnapshot: null,
+      now,
+    })).toBe(false);
+
+    expect(shouldLockChatToBottomForSend({
+      currentAtBottom: true,
+      showScrollButton: false,
+      chatUnreadCount: 0,
+      scrollSnapshot: {
+        mode: "detached",
+        anchorId: "evt-older",
+        updatedAt: now - 1000,
+      },
+      now,
+    })).toBe(false);
   });
 });
 

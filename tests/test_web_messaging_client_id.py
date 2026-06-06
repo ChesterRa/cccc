@@ -221,6 +221,43 @@ class TestWebMessagingClientId(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_reply_upload_returns_400_when_default_reply_recipient_is_invalid(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="reply-upload-invalid-default", topic="")
+            original = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key=str(group.doc.get("active_scope_key") or ""),
+                by="user",
+                data={"text": "original", "to": ["unknown-recipient"]},
+            )
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/reply_upload",
+                    data={
+                        "by": "user",
+                        "text": "upload reply",
+                        "reply_to": str(original.get("id") or ""),
+                    },
+                    files={"files": ("reply.txt", BytesIO(b"reply"), "text/plain")},
+                )
+
+                self.assertEqual(resp.status_code, 400)
+                error = resp.json().get("error") or {}
+                self.assertEqual(error.get("code"), "invalid_recipient")
+                self.assertIn("unknown recipient", str(error.get("message") or ""))
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

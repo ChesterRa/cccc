@@ -306,7 +306,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
 
         if not canonical_to and not to_list:
-            canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
+            try:
+                canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
+            except Exception as e:
+                raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
 
         # Note: enabled-recipient validation + auto-wake is handled by the daemon.
 

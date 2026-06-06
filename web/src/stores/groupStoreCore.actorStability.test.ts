@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Actor } from "../types";
 import {
+  deriveRuntimeStatusFromActors,
   mergeActorUnreadCounts,
   reuseEqualActors,
 } from "./groupStoreCore";
@@ -54,5 +55,20 @@ describe("actor refresh stability", () => {
     ];
 
     expect(mergeActorUnreadCounts(readonlyRefresh, previous)).toBe(previous);
+  });
+
+  it("keeps fallback lifecycle when actors refresh has no running actors", () => {
+    const actors: Actor[] = [
+      {
+        id: "claude-1",
+        role: "foreman",
+        runtime: "codex",
+        runner: "pty",
+        running: false,
+      },
+    ];
+
+    expect(deriveRuntimeStatusFromActors(actors, { lifecycle_state: "active" }).lifecycle_state).toBe("active");
+    expect(deriveRuntimeStatusFromActors(actors, { lifecycle_state: "stopped" }).lifecycle_state).toBe("stopped");
   });
 });

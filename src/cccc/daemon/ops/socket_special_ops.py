@@ -40,7 +40,8 @@ def try_handle_socket_special_op(
     dump_response: Callable[[DaemonResponse], Dict[str, Any]],
     error: Callable[[str, str, Optional[Dict[str, Any]]], DaemonResponse],
     actor_running: Callable[[str, str], bool],
-    attach_actor_socket: Callable[[str, str, Any, Optional[int]], None],
+    attach_actor_socket: Callable[..., Any],
+    backlog_start_offset: Callable[[str, str], int],
     load_group: Callable[[str], Any],
     find_actor: Callable[[Any, str], Any],
     effective_runner_kind: Callable[[str], str],
@@ -54,6 +55,10 @@ def try_handle_socket_special_op(
         group_id = str(args.get("group_id") or "").strip()
         actor_id = str(args.get("actor_id") or "").strip()
         since_raw = args.get("since")
+        mode = str(args.get("mode") or "control").strip().lower()
+        if mode not in {"control", "viewer"}:
+            mode = "control"
+        takeover = bool(args.get("takeover")) if mode == "control" else False
         since: Optional[int] = None
         if since_raw is not None and str(since_raw).strip() != "":
             try:
@@ -89,10 +94,44 @@ def try_handle_socket_special_op(
                     else:
                         resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
         try:
+            if resp.ok:
+                base_result = resp.result if isinstance(resp.result, dict) else {}
+                # Absolute offset of the first byte the client is about to receive.
+                # The client seeds its delivered-byte cursor from this and resumes
+                # from the exact gap on reconnect (no replay, no data loss).
+                #
+                # Safety invariant: the ring start offset is monotonic non-decreasing
+                # (it only advances as old bytes are evicted). This value is read
+                # slightly before _attach_client_now() takes its own backlog snapshot,
+                # so the snapshot's actual start is >= this value. The reported cursor
+                # is therefore always a LOWER BOUND on the true replay start: a stale
+                # cursor can only make the daemon re-send a few already-seen bytes
+                # (harmless duplicate), never skip unseen output (which would be data
+                # loss). The two can differ only if the ring evicts within the sub-ms
+                # attach-handoff window (a >2MB burst), and that case self-heals on the
+                # next runtime repaint.
+                try:
+                    start_offset = int(backlog_start_offset(group_id, actor_id))
+                except Exception:
+                    start_offset = 0
+                replay_cursor = max(int(since) if since is not None else 0, start_offset)
+                resp = DaemonResponse(
+                    ok=True,
+                    result={
+                        **base_result,
+                        "terminal_mode": mode,
+                        "terminal_writable": mode == "control",
+                        "writer_replaced": bool(takeover),
+                        "replay_cursor": replay_cursor,
+                    },
+                )
             send_json(conn, dump_response(resp))
             if resp.ok:
                 _set_blocking_io(conn)
-                attach_actor_socket(group_id, actor_id, conn, since)
+                try:
+                    attach_actor_socket(group_id, actor_id, conn, since, mode, takeover)
+                except TypeError:
+                    attach_actor_socket(group_id, actor_id, conn, since)
                 return True
         except Exception:
             pass

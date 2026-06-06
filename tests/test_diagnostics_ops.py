@@ -202,6 +202,7 @@ class TestDiagnosticsOps(unittest.TestCase):
         finally:
             cleanup()
 
+
     def test_terminal_tail_strips_codex_working_status_lines(self) -> None:
         from unittest.mock import patch
 

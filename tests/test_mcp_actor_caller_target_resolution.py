@@ -62,11 +62,45 @@ class TestMcpActorCallerTargetResolution(unittest.TestCase):
         self.assertEqual(args.get("by"), "foreman")
         self.assertEqual(args.get("actor_id"), "peer_new")
 
+    def test_actor_remove_uses_env_actor_as_caller(self) -> None:
+        from cccc.ports.mcp import common as mcp_common
+        from cccc.ports.mcp.common import runtime_context_override
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_call_daemon(req):
+            captured["req"] = req
+            return {"ok": True, "result": {"ok": True}}
+
+        with runtime_context_override(group_id="g_test", actor_id="foreman"):
+            with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+                out = mcp_server.handle_tool_call(
+                    "cccc_actor",
+                    {
+                        "action": "remove",
+                        "actor_id": "peer_old",
+                    },
+                )
+
+        self.assertEqual(out.get("ok"), True)
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        self.assertEqual(req.get("op"), "actor_remove")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_test")
+        self.assertEqual(args.get("by"), "foreman")
+        self.assertEqual(args.get("actor_id"), "peer_old")
+
     def test_actor_add_requires_caller_identity(self) -> None:
+        from cccc.ports.mcp import common as mcp_common
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.common import MCPError
 
-        with patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False):
+        empty_context = mcp_common._RuntimeContext(home="", group_id="", actor_id="")
+        with patch("cccc.ports.mcp.common._runtime_context", return_value=empty_context), patch(
+            "cccc.ports.mcp.server._runtime_context",
+            return_value=empty_context,
+        ):
             with self.assertRaises(MCPError) as raised:
                 mcp_server.handle_tool_call(
                     "cccc_actor",

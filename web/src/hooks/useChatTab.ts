@@ -52,6 +52,20 @@ export function shouldRestoreDetachedScrollSnapshot(
   return now - updatedAt <= CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS;
 }
 
+export function shouldLockChatToBottomForSend(input: {
+  currentAtBottom: boolean;
+  showScrollButton: boolean;
+  chatUnreadCount: number;
+  scrollSnapshot: { mode?: unknown; anchorId?: unknown; updatedAt?: unknown } | null | undefined;
+  now?: number;
+}): boolean {
+  if (!input.currentAtBottom) return false;
+  if (input.showScrollButton) return false;
+  if (Math.max(0, Number(input.chatUnreadCount) || 0) > 0) return false;
+  if (shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot, input.now ?? Date.now())) return false;
+  return true;
+}
+
 function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
   const primaryData = primary.data && typeof primary.data === "object"
     ? primary.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
@@ -1303,7 +1317,12 @@ export function useChatTab({
     };
 
     const applyImmediateComposerFeedback = () => {
-      const shouldLockBottom = isCurrentScrollAtBottom();
+      const shouldLockBottom = shouldLockChatToBottomForSend({
+        currentAtBottom: isCurrentScrollAtBottom(),
+        showScrollButton,
+        chatUnreadCount,
+        scrollSnapshot,
+      });
       clearComposer();
       if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
@@ -1488,6 +1507,9 @@ export function useChatTab({
     fileInputRef,
     chatAtBottomRef,
     isCurrentScrollAtBottom,
+    showScrollButton,
+    chatUnreadCount,
+    scrollSnapshot,
     setChatFilter,
     setChatMobileSurface,
     setShowScrollButton,

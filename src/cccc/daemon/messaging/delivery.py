@@ -840,7 +840,7 @@ def deliver_message_with_preamble(
     out = (message_text or "").rstrip("\n")
     if out and (delivered_before + 1) % REMINDER_EVERY_N_MESSAGES == 0:
         out = append_mcp_reply_reminder(out)
-    result = pty_submit_text(group, actor_id=aid, text=out)
+    result = pty_submit_text(group, actor_id=aid, text=out, wait_for_submit=True)
     if result:
         THROTTLE.add_delivered_chat_count(group.group_id, aid, 1)
     return result
@@ -1205,7 +1205,7 @@ def _start_async_first_delivery(
                 return
 
             logger.debug(f"[flush] {gid}/{aid} sending delayed first message now")
-            ok = bool(pty_submit_text(group, actor_id=aid, text=message_text))
+            ok = bool(pty_submit_text(group, actor_id=aid, text=message_text, wait_for_submit=True))
             if ok:
                 _finalize_delivery_success(
                     group,
@@ -1337,7 +1337,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         # Send message (no preamble delay needed)
         delivered = False
         if message_text:
-            delivered = bool(pty_submit_text(group, actor_id=aid, text=message_text))
+            delivered = bool(pty_submit_text(group, actor_id=aid, text=message_text, wait_for_submit=True))
             if delivered:
                 _finalize_delivery_success(
                     group,

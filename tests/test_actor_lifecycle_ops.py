@@ -735,6 +735,42 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_foreman_can_remove_peer_but_peer_can_only_remove_self(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-remove-permission", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            for actor_id in ("foreman1", "peer1", "peer2"):
+                add, _ = self._call(
+                    "actor_add",
+                    {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "title": actor_id,
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(add.ok, getattr(add, "error", None))
+
+            denied, _ = self._call("actor_remove", {"group_id": group_id, "actor_id": "peer2", "by": "peer1"})
+            self.assertFalse(denied.ok)
+            self.assertIn("permission denied", str(getattr(denied.error, "message", "")).lower())
+
+            removed, _ = self._call("actor_remove", {"group_id": group_id, "actor_id": "peer1", "by": "foreman1"})
+            self.assertTrue(removed.ok, getattr(removed, "error", None))
+            self.assertEqual(str((removed.result or {}).get("actor_id") or ""), "peer1")
+
+            self_removed, _ = self._call("actor_remove", {"group_id": group_id, "actor_id": "peer2", "by": "peer2"})
+            self.assertTrue(self_removed.ok, getattr(self_removed, "error", None))
+            self.assertEqual(str((self_removed.result or {}).get("actor_id") or ""), "peer2")
+        finally:
+            cleanup()
+
     def test_actor_remove_stops_codex_session_and_publishes_global_event(self) -> None:
         home, cleanup = self._with_home()
         try:

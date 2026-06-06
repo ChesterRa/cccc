@@ -50,7 +50,7 @@ interface SettingsModalProps {
   groupDoc?: GroupDoc | null;
 }
 
-function SettingsTabFallback({ isDark }: { isDark: boolean }) {
+function SettingsTabFallback() {
   return (
     <div
       className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-5 text-sm text-[var(--color-text-secondary)]"
@@ -1085,7 +1085,7 @@ export function SettingsModal({
                 ) : null}
               </div>
             ) : !tabs.some((tab) => tab.id === activeTab) ? null : (
-              <Suspense fallback={<SettingsTabFallback isDark={isDark} />}>
+              <Suspense fallback={<SettingsTabFallback />}>
               {activeTab === "automation" && (
                 <AutomationTab
                   isDark={isDark}

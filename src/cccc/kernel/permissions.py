@@ -57,7 +57,7 @@ def require_actor_permission(
     | actor.start   | ✓    | ✓ (any)      | ✗           |
     | actor.stop    | ✓    | ✓ (any)      | ✓ (self)    |
     | actor.restart | ✓    | ✓ (any)      | ✓ (any)     |
-    | actor.remove  | ✓    | ✓ (self)     | ✓ (self)    |
+    | actor.remove  | ✓    | ✓ (self/peer)| ✓ (self)    |
     | actor.update  | ✓    | ✗            | ✗           |
     """
     who = (by or "").strip()
@@ -70,14 +70,15 @@ def require_actor_permission(
     role = actor_role(group, who)
     
     if role == "foreman":
-        # Foreman can: list, add, start/stop/restart any, remove self
+        # Foreman can: list, add, start/stop/restart any, remove self/peers
         if action in ("actor.list", "actor.add", "actor.start", "actor.stop", "actor.restart"):
             return
         if action == "actor.remove":
-            # Foreman can only remove self
             if target and target == who:
                 return
-            raise ValueError(f"permission denied: foreman can only remove self, not {target}")
+            if target and actor_role(group, target) == "peer":
+                return
+            raise ValueError(f"permission denied: foreman can only remove self or peers, not {target}")
         if action == "actor.update":
             raise ValueError("permission denied: actor.update is only available via CLI/Web UI")
         raise ValueError(f"permission denied: {who} cannot {action}")

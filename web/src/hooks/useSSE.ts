@@ -119,6 +119,18 @@ function headlessActorKey(groupId: string, actorId: string): string {
   return `${String(groupId || "").trim()}:${String(actorId || "").trim()}`;
 }
 
+export function getRuntimeStatusFallbackForGroup(
+  state: ReturnType<typeof useGroupStore.getState>,
+  groupId: string,
+): GroupRuntimeStatus | null {
+  const gid = String(groupId || "").trim();
+  if (!gid) return null;
+  if (String(state.groupDoc?.group_id || "").trim() === gid) {
+    return state.groupDoc?.runtime_status || null;
+  }
+  return state.groups.find((group) => String(group.group_id || "").trim() === gid)?.runtime_status || null;
+}
+
 type ActorActivityUpdate = {
   id: string;
   idle_seconds?: number | null;
@@ -135,13 +147,35 @@ type ActorActivityUpdate = {
 export function computeGroupRuntimeFromActorActivityUpdate(
   actors: Actor[],
   update: ActorActivityUpdate,
+  fallback?: GroupRuntimeStatus | null,
 ): GroupRuntimeStatus {
-  return computeGroupRuntimeFromActorActivityUpdates(actors, [update]);
+  return computeGroupRuntimeFromActorActivityUpdates(actors, [update], fallback);
+}
+
+function deriveActivityLifecycleState(runningActors: Actor[], fallback?: GroupRuntimeStatus | null): string {
+  const fallbackLifecycle = String(fallback?.lifecycle_state || "active");
+  if (runningActors.length === 0) {
+    // Nothing running: preserve the prior lifecycle (stopped/paused/active/idle).
+    return fallbackLifecycle;
+  }
+  // Actors are running, so the group cannot be "stopped" — re-deriving below avoids
+  // a contradictory runtime_running:true + lifecycle_state:"stopped" projection that
+  // would otherwise stick (e.g. a stopped group waking via an activity event) until a
+  // full refresh. "paused" is a deliberate hold that can coexist with live actors, so
+  // it stays sticky.
+  if (fallbackLifecycle === "paused") {
+    return "paused";
+  }
+  return runningActors.some((actor) => {
+    const state = String(actor.effective_working_state || "").trim().toLowerCase();
+    return state === "working" || state === "waiting" || state === "stuck";
+  }) ? "active" : "idle";
 }
 
 export function computeGroupRuntimeFromActorActivityUpdates(
   actors: Actor[],
   updates: ActorActivityUpdate[],
+  fallback?: GroupRuntimeStatus | null,
 ): GroupRuntimeStatus {
   const actorById = new Map<string, Actor>();
   for (const actor of Array.isArray(actors) ? actors : []) {
@@ -162,13 +196,9 @@ export function computeGroupRuntimeFromActorActivityUpdates(
 
   const projectedActors = Array.from(actorById.values());
   const runningActors = projectedActors.filter((actor) => !!actor.running);
-  const hasBusyActor = runningActors.some((actor) => {
-    const state = String(actor.effective_working_state || "").trim().toLowerCase();
-    return state !== "idle" && state !== "stopped";
-  });
 
   return {
-    lifecycle_state: hasBusyActor ? "active" : (runningActors.length > 0 ? "idle" : "stopped"),
+    lifecycle_state: deriveActivityLifecycleState(runningActors, fallback),
     runtime_running: runningActors.length > 0,
     running_actor_count: runningActors.length,
     has_running_foreman: runningActors.some((actor) => String(actor.role || "").trim().toLowerCase() === "foreman"),
@@ -524,11 +554,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       appendHeadlessEvent(ev, groupId);
 
       function updateHeadlessActorRuntime(update: ActorActivityUpdate) {
-        const actorsSnapshot = useGroupStore.getState().actors;
+        const storeState = useGroupStore.getState();
+        const actorsSnapshot = storeState.actors;
         updateActorActivity([update]);
         updateGroupRuntimeState(groupId, computeGroupRuntimeFromActorActivityUpdate(
           actorsSnapshot.length > 0 ? actorsSnapshot : actorsRef.current,
           update,
+          getRuntimeStatusFallbackForGroup(storeState, groupId),
         ));
       }
 
@@ -1000,8 +1032,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         if (isActorActivityEvent(ev)) {
           const actors = ev.data?.actors;
           if (Array.isArray(actors) && actors.length > 0) {
+            const storeState = useGroupStore.getState();
             updateActorActivity(actors);
-            updateGroupRuntimeState(groupId, computeGroupRuntimeFromActorActivityUpdates(actorsRef.current, actors));
+            updateGroupRuntimeState(
+              groupId,
+              computeGroupRuntimeFromActorActivityUpdates(
+                actorsRef.current,
+                actors,
+                getRuntimeStatusFallbackForGroup(storeState, groupId),
+              ),
+            );
           }
           return;
         }

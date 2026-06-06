@@ -6,6 +6,16 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _stop_global_actor_runtimes_between_tests():
+    try:
+        yield
+    finally:
+        from cccc.daemon.actors.runner_ops import stop_all
+
+        stop_all()
+
+
+@pytest.fixture(autouse=True)
 def _inline_chat_post_commit_tasks():
     old_mode = os.environ.get("CCCC_CHAT_POST_COMMIT_MODE")
     os.environ["CCCC_CHAT_POST_COMMIT_MODE"] = "inline"

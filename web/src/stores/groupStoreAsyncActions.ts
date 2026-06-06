@@ -207,6 +207,12 @@ export function createGroupStoreAsyncActions(
       } catch (e) {
         console.error(`Failed to refresh actors for group=${gid}:`, e);
       } finally {
+        // Fallback clear: the success branch above only clears the spinner when
+        // resp.ok. A failed/throwing refresh of the selected group must not leave
+        // selectedGroupActorsHydrating stuck true (which would disable Send).
+        if (get().selectedGroupId === gid) {
+          set({ selectedGroupActorsHydrating: false });
+        }
         refreshActorsInFlight.delete(gid);
         const queuedIncludeUnread = refreshActorsQueued.get(gid);
         if (queuedIncludeUnread !== undefined) {
@@ -412,7 +418,14 @@ export function createGroupStoreAsyncActions(
       }).catch((error) => {
         console.error(`Failed to load actors for group=${gid}:`, error);
       }).finally(() => {
-        if (isLatestSelection()) {
+        // Readiness flag clearing must NOT inherit the load-token guard used for
+        // data writes. The token guards against a stale load overwriting a newer
+        // group's data; but whether the *currently selected* group's actors are
+        // done loading only depends on still being on that group. Gating this with
+        // the token lets a rapid A->B->A switch (where the re-entrant loadGroup(A)
+        // is swallowed by loadGroupInFlight and the original A load's token is now
+        // stale) leave the spinner stuck true forever, disabling Send.
+        if (get().selectedGroupId === gid) {
           set({ selectedGroupActorsHydrating: false });
         }
       }).finally(() => {

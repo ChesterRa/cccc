@@ -24,6 +24,7 @@ from ...ports.web.runtime_control import (
 )
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ...util.terminal_render import render_transcript
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
@@ -367,8 +368,6 @@ def handle_terminal_history(
         hint = ""
         if strip_ansi:
             try:
-                from ...util.terminal_render import render_transcript
-
                 text = render_transcript(text, compact=compact)
             except Exception:
                 pass
