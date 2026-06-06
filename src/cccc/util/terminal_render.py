@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+import unicodedata
 from typing import Optional
 
 
 _HR_CHARS = set("─━-=═")
+
+# Sentinel occupying the trailing cell of a double-width glyph. It holds the
+# column so width-aware cursor positioning stays aligned, but contributes
+# nothing when the row is joined back into text.
+_WIDE_CHAR_FILLER = ""
+
+
+def _char_display_width(ch: str) -> int:
+    """Best-effort terminal cell width for a single character.
+
+    East Asian Wide/Fullwidth glyphs (CJK, fullwidth forms) occupy two cells.
+    TUIs position the next glyph two columns over; a single-width model leaves a
+    padding space in the skipped cell, which shows up as a gap between every CJK
+    character in the snapshot.
+    """
+    if not ch:
+        return 0
+    if unicodedata.east_asian_width(ch) in ("W", "F"):
+        return 2
+    return 1
 
 
 def _is_horizontal_rule(line: str) -> bool:
@@ -362,8 +383,14 @@ def render_transcript(text: str, *, compact: bool = True) -> str:
             continue
 
         # Printable
+        width = _char_display_width(ch)
         _set_char(buf, row, col, ch)
-        col += 1
+        if width == 2:
+            # Occupy the trailing cell now (before any later _ensure_col pads it
+            # with a space) so width-aware positioning of the next glyph lands
+            # flush against this one instead of leaving a visible gap.
+            _set_char(buf, row, col + 1, _WIDE_CHAR_FILLER)
+        col += width
         i += 1
 
     out_lines = ["".join(line).rstrip() for line in buf]
