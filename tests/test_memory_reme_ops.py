@@ -233,6 +233,53 @@ class TestMemoryRemeOps(unittest.TestCase):
         hits = payload.get("hits") if isinstance(payload.get("hits"), list) else []
         self.assertEqual(len(hits), 1)
 
+    def test_memory_search_forwards_caller_recall_controls(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.memory.memory_sdk_ops import handle_memory_search
+
+        captured: dict = {}
+
+        def _capture(reme_args):
+            captured.update(reme_args)
+            return DaemonResponse(ok=True, result={"hits": []})
+
+        with patch("cccc.daemon.memory.memory_ops.handle_memory_reme_search", side_effect=_capture):
+            handle_memory_search(
+                {
+                    "group_id": "g1",
+                    "query": "q",
+                    "min_score": 0.6,
+                    "max_results": 12,
+                    "vector_weight": 0.7,
+                    "candidate_multiplier": 3,
+                }
+            )
+
+        self.assertEqual(captured.get("min_score"), 0.6)
+        self.assertEqual(captured.get("max_results"), 12)
+        self.assertEqual(captured.get("vector_weight"), 0.7)
+        self.assertEqual(captured.get("candidate_multiplier"), 3)
+
+    def test_memory_search_defaults_low_min_score_and_limit_alias(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.memory.memory_sdk_ops import handle_memory_search
+
+        captured: dict = {}
+
+        def _capture(reme_args):
+            captured.update(reme_args)
+            return DaemonResponse(ok=True, result={"hits": []})
+
+        with patch("cccc.daemon.memory.memory_ops.handle_memory_reme_search", side_effect=_capture):
+            handle_memory_search({"group_id": "g1", "query": "q", "limit": 5})
+
+        # No caller min_score: keep the low default so tag/target post-filtering has candidates.
+        self.assertEqual(captured.get("min_score"), 0.01)
+        # `limit` is the SDK alias for max_results when max_results is absent.
+        self.assertEqual(captured.get("max_results"), 5)
+        self.assertNotIn("vector_weight", captured)
+        self.assertNotIn("candidate_multiplier", captured)
+
     def test_context_check_compact_daily_flush(self) -> None:
         _, cleanup = self._with_home()
         try:

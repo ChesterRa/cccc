@@ -143,11 +143,11 @@ function StatusPill({ children, tone }: { children: React.ReactNode; tone: "on" 
   );
 }
 
-function localVoicePanelClass(isDark: boolean) {
+function localVoicePanelClass() {
   return "rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-4";
 }
 
-function localVoiceModelCardClass(isDark: boolean) {
+function localVoiceModelCardClass() {
   return "rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] p-3";
 }
 
@@ -1185,7 +1185,7 @@ export function AssistantsTab({
 
                   {showServiceModelControls ? (
                     <div className={`mt-4 space-y-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
-                      <div className={localVoicePanelClass(isDark)}>
+                      <div className={localVoicePanelClass()}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -1215,7 +1215,7 @@ export function AssistantsTab({
                           </button>
                         </div>
                         <div className="mt-4 grid gap-2 lg:grid-cols-3">
-                          <div className={localVoiceModelCardClass(isDark)}>
+                          <div className={localVoiceModelCardClass()}>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                                 {t("assistants.localAsrEngineLabel", { defaultValue: "Engine" })}
@@ -1228,7 +1228,7 @@ export function AssistantsTab({
                               {t("assistants.localAsrEngineHint", { defaultValue: "sherpa-onnx runtime environment." })}
                             </p>
                           </div>
-                          <div className={localVoiceModelCardClass(isDark)}>
+                          <div className={localVoiceModelCardClass()}>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                                 {t("assistants.liveAsrModelLabel", { defaultValue: "Live ASR" })}
@@ -1242,7 +1242,7 @@ export function AssistantsTab({
                               {liveServiceAsrModel?.title || liveServiceAsrModelId || t("assistants.streamingAsrModelMissing", { defaultValue: "No streaming ASR model is available." })}
                             </p>
                           </div>
-                          <div className={localVoiceModelCardClass(isDark)}>
+                          <div className={localVoiceModelCardClass()}>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                                 {t("assistants.finalAsrModelLabel", { defaultValue: "Final ASR" })}
@@ -1264,7 +1264,7 @@ export function AssistantsTab({
                         ) : null}
                       </div>
 
-                      <div className={`flex flex-wrap items-start justify-between gap-3 ${localVoicePanelClass(isDark)}`}>
+                      <div className={`flex flex-wrap items-start justify-between gap-3 ${localVoicePanelClass()}`}>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <div className="text-sm font-semibold text-[var(--color-text-primary)]">

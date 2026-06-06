@@ -135,10 +135,21 @@ def handle_memory_search(args: Dict[str, Any]) -> DaemonResponse:
         "group_id": args.get("group_id"),
         "query": args.get("query"),
         "sources": _memory_sdk_sources_for_target(args.get("target")),
-        "min_score": 0.01,
     }
-    if args.get("limit") is not None:
-        reme_args["max_results"] = args.get("limit")
+    # Forward caller recall/threshold controls when provided so SDK callers can
+    # tighten relevance the same way handle_memory_reme_search allows. Default to a
+    # low min_score only when the caller didn't specify one, so tag/target
+    # post-filtering still has candidates to match.
+    reme_args["min_score"] = args.get("min_score") if args.get("min_score") is not None else 0.01
+    max_results = args.get("max_results")
+    if max_results is None:
+        max_results = args.get("limit")
+    if max_results is not None:
+        reme_args["max_results"] = max_results
+    if args.get("vector_weight") is not None:
+        reme_args["vector_weight"] = args.get("vector_weight")
+    if args.get("candidate_multiplier") is not None:
+        reme_args["candidate_multiplier"] = args.get("candidate_multiplier")
     resp = handle_memory_reme_search(reme_args)
     if not resp.ok:
         return _memory_sdk_error(resp)

@@ -98,9 +98,18 @@ def try_handle_socket_special_op(
                 base_result = resp.result if isinstance(resp.result, dict) else {}
                 # Absolute offset of the first byte the client is about to receive.
                 # The client seeds its delivered-byte cursor from this and resumes
-                # from the exact gap on reconnect (no replay, no data loss). Using
-                # the ring start as a lower bound makes a stale cursor re-send a few
-                # duplicate bytes (safe) rather than skip output (loss).
+                # from the exact gap on reconnect (no replay, no data loss).
+                #
+                # Safety invariant: the ring start offset is monotonic non-decreasing
+                # (it only advances as old bytes are evicted). This value is read
+                # slightly before _attach_client_now() takes its own backlog snapshot,
+                # so the snapshot's actual start is >= this value. The reported cursor
+                # is therefore always a LOWER BOUND on the true replay start: a stale
+                # cursor can only make the daemon re-send a few already-seen bytes
+                # (harmless duplicate), never skip unseen output (which would be data
+                # loss). The two can differ only if the ring evicts within the sub-ms
+                # attach-handoff window (a >2MB burst), and that case self-heals on the
+                # next runtime repaint.
                 try:
                     start_offset = int(backlog_start_offset(group_id, actor_id))
                 except Exception:

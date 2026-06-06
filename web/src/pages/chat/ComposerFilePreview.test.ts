@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getComposerPreviewPosition, isPreviewableComposerImageFile } from "./ComposerFilePreview";
+import { getComposerPreviewPosition, isPreviewableComposerImageFile } from "./ComposerFilePreview.model";
 
 describe("isPreviewableComposerImageFile", () => {
   it("only enables hover previews for image files", () => {

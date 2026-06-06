@@ -19,6 +19,7 @@ import { copyTextToClipboard } from "../utils/copy";
 import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
+import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "./AgentTab.model";
 
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
@@ -39,21 +40,6 @@ function fitTerminalToContainer(
   } catch {
     return false;
   }
-}
-
-export function actorHasRuntimeResumeFailure(actor: Pick<Actor, "runtime_session_status">): boolean {
-  return String(actor.runtime_session_status || "").trim().toLowerCase() === "resume_failed";
-}
-
-export function shouldFetchStoppedTerminalTail(args: {
-  activated: boolean;
-  isRunning: boolean;
-  isHeadless: boolean;
-  groupId: string;
-  actorId: string;
-  isActorBusy: boolean;
-}): boolean {
-  return Boolean(args.activated && !args.isRunning && !args.isHeadless && args.groupId && args.actorId && !args.isActorBusy);
 }
 
 interface AgentTabProps {

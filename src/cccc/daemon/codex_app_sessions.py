@@ -833,6 +833,12 @@ class CodexAppSession:
         with self._lock:
             proc = self._proc
             ws = self._ws
+            worker_threads = [
+                self._stdout_thread,
+                self._stderr_thread,
+                self._ws_thread,
+                self._turn_thread,
+            ]
             was_stop_requested = self._stop_requested
             self._stop_requested = True
             self._running = False
@@ -862,9 +868,25 @@ class CodexAppSession:
                 pass
             self._pty_session = None
         _terminate_codex_app_server_process(proc)
+        self._join_worker_threads(worker_threads)
         self._emit("headless.session.stopped", {})
         if persist_actor_stopped and not was_stop_requested:
             persist_actor_process_exit_stopped(group_id=self.group_id, actor_id=self.actor_id, runner="headless")
+
+    def _join_worker_threads(self, threads: list[threading.Thread | None]) -> None:
+        current = threading.current_thread()
+        deadline = time.monotonic() + 1.0
+        for thread in threads:
+            if thread is None or thread is current:
+                continue
+            is_alive = getattr(thread, "is_alive", None)
+            join = getattr(thread, "join", None)
+            if not callable(is_alive) or not callable(join) or not is_alive():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            join(timeout=remaining)
 
     def is_running(self) -> bool:
         with self._lock:

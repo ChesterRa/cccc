@@ -40,7 +40,7 @@ export function ModalFrame({
         isDark
           ? "bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)]"
           : "bg-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.98)]"
-      }`}
+      } ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
     >
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
