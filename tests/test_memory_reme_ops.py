@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestMemoryRemeOps(unittest.TestCase):
@@ -77,6 +78,160 @@ class TestMemoryRemeOps(unittest.TestCase):
             self.assertIn("migration checklist", content)
         finally:
             cleanup()
+
+    def test_first_class_memory_ops_adapt_reme_for_sdk_clients(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("sdk-memory")
+
+            health_resp, _ = self._call("memory_health", {"group_id": gid})
+            self.assertTrue(health_resp.ok, getattr(health_resp, "error", None))
+            health = health_resp.result if isinstance(health_resp.result, dict) else {}
+            self.assertEqual(health.get("provider"), "cccc-memory")
+            self.assertEqual(health.get("source"), "local-index")
+            self.assertEqual(health.get("status"), "ok")
+            self.assertTrue(health.get("indexReady"))
+            self.assertTrue(health.get("writable"))
+            self.assertTrue(str(health.get("memoryRoot") or "").endswith("state/memory"))
+            self.assertIsInstance(health.get("latencyMs"), int)
+
+            write_resp, _ = self._call(
+                "memory_write",
+                {
+                    "group_id": gid,
+                    "actor_id": "dingtalk-worker",
+                    "target": "daily",
+                    "content": "DingTalk reply profile prefers concise Chinese answers.",
+                    "tags": ["dingtalk-profile", "reply-style"],
+                    "source_refs": ["message:m1"],
+                    "idempotency_key": "sdk-memory-write-m1",
+                },
+            )
+            self.assertTrue(write_resp.ok, getattr(write_resp, "error", None))
+            write_payload = write_resp.result if isinstance(write_resp.result, dict) else {}
+            self.assertEqual(write_payload.get("provider"), "cccc-memory")
+            self.assertEqual(write_payload.get("source"), "local-file")
+            self.assertEqual(write_payload.get("status"), "written")
+            path = str(write_payload.get("path") or "")
+            self.assertTrue(path.endswith(".md"))
+            self.assertTrue(write_payload.get("contentHash"))
+
+            search_resp, _ = self._call(
+                "memory_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "dingtalk-worker",
+                    "query": "concise Chinese reply profile",
+                    "limit": 5,
+                    "target": "daily",
+                    "tags": ["reply-style"],
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            search_payload = search_resp.result if isinstance(search_resp.result, dict) else {}
+            self.assertEqual(search_payload.get("provider"), "cccc-memory")
+            self.assertEqual(search_payload.get("source"), "local-index")
+            hits = search_payload.get("hits") if isinstance(search_payload.get("hits"), list) else []
+            self.assertGreaterEqual(len(hits), 1)
+            first = hits[0] if isinstance(hits[0], dict) else {}
+            self.assertIn("startLine", first)
+            self.assertIn("sourceRefs", first)
+
+            get_resp, _ = self._call("memory_get", {"group_id": gid, "path": path, "offset": 1, "limit": 60})
+            self.assertTrue(get_resp.ok, getattr(get_resp, "error", None))
+            get_payload = get_resp.result if isinstance(get_resp.result, dict) else {}
+            self.assertEqual(get_payload.get("provider"), "cccc-memory")
+            self.assertEqual(get_payload.get("source"), "local-file")
+            self.assertEqual(get_payload.get("path"), path)
+            self.assertIn("DingTalk reply profile", str(get_payload.get("content") or ""))
+
+            profile_resp, _ = self._call(
+                "memory_profile_get",
+                {
+                    "group_id": gid,
+                    "actor_id": "dingtalk-worker",
+                    "user_id": "waterbang",
+                    "tags": ["dingtalk-profile", "reply-style"],
+                },
+            )
+            self.assertTrue(profile_resp.ok, getattr(profile_resp, "error", None))
+            profile_payload = profile_resp.result if isinstance(profile_resp.result, dict) else {}
+            self.assertEqual(profile_payload.get("provider"), "cccc-memory")
+            self.assertEqual(profile_payload.get("source"), "local-index")
+            self.assertIn("DingTalk reply profile", str(profile_payload.get("profile") or ""))
+            profile_hits = profile_payload.get("hits") if isinstance(profile_payload.get("hits"), list) else []
+            self.assertGreaterEqual(len(profile_hits), 1)
+        finally:
+            cleanup()
+
+    def test_memory_search_tag_filter_matches_long_entry_tail_chunks(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("sdk-memory-long-entry")
+            filler = "\n".join(f"Filler line {i}: ordinary project context without the search token." for i in range(90))
+            tail_marker = "tail-only-calibration-marker"
+
+            write_resp, _ = self._call(
+                "memory_write",
+                {
+                    "group_id": gid,
+                    "actor_id": "memory-worker",
+                    "target": "daily",
+                    "content": f"{filler}\nFinal detail: {tail_marker} belongs to the tagged long entry.",
+                    "tags": ["long-entry-tag"],
+                    "source_refs": ["message:tail"],
+                    "idempotency_key": "sdk-memory-long-entry-tail",
+                },
+            )
+            self.assertTrue(write_resp.ok, getattr(write_resp, "error", None))
+
+            search_resp, _ = self._call(
+                "memory_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "memory-worker",
+                    "query": tail_marker,
+                    "limit": 5,
+                    "target": "daily",
+                    "tags": ["long-entry-tag"],
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            payload = search_resp.result if isinstance(search_resp.result, dict) else {}
+            hits = payload.get("hits") if isinstance(payload.get("hits"), list) else []
+            self.assertGreaterEqual(len(hits), 1)
+            first = hits[0] if isinstance(hits[0], dict) else {}
+            self.assertIn("long-entry-tag", first.get("tags") or [])
+            self.assertIn("message:tail", first.get("sourceRefs") or [])
+        finally:
+            cleanup()
+
+    def test_memory_search_daily_filter_accepts_windows_paths(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.memory.memory_sdk_ops import handle_memory_search
+
+        with patch(
+            "cccc.daemon.memory.memory_ops.handle_memory_reme_search",
+            return_value=DaemonResponse(
+                ok=True,
+                result={
+                    "hits": [
+                        {
+                            "path": r"C:\state\memory\daily\2026-06-07__group.md",
+                            "start_line": 1,
+                            "score": 1.0,
+                            "snippet": "Windows daily memory hit",
+                        }
+                    ]
+                },
+            ),
+        ):
+            resp = handle_memory_search({"group_id": "g1", "query": "daily", "target": "daily"})
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        payload = resp.result if isinstance(resp.result, dict) else {}
+        hits = payload.get("hits") if isinstance(payload.get("hits"), list) else []
+        self.assertEqual(len(hits), 1)
 
     def test_context_check_compact_daily_flush(self) -> None:
         _, cleanup = self._with_home()

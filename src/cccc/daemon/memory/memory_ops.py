@@ -1087,6 +1087,11 @@ def handle_memory_reme_write(args: Dict[str, Any]) -> DaemonResponse:
 
 
 def try_handle_memory_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
+    from .memory_sdk_ops import try_handle_memory_sdk_op
+
+    sdk_resp = try_handle_memory_sdk_op(op, args)
+    if sdk_resp is not None:
+        return sdk_resp
     if op == "memory_reme_layout_get":
         return handle_memory_reme_layout_get(args)
     if op == "memory_reme_index_sync":
