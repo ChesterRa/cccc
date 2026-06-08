@@ -342,7 +342,7 @@ describe("isFormalChatMessageEvent", () => {
 });
 
 describe("group send blocked state", () => {
-  it("blocks only explicit paused and stopped lifecycle states before optimistic send feedback", () => {
+  it("blocks only explicit paused lifecycle before optimistic send feedback", () => {
     expect(getGroupSendBlockedReason({
       lifecycleState: "paused",
       runtimeRunning: true,
@@ -357,7 +357,7 @@ describe("group send blocked state", () => {
       lifecycleState: "stopped",
       runtimeRunning: false,
       actorCount: 2,
-    })).toBe("stopped");
+    })).toBeNull();
     expect(getGroupSendBlockedReason({
       lifecycleState: "idle",
       runtimeRunning: true,
@@ -366,8 +366,8 @@ describe("group send blocked state", () => {
   });
 
   it("maps recipient-resolution failures to group-state recovery copy", () => {
-    expect(getGroupSendBlockedMessage("stopped", t)).toBe(
-      "This group is not running. Start the group before sending a message to agents.",
+    expect(getGroupSendBlockedMessage("paused", t)).toBe(
+      "This group is paused. Resume the group before sending a message to agents.",
     );
     expect(formatSendMessageError({
       code: "no_enabled_recipients",

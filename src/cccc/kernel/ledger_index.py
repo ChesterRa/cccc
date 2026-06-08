@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
 from .ledger_segments import ACTIVE_SOURCE_SEQ, iter_source_lines, list_ledger_sources, open_ledger_source_text
 
 
@@ -31,6 +32,10 @@ _CHAT_ACK_REQUIRED_COLUMNS = {
 
 def _index_path_for_ledger(ledger_path: Path) -> Path:
     return ledger_path.parent / "state" / "ledger" / "index.sqlite3"
+
+
+def _index_lock_path_for_ledger(ledger_path: Path) -> Path:
+    return ledger_path.parent / "state" / "ledger" / "index.lock"
 
 
 def _connect(index_path: Path) -> sqlite3.Connection:
@@ -393,8 +398,10 @@ def _catch_up_plain_source(conn: sqlite3.Connection, ledger_path: Path, source: 
 
 def catch_up_ledger_index(ledger_path: Path) -> None:
     index_path = _index_path_for_ledger(ledger_path)
-    conn = _connect(index_path)
+    index_lock = acquire_lockfile(_index_lock_path_for_ledger(ledger_path), blocking=True)
+    conn: Optional[sqlite3.Connection] = None
     try:
+        conn = _connect(index_path)
         _ensure_schema(conn)
         sources = list_ledger_sources(ledger_path.parent)
         current_paths = {str(source.get("path") or "").strip() for source in sources}
@@ -436,13 +443,20 @@ def catch_up_ledger_index(ledger_path: Path) -> None:
             _catch_up_plain_source(conn, ledger_path, source)
         conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+        release_lockfile(index_lock)
 
 
 def append_event_to_index(ledger_path: Path, event: Dict[str, Any], *, next_offset_bytes: int) -> None:
     index_path = _index_path_for_ledger(ledger_path)
-    conn = _connect(index_path)
     try:
+        index_lock = acquire_lockfile(_index_lock_path_for_ledger(ledger_path), blocking=False)
+    except LockUnavailableError:
+        return
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _connect(index_path)
         _ensure_schema(conn)
         source_path = "ledger.jsonl"
         row = conn.execute(
@@ -476,7 +490,9 @@ def append_event_to_index(ledger_path: Path, event: Dict[str, Any], *, next_offs
         )
         conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+        release_lockfile(index_lock)
 
 
 def _read_event_from_source(group_path: Path, *, source_path: str, line_no: int, offset_bytes: int) -> Optional[Dict[str, Any]]:

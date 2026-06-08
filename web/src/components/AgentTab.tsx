@@ -315,7 +315,9 @@ export function AgentTab({
     }
   }, [terminalScrollbackLines]);
 
-  // Initialize terminal
+  // Initialize terminal. Theme, stdin, and scrollback changes are applied by
+  // option-update effects above; they must not dispose/recreate the live xterm
+  // instance because the WebSocket input/resize subscriptions are bound to it.
   useEffect(() => {
     if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
@@ -435,7 +437,7 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl, isDark, terminalScrollbackLines]);
+  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl]);
 
   const fitTerminalBeforeAttach = useCallback(() => {
     fitTerminalToContainer(fitAddonRef.current, termRef.current);

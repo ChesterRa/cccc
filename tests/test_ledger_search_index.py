@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +26,112 @@ class TestLedgerSearchIndex(unittest.TestCase):
         from cccc.daemon.server import handle_request
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    def _create_group_with_messages(self, title: str, count: int = 3) -> str:
+        create, _ = self._call("group_create", {"title": title, "topic": "", "by": "user"})
+        self.assertTrue(create.ok, getattr(create, "error", None))
+        group_id = str((create.result or {}).get("group_id") or "").strip()
+        self.assertTrue(group_id)
+
+        for idx in range(count):
+            sent, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "text": f"{title} {idx}",
+                    "by": "user",
+                    "to": ["user"],
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+        return group_id
+
+    def test_catch_up_ledger_index_waits_for_index_lock(self) -> None:
+        _, cleanup = self._with_home()
+        lock_handle = None
+        try:
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import load_group
+            from cccc.util.file_lock import acquire_lockfile, release_lockfile
+
+            group_id = self._create_group_with_messages("search-index-lock")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            lock_path = group.path / "state" / "ledger" / "index.lock"
+            lock_handle = acquire_lockfile(lock_path, blocking=True)
+            attempted = threading.Event()
+            finished = threading.Event()
+            errors: list[BaseException] = []
+            real_acquire = ledger_index.acquire_lockfile
+
+            def observed_acquire(path, *, blocking: bool = True):
+                attempted.set()
+                return real_acquire(path, blocking=blocking)
+
+            def run_catch_up() -> None:
+                try:
+                    ledger_index.catch_up_ledger_index(group.ledger_path)
+                except BaseException as exc:  # pragma: no cover - surfaced by assertion below
+                    errors.append(exc)
+                finally:
+                    finished.set()
+
+            with patch.object(ledger_index, "acquire_lockfile", side_effect=observed_acquire):
+                thread = threading.Thread(target=run_catch_up)
+                thread.start()
+                self.assertTrue(attempted.wait(timeout=1.0))
+                self.assertFalse(finished.wait(timeout=0.15))
+                release_lockfile(lock_handle)
+                lock_handle = None
+                thread.join(timeout=2.0)
+
+            self.assertTrue(finished.is_set())
+            self.assertEqual(errors, [])
+        finally:
+            if lock_handle is not None:
+                from cccc.util.file_lock import release_lockfile
+
+                release_lockfile(lock_handle)
+            cleanup()
+
+    def test_append_event_to_index_skips_when_index_lock_busy(self) -> None:
+        _, cleanup = self._with_home()
+        lock_handle = None
+        try:
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import load_group
+            from cccc.util.file_lock import acquire_lockfile, release_lockfile
+
+            group_id = self._create_group_with_messages("append-index-lock", count=1)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            from cccc.kernel.inbox import search_messages
+
+            events, _ = search_messages(group, query="", kind_filter="chat", limit=1)
+            self.assertTrue(events)
+            indexed_event = events[-1]
+
+            lock_path = group.path / "state" / "ledger" / "index.lock"
+            lock_handle = acquire_lockfile(lock_path, blocking=True)
+
+            with patch.object(ledger_index, "_connect", side_effect=AssertionError("busy append index update should skip")):
+                ledger_index.append_event_to_index(
+                    group.ledger_path,
+                    indexed_event,
+                    next_offset_bytes=group.ledger_path.stat().st_size,
+                )
+
+            release_lockfile(lock_handle)
+            lock_handle = None
+        finally:
+            if lock_handle is not None:
+                from cccc.util.file_lock import release_lockfile
+
+                release_lockfile(lock_handle)
+            cleanup()
 
     def test_search_messages_without_query_uses_index_path(self) -> None:
         _, cleanup = self._with_home()
