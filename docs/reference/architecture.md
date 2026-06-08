@@ -193,7 +193,7 @@ class ChatMessageData:
 | actor_start | ✓ | ✓ (any) | ✗ |
 | actor_stop | ✓ | ✓ (any) | ✓ (self) |
 | actor_restart | ✓ | ✓ (any) | ✓ (self) |
-| actor_remove | ✓ | ✓ (self) | ✓ (self) |
+| actor_remove | ✓ | ✓ (self/peer) | ✓ (self) |
 
 ## MCP Server
 

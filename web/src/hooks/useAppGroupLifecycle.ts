@@ -17,6 +17,27 @@ type UseAppGroupLifecycleOptions = {
   cleanupSSE: () => void;
 };
 
+export function shouldResetDestGroupForLifecycle({
+  selectedGroupId,
+  destGroupId,
+  sendGroupId,
+  hasReplyTarget,
+  hasComposerFiles,
+}: {
+  selectedGroupId: string;
+  destGroupId: string;
+  sendGroupId: string;
+  hasReplyTarget: boolean;
+  hasComposerFiles: boolean;
+}): boolean {
+  const gid = String(selectedGroupId || "").trim();
+  if (!gid) return false;
+  const dest = String(destGroupId || "").trim();
+  const send = String(sendGroupId || "").trim();
+  if (!dest) return true;
+  return (hasReplyTarget || hasComposerFiles) && !!send && send !== gid;
+}
+
 export function useAppGroupLifecycle({
   selectedGroupId,
   destGroupId,
@@ -36,20 +57,16 @@ export function useAppGroupLifecycle({
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
-    if (!destGroupId) {
+    if (shouldResetDestGroupForLifecycle({
+      selectedGroupId: gid,
+      destGroupId,
+      sendGroupId,
+      hasReplyTarget,
+      hasComposerFiles,
+    })) {
       setDestGroupId(gid);
     }
-  }, [destGroupId, selectedGroupId, setDestGroupId]);
-
-  useEffect(() => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid) return;
-    if (hasReplyTarget || hasComposerFiles) {
-      if (sendGroupId && sendGroupId !== gid) {
-        setDestGroupId(gid);
-      }
-    }
-  }, [hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
+  }, [destGroupId, hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
 
   useEffect(() => {
     if (fileInputRef.current) fileInputRef.current.value = "";

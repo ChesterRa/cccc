@@ -39,7 +39,7 @@
   "cancelReply": "Cancel reply",
   "clearRecipients": "Clear recipients",
   "messagePlaceholder": "Message…",
-  "messagePlaceholderDesktop": "Message… (@ mention, Ctrl+Enter send)",
+  "messagePlaceholderDesktop": "Type a message… (@ to mention, Ctrl+Enter to send)",
   "send": "Send",
   "sendMessage": "Send message",
   "sendMessageWithShortcut": "Send message ({{shortcut}})",

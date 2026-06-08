@@ -3,7 +3,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import { BookmarkIcon, CompassIcon } from "../../components/Icons";
-import { Actor, GroupMeta, HeadlessPreviewSession, LedgerEvent, PresentationMessageRef, StreamingActivity, TaskMessageRef } from "../../types";
+import { Actor, HeadlessPreviewSession, LedgerEvent, PresentationMessageRef, StreamingActivity, TaskMessageRef } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
@@ -23,6 +23,7 @@ import {
 import { buildWebModelDeliveryStatusByEventId } from "../../utils/webModelDeliveryStatus";
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
 import { buildLiveWorkCards } from "./liveWorkCards";
+import type { ComposerMentionKind } from "./chatMentionSuggestions";
 
 const PresentationRail = lazy(() =>
   import("../../components/presentation/PresentationRail").then((module) => ({ default: module.PresentationRail }))
@@ -58,13 +59,15 @@ export interface ChatTabProps {
   groupLabelById: Record<string, string>;
   actors: Actor[];
   runtimeActors: Actor[];
-  groups: GroupMeta[];
   activeRuntimeActorId?: string;
 
   // Recipient actors for cross-group messaging
   recipientActors: Actor[];
   recipientActorsBusy?: boolean;
   destGroupScopeLabel?: string;
+  mentionFilter?: string;
+  mentionKind?: ComposerMentionKind;
+  mentionActorScope?: "selected" | "destination";
 
   // Refs (shared with App for external interactions)
   scrollRef: MutableRefObject<HTMLDivElement | null>;
@@ -87,6 +90,8 @@ export interface ChatTabProps {
   mentionSelectedIndex: number;
   setMentionSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
   setMentionFilter: React.Dispatch<React.SetStateAction<string>>;
+  setMentionKind: React.Dispatch<React.SetStateAction<ComposerMentionKind>>;
+  setMentionActorScope: React.Dispatch<React.SetStateAction<"selected" | "destination">>;
 }
 
 export function ChatTab({
@@ -99,11 +104,13 @@ export function ChatTab({
   groupLabelById,
   actors,
   runtimeActors,
-  groups,
   activeRuntimeActorId,
   recipientActors,
   recipientActorsBusy,
   destGroupScopeLabel,
+  mentionFilter,
+  mentionKind,
+  mentionActorScope,
   scrollRef,
   composerRef,
   fileInputRef,
@@ -116,6 +123,8 @@ export function ChatTab({
   mentionSelectedIndex,
   setMentionSelectedIndex,
   setMentionFilter,
+  setMentionKind,
+  setMentionActorScope,
 }: ChatTabProps) {
   // Use the refactored hook for business logic
   const {
@@ -193,6 +202,9 @@ export function ChatTab({
     selectedGroupRunning,
     actors,
     recipientActors,
+    mentionFilter,
+    mentionKind,
+    mentionActorScope,
     composerRef,
     fileInputRef,
     chatAtBottomRef,
@@ -866,7 +878,6 @@ export function ChatTab({
             recipientActors={recipientActors}
             recipientActorsBusy={recipientActorsBusy}
             selectedGroupActorsHydrating={selectedGroupActorsHydrating}
-            groups={groups}
             destGroupId={destGroupId}
             setDestGroupId={setDestGroupId}
             composerGroupSettled={composerGroupSettled}
@@ -898,6 +909,8 @@ export function ChatTab({
             mentionSelectedIndex={mentionSelectedIndex}
             setMentionSelectedIndex={setMentionSelectedIndex}
             setMentionFilter={setMentionFilter}
+            setMentionKind={setMentionKind}
+            setMentionActorScope={setMentionActorScope}
             onAppendRecipientToken={appendRecipientToken}
             slashCommands={slashCommands}
           />

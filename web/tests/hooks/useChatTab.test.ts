@@ -26,12 +26,14 @@ const { localStorageMock } = vi.hoisted(() => {
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
   buildComposerSendRoutingSnapshot,
+  buildComposerSendRecipientTokens,
   buildReplyAnchorTsMap,
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
   mergeVisibleChatMessages,
   parseComposerRecipientTokens,
+  pruneMissingMentionRecipientTokens,
   restoreFailedSendComposerState,
   sortChatMessages,
   shouldLockChatToBottomForSend,
@@ -238,6 +240,26 @@ describe("buildComposerSendRoutingSnapshot", () => {
   });
 });
 
+describe("buildComposerSendRecipientTokens", () => {
+  it("keeps current-group actor tokens for same-group sends", () => {
+    expect(buildComposerSendRecipientTokens({
+      toText: "peer-architect, @foreman, missing",
+      isCrossGroup: false,
+      validRecipientSet: new Set(["peer-architect", "@foreman"]),
+      crossGroupValidRecipientSet: new Set(["@foreman"]),
+    })).toEqual(["peer-architect", "@foreman"]);
+  });
+
+  it("filters current-group actor tokens from cross-group sends", () => {
+    expect(buildComposerSendRecipientTokens({
+      toText: "peer-architect, @foreman, target-peer",
+      isCrossGroup: true,
+      validRecipientSet: new Set(["peer-architect", "@foreman", "target-peer"]),
+      crossGroupValidRecipientSet: new Set(["@foreman", "target-peer"]),
+    })).toEqual(["@foreman", "target-peer"]);
+  });
+});
+
 describe("restoreFailedSendComposerState", () => {
   it("restores the current composer when the failed send still belongs to the selected group", () => {
     resetComposerAndGroupSelection();
@@ -315,6 +337,57 @@ describe("parseComposerRecipientTokens", () => {
   });
 });
 
+describe("pruneMissingMentionRecipientTokens", () => {
+  it("keeps mention-added recipients while the matching @ token remains in the composer", () => {
+    expect(pruneMissingMentionRecipientTokens({
+      composerText: "请 @peer-reviewer 看一下",
+      toText: "peer-reviewer, @foreman",
+      mentionRecipientTokens: new Set(["peer-reviewer"]),
+      validRecipientSet: new Set(["peer-reviewer", "@foreman"]),
+    })).toEqual({
+      toText: "peer-reviewer, @foreman",
+      mentionRecipientTokens: new Set(["peer-reviewer"]),
+    });
+  });
+
+  it("keeps mention-added recipients when the composer shows the actor display name", () => {
+    expect(pruneMissingMentionRecipientTokens({
+      composerText: "请 @Code Reviewer 看一下",
+      toText: "peer-reviewer",
+      mentionRecipientTokens: new Set(["peer-reviewer"]),
+      mentionTokenLabels: new Map([["peer-reviewer", "Code Reviewer"]]),
+      validRecipientSet: new Set(["peer-reviewer"]),
+    })).toEqual({
+      toText: "peer-reviewer",
+      mentionRecipientTokens: new Set(["peer-reviewer"]),
+    });
+  });
+
+  it("keeps built-in @ recipients while their composer token remains", () => {
+    expect(pruneMissingMentionRecipientTokens({
+      composerText: "请 @foreman 看一下",
+      toText: "@foreman",
+      mentionRecipientTokens: new Set(["@foreman"]),
+      validRecipientSet: new Set(["@foreman"]),
+    })).toEqual({
+      toText: "@foreman",
+      mentionRecipientTokens: new Set(["@foreman"]),
+    });
+  });
+
+  it("removes only mention-added recipients when their @ token is deleted from the composer", () => {
+    expect(pruneMissingMentionRecipientTokens({
+      composerText: "peer-reviewer",
+      toText: "peer-reviewer, @foreman",
+      mentionRecipientTokens: new Set(["peer-reviewer"]),
+      validRecipientSet: new Set(["peer-reviewer", "@foreman"]),
+    })).toEqual({
+      toText: "@foreman",
+      mentionRecipientTokens: new Set<string>(),
+    });
+  });
+});
+
 describe("isFormalChatMessageEvent", () => {
   it("keeps headless streaming events out of the standard chat message list", () => {
     expect(isFormalChatMessageEvent({
@@ -342,7 +415,7 @@ describe("isFormalChatMessageEvent", () => {
 });
 
 describe("group send blocked state", () => {
-  it("blocks only explicit paused and stopped lifecycle states before optimistic send feedback", () => {
+  it("blocks only explicit paused lifecycle states before optimistic send feedback", () => {
     expect(getGroupSendBlockedReason({
       lifecycleState: "paused",
       runtimeRunning: true,
@@ -357,7 +430,7 @@ describe("group send blocked state", () => {
       lifecycleState: "stopped",
       runtimeRunning: false,
       actorCount: 2,
-    })).toBe("stopped");
+    })).toBeNull();
     expect(getGroupSendBlockedReason({
       lifecycleState: "idle",
       runtimeRunning: true,
@@ -366,8 +439,8 @@ describe("group send blocked state", () => {
   });
 
   it("maps recipient-resolution failures to group-state recovery copy", () => {
-    expect(getGroupSendBlockedMessage("stopped", t)).toBe(
-      "This group is not running. Start the group before sending a message to agents.",
+    expect(getGroupSendBlockedMessage("paused", t)).toBe(
+      "This group is paused. Resume the group before sending a message to agents.",
     );
     expect(formatSendMessageError({
       code: "no_enabled_recipients",

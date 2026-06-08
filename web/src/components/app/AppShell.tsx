@@ -10,11 +10,11 @@ import { ChatTab } from "../../pages/chat";
 import type { Actor, GroupContext, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale } from "../../types";
 import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
+import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
 
 type AppShellProps = {
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
-  groups: GroupMeta[];
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   groupContext: GroupContext | null;
@@ -40,6 +40,9 @@ type AppShellProps = {
   textScale: TextScale;
   sseStatus: "connected" | "connecting" | "disconnected";
   groupLabelById: Record<string, string>;
+  mentionFilter?: string;
+  mentionKind?: ComposerMentionKind;
+  mentionActorScope?: "selected" | "destination";
   mentionSelectedIndex: number;
   showMentionMenu: boolean;
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -70,6 +73,8 @@ type AppShellProps = {
   onTabChange: (tab: string) => void;
   appendComposerFiles: (files: File[]) => void;
   setMentionFilter: React.Dispatch<React.SetStateAction<string>>;
+  setMentionKind: React.Dispatch<React.SetStateAction<ComposerMentionKind>>;
+  setMentionActorScope: React.Dispatch<React.SetStateAction<"selected" | "destination">>;
   setMentionSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
   setShowMentionMenu: React.Dispatch<React.SetStateAction<boolean>>;
   getTermEpoch: (actorId: string) => number;
@@ -138,7 +143,6 @@ function RuntimeInspectorModal({
 export function AppShell({
   orderedGroups,
   archivedGroupIds,
-  groups,
   selectedGroupId,
   groupDoc,
   groupContext,
@@ -164,6 +168,9 @@ export function AppShell({
   textScale,
   sseStatus,
   groupLabelById,
+  mentionFilter,
+  mentionKind,
+  mentionActorScope,
   mentionSelectedIndex,
   showMentionMenu,
   composerRef,
@@ -194,6 +201,8 @@ export function AppShell({
   onTabChange,
   appendComposerFiles,
   setMentionFilter,
+  setMentionKind,
+  setMentionActorScope,
   setMentionSelectedIndex,
   setShowMentionMenu,
   getTermEpoch,
@@ -307,11 +316,13 @@ export function AppShell({
                 groupLabelById={groupLabelById}
                 actors={actors}
                 runtimeActors={runtimeActors}
-                groups={groups}
                 activeRuntimeActorId={activeTab !== "chat" ? activeTab : undefined}
                 recipientActors={recipientActors}
                 recipientActorsBusy={recipientActorsBusy}
                 destGroupScopeLabel={destGroupScopeLabel}
+                mentionFilter={mentionFilter}
+                mentionKind={mentionKind}
+                mentionActorScope={mentionActorScope}
                 scrollRef={eventContainerRef}
                 composerRef={composerRef}
                 fileInputRef={fileInputRef}
@@ -324,6 +335,8 @@ export function AppShell({
                 mentionSelectedIndex={mentionSelectedIndex}
                 setMentionSelectedIndex={setMentionSelectedIndex}
                 setMentionFilter={setMentionFilter}
+                setMentionKind={setMentionKind}
+                setMentionActorScope={setMentionActorScope}
               />
             </ErrorBoundary>
           </div>

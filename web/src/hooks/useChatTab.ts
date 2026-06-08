@@ -37,6 +37,7 @@ import { copyTextToClipboard } from "../utils/copy";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
+import { buildComposerMentionSuggestions, type ComposerMentionKind } from "../pages/chat/chatMentionSuggestions";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -650,6 +651,9 @@ interface UseChatTabOptions {
   selectedGroupRunning: boolean;
   actors: Actor[];
   recipientActors: Actor[];
+  mentionFilter?: string;
+  mentionKind?: ComposerMentionKind;
+  mentionActorScope?: "selected" | "destination";
   /** Callback for when message is sent */
   onMessageSent?: () => void;
   /** Refs for composer interactions */
@@ -766,11 +770,96 @@ export function parseComposerRecipientTokens(toText: string, validRecipientSet: 
   return out;
 }
 
+export function buildComposerSendRecipientTokens({
+  toText,
+  isCrossGroup,
+  validRecipientSet,
+  crossGroupValidRecipientSet,
+}: {
+  toText: string;
+  isCrossGroup: boolean;
+  validRecipientSet: Set<string>;
+  crossGroupValidRecipientSet: Set<string>;
+}): string[] {
+  return parseComposerRecipientTokens(
+    toText,
+    isCrossGroup ? crossGroupValidRecipientSet : validRecipientSet,
+  );
+}
+
+function hasComposerRecipientMentionToken(text: string, value: string): boolean {
+  const raw = String(value || "").trim();
+  const needle = raw.startsWith("@") ? raw : `@${raw}`;
+  if (needle === "@") return false;
+  const source = String(text || "");
+  let index = source.indexOf(needle);
+  while (index >= 0) {
+    const before = index === 0 ? "" : source[index - 1];
+    const afterIndex = index + needle.length;
+    const after = afterIndex >= source.length ? "" : source[afterIndex];
+    const startsOnBoundary = !before || before === " " || before === "\n";
+    const endsOnBoundary = !after || after === " " || after === "\n" || after === "," || after === "." || after === "，" || after === "。";
+    if (startsOnBoundary && endsOnBoundary) return true;
+    index = source.indexOf(needle, index + 1);
+  }
+  return false;
+}
+
+export function pruneMissingMentionRecipientTokens({
+  composerText,
+  toText,
+  mentionRecipientTokens,
+  mentionTokenLabels,
+  validRecipientSet,
+}: {
+  composerText: string;
+  toText: string;
+  mentionRecipientTokens: Set<string>;
+  mentionTokenLabels?: Map<string, string>;
+  validRecipientSet: Set<string>;
+}): { toText: string; mentionRecipientTokens: Set<string> } {
+  if (mentionRecipientTokens.size === 0) {
+    return { toText: String(toText || ""), mentionRecipientTokens: new Set() };
+  }
+
+  const nextMentionTokens = new Set<string>();
+  for (const token of mentionRecipientTokens) {
+    const normalized = String(token || "").trim();
+    if (!normalized) continue;
+    const label = String(mentionTokenLabels?.get(normalized) || "").trim();
+    if (
+      hasComposerRecipientMentionToken(composerText, normalized) ||
+      (label && hasComposerRecipientMentionToken(composerText, label))
+    ) {
+      nextMentionTokens.add(normalized);
+    }
+  }
+
+  const missing = new Set<string>();
+  for (const token of mentionRecipientTokens) {
+    const normalized = String(token || "").trim();
+    if (normalized && !nextMentionTokens.has(normalized)) missing.add(normalized);
+  }
+  if (missing.size === 0) {
+    return { toText: String(toText || ""), mentionRecipientTokens: nextMentionTokens };
+  }
+
+  const nextTokens = parseComposerRecipientTokens(toText, validRecipientSet)
+    .filter((token) => !missing.has(token));
+  return {
+    toText: nextTokens.join(", "),
+    mentionRecipientTokens: nextMentionTokens,
+  };
+}
+
 export function useChatTab({
   selectedGroupId,
   selectedGroupRunning,
   actors,
   recipientActors,
+  mentionFilter = "",
+  mentionKind = "agent",
+  mentionActorScope = "selected",
   onMessageSent,
   composerRef,
   fileInputRef,
@@ -783,6 +872,7 @@ export function useChatTab({
   const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
     useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
   );
+  const groups = useGroupStore((state) => state.groups);
   const appendEvent = useGroupStore((state) => state.appendEvent);
   const upsertStreamingEvent = useGroupStore((state) => state.upsertStreamingEvent);
   const removeStreamingEventsByPrefix = useGroupStore((state) => state.removeStreamingEventsByPrefix);
@@ -850,6 +940,8 @@ export function useChatTab({
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
+  const mentionRecipientTokensRef = useRef<Set<string>>(new Set());
+  const mentionRecipientLabelsRef = useRef<Map<string, string>>(new Map());
 
   // ============ Computed Values ============
 
@@ -894,8 +986,23 @@ export function useChatTab({
     return Array.from(resolved.values()).filter((actor) => String(actor.runtime || "").trim() === "codex");
   }, [actors, groupSettings?.default_send_to]);
 
-  // Valid recipient tokens
+  // Recipient parsing accepts tokens selected from either the current group or
+  // the destination group, because @ suggestions can switch source by cursor
+  // position while selected chips still serialize into one toText field.
   const validRecipientSet = useMemo(() => {
+    const out = new Set<string>(["@all", "@foreman", "@peers"]);
+    for (const a of actors) {
+      const id = String(a.id || "").trim();
+      if (id) out.add(id);
+    }
+    for (const a of recipientActors) {
+      const id = String(a.id || "").trim();
+      if (id) out.add(id);
+    }
+    return out;
+  }, [actors, recipientActors]);
+
+  const crossGroupValidRecipientSet = useMemo(() => {
     const out = new Set<string>(["@all", "@foreman", "@peers"]);
     for (const a of recipientActors) {
       const id = String(a.id || "").trim();
@@ -904,22 +1011,31 @@ export function useChatTab({
     return out;
   }, [recipientActors]);
 
-  // Parse toText into validated tokens
-  const toTokens = useMemo(() => {
-    return parseComposerRecipientTokens(toText, validRecipientSet);
-  }, [toText, validRecipientSet]);
-
-  // Mention suggestions
-  const mentionSuggestions = useMemo(() => {
-    const base = ["@all", "@foreman", "@peers"];
-    const actorIds = recipientActors.map((a) => String(a.id || "")).filter((id) => id);
-    return [...base, ...actorIds];
-  }, [recipientActors]);
-
   // Send group ID (respects cross-group destination)
   const sendGroupId = useMemo(() => {
     return getEffectiveComposerDestGroupId(destGroupId, activeGroupId, selectedGroupId);
   }, [destGroupId, activeGroupId, selectedGroupId]);
+
+  // Parse toText into validated tokens
+  const toTokens = useMemo(() => {
+    return buildComposerSendRecipientTokens({
+      toText,
+      isCrossGroup: !!sendGroupId && !!selectedGroupId && sendGroupId !== selectedGroupId,
+      validRecipientSet,
+      crossGroupValidRecipientSet,
+    });
+  }, [crossGroupValidRecipientSet, sendGroupId, selectedGroupId, toText, validRecipientSet]);
+
+  // Message-body mentions: @ selects current-route recipients; # selects the destination group.
+  const mentionSuggestions = useMemo(() => {
+    const mentionActors = mentionKind === "agent" && mentionActorScope === "selected" ? actors : recipientActors;
+    return buildComposerMentionSuggestions({
+      kind: mentionKind,
+      filter: mentionFilter,
+      recipientActors: mentionActors,
+      groups,
+    });
+  }, [actors, groups, mentionActorScope, mentionFilter, mentionKind, recipientActors]);
 
   // Project root
   const projectRoot = useMemo(() => {
@@ -1188,13 +1304,48 @@ export function useChatTab({
     [toTokens, setToText]
   );
 
-  const clearRecipients = useCallback(() => setToText(""), [setToText]);
+  const clearRecipients = useCallback(() => {
+    mentionRecipientTokensRef.current = new Set();
+    mentionRecipientLabelsRef.current = new Map();
+    setToText("");
+  }, [setToText]);
 
   const appendRecipientToken = useCallback(
-    (token: string) => {
-      setToText(toText ? toText + ", " + token : token);
+    (token: string, label?: string) => {
+      const normalized = String(token || "").trim();
+      if (!normalized) return;
+      mentionRecipientTokensRef.current.add(normalized);
+      const normalizedLabel = String(label || "").trim();
+      if (normalizedLabel) {
+        mentionRecipientLabelsRef.current.set(normalized, normalizedLabel);
+      }
+      setToText(toText ? toText + ", " + normalized : normalized);
     },
     [toText, setToText]
+  );
+
+  const syncMentionRecipientsFromComposerText = useCallback(
+    (textOrUpdater: string | ((prev: string) => string)) => {
+      const text = typeof textOrUpdater === "function" ? textOrUpdater(composerText) : textOrUpdater;
+      const result = pruneMissingMentionRecipientTokens({
+        composerText: text,
+        toText,
+        mentionRecipientTokens: mentionRecipientTokensRef.current,
+        mentionTokenLabels: mentionRecipientLabelsRef.current,
+        validRecipientSet,
+      });
+      mentionRecipientTokensRef.current = result.mentionRecipientTokens;
+      for (const token of Array.from(mentionRecipientLabelsRef.current.keys())) {
+        if (!result.mentionRecipientTokens.has(token)) {
+          mentionRecipientLabelsRef.current.delete(token);
+        }
+      }
+      if (result.toText !== toText) {
+        setToText(result.toText);
+      }
+      setComposerText(text);
+    },
+    [composerText, setComposerText, setToText, toText, validRecipientSet],
   );
 
   const removeComposerFile = useCallback(
@@ -1246,7 +1397,12 @@ export function useChatTab({
     const prioritySnapshot = composerStateSnapshot.priority;
     const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
     const toTextSnapshot = composerStateSnapshot.toText;
-    const toTokensSnapshot = parseComposerRecipientTokens(toTextSnapshot, validRecipientSet);
+    const toTokensSnapshot = buildComposerSendRecipientTokens({
+      toText: toTextSnapshot,
+      isCrossGroup,
+      validRecipientSet,
+      crossGroupValidRecipientSet,
+    });
     const prio = replyRequiredSnapshot ? "attention" : (prioritySnapshot || "normal");
     const assistantTargets = !isCrossGroup ? resolveAssistantTargets(toTokensSnapshot) : [];
 
@@ -1487,6 +1643,7 @@ export function useChatTab({
     groupSendBlockedReason,
     tryExecuteSlashCommand,
     validRecipientSet,
+    crossGroupValidRecipientSet,
     inChatWindow,
     appendEvent,
     enqueueOutbox,
@@ -1702,7 +1859,7 @@ export function useChatTab({
 
     // Composer state
     composerText,
-    setComposerText,
+    setComposerText: syncMentionRecipientsFromComposerText,
     composerFiles,
     setComposerFiles,
     removeComposerFile,

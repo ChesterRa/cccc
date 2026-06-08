@@ -39,7 +39,7 @@
   "cancelReply": "取消回复",
   "clearRecipients": "清除收件人",
   "messagePlaceholder": "输入消息…",
-  "messagePlaceholderDesktop": "输入消息… (@ 提及，Ctrl+Enter 发送)",
+  "messagePlaceholderDesktop": "输入消息…（输入 @ 提及，Ctrl+Enter 发送）",
   "send": "发送",
   "sendMessage": "发送消息",
   "sendMessageWithShortcut": "发送消息（{{shortcut}}）",

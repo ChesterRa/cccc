@@ -39,7 +39,7 @@
   "cancelReply": "返信をキャンセル",
   "clearRecipients": "宛先をクリア",
   "messagePlaceholder": "メッセージ…",
-  "messagePlaceholderDesktop": "メッセージ… (@ メンション、Ctrl+Enter 送信)",
+  "messagePlaceholderDesktop": "メッセージを入力…（@ でメンション、Ctrl+Enter で送信）",
   "send": "送信",
   "sendMessage": "メッセージを送信",
   "sendMessageWithShortcut": "メッセージを送信（{{shortcut}}）",

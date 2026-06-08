@@ -29,6 +29,27 @@ interface UseCrossGroupRecipientsResult {
   destGroupScopeLabel: string;
 }
 
+const REMOTE_ACTORS_REFRESH_MS = 60000;
+
+export function getRemoteActorsFetchDecision({
+  canFetchRemoteRecipients,
+  hasCachedActors,
+  fetchedAtMs,
+  nowMs,
+}: {
+  canFetchRemoteRecipients: boolean;
+  hasCachedActors: boolean;
+  fetchedAtMs?: number;
+  nowMs: number;
+}): { shouldFetch: boolean; noCache: boolean } {
+  if (!canFetchRemoteRecipients) return { shouldFetch: false, noCache: false };
+  if (!hasCachedActors) return { shouldFetch: true, noCache: false };
+  const fetchedAt = Number(fetchedAtMs || 0);
+  if (!fetchedAt) return { shouldFetch: true, noCache: true };
+  const stale = nowMs - fetchedAt >= REMOTE_ACTORS_REFRESH_MS;
+  return { shouldFetch: stale, noCache: stale };
+}
+
 export function resolveRecipientActorsForComposer({
   actors,
   remoteActorsByGroup,
@@ -80,7 +101,9 @@ export function useCrossGroupRecipients({
 
   // Remote fetch caches (state drives re-render).
   const [remoteActorsByGroup, setRemoteActorsByGroup] = useState<Record<string, Actor[]>>({});
+  const [remoteActorsFetchedAtByGroup, setRemoteActorsFetchedAtByGroup] = useState<Record<string, number>>({});
   const [remoteGroupDocsByGroup, setRemoteGroupDocsByGroup] = useState<Record<string, GroupDoc>>({});
+  const [remoteActorsRefreshTick, setRemoteActorsRefreshTick] = useState(0);
 
   const remoteDocForSend = canFetchRemoteRecipients ? remoteGroupDocsByGroup[sendGid] : undefined;
   useEffect(() => {
@@ -101,28 +124,46 @@ export function useCrossGroupRecipients({
   }, [canFetchRemoteRecipients, remoteDocForSend, sendGid]);
 
   const remoteActorsForSend = canFetchRemoteRecipients ? remoteActorsByGroup[sendGid] : undefined;
+  const remoteActorsFetchedAtForSend = canFetchRemoteRecipients ? remoteActorsFetchedAtByGroup[sendGid] : undefined;
+
   useEffect(() => {
-    if (!canFetchRemoteRecipients) return;
-    if (remoteActorsForSend) return;
+    if (!canFetchRemoteRecipients) return undefined;
+    const interval = window.setInterval(() => {
+      setRemoteActorsRefreshTick((value) => value + 1);
+    }, REMOTE_ACTORS_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [canFetchRemoteRecipients, sendGid]);
+
+  useEffect(() => {
+    const decision = getRemoteActorsFetchDecision({
+      canFetchRemoteRecipients,
+      hasCachedActors: remoteActorsForSend !== undefined,
+      fetchedAtMs: remoteActorsFetchedAtForSend,
+      nowMs: Date.now(),
+    });
+    if (!decision.shouldFetch) return;
 
     let cancelled = false;
-    void api.fetchActors(sendGid, false).then((resp) => {
+    void api.fetchActors(sendGid, false, decision.noCache ? { noCache: true } : undefined).then((resp) => {
       if (cancelled) return;
+      const fetchedAt = Date.now();
       if (!resp.ok) {
         setRemoteActorsByGroup((prev) => {
           if (Object.prototype.hasOwnProperty.call(prev, sendGid)) return prev;
           return { ...prev, [sendGid]: [] };
         });
+        setRemoteActorsFetchedAtByGroup((prev) => ({ ...prev, [sendGid]: fetchedAt }));
         return;
       }
       const next = resp.result.actors || [];
       setRemoteActorsByGroup((prev) => ({ ...prev, [sendGid]: next }));
+      setRemoteActorsFetchedAtByGroup((prev) => ({ ...prev, [sendGid]: fetchedAt }));
     });
 
     return () => {
       cancelled = true;
     };
-  }, [canFetchRemoteRecipients, remoteActorsForSend, sendGid]);
+  }, [canFetchRemoteRecipients, remoteActorsFetchedAtForSend, remoteActorsForSend, remoteActorsRefreshTick, sendGid]);
 
   const destGroupScopeLabel = useMemo(() => {
     if (!sendGid) return "";

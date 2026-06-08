@@ -174,6 +174,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         quotedPresentationRef: null,
         priority: "normal",
         replyRequired: false,
+        destGroupId: activeGroupId,
         normalToTextByGroup: activeGroupId
           ? {
               ...state.normalToTextByGroup,

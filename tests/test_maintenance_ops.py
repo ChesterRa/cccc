@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -11,7 +12,11 @@ class TestMaintenanceOps(unittest.TestCase):
         os.environ["CCCC_HOME"] = td
 
         def cleanup() -> None:
-            td_ctx.__exit__(None, None, None)
+            try:
+                td_ctx.__exit__(None, None, None)
+            except OSError:
+                pass
+            shutil.rmtree(td, ignore_errors=True)
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
             else:
