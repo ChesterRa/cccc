@@ -52,7 +52,6 @@ export interface ChatComposerProps {
   isSmallScreen: boolean;
   selectedGroupId: string;
   actors: Actor[];
-  recipientActors: Actor[];
   recipientActorsBusy?: boolean;
   destGroupId: string;
   setDestGroupId: (groupId: string) => void;
@@ -108,7 +107,6 @@ export function ChatComposer({
   isSmallScreen,
   selectedGroupId,
   actors,
-  recipientActors,
   recipientActorsBusy,
   destGroupId,
   setDestGroupId,
@@ -585,9 +583,7 @@ export function ChatComposer({
   });
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
-  const recipientChipActors = isCrossGroup ? recipientActors : actors;
-  const recipientChipActorsBusy = isCrossGroup ? recipientActorsBusy : selectedGroupActorsHydrating;
-  const actorChipDisabled = !selectedGroupId || busy === "send" || !!recipientChipActorsBusy;
+  const actorChipDisabled = !selectedGroupId || busy === "send" || !!selectedGroupActorsHydrating;
   const actionVisibility = getComposerActionVisibility(isSmallScreen);
 
   type MessageMode = "normal" | "attention" | "task";
@@ -812,7 +808,7 @@ export function ChatComposer({
                 <div
                   className={classNames(
                     "flex min-w-max items-center gap-1 transition-opacity",
-                    recipientChipActorsBusy ? "opacity-50" : "",
+                    selectedGroupActorsHydrating ? "opacity-50 pointer-events-none" : "",
                   )}
                 >
                   {["@all", "@foreman", "@peers"].map((tok) => {
@@ -834,7 +830,7 @@ export function ChatComposer({
                       </button>
                     );
                   })}
-                  {recipientChipActors.map((actor) => {
+                  {actors.map((actor) => {
                     const id = String(actor.id || "");
                     if (!id) return null;
                     const active = toTokens.includes(id);

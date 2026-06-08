@@ -48,7 +48,7 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).not.toContain("<GroupCombobox");
     expect(composerSource).not.toContain("getComposerDestGroupDisplayValue");
     expect(composerSource).toContain("onToggleRecipient(tok)");
-    expect(composerSource).toContain("const recipientChipActors = isCrossGroup ? recipientActors : actors;");
+    expect(composerSource).toContain("actors.map((actor)");
     expect(composerSource).toContain('val.lastIndexOf("@")');
     expect(composerSource).toContain('val.lastIndexOf("#")');
     expect(composerSource).toContain("getAgentMentionDisplayToken(selected)");
@@ -61,15 +61,17 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("setComposerText(before + getAgentMentionDisplayToken(selected) + \" \")");
   });
 
-  it("binds actor To chips to the active send destination", () => {
-    expect(composerSource).toContain("recipientActors: Actor[]");
-    expect(composerSource).toContain("recipientChipActors.map((actor)");
-    expect(composerSource).toContain("const recipientChipActors = isCrossGroup ? recipientActors : actors;");
+  it("keeps actor To chips bound to the selected group", () => {
+    expect(composerSource).not.toContain("recipientActors: Actor[]");
+    expect(composerSource).not.toContain("recipientChipActors.map((actor)");
+    expect(composerSource).not.toContain("const recipientChipActors = isCrossGroup ? recipientActors : actors;");
+    expect(composerSource).toContain("actors.map((actor)");
   });
 
-  it("disables actor chips only while their actor source is resolving", () => {
+  it("disables actor chips only while selected group actors are resolving", () => {
     expect(composerSource).toContain("const actorChipDisabled =");
-    expect(composerSource).toContain("const recipientChipActorsBusy = isCrossGroup ? recipientActorsBusy : selectedGroupActorsHydrating;");
+    expect(composerSource).not.toContain("recipientChipActorsBusy");
+    expect(composerSource).toContain('selectedGroupActorsHydrating ? "opacity-50 pointer-events-none" : ""');
     expect(composerSource).toContain("disabled={actorChipDisabled}");
   });
 
