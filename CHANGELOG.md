@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [0.4.26] — 2026-06-10
+
+### Added
+- **First-class local memory daemon operations** expose search, read, write, profile, and health checks on top of CCCC's local ReMe-backed memory store.
+- **Read-only terminal viewing** supports viewer-mode attaches without granting or stealing terminal write control.
+
+### Changed
+- **Web terminal sessions now preserve raw PTY output across attach and reconnect**, including byte-cursor replay, better viewer/control separation, and safer control takeover behavior.
+- **Group sends no longer get blocked just because the Web UI currently sees no running actor**, allowing stopped groups to wake through the server-side send path instead of failing early in the browser.
+- **Terminal transcript rendering is more accurate for wide CJK/fullwidth characters and alternate-screen TUIs**, making terminal tails and diagnostics easier to read.
+
+### Fixed
+- **Read-only exhibit terminal access can no longer take over a live PTY writer**, so public viewers cannot deny control to an active operator.
+- **Changing Web theme or terminal scrollback no longer recreates the live xterm instance**, preventing terminal input/resize from silently detaching until reconnect.
+- **Ledger index catch-up is serialized to avoid SQLite writer-lock failures** during concurrent ledger tail/search and append-index activity.
+- **Headless Codex and Claude session shutdown now waits briefly for worker threads**, reducing stale runtime threads after stop/restart flows.
+- **Reply uploads now reject invalid default recipients with a clear validation error** instead of creating a misleading send result.
+- **Task reference chips have stronger dark-mode contrast**, and Web chat follow mode avoids forcing the bottom while the user is browsing detached history.
+- **Foreman actors can remove peer actors through the expected management path**, matching the documented permission model.
+
+### Tests
+- Added and updated coverage for terminal attach modes, reconnect cursors, raw PTY replay helpers, read-only Web terminal access, runtime thread cleanup, local memory operations, ledger index locking, group send lifecycle projection, reply upload validation, terminal transcript rendering, and related Web typecheck paths.
+
 ## [0.4.25] — 2026-06-04
 
 ### Changed
