@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ### Fixed
 - **Read-only exhibit terminal access can no longer take over a live PTY writer**, so public viewers cannot deny control to an active operator.
 - **Changing Web theme or terminal scrollback no longer recreates the live xterm instance**, preventing terminal input/resize from silently detaching until reconnect.
+- **Windows ConPTY installs now avoid the newly regressed pywinpty 3.0.4 release** while keeping the previously verified 3.0.3 path available.
 - **Ledger index catch-up is serialized to avoid SQLite writer-lock failures** during concurrent ledger tail/search and append-index activity.
 - **Headless Codex and Claude session shutdown now waits briefly for worker threads**, reducing stale runtime threads after stop/restart flows.
 - **Reply uploads now reject invalid default recipients with a clear validation error** instead of creating a misleading send result.

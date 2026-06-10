@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 def _windows_pty_hints() -> List[str]:
     return [
-        "Run `python -m pip install pywinpty` to install the Windows ConPTY dependency.",
+        "Run `python -m pip install 'pywinpty>=2.0,<3.0.4'` to install the Windows ConPTY dependency.",
         "If you installed the project with uv, rerun `uv pip install -e .` to refresh platform dependencies.",
         "After installation, rerun `cccc doctor` or `pytest tests/test_windows_pty_backend.py -q` to verify support.",
     ]
