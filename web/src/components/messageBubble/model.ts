@@ -16,7 +16,7 @@ export function buildToLabel({
     if (hasDestination) {
         return "";
     }
-    if (!recipients || recipients.length === 0) return "@all";
+    if (!recipients || recipients.length === 0) return "@foreman";
     return recipients
         .map((recipient) => getRecipientDisplayName(recipient, displayNameMap))
         .join(", ");

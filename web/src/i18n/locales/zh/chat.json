@@ -337,6 +337,7 @@
   "jumpToRepliedMessage": "跳转到被回复的消息",
   "replyTargetNotLoaded": "原消息未加载。",
   "sentTo": "发送至 {{label}} · {{to}}",
+  "relayedTo": "已中转至 {{label}} · {{to}}",
   "updated": "更新于 {{time}}",
   "noAgentStateYet": "暂无智能体状态",
   "taskShort": "任务 {{id}}",

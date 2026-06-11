@@ -37,7 +37,10 @@ import { copyTextToClipboard } from "../utils/copy";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
+import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "./composerGroupMentions";
+import { pruneComposerAgentMentionTokens, pruneComposerGroupMentionTokens } from "./composerGroupMentions";
 import { buildComposerMentionSuggestions, type ComposerMentionKind } from "../pages/chat/chatMentionSuggestions";
+import { isDelegationSourceOutboundEvent } from "../components/messageBubbleDelegation";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -65,6 +68,10 @@ export function shouldLockChatToBottomForSend(input: {
   if (Math.max(0, Number(input.chatUnreadCount) || 0) > 0) return false;
   if (shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot, input.now ?? Date.now())) return false;
   return true;
+}
+
+export function shouldShowInConversation(event: LedgerEvent): boolean {
+  return !isDelegationSourceOutboundEvent(event.data);
 }
 
 function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
@@ -787,68 +794,33 @@ export function buildComposerSendRecipientTokens({
   );
 }
 
-function hasComposerRecipientMentionToken(text: string, value: string): boolean {
-  const raw = String(value || "").trim();
-  const needle = raw.startsWith("@") ? raw : `@${raw}`;
-  if (needle === "@") return false;
-  const source = String(text || "");
-  let index = source.indexOf(needle);
-  while (index >= 0) {
-    const before = index === 0 ? "" : source[index - 1];
-    const afterIndex = index + needle.length;
-    const after = afterIndex >= source.length ? "" : source[afterIndex];
-    const startsOnBoundary = !before || before === " " || before === "\n";
-    const endsOnBoundary = !after || after === " " || after === "\n" || after === "," || after === "." || after === "，" || after === "。";
-    if (startsOnBoundary && endsOnBoundary) return true;
-    index = source.indexOf(needle, index + 1);
-  }
-  return false;
-}
-
 export function pruneMissingMentionRecipientTokens({
-  composerText,
   toText,
-  mentionRecipientTokens,
-  mentionTokenLabels,
+  liveAgentMentionTokens,
   validRecipientSet,
 }: {
-  composerText: string;
   toText: string;
-  mentionRecipientTokens: Set<string>;
-  mentionTokenLabels?: Map<string, string>;
+  liveAgentMentionTokens: ComposerAgentMentionToken[];
   validRecipientSet: Set<string>;
 }): { toText: string; mentionRecipientTokens: Set<string> } {
+  const mentionRecipientTokens = new Set(
+    (liveAgentMentionTokens || [])
+      .filter((token) => token.scope === "selected")
+      .map((token) => String(token.actorId || "").trim())
+      .filter((token) => token && validRecipientSet.has(token)),
+  );
   if (mentionRecipientTokens.size === 0) {
     return { toText: String(toText || ""), mentionRecipientTokens: new Set() };
   }
 
-  const nextMentionTokens = new Set<string>();
-  for (const token of mentionRecipientTokens) {
-    const normalized = String(token || "").trim();
-    if (!normalized) continue;
-    const label = String(mentionTokenLabels?.get(normalized) || "").trim();
-    if (
-      hasComposerRecipientMentionToken(composerText, normalized) ||
-      (label && hasComposerRecipientMentionToken(composerText, label))
-    ) {
-      nextMentionTokens.add(normalized);
-    }
-  }
-
-  const missing = new Set<string>();
-  for (const token of mentionRecipientTokens) {
-    const normalized = String(token || "").trim();
-    if (normalized && !nextMentionTokens.has(normalized)) missing.add(normalized);
-  }
-  if (missing.size === 0) {
-    return { toText: String(toText || ""), mentionRecipientTokens: nextMentionTokens };
-  }
-
-  const nextTokens = parseComposerRecipientTokens(toText, validRecipientSet)
-    .filter((token) => !missing.has(token));
+  const explicitTokens = parseComposerRecipientTokens(toText, validRecipientSet)
+    .filter((token) => !mentionRecipientTokens.has(token));
+  const nextTokens = explicitTokens.concat(
+    Array.from(mentionRecipientTokens).filter((token) => !explicitTokens.includes(token)),
+  );
   return {
     toText: nextTokens.join(", "),
-    mentionRecipientTokens: nextMentionTokens,
+    mentionRecipientTokens,
   };
 }
 
@@ -941,7 +913,8 @@ export function useChatTab({
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
   const mentionRecipientTokensRef = useRef<Set<string>>(new Set());
-  const mentionRecipientLabelsRef = useRef<Map<string, string>>(new Map());
+  const [composerGroupMentionTokens, setComposerGroupMentionTokens] = useState<ComposerGroupMentionToken[]>([]);
+  const [composerAgentMentionTokens, setComposerAgentMentionTokens] = useState<ComposerAgentMentionToken[]>([]);
 
   // ============ Computed Values ============
 
@@ -1135,7 +1108,7 @@ export function useChatTab({
 
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
-    const all = events.filter(isFormalChatMessageEvent);
+    const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation);
     const renderableCanonicalClientIds = new Set(
       all
         .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
@@ -1180,12 +1153,12 @@ export function useChatTab({
 
   // Chat messages (window or live)
   const chatMessages = useMemo(() => {
-    if (inChatWindow && chatWindow) return (chatWindow.events || []).filter(isFormalChatMessageEvent);
+    if (inChatWindow && chatWindow) return (chatWindow.events || []).filter(isFormalChatMessageEvent).filter(shouldShowInConversation);
     return liveChatMessages;
   }, [chatWindow, inChatWindow, liveChatMessages]);
 
   const hasAnyChatMessages = useMemo(
-    () => events.some(isFormalChatMessageEvent) || outboxEntries.length > 0,
+    () => events.some((event: LedgerEvent) => isFormalChatMessageEvent(event) && shouldShowInConversation(event)) || outboxEntries.length > 0,
     [events, outboxEntries]
   );
   const chatInitialScrollAnchorId = useMemo(() => {
@@ -1296,6 +1269,7 @@ export function useChatTab({
       const idx = cur.findIndex((x) => x === t);
       if (idx >= 0) {
         const next = cur.slice(0, idx).concat(cur.slice(idx + 1));
+        setComposerAgentMentionTokens((tokens) => tokens.filter((mention) => mention.scope !== "selected" || mention.actorId !== t));
         setToText(next.join(", "));
       } else {
         setToText(cur.concat([t]).join(", "));
@@ -1306,19 +1280,15 @@ export function useChatTab({
 
   const clearRecipients = useCallback(() => {
     mentionRecipientTokensRef.current = new Set();
-    mentionRecipientLabelsRef.current = new Map();
+    setComposerAgentMentionTokens((tokens) => tokens.filter((token) => token.scope !== "selected"));
     setToText("");
   }, [setToText]);
 
   const appendRecipientToken = useCallback(
-    (token: string, label?: string) => {
+    (token: string) => {
       const normalized = String(token || "").trim();
       if (!normalized) return;
       mentionRecipientTokensRef.current.add(normalized);
-      const normalizedLabel = String(label || "").trim();
-      if (normalizedLabel) {
-        mentionRecipientLabelsRef.current.set(normalized, normalizedLabel);
-      }
       setToText(toText ? toText + ", " + normalized : normalized);
     },
     [toText, setToText]
@@ -1327,25 +1297,23 @@ export function useChatTab({
   const syncMentionRecipientsFromComposerText = useCallback(
     (textOrUpdater: string | ((prev: string) => string)) => {
       const text = typeof textOrUpdater === "function" ? textOrUpdater(composerText) : textOrUpdater;
+      setComposerGroupMentionTokens((tokens) => pruneComposerGroupMentionTokens({ text, tokens }));
+      const liveAgentMentionTokens = pruneComposerAgentMentionTokens({ text, tokens: composerAgentMentionTokens });
+      if (liveAgentMentionTokens.length !== composerAgentMentionTokens.length) {
+        setComposerAgentMentionTokens(liveAgentMentionTokens);
+      }
       const result = pruneMissingMentionRecipientTokens({
-        composerText: text,
         toText,
-        mentionRecipientTokens: mentionRecipientTokensRef.current,
-        mentionTokenLabels: mentionRecipientLabelsRef.current,
+        liveAgentMentionTokens,
         validRecipientSet,
       });
       mentionRecipientTokensRef.current = result.mentionRecipientTokens;
-      for (const token of Array.from(mentionRecipientLabelsRef.current.keys())) {
-        if (!result.mentionRecipientTokens.has(token)) {
-          mentionRecipientLabelsRef.current.delete(token);
-        }
-      }
       if (result.toText !== toText) {
         setToText(result.toText);
       }
       setComposerText(text);
     },
-    [composerText, setComposerText, setToText, toText, validRecipientSet],
+    [composerAgentMentionTokens, composerText, setComposerText, setToText, toText, validRecipientSet],
   );
 
   const removeComposerFile = useCallback(
@@ -1397,6 +1365,8 @@ export function useChatTab({
     const prioritySnapshot = composerStateSnapshot.priority;
     const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
     const toTextSnapshot = composerStateSnapshot.toText;
+    const groupMentionTokensSnapshot = composerGroupMentionTokens;
+    const agentMentionTokensSnapshot = composerAgentMentionTokens;
     const toTokensSnapshot = buildComposerSendRecipientTokens({
       toText: toTextSnapshot,
       isCrossGroup,
@@ -1470,6 +1440,8 @@ export function useChatTab({
           upsertDraft,
         },
       );
+      setComposerGroupMentionTokens(groupMentionTokensSnapshot);
+      setComposerAgentMentionTokens(agentMentionTokensSnapshot);
     };
 
     const applyImmediateComposerFeedback = () => {
@@ -1480,6 +1452,8 @@ export function useChatTab({
         scrollSnapshot,
       });
       clearComposer();
+      setComposerGroupMentionTokens([]);
+      setComposerAgentMentionTokens([]);
       if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, !shouldLockBottom);
@@ -1677,6 +1651,8 @@ export function useChatTab({
     resolveAssistantTargets,
     upsertStreamingEvent,
     t,
+    composerGroupMentionTokens,
+    composerAgentMentionTokens,
   ]);
 
   const copyMessageLink = useCallback(
@@ -1860,6 +1836,10 @@ export function useChatTab({
     // Composer state
     composerText,
     setComposerText: syncMentionRecipientsFromComposerText,
+    composerGroupMentionTokens,
+    setComposerGroupMentionTokens,
+    composerAgentMentionTokens,
+    setComposerAgentMentionTokens,
     composerFiles,
     setComposerFiles,
     removeComposerFile,

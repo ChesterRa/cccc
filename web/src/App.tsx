@@ -136,6 +136,9 @@ export default function App() {
   const [mentionFilter, setMentionFilter] = React.useState("");
   const [mentionKind, setMentionKind] = React.useState<ComposerMentionKind>("agent");
   const [mentionActorScope, setMentionActorScope] = React.useState<"selected" | "destination">("selected");
+  // Group whose actors feed the `@` destination menu (set when typing `#group @`).
+  // Decoupled from destGroupId so it never turns the message into a cross-send.
+  const [mentionTargetGroupId, setMentionTargetGroupId] = React.useState<string>("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const internalRuntimeActors = useMemo(
     () => internalRuntimeActorsByGroup[String(selectedGroupId || "").trim()] || [],
@@ -236,6 +239,7 @@ export default function App() {
     selectedGroupId,
     composerGroupId: activeGroupId,
     sendGroupId: computedSendGroupId,
+    mentionTargetGroupId,
     selectedGroupActorsHydrating,
   });
   const sendGroupId = computedSendGroupId;
@@ -450,6 +454,7 @@ export default function App() {
         setMentionFilter={setMentionFilter}
         setMentionKind={setMentionKind}
         setMentionActorScope={setMentionActorScope}
+        setMentionTargetGroupId={setMentionTargetGroupId}
         setMentionSelectedIndex={setMentionSelectedIndex}
         setShowMentionMenu={setShowMentionMenu}
         getTermEpoch={getTermEpoch}

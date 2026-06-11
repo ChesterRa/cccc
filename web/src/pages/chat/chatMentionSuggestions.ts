@@ -155,6 +155,121 @@ export function getComposerGroupRouteDestination({
   return best?.groupId || selected;
 }
 
+export interface ComposerHashRouting {
+  /** Destination group for the actual send. Always the local group: a user's
+   *  `#<group>` token is a local-group agent delegation hint, never a direct
+   *  cross-group route. */
+  destGroupId: string;
+  /** The group referenced by the `#` token, kept as delegation context for the
+   *  local agent (empty when the token matches no real group). */
+  delegationGroupId: string;
+}
+
+// Resolve how a user's `#<group>` token should route. Policy: never set a
+// cross-group destination from composer input — the message stays in the local
+// group so its agent can decide how to contact the referenced group. The
+// referenced group id is surfaced separately as delegation context.
+export function resolveComposerHashRouting({
+  text,
+  selectedGroupId,
+  groups,
+}: {
+  text: string;
+  selectedGroupId: string;
+  groups: GroupMeta[];
+}): ComposerHashRouting {
+  const selected = String(selectedGroupId || "").trim();
+  const matched = getComposerGroupRouteDestination({ text, selectedGroupId, groups });
+  const delegationGroupId = matched && matched !== selected ? matched : "";
+  return { destGroupId: selected, delegationGroupId };
+}
+
+// A `#group` token only governs `@` tokens in the same "segment" — i.e. the
+// same line, with no newline between them. Sending clears the composer, so a
+// prior turn never leaks in. This prevents an arbitrary/historical `#` from
+// polluting a later bare `@`.
+function _segmentStart(text: string, index: number): number {
+  const nl = text.lastIndexOf("\n", Math.max(0, index - 1));
+  return nl >= 0 ? nl + 1 : 0;
+}
+
+function _latestValidHashInRange(
+  text: string,
+  start: number,
+  end: number,
+  selected: string,
+  groups: GroupMeta[],
+): { index: number; end: number; groupId: string } | null {
+  const window = text.slice(start, end);
+  let best: { index: number; end: number; groupId: string } | null = null;
+  for (const group of groups || []) {
+    const groupId = String(group.group_id || "").trim();
+    if (!groupId || groupId === selected) continue;
+    for (const candidate of getGroupRouteCandidates(group)) {
+      for (const idx of getRouteTokenOccurrences(window, candidate)) {
+        const absIdx = start + idx;
+        if (!best || absIdx >= best.index) {
+          best = { index: absIdx, end: absIdx + 1 + candidate.length, groupId };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+export interface ComposerMentionContext {
+  scope: "selected" | "destination";
+  mentionTargetGroupId: string;
+}
+
+// Decide the actor scope for an `@` being typed at ``atIndex``: a valid,
+// nearest, same-segment `#group` before it switches the mention to that target
+// group's actors; otherwise the local group.
+export function resolveComposerMentionContext({
+  text,
+  atIndex,
+  selectedGroupId,
+  groups,
+}: {
+  text: string;
+  atIndex: number;
+  selectedGroupId: string;
+  groups: GroupMeta[];
+}): ComposerMentionContext {
+  const src = String(text || "");
+  const selected = String(selectedGroupId || "").trim();
+  const segStart = _segmentStart(src, atIndex);
+  const best = _latestValidHashInRange(src, segStart, atIndex, selected, groups);
+  if (best) {
+    return { scope: "destination", mentionTargetGroupId: best.groupId };
+  }
+  return { scope: "selected", mentionTargetGroupId: "" };
+}
+
+// Extract an explicit target-group agent: the first `@token` that appears after
+// a valid `#group` token within the same segment. Returns "" when there is no
+// such in-segment `@` (a bare `@`, or a `@` on a different line, is never a
+// target agent).
+export function extractSegmentTargetActor({
+  text,
+  selectedGroupId,
+  groups,
+}: {
+  text: string;
+  selectedGroupId: string;
+  groups: GroupMeta[];
+}): string {
+  const src = String(text || "");
+  const selected = String(selectedGroupId || "").trim();
+  const best = _latestValidHashInRange(src, 0, src.length, selected, groups);
+  if (!best) return "";
+  const segEndNl = src.indexOf("\n", best.end);
+  const segEnd = segEndNl >= 0 ? segEndNl : src.length;
+  const segment = src.slice(best.end, segEnd);
+  const match = segment.match(/(?:^|\s)@([^\s,，。@#]+)/);
+  return match ? match[1].trim() : "";
+}
+
 export function buildComposerMentionSuggestions({
   kind,
   filter,

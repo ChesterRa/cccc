@@ -92,6 +92,7 @@ export interface ChatTabProps {
   setMentionFilter: React.Dispatch<React.SetStateAction<string>>;
   setMentionKind: React.Dispatch<React.SetStateAction<ComposerMentionKind>>;
   setMentionActorScope: React.Dispatch<React.SetStateAction<"selected" | "destination">>;
+  setMentionTargetGroupId: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export function ChatTab({
@@ -125,6 +126,7 @@ export function ChatTab({
   setMentionFilter,
   setMentionKind,
   setMentionActorScope,
+  setMentionTargetGroupId,
 }: ChatTabProps) {
   // Use the refactored hook for business logic
   const {
@@ -160,6 +162,10 @@ export function ChatTab({
     // Composer state
     composerText,
     setComposerText,
+    composerGroupMentionTokens,
+    setComposerGroupMentionTokens,
+    composerAgentMentionTokens,
+    setComposerAgentMentionTokens,
     composerFiles,
     removeComposerFile,
     replyTarget,
@@ -897,6 +903,10 @@ export function ChatTab({
             composerRef={composerRef}
             composerText={composerText}
             setComposerText={setComposerText}
+            composerGroupMentionTokens={composerGroupMentionTokens}
+            setComposerGroupMentionTokens={setComposerGroupMentionTokens}
+            composerAgentMentionTokens={composerAgentMentionTokens}
+            setComposerAgentMentionTokens={setComposerAgentMentionTokens}
             priority={priority}
             replyRequired={replyRequired}
             setPriority={setPriority}
@@ -910,6 +920,7 @@ export function ChatTab({
             setMentionFilter={setMentionFilter}
             setMentionKind={setMentionKind}
             setMentionActorScope={setMentionActorScope}
+            setMentionTargetGroupId={setMentionTargetGroupId}
             onAppendRecipientToken={appendRecipientToken}
             slashCommands={slashCommands}
           />

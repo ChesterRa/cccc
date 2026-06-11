@@ -10,6 +10,7 @@ import { getReplyEventId } from "../utils/chatReply";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import { getTaskMessageRefs, getTaskRefChipLabel, getTaskRefStateKey, type TaskRefStateKey } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
+import { destinationChipKey, getDelegationDisplayText, getDelegationSourceOutboundStatus, isDelegationSourceOutbound } from "./messageBubbleDelegation";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
@@ -191,6 +192,7 @@ function MessageBubbleBody({
     taskRefs,
     taskById,
     messageText,
+    bodyText,
     shouldRenderMarkdown,
     blobAttachments,
     blobGroupId,
@@ -218,6 +220,7 @@ function MessageBubbleBody({
     taskRefs: TaskMessageRef[];
     taskById: Map<string, Task>;
     messageText: string;
+    bodyText: string;
     shouldRenderMarkdown: boolean;
     blobAttachments: Array<{
         kind: string;
@@ -291,14 +294,18 @@ function MessageBubbleBody({
                     {hasDestination ? (() => {
                         const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
                         const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+                        // A delegation relay request is an agent contacting the
+                        // target group on the user's behalf — show "Relayed to"
+                        // so it never reads like a user direct cross-send.
+                        const chipKey = destinationChipKey(messageText);
                         return (
                             <div
                                 className={classNames(metaChipClass, relayChipClass)}
-                                title={t("sentTo", { label: dstGroupId, to: dstToLabel })}
+                                title={t(chipKey, { label: dstGroupId, to: dstToLabel })}
                             >
                                 <span className="opacity-65">↗</span>
                                 <span className="truncate">
-                                    {t("sentTo", { label: dstLabel, to: dstToLabel })}
+                                    {t(chipKey, { label: dstLabel, to: dstToLabel })}
                                 </span>
                             </div>
                         );
@@ -401,7 +408,7 @@ function MessageBubbleBody({
             ) : null}
 
             <MessageContent
-                fallbackText={messageText}
+                fallbackText={bodyText}
                 shouldRenderMarkdown={shouldRenderMarkdown}
                 isDark={isDark}
             />
@@ -675,9 +682,21 @@ export const MessageBubble = memo(function MessageBubble({
         }
         return messageText;
     }, [blobAttachments, messageText, sourcePlatform]);
+    const delegationSourceOutbound = useMemo(() => isDelegationSourceOutbound({
+        rawText: displayMessageText,
+        srcGroupId,
+        dstGroupId,
+    }), [displayMessageText, dstGroupId, srcGroupId]);
+    // Body text shown in the bubble: source-side outbound delegation is a
+    // status, not conversation content. Target-side inbound delegation still
+    // shows the natural contact body while hiding the protocol comment.
+    const bubbleBodyText = useMemo(() => {
+        if (delegationSourceOutbound) return getDelegationSourceOutboundStatus(displayMessageText);
+        return getDelegationDisplayText(displayMessageText);
+    }, [delegationSourceOutbound, displayMessageText]);
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
     const taskRefs = useMemo(() => getTaskMessageRefs(msgData?.refs), [msgData?.refs]);
-    const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(displayMessageText), [displayMessageText, isStreaming]);
+    const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(bubbleBodyText), [bubbleBodyText, isStreaming]);
     const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
     const stableMessageAttachmentKey = useMemo(() => {
         const clientId = typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
@@ -958,6 +977,7 @@ export const MessageBubble = memo(function MessageBubble({
                         taskRefs={taskRefs}
                         taskById={taskById}
                         messageText={displayMessageText}
+                        bodyText={bubbleBodyText}
                         shouldRenderMarkdown={shouldRenderMarkdown}
                         blobAttachments={blobAttachments}
                         blobGroupId={blobGroupId}

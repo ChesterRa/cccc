@@ -75,6 +75,7 @@ type AppShellProps = {
   setMentionFilter: React.Dispatch<React.SetStateAction<string>>;
   setMentionKind: React.Dispatch<React.SetStateAction<ComposerMentionKind>>;
   setMentionActorScope: React.Dispatch<React.SetStateAction<"selected" | "destination">>;
+  setMentionTargetGroupId: React.Dispatch<React.SetStateAction<string>>;
   setMentionSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
   setShowMentionMenu: React.Dispatch<React.SetStateAction<boolean>>;
   getTermEpoch: (actorId: string) => number;
@@ -203,6 +204,7 @@ export function AppShell({
   setMentionFilter,
   setMentionKind,
   setMentionActorScope,
+  setMentionTargetGroupId,
   setMentionSelectedIndex,
   setShowMentionMenu,
   getTermEpoch,
@@ -337,6 +339,7 @@ export function AppShell({
                 setMentionFilter={setMentionFilter}
                 setMentionKind={setMentionKind}
                 setMentionActorScope={setMentionActorScope}
+                setMentionTargetGroupId={setMentionTargetGroupId}
               />
             </ErrorBoundary>
           </div>

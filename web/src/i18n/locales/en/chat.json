@@ -337,6 +337,7 @@
   "jumpToRepliedMessage": "Jump to replied message",
   "replyTargetNotLoaded": "Original message is not loaded.",
   "sentTo": "Sent to {{label}} · {{to}}",
+  "relayedTo": "Relayed to {{label}} · {{to}}",
   "updated": "Updated {{time}}",
   "noAgentStateYet": "No agent state yet",
   "taskShort": "task {{id}}",

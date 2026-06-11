@@ -337,6 +337,7 @@
   "jumpToRepliedMessage": "返信先メッセージへ移動",
   "replyTargetNotLoaded": "元のメッセージは読み込まれていません。",
   "sentTo": "{{label}} · {{to}} に送信",
+  "relayedTo": "{{label}} · {{to}} へ中継",
   "updated": "更新： {{time}}",
   "noAgentStateYet": "エージェント状態はまだありません",
   "taskShort": "タスク {{id}}",

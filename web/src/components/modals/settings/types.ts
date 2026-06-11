@@ -17,6 +17,7 @@ export type GlobalTabId =
   | "myProfiles"
   | "branding"
   | "webAccess"
+  | "federation"
   | "webModels"
   | "developer";
 

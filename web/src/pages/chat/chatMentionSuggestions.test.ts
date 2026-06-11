@@ -2,9 +2,102 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildComposerMentionSuggestions,
+  extractSegmentTargetActor,
   getComposerGroupRouteDestination,
   hasComposerGroupRouteToken,
+  resolveComposerHashRouting,
+  resolveComposerMentionContext,
 } from "./chatMentionSuggestions";
+
+describe("resolveComposerMentionContext", () => {
+  const groups = [
+    { group_id: "self-agent", title: "Self Agent" },
+    { group_id: "g_other", title: "Other" },
+  ] as unknown as Parameters<typeof resolveComposerMentionContext>[0]["groups"];
+
+  const ctx = (text: string) => {
+    const atIndex = text.lastIndexOf("@");
+    return resolveComposerMentionContext({ text, atIndex, selectedGroupId: "g_local", groups });
+  };
+
+  it("bare @ at start → selected/local", () => {
+    expect(ctx("@")).toEqual({ scope: "selected", mentionTargetGroupId: "" });
+  });
+
+  it("@ after plain text → selected/local", () => {
+    expect(ctx("hello there @")).toEqual({ scope: "selected", mentionTargetGroupId: "" });
+  });
+
+  it("#self-agent @ (valid group, same segment) → destination/target group", () => {
+    expect(ctx("ask #self-agent to help @")).toEqual({ scope: "destination", mentionTargetGroupId: "self-agent" });
+  });
+
+  it("invalid #not-a-group @ → selected/local", () => {
+    expect(ctx("#not-a-group @")).toEqual({ scope: "selected", mentionTargetGroupId: "" });
+  });
+
+  it("a # on a previous line does not pollute @ on the next line", () => {
+    expect(ctx("#self-agent first line\nsecond line @")).toEqual({ scope: "selected", mentionTargetGroupId: "" });
+  });
+});
+
+describe("extractSegmentTargetActor", () => {
+  const groups = [{ group_id: "self-agent", title: "Self Agent" }] as unknown as Parameters<
+    typeof extractSegmentTargetActor
+  >[0]["groups"];
+
+  it("extracts @target after a valid #group in the same segment", () => {
+    expect(extractSegmentTargetActor({ text: "#self-agent some text @target-agent", selectedGroupId: "g_local", groups })).toBe(
+      "target-agent",
+    );
+  });
+
+  it("returns empty for a bare @ with no #group", () => {
+    expect(extractSegmentTargetActor({ text: "@local-peer hello", selectedGroupId: "g_local", groups })).toBe("");
+  });
+
+  it("returns empty when @ is on a different line from the #group", () => {
+    expect(extractSegmentTargetActor({ text: "#self-agent line one\n@local-peer", selectedGroupId: "g_local", groups })).toBe("");
+  });
+});
+
+describe("resolveComposerHashRouting", () => {
+  const groups = [
+    { group_id: "self-agent", title: "Self Agent" },
+    { group_id: "g_other", title: "Other" },
+  ] as unknown as Parameters<typeof resolveComposerHashRouting>[0]["groups"];
+
+  it("never sets a cross-group destination even when # matches a real group", () => {
+    const routing = resolveComposerHashRouting({
+      text: "please contact #self-agent about this",
+      selectedGroupId: "g_local",
+      groups,
+    });
+    // Destination stays local: the message is delivered to the local group's
+    // agent, never sent directly to the referenced group.
+    expect(routing.destGroupId).toBe("g_local");
+    expect(routing.destGroupId).not.toBe("self-agent");
+  });
+
+  it("surfaces the referenced group as delegation context", () => {
+    const routing = resolveComposerHashRouting({
+      text: "ping #self-agent",
+      selectedGroupId: "g_local",
+      groups,
+    });
+    expect(routing.delegationGroupId).toBe("self-agent");
+  });
+
+  it("has no delegation target when the # token matches no real group", () => {
+    const routing = resolveComposerHashRouting({
+      text: "hello #nobody",
+      selectedGroupId: "g_local",
+      groups,
+    });
+    expect(routing.destGroupId).toBe("g_local");
+    expect(routing.delegationGroupId).toBe("");
+  });
+});
 
 describe("buildComposerMentionSuggestions", () => {
   it("builds current-route agent suggestions for @ mentions", () => {
