@@ -557,12 +557,16 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_group",
-        "description": "Group operations: action=info|list|set_state.",
+        "description": "Group operations: action=info|list|resolve|set_state. Use resolve to turn natural #group/title tokens into a real group_id before cross-group messaging.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
-                "action": {"type": "string", "enum": ["info", "list", "set_state"], "default": "info"},
+                "action": {"type": "string", "enum": ["info", "list", "resolve", "set_state"], "default": "info"},
+                "token": {
+                    "type": "string",
+                    "description": "Required when action=resolve; accepts #group, title, topic, or group_id and returns only a unique exact match.",
+                },
                 "state": {
                     "type": "string",
                     "enum": ["active", "idle", "paused", "stopped"],
@@ -1253,6 +1257,43 @@ MCP_TOOLS = [
                 "key": {"type": "string"},
             },
             required=["key"],
+        ),
+    },
+    {
+        "name": "cccc_remote_send",
+        "description": (
+            "Enqueue an outbound federated message to a remote target via a saved registration. "
+            "Returns a queued receipt; delivery happens daemon-side. idempotency_key is required and replays safely."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "registration_id": {"type": "string"},
+                "text": {"type": "string"},
+                "idempotency_key": {"type": "string"},
+                "to": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ]
+                },
+                "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
+                "reply_required": {"type": "boolean", "default": False},
+            },
+            required=["registration_id", "text", "idempotency_key"],
+        ),
+    },
+    {
+        "name": "cccc_remote_delivery_status",
+        "description": "Read back the delivery receipt for a prior cccc_remote_send by (registration_id, idempotency_key).",
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "registration_id": {"type": "string"},
+                "idempotency_key": {"type": "string"},
+            },
+            required=["registration_id", "idempotency_key"],
         ),
     },
 ]

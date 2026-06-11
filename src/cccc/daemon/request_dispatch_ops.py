@@ -17,6 +17,7 @@ from .actors.actor_update_ops import try_handle_actor_update_op
 from .messaging.inbox_ack_ops import try_handle_inbox_ack_op
 from .messaging.inbox_read_ops import try_handle_inbox_read_op
 from .ops.maintenance_ops import try_handle_maintenance_op
+from .messaging.delegation_relay_ops import try_handle_delegation_relay_op
 from .ops.diagnostics_ops import try_handle_diagnostics_op
 from .ops.daemon_core_ops import try_handle_daemon_core_op
 from .ops.remote_access_ops import try_handle_remote_access_op
@@ -42,6 +43,7 @@ from .actors.runner_ops import try_handle_headless_op
 from .actors.web_model_runtime_ops import try_handle_web_model_runtime_op
 from .actors.web_model_browser_ops import try_handle_web_model_browser_op
 from .memory.memory_ops import try_handle_memory_op
+from .federation.ops import try_handle_remote_send_op
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,10 @@ def dispatch_request(
     remote_access_resp = try_handle_remote_access_op(op, args)
     if remote_access_resp is not None:
         return remote_access_resp, False
+
+    remote_send_resp = try_handle_remote_send_op(op, args)
+    if remote_send_resp is not None:
+        return remote_send_resp, False
 
     diagnostics_resp = try_handle_diagnostics_op(
         op,
@@ -392,6 +398,16 @@ def dispatch_request(
     )
     if maintenance_resp is not None:
         return maintenance_resp, False
+
+    delegation_relay_resp = try_handle_delegation_relay_op(
+        op,
+        args,
+        dispatch_send=lambda relay_op, relay_args: recurse(
+            deps.daemon_request_factory(op=relay_op, args=relay_args)
+        ),
+    )
+    if delegation_relay_resp is not None:
+        return delegation_relay_resp, False
 
     chat_resp = try_handle_chat_op(
         op,

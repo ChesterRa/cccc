@@ -118,6 +118,15 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         ),
         "tags": ("im", "bind"),
     },
+    "pack:federation": {
+        "title": "Federation Remote Send",
+        "description": "Outbound federated remote send to a registered remote target and delivery status lookup.",
+        "tool_names": (
+            "cccc_remote_send",
+            "cccc_remote_delivery_status",
+        ),
+        "tags": ("federation", "remote", "send"),
+    },
     "pack:space": {
         "title": "Group Space",
         "description": "NotebookLM-backed Group Space operations (consolidated action tool).",

@@ -30,7 +30,7 @@ class TestMaintenanceOps(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
-    def test_send_cross_group_relay(self) -> None:
+    def test_send_cross_group_honors_explicit_all(self) -> None:
         _, cleanup = self._with_home()
         try:
             src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
@@ -42,6 +42,11 @@ class TestMaintenanceOps(unittest.TestCase):
             self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
             dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
             self.assertTrue(dst_group_id)
+            add_peer, _ = self._call(
+                "actor_add",
+                {"group_id": dst_group_id, "actor_id": "dst-peer", "runtime": "claude", "by": "user"},
+            )
+            self.assertTrue(add_peer.ok, getattr(add_peer, "error", None))
 
             relay, _ = self._call(
                 "send_cross_group",
@@ -50,7 +55,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "dst_group_id": dst_group_id,
                     "by": "user",
                     "text": "relay ping",
-                    "to": ["user"],
+                    "to": ["@all"],
                 },
             )
             self.assertTrue(relay.ok, getattr(relay, "error", None))
@@ -62,6 +67,43 @@ class TestMaintenanceOps(unittest.TestCase):
             assert isinstance(dst_event, dict)
             self.assertEqual(str(src_event.get("kind") or ""), "chat.message")
             self.assertEqual(str(dst_event.get("kind") or ""), "chat.message")
+            self.assertEqual(((src_event or {}).get("data") or {}).get("dst_to"), ["@all"])
+            self.assertEqual(((dst_event or {}).get("data") or {}).get("to"), ["@all"])
+        finally:
+            cleanup()
+
+    def test_send_cross_group_defaults_to_target_foreman_not_all(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+            add_foreman, _ = self._call(
+                "actor_add",
+                {"group_id": dst_group_id, "actor_id": "dst-foreman", "runtime": "claude", "by": "user"},
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "relay ping",
+                },
+            )
+            self.assertTrue(relay.ok, getattr(relay, "error", None))
+            src_event = (relay.result or {}).get("src_event") if isinstance(relay.result, dict) else {}
+            dst_event = (relay.result or {}).get("dst_event") if isinstance(relay.result, dict) else {}
+            self.assertEqual(((src_event or {}).get("data") or {}).get("dst_to"), ["@foreman"])
+            self.assertEqual(((dst_event or {}).get("data") or {}).get("to"), ["@foreman"])
         finally:
             cleanup()
 
@@ -91,6 +133,103 @@ class TestMaintenanceOps(unittest.TestCase):
             )
             self.assertFalse(relay.ok)
             self.assertEqual(str(getattr(relay.error, "code", "") or ""), "refs_not_supported")
+        finally:
+            cleanup()
+
+    def test_send_cross_group_rejects_hash_recipient_syntax(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "relay ping",
+                    "to": ["#self-agent"],
+                },
+            )
+            self.assertFalse(relay.ok)
+            self.assertEqual(str(getattr(relay.error, "code", "") or ""), "invalid_recipient_syntax")
+            message = str(getattr(relay.error, "message", "") or "")
+            self.assertIn("#group tokens are routing hints, not recipients", message)
+            self.assertIn('cccc_group(action="resolve"', message)
+            self.assertIn("unique real group_id", message)
+            self.assertIn("cccc_message_send(dst_group_id=<g_...>", message)
+            self.assertIn("text=<your own natural message to the target>", message)
+            self.assertNotIn("unknown recipient", message)
+        finally:
+            cleanup()
+
+    def test_send_cross_group_group_not_found_explains_group_resolution(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": "cccc",
+                    "by": "user",
+                    "text": "relay ping",
+                    "to": ["@foreman"],
+                },
+            )
+            self.assertFalse(relay.ok)
+            self.assertEqual(str(getattr(relay.error, "code", "") or ""), "group_not_found")
+            message = str(getattr(relay.error, "message", "") or "")
+            self.assertIn("group not found: cccc", message)
+            self.assertIn("dst_group_id must be the real group id", message)
+            self.assertIn('cccc_group(action="resolve", token="cccc")', message)
+            self.assertIn("Do not use #token/title as dst_group_id", message)
+        finally:
+            cleanup()
+
+    def test_send_cross_group_allows_target_foreman_recipient(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+            added, _ = self._call(
+                "actor_add",
+                {"group_id": dst_group_id, "actor_id": "dst-foreman", "runtime": "claude", "role": "foreman"},
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "relay ping",
+                    "to": ["@foreman"],
+                },
+            )
+            self.assertTrue(relay.ok, getattr(relay, "error", None))
+            dst_event = (relay.result or {}).get("dst_event") if isinstance(relay.result, dict) else {}
+            self.assertEqual(((dst_event or {}).get("data") or {}).get("to"), ["@foreman"])
         finally:
             cleanup()
 

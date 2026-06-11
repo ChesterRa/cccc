@@ -10,6 +10,12 @@ from ...kernel.group import load_group
 from ...kernel.ledger_retention import compact as compact_ledger
 from ...kernel.ledger_retention import snapshot as snapshot_ledger
 from ...kernel.permissions import require_group_permission
+from ...kernel.recipient_syntax import (
+    CROSS_GROUP_HASH_RECIPIENT_MESSAGE,
+    cross_group_recipient_tokens_or_default,
+    group_not_found_with_resolution_hint,
+    has_hash_recipient_token,
+)
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 
@@ -115,14 +121,15 @@ def handle_send_cross_group(
         return _error("group_not_found", f"group not found: {src_group_id}")
     dst_group = load_group(dst_group_id)
     if dst_group is None:
-        return _error("group_not_found", f"group not found: {dst_group_id}")
+        return _error("group_not_found", group_not_found_with_resolution_hint(dst_group_id))
 
-    dst_to_canon: list[str] = []
-    if dst_to_tokens:
-        try:
-            dst_to_canon = resolve_recipient_tokens(dst_group, dst_to_tokens)
-        except Exception as e:
-            return _error("invalid_recipient", str(e))
+    dst_to_tokens = cross_group_recipient_tokens_or_default(dst_to_tokens)
+    if has_hash_recipient_token(dst_to_tokens):
+        return _error("invalid_recipient_syntax", CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
+    try:
+        dst_to_canon = resolve_recipient_tokens(dst_group, dst_to_tokens)
+    except Exception as e:
+        return _error("invalid_recipient", str(e))
 
     src_resp, _ = dispatch_send(
         "send",

@@ -53,6 +53,17 @@ class SendCrossGroupRequest(BaseModel):
     reply_required: bool = False
 
 
+class DelegateContactRequest(BaseModel):
+    text: str
+    dst_group_id: str
+    by: str = Field(default="user")
+    delegation_token: str = Field(default="")
+    relay_sender: str = Field(default="")
+    source_event_id: str = Field(default="")
+    target_actor: str = Field(default="")
+    contact_text: str = Field(default="")
+
+
 class TrackedSendRequest(BaseModel):
     title: str
     text: str

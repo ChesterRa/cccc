@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ..schemas import (
+    DelegateContactRequest,
     ReplyRequest,
     RouteContext,
     SendCrossGroupRequest,
@@ -123,6 +124,31 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "to": list(req.to),
                     "priority": req.priority,
                     "reply_required": _normalize_reply_required(req.reply_required),
+                },
+            }
+        )
+
+    @group_router.post("/delegate_contact")
+    async def delegate_contact(request: Request, group_id: str, req: DelegateContactRequest) -> Dict[str, Any]:
+        """Ask a local-group agent to contact a target group on the user's behalf.
+
+        The user's own message stays in the local group; this triggers a
+        deterministic relay authored by a local agent into the target group.
+        """
+        check_group(request, req.dst_group_id)
+        return await ctx.daemon(
+            {
+                "op": "relay_user_delegation",
+                "args": {
+                    "group_id": group_id,
+                    "dst_group_id": req.dst_group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "delegation_token": req.delegation_token,
+                    "relay_sender": req.relay_sender,
+                    "source_event_id": req.source_event_id,
+                    "target_actor": req.target_actor,
+                    "contact_text": req.contact_text,
                 },
             }
         )

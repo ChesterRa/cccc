@@ -91,6 +91,17 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("communication obligation, not the whole job", MCP_REMINDER_LINE)
         self.assertIn("resume active work unless priority changed", MCP_REMINDER_LINE)
         self.assertIn("use MCP tool cccc_help", MCP_REMINDER_LINE)
+        self.assertIn("natural #group requests", MCP_REMINDER_LINE)
+        self.assertIn('cccc_group(action="resolve"', MCP_REMINDER_LINE)
+        self.assertIn("unique real group_id", MCP_REMINDER_LINE)
+        self.assertIn("cccc_message_send", MCP_REMINDER_LINE)
+        self.assertIn("dst_group_id", MCP_REMINDER_LINE)
+        self.assertIn("your own natural text", MCP_REMINDER_LINE)
+        self.assertIn("never guess dst_group_id", MCP_REMINDER_LINE)
+        self.assertIn("never put #group in to", MCP_REMINDER_LINE)
+        self.assertIn("forward a template", MCP_REMINDER_LINE)
+        self.assertIn("#group", MCP_REMINDER_LINE)
+        self.assertIn("to", MCP_REMINDER_LINE)
         self.assertNotIn("Help: cccc_help", MCP_REMINDER_LINE)
 
     def test_default_standup_stays_short_ritual(self) -> None:

@@ -36,6 +36,7 @@ from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ...kernel.group import Group, get_group_state, load_group, set_group_state
 from ...kernel.inbox import get_cursor, is_message_for_actor, set_cursor
 from ...kernel.ledger import append_event
+from ...kernel.recipient_syntax import CROSS_GROUP_RESOLVE_HINT
 from ...kernel.system_prompt import render_system_prompt
 from ...paths import ensure_home
 from ...runners import pty as pty_runner
@@ -533,6 +534,9 @@ REMINDER_EVERY_N_MESSAGES = 1
 MCP_REMINDER_LINE = (
     "[cccc] If you respond: use MCP (cccc_message_send / cccc_message_reply); "
     "terminal output isn't delivered. Verify reply_to/to; avoid routine @all. "
+    "For natural #group requests, "
+    f"{CROSS_GROUP_RESOLVE_HINT} Then use cccc_message_send with dst_group_id=<g_...>, "
+    "to='@foreman' or target actor, and your own natural text; never put #group in to or forward a template. "
     "A reply handles the communication obligation, not the whole job; "
     "resume active work unless priority changed. If unsure, use MCP tool cccc_help."
 )

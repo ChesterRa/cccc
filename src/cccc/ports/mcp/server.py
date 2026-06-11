@@ -77,6 +77,10 @@ from .handlers.cccc_messaging import (  # noqa: F401
     message_send,
     tracked_send,
 )
+from .handlers.cccc_federation import (  # noqa: F401
+    remote_delivery_status,
+    remote_send,
+)
 from .handlers.cccc_repo import (  # noqa: F401
     apply_codex_patch_tool,
     exec_command_tool,
@@ -108,6 +112,7 @@ from .handlers.cccc_group_actor import (  # noqa: F401
     actor_stop,
     group_info,
     group_list,
+    group_resolve,
     group_set_state,
     runtime_list,
 )
@@ -484,6 +489,28 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
             refs=refs_val,
+        )
+
+    if name == "cccc_remote_send":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return remote_send(
+            group_id=gid,
+            actor_id=aid,
+            registration_id=str(arguments.get("registration_id") or ""),
+            text=str(arguments.get("text") or ""),
+            idempotency_key=str(arguments.get("idempotency_key") or ""),
+            to=_normalize_to_arg(arguments.get("to")),
+            priority=str(arguments.get("priority") or "normal"),
+            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+        )
+
+    if name == "cccc_remote_delivery_status":
+        gid = _resolve_group_id(arguments)
+        return remote_delivery_status(
+            group_id=gid,
+            registration_id=str(arguments.get("registration_id") or ""),
+            idempotency_key=str(arguments.get("idempotency_key") or ""),
         )
 
     if name == "cccc_tracked_send":
@@ -871,6 +898,8 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         action = str(arguments.get("action") or "info").strip().lower()
         if action == "list":
             return group_list()
+        if action == "resolve":
+            return group_resolve(token=str(arguments.get("token") or ""))
         if action == "info":
             gid = _resolve_group_id(arguments)
             return group_info(group_id=gid)
@@ -882,7 +911,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 by=by,
                 state=str(arguments.get("state") or ""),
             )
-        raise MCPError(code="invalid_request", message="cccc_group action must be one of: info/list/set_state")
+        raise MCPError(code="invalid_request", message="cccc_group action must be one of: info/list/resolve/set_state")
 
     if name == "cccc_actor":
         gid = _resolve_group_id(arguments)

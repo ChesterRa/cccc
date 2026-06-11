@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Optional
 from ....kernel.actors import find_actor
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
+from ....kernel.recipient_syntax import (
+    CROSS_GROUP_HASH_RECIPIENT_MESSAGE,
+    has_hash_recipient_token,
+    normalize_recipient_tokens,
+)
 from ....util.conv import coerce_bool
 from ..common import MCPError, _call_daemon_or_raise
 
@@ -81,6 +86,8 @@ def message_send(
 
     dst_gid = str(dst_group_id or "").strip()
     if dst_gid and dst_gid != str(group_id or "").strip():
+        if has_hash_recipient_token(normalize_recipient_tokens(to)):
+            raise MCPError(code="invalid_recipient_syntax", message=CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
         return _call_daemon_or_raise(
             {
                 "op": "send_cross_group",

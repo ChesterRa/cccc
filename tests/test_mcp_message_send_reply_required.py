@@ -8,6 +8,12 @@ from unittest.mock import patch
 _CLEAN_ENV = {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}
 
 
+def _isolated_runtime_context():
+    from cccc.ports.mcp.common import runtime_context_override
+
+    return runtime_context_override(home="/tmp/cccc-mcp-test", group_id="", actor_id="")
+
+
 class TestMcpMessageSendReplyRequired(unittest.TestCase):
     def test_message_send_coerces_reply_required_string(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -19,7 +25,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             captured["req"] = req
             return {"ok": True, "result": {"event_id": "ev_test"}}
 
-        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_message_send",
@@ -50,7 +57,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
 
         refs = [{"kind": "presentation_ref", "slot_id": "slot-2", "label": "P2", "locator_label": "PDF p.12"}]
 
-        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_message_send",
@@ -78,7 +86,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             captured["req"] = req
             return {"ok": True, "result": {"src_event": {"id": "src-1"}, "dst_event": {"id": "dst-1"}}}
 
-        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_message_send",
@@ -99,6 +108,58 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("dst_group_id"), "g_selected")
         self.assertEqual(args.get("to"), ["@foreman"])
 
+    def test_message_send_rejects_hash_recipient_for_cross_group_string_to(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon") as call_daemon:
+            with self.assertRaises(mcp_server.MCPError) as raised:
+                mcp_server.handle_tool_call(
+                    "cccc_message_send",
+                    {
+                        "group_id": "g_runtime",
+                        "dst_group_id": "g_selected",
+                        "actor_id": "peer1",
+                        "text": "hello",
+                        "to": "#self-agent",
+                    },
+                )
+
+        self.assertEqual(raised.exception.code, "invalid_recipient_syntax")
+        self.assertIn("#group tokens are routing hints, not recipients", str(raised.exception))
+        self.assertIn('cccc_group(action="resolve"', str(raised.exception))
+        self.assertIn("unique real group_id", str(raised.exception))
+        self.assertIn("cccc_message_send(dst_group_id=<g_...>", str(raised.exception))
+        self.assertIn("to='@foreman' or target actor id", str(raised.exception))
+        self.assertIn("text=<your own natural message to the target>", str(raised.exception))
+        call_daemon.assert_not_called()
+
+    def test_message_send_rejects_hash_recipient_for_cross_group_list_to(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon") as call_daemon:
+            with self.assertRaises(mcp_server.MCPError) as raised:
+                mcp_server.handle_tool_call(
+                    "cccc_message_send",
+                    {
+                        "group_id": "g_runtime",
+                        "dst_group_id": "g_selected",
+                        "actor_id": "peer1",
+                        "text": "hello",
+                        "to": ["#self-agent"],
+                    },
+                )
+
+        self.assertEqual(raised.exception.code, "invalid_recipient_syntax")
+        self.assertIn("Do not put #group in to", str(raised.exception))
+        self.assertIn("do not forward a template", str(raised.exception))
+        call_daemon.assert_not_called()
+
     def test_message_reply_passes_refs(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
@@ -111,7 +172,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
 
         refs = [{"kind": "presentation_ref", "slot_id": "slot-4", "label": "P4", "locator_label": "Web"}]
 
-        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_message_reply",
@@ -140,7 +202,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             return {"ok": True, "result": {"task_id": "T001", "message_sent": True}}
 
         checklist = [{"text": "Check"}, {"text": "Report", "status": "pending"}]
-        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+        with _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             out = mcp_server.handle_tool_call(
                 "cccc_tracked_send",
