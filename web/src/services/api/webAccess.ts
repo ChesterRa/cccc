@@ -23,7 +23,7 @@ export interface Observability {
   };
   runtime_visibility?: {
     peer_runtime?: "hidden" | "visible" | string;
-    pet_runtime?: "hidden" | "visible" | string;
+    assistant_runtime?: "hidden" | "visible" | string;
   };
 }
 
@@ -47,7 +47,7 @@ export async function updateObservability(args: {
   terminalTranscriptPerActorBytes?: number;
   terminalUiScrollbackLines?: number;
   peerRuntimeVisibility?: "hidden" | "visible";
-  petRuntimeVisibility?: "hidden" | "visible";
+  assistantRuntimeVisibility?: "hidden" | "visible";
 }) {
   clearWebAccessSessionReadRequest();
   return apiJson<{ observability: Observability }>("/api/v1/observability", {
@@ -59,7 +59,7 @@ export async function updateObservability(args: {
       terminal_transcript_per_actor_bytes: args.terminalTranscriptPerActorBytes,
       terminal_ui_scrollback_lines: args.terminalUiScrollbackLines,
       peer_runtime_visibility: args.peerRuntimeVisibility,
-      pet_runtime_visibility: args.petRuntimeVisibility,
+      assistant_runtime_visibility: args.assistantRuntimeVisibility,
     }),
   });
 }

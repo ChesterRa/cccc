@@ -763,36 +763,6 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_pet_capability_state_uses_minimal_core_surface(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            from cccc.kernel.group import load_group
-            from cccc.kernel.pet_actor import ensure_pet_actor
-
-            gid = self._create_group()
-            self._add_actor(gid, "peer-1", by="user")
-            group = load_group(gid)
-            self.assertIsNotNone(group)
-            ensure_pet_actor(group)
-
-            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "pet-peer", "by": "pet-peer"})
-            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
-            result = state_resp.result if isinstance(state_resp.result, dict) else {}
-            visible = set(result.get("visible_tools") or [])
-            autoload = set(result.get("autoload_capabilities") or [])
-
-            self.assertIn("cccc_help", visible)
-            self.assertIn("cccc_context_get", visible)
-            self.assertIn("cccc_agent_state", visible)
-            self.assertIn("pack:pet", autoload)
-            self.assertNotIn("cccc_message_send", visible)
-            self.assertNotIn("cccc_message_reply", visible)
-            self.assertNotIn("cccc_file", visible)
-            self.assertNotIn("cccc_coordination", visible)
-            self.assertNotIn("cccc_task", visible)
-        finally:
-            cleanup()
-
     def test_enable_session_pack_updates_visible_tools(self) -> None:
         _, cleanup = self._with_home()
         try:

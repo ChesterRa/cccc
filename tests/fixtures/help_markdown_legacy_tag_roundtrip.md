@@ -8,10 +8,6 @@ Foreman note.
 
 Peer note.
 
-## @pet
-
-Pet note.
-
 ## @actor: peer-1
 
 Actor note.
@@ -19,6 +15,10 @@ Actor note.
 ## @actor: reviewer-1
 
 Reviewer note.
+
+## @pet
+
+Legacy note.
 
 ## @role: observer
 

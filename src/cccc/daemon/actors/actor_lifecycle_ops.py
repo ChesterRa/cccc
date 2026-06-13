@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import find_actor, is_internal_actor, list_actors, update_actor
+from ...kernel.actors import find_actor, is_internal_actor, is_supported_internal_actor, list_actors, update_actor
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
@@ -22,13 +22,28 @@ from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
-from ..pet.review_scheduler import request_pet_review
 
 _NEW_SESSION_RUNTIMES = frozenset({"claude", "codex"})
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _is_unsupported_internal_actor(actor: Any) -> bool:
+    return isinstance(actor, dict) and is_internal_actor(actor) and not is_supported_internal_actor(actor)
+
+
+def _unsupported_internal_actor_error(group_id: str, actor_id: str, actor: Dict[str, Any]) -> DaemonResponse:
+    return _error(
+        "unsupported_internal_actor",
+        "unsupported internal actor cannot be started",
+        details={
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "internal_kind": str(actor.get("internal_kind") or "").strip(),
+        },
+    )
 
 
 def _stop_actor_runtime_handles(
@@ -87,6 +102,8 @@ def handle_actor_start(
 
     try:
         require_actor_permission(group, by=by, action="actor.start", target_actor_id=actor_id)
+        if _is_unsupported_internal_actor(previous_actor):
+            return _unsupported_internal_actor_error(group.group_id, actor_id, previous_actor)
         actor = update_actor(group, actor_id, {"enabled": True})
         enabled_was_updated = True
         actor = resolve_linked_actor_before_start(
@@ -211,16 +228,6 @@ def handle_actor_stop(
 
     from ...kernel.events import publish_event
     publish_event("actor.stop", {"group_id": group.group_id, "actor_id": actor_id})
-    try:
-        request_pet_review(
-            group.group_id,
-            reason="actor_stop",
-            source_event_id=str(event.get("id") or "").strip(),
-            immediate=True,
-        )
-    except Exception:
-        pass
-
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
 
@@ -262,6 +269,9 @@ def handle_actor_restart(
     is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
+        current_actor = find_actor(group, actor_id)
+        if _is_unsupported_internal_actor(current_actor):
+            return _unsupported_internal_actor_error(group.group_id, actor_id, current_actor)
         actor = update_actor(group, actor_id, {"enabled": True})
         actor = resolve_linked_actor_before_start(
             group,
@@ -483,16 +493,6 @@ def handle_actor_restart(
 
     from ...kernel.events import publish_event
     publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id})
-    try:
-        request_pet_review(
-            group.group_id,
-            reason="actor_restart",
-            source_event_id=str(event.get("id") or "").strip(),
-            immediate=True,
-        )
-    except Exception:
-        pass
-
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
 
@@ -538,6 +538,8 @@ def handle_actor_new_session(
 
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
+        if _is_unsupported_internal_actor(previous_actor):
+            return _unsupported_internal_actor_error(group.group_id, actor_id, previous_actor)
         actor = update_actor(group, actor_id, {"enabled": True})
         enabled_was_updated = True
         actor = resolve_linked_actor_before_start(

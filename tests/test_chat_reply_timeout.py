@@ -137,53 +137,6 @@ class TestChatReplyTimeout(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_returns_before_slow_user_profile_record_finishes(self) -> None:
-        from cccc.daemon.messaging.chat_ops import handle_send
-        from cccc.util.conv import coerce_bool
-
-        _, cleanup = self._with_home()
-        try:
-            created, _ = self._call("group_create", {"title": "profile-timeout", "topic": "", "by": "user"})
-            self.assertTrue(created.ok, getattr(created, "error", None))
-            group_id = str((created.result or {}).get("group_id") or "").strip()
-
-            profile_record_started = threading.Event()
-            profile_record_can_finish = threading.Event()
-
-            def slow_profile_record(_group_id, *, event_id, ts, text):
-                profile_record_started.set()
-                profile_record_can_finish.wait(timeout=1)
-                return None
-
-            started_at = time.monotonic()
-            with mock.patch(
-                "cccc.daemon.messaging.chat_side_effects.record_user_chat_message",
-                side_effect=slow_profile_record,
-            ):
-                resp = handle_send(
-                    {
-                        "group_id": group_id,
-                        "by": "user",
-                        "to": ["user"],
-                        "text": "send should return before profile record finishes",
-                    },
-                    coerce_bool=coerce_bool,
-                    normalize_attachments=lambda _group, _raw: [],
-                    effective_runner_kind=lambda runner: str(runner or "headless"),
-                    auto_wake_recipients=lambda _group, _to, _by: [],
-                    automation_on_resume=lambda _group: None,
-                    automation_on_new_message=lambda _group: None,
-                    clear_pending_system_notifies=lambda _group_id, _kinds: None,
-                )
-                elapsed = time.monotonic() - started_at
-                profile_record_can_finish.set()
-
-                self.assertTrue(resp.ok, getattr(resp, "error", None))
-                self.assertLess(elapsed, 0.2)
-                self.assertTrue(profile_record_started.wait(timeout=1))
-        finally:
-            cleanup()
-
     def test_send_returns_before_slow_headless_submit_finishes(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
         from cccc.util.conv import coerce_bool
@@ -239,62 +192,6 @@ class TestChatReplyTimeout(unittest.TestCase):
                 self.assertTrue(resp.ok, getattr(resp, "error", None))
                 self.assertLess(elapsed, 0.2)
                 self.assertTrue(submit_started.wait(timeout=1))
-        finally:
-            cleanup()
-
-    def test_reply_returns_before_slow_user_profile_record_finishes(self) -> None:
-        from cccc.daemon.messaging.chat_ops import handle_reply
-        from cccc.util.conv import coerce_bool
-
-        _, cleanup = self._with_home()
-        try:
-            created, _ = self._call("group_create", {"title": "reply-profile-timeout", "topic": "", "by": "user"})
-            self.assertTrue(created.ok, getattr(created, "error", None))
-            group_id = str((created.result or {}).get("group_id") or "").strip()
-            original, _ = self._call(
-                "send",
-                {"group_id": group_id, "by": "user", "to": ["user"], "text": "original"},
-            )
-            self.assertTrue(original.ok, getattr(original, "error", None))
-            original_event = (original.result or {}).get("event") if isinstance(original.result, dict) else {}
-            reply_to = str(original_event.get("id") or "").strip()
-            self.assertTrue(reply_to)
-
-            profile_record_started = threading.Event()
-            profile_record_can_finish = threading.Event()
-
-            def slow_profile_record(_group_id, *, event_id, ts, text):
-                profile_record_started.set()
-                profile_record_can_finish.wait(timeout=1)
-                return None
-
-            started_at = time.monotonic()
-            with mock.patch(
-                "cccc.daemon.messaging.chat_side_effects.record_user_chat_message",
-                side_effect=slow_profile_record,
-            ):
-                resp = handle_reply(
-                    {
-                        "group_id": group_id,
-                        "by": "user",
-                        "reply_to": reply_to,
-                        "to": ["user"],
-                        "text": "reply should return before profile record finishes",
-                    },
-                    coerce_bool=coerce_bool,
-                    normalize_attachments=lambda _group, _raw: [],
-                    effective_runner_kind=lambda runner: str(runner or "headless"),
-                    auto_wake_recipients=lambda _group, _to, _by: [],
-                    automation_on_resume=lambda _group: None,
-                    automation_on_new_message=lambda _group: None,
-                    clear_pending_system_notifies=lambda _group_id, _kinds: None,
-                )
-                elapsed = time.monotonic() - started_at
-                profile_record_can_finish.set()
-
-                self.assertTrue(resp.ok, getattr(resp, "error", None))
-                self.assertLess(elapsed, 0.2)
-                self.assertTrue(profile_record_started.wait(timeout=1))
         finally:
             cleanup()
 

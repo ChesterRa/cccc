@@ -27,7 +27,7 @@ from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 # Kernel/util imports needed by routing
-from ...kernel.actors import find_actor, get_effective_role, is_pet_actor, is_voice_secretary_actor
+from ...kernel.actors import find_actor, get_effective_role, is_voice_secretary_actor
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
 from ...kernel.capabilities import (
@@ -356,7 +356,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     except Exception:
                         role = None
                 actor = _safe_find_actor(g, aid)
-                actor_is_pet = bool(isinstance(actor, dict) and is_pet_actor(actor))
                 actor_is_voice_secretary = aid == "voice-secretary" or bool(isinstance(actor, dict) and is_voice_secretary_actor(actor))
                 if actor_is_voice_secretary:
                     role = "voice_secretary"
@@ -368,7 +367,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                                 pf.content,
                                 role=role,
                                 actor_id=aid,
-                                include_pet=actor_is_pet,
                                 include_voice_secretary=actor_is_voice_secretary,
                             ),
                             group_id=gid,
@@ -383,7 +381,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                                 _CCCC_HELP_BUILTIN,
                                 role=role,
                                 actor_id=aid,
-                                include_pet=actor_is_pet,
                                 include_voice_secretary=actor_is_voice_secretary,
                             ),
                             group_id=gid,
@@ -531,27 +528,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
             refs=refs_val_reply,
         )
-
-    if name == "cccc_pet_decisions":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        action = str(arguments.get("action") or "get").strip().lower()
-        if action == "get":
-            return _call_daemon_or_raise({"op": "pet_decisions_get", "args": {"group_id": gid, "actor_id": aid}})
-        if action == "replace":
-            return _call_daemon_or_raise(
-                {
-                    "op": "pet_decisions_replace",
-                    "args": {
-                        "group_id": gid,
-                        "actor_id": aid,
-                        "decisions": list(arguments.get("decisions") or []) if isinstance(arguments.get("decisions"), list) else [],
-                    },
-                }
-            )
-        if action == "clear":
-            return _call_daemon_or_raise({"op": "pet_decisions_clear", "args": {"group_id": gid, "actor_id": aid}})
-        raise MCPError(code="invalid_request", message="cccc_pet_decisions action must be get|replace|clear")
 
     if name == "cccc_voice_secretary_document":
         gid = _resolve_group_id(arguments)
@@ -1450,7 +1426,6 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
 
     # Determine actor role for admin tool gating.
     actor_role = ""
-    actor_is_pet = False
     actor_is_voice_secretary = False
     actor_is_web_model = False
     builtin_enabled_fallback: List[str] = []
@@ -1461,7 +1436,6 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
             actor_role = str(get_effective_role(group, aid) or "").strip().lower()
             actor = find_actor(group, aid)
             if isinstance(actor, dict):
-                actor_is_pet = is_pet_actor(actor)
                 actor_is_voice_secretary = actor_is_voice_secretary or is_voice_secretary_actor(actor)
                 actor_is_web_model = str(actor.get("runtime") or "").strip().lower() == "web_model"
                 autoload = actor.get("capability_autoload") if isinstance(actor.get("capability_autoload"), list) else []
@@ -1497,7 +1471,6 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
                 resolve_visible_tool_names(
                     builtin_enabled_fallback,
                     actor_role=actor_role,
-                    is_pet=actor_is_pet,
                     is_voice_secretary=actor_is_voice_secretary,
                     is_web_model=actor_is_web_model,
                 )

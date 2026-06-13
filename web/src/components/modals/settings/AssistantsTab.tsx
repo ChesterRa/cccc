@@ -8,8 +8,7 @@ import {
   DEFAULT_SERVICE_MODEL_ID,
   STREAMING_ASR_RUNTIME_ID,
 } from "../../../pages/chat/voice-secretary/voiceServiceModelRuntime";
-import { parseHelpMarkdown, updatePetHelpNote, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
-import { getDefaultPetPersonaSeed } from "../../../utils/rolePresets";
+import { parseHelpMarkdown, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
 import { GroupCombobox } from "../../GroupCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { resolveLocalAsrModels } from "./assistantsLocalAsrModels";
@@ -32,9 +31,7 @@ interface AssistantsTabProps {
   isDark: boolean;
   groupId?: string;
   isActive: boolean;
-  petEnabled: boolean;
   busy: boolean;
-  onUpdatePetEnabled?: (enabled: boolean) => Promise<boolean | void>;
 }
 
 const VOICE_BACKENDS = [
@@ -58,7 +55,7 @@ const DEFAULT_VOICE_SECRETARY_GUIDANCE = [
   "- Preserve uncertainty and ASR-risk terms. For fragmented audio, write a best-effort rolling summary instead of refusing.",
 ].join("\n");
 
-type AssistantPromptBlock = "pet" | "voice_secretary";
+type AssistantPromptBlock = "voice_secretary";
 
 function findAssistant(state: AssistantStateResult | null, assistantId: string): BuiltinAssistant | null {
   if (!state) return null;
@@ -111,11 +108,6 @@ function serviceModelStatusLabel(
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function resolvePetPersonaDraft(savedPetPersona: string): string {
-  const saved = String(savedPetPersona || "").trim();
-  return saved || getDefaultPetPersonaSeed();
 }
 
 function resolveVoiceSecretaryGuidanceDraft(savedGuidance: string): string {
@@ -347,9 +339,7 @@ export function AssistantsTab({
   isDark,
   groupId,
   isActive,
-  petEnabled,
   busy,
-  onUpdatePetEnabled,
 }: AssistantsTabProps) {
   const { t } = useTranslation("settings");
   const loadSeq = useRef(0);
@@ -362,7 +352,6 @@ export function AssistantsTab({
   const [assistantState, setAssistantState] = useState<AssistantStateResult | null>(null);
   const [loadBusy, setLoadBusy] = useState(false);
   const [voiceSaveBusy, setVoiceSaveBusy] = useState(false);
-  const [petSaveBusy, setPetSaveBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -376,7 +365,6 @@ export function AssistantsTab({
 
   const [assistantHelpPrompt, setAssistantHelpPrompt] = useState<GroupPromptInfo | null>(null);
   const [assistantHelpPromptGroupId, setAssistantHelpPromptGroupId] = useState("");
-  const [petPersonaDraft, setPetPersonaDraft] = useState("");
   const [voiceSecretaryGuidanceDraft, setVoiceSecretaryGuidanceDraft] = useState("");
   const [assistantPromptBusy, setAssistantPromptBusy] = useState(false);
   const [assistantPromptError, setAssistantPromptError] = useState("");
@@ -388,11 +376,6 @@ export function AssistantsTab({
     () => findAssistant(assistantState, "voice_secretary"),
     [assistantState],
   );
-  const petAssistant = useMemo(
-    () => findAssistant(assistantState, "pet"),
-    [assistantState],
-  );
-  const effectivePetEnabled = Boolean(petAssistant?.enabled ?? petEnabled);
   const activeAssistantHelpPrompt = assistantHelpPromptGroupId === groupIdRef.current ? assistantHelpPrompt : null;
 
   const syncVoiceDraft = useCallback((state: AssistantStateResult | null) => {
@@ -419,7 +402,6 @@ export function AssistantsTab({
     visibleLoadCount.current = 0;
     setLoadBusy(false);
     setVoiceSaveBusy(false);
-    setPetSaveBusy(false);
     setServiceRuntimeInstallBusy(false);
     setDiarizationModelInstallBusy(false);
     setLocalAsrMaintenanceBusy(false);
@@ -430,7 +412,6 @@ export function AssistantsTab({
     setNotice("");
     setAssistantHelpPrompt(null);
     setAssistantHelpPromptGroupId("");
-    setPetPersonaDraft("");
     setVoiceSecretaryGuidanceDraft("");
     setAssistantPromptBusy(false);
     setAssistantPromptError("");
@@ -497,7 +478,6 @@ export function AssistantsTab({
       const parsed = parseHelpMarkdown(String(nextHelp.content || ""));
       setAssistantHelpPrompt(nextHelp);
       setAssistantHelpPromptGroupId(gid);
-      setPetPersonaDraft(resolvePetPersonaDraft(parsed.pet));
       setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(parsed.voiceSecretary));
       return nextHelp;
     } catch {
@@ -603,30 +583,6 @@ export function AssistantsTab({
     if (!ok) setVoiceEnabled(previous);
   };
 
-  const togglePet = async (nextEnabled?: boolean) => {
-    if (!onUpdatePetEnabled) return;
-    const gid = String(groupId || "").trim();
-    setPetSaveBusy(true);
-    setError("");
-    setNotice("");
-    const requestedEnabled = typeof nextEnabled === "boolean" ? nextEnabled : !effectivePetEnabled;
-    try {
-      const ok = await onUpdatePetEnabled(requestedEnabled);
-      if (!isCurrentGroup(gid)) return;
-      if (ok === false) {
-        setError(t("assistants.petSaveFailed"));
-        return;
-      }
-      setNotice(requestedEnabled ? t("assistants.petEnabled") : t("assistants.petDisabled"));
-      await loadAssistants({ quiet: true });
-    } catch {
-      if (!isCurrentGroup(gid)) return;
-      setError(t("assistants.petSaveFailed"));
-    } finally {
-      if (isCurrentGroup(gid)) setPetSaveBusy(false);
-    }
-  };
-
   const saveAssistantGuidance = async (block: AssistantPromptBlock) => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
@@ -642,10 +598,7 @@ export function AssistantsTab({
       const currentContent = String(currentHelp.content || "");
       const parsed = parseHelpMarkdown(currentContent);
       const actorOrder = Object.keys(parsed.actorNotes);
-      const nextContent =
-        block === "pet"
-          ? updatePetHelpNote(currentContent, petPersonaDraft, actorOrder)
-          : updateVoiceSecretaryHelpNote(currentContent, voiceSecretaryGuidanceDraft, actorOrder);
+      const nextContent = updateVoiceSecretaryHelpNote(currentContent, voiceSecretaryGuidanceDraft, actorOrder);
       const resp = await api.updateGroupPrompt(gid, "help", nextContent, {
         editorMode: "structured",
         changedBlocks: [block],
@@ -659,25 +612,14 @@ export function AssistantsTab({
       const nextParsed = parseHelpMarkdown(String(nextHelp.content || ""));
       setAssistantHelpPrompt(nextHelp);
       setAssistantHelpPromptGroupId(gid);
-      setPetPersonaDraft(resolvePetPersonaDraft(nextParsed.pet));
       setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(nextParsed.voiceSecretary));
-      setAssistantPromptNotice(
-        block === "pet" ? t("assistants.petPersonaSaved") : t("assistants.voiceGuidanceSaved"),
-      );
+      setAssistantPromptNotice(t("assistants.voiceGuidanceSaved"));
     } catch {
       if (!isCurrentGroup(gid)) return;
       setAssistantPromptError(t("assistants.assistantGuidanceSaveFailed"));
     } finally {
       if (isCurrentGroup(gid)) setAssistantPromptBusy(false);
     }
-  };
-
-  const discardPetPersona = () => {
-    const saved = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")).pet : "";
-    setPetPersonaDraft(resolvePetPersonaDraft(saved));
-    setAssistantPromptError("");
-    setAssistantPromptNotice("");
-    setAssistantPromptFeedbackBlock("");
   };
 
   const discardVoiceSecretaryGuidance = () => {
@@ -1032,14 +974,7 @@ export function AssistantsTab({
     );
   }
   const parsedHelp = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")) : null;
-  const savedPetPersona = parsedHelp?.pet || "";
   const savedVoiceSecretaryGuidance = parsedHelp?.voiceSecretary || "";
-  const hasPetPersonaUnsaved = promptDraftDirty(
-    savedPetPersona,
-    petPersonaDraft,
-    activeAssistantHelpPrompt !== null,
-    resolvePetPersonaDraft(""),
-  );
   const hasVoiceGuidanceUnsaved = promptDraftDirty(
     savedVoiceSecretaryGuidance,
     voiceSecretaryGuidanceDraft,
@@ -1071,35 +1006,6 @@ export function AssistantsTab({
       onExpand={() => setExpandedPromptBlock("voice_secretary")}
       onChange={(value) => {
         setVoiceSecretaryGuidanceDraft(value);
-        setAssistantPromptNotice("");
-        setAssistantPromptFeedbackBlock("");
-      }}
-    />
-  );
-
-  const renderPetPersonaEditor = (expanded = false) => (
-    <AssistantPromptEditor
-      isDark={isDark}
-      title={t("assistants.petPersonaTitle")}
-      hint={t("assistants.petPersonaHint")}
-      path={activeAssistantHelpPrompt?.path || undefined}
-      value={petPersonaDraft}
-      placeholder={t("assistants.petPersonaPlaceholder")}
-      busy={assistantPromptBusy}
-      error={!assistantPromptFeedbackBlock || assistantPromptFeedbackBlock === "pet" ? assistantPromptError : ""}
-      notice={assistantPromptFeedbackBlock === "pet" ? assistantPromptNotice : ""}
-      hasUnsaved={hasPetPersonaUnsaved}
-      reloadLabel={assistantPromptBusy ? t("assistants.refreshing") : t("assistants.reloadAssistantGuidance")}
-      discardLabel={t("assistants.discardAssistantGuidance")}
-      saveLabel={assistantPromptBusy ? t("common:saving") : t("assistants.savePetPersona")}
-      expandLabel={t("assistants.expandAssistantGuidance")}
-      expanded={expanded}
-      onReload={() => void loadAssistantGuidance({ force: true })}
-      onDiscard={discardPetPersona}
-      onSave={() => void saveAssistantGuidance("pet")}
-      onExpand={() => setExpandedPromptBlock("pet")}
-      onChange={(value) => {
-        setPetPersonaDraft(value);
         setAssistantPromptNotice("");
         setAssistantPromptFeedbackBlock("");
       }}
@@ -1467,31 +1373,6 @@ export function AssistantsTab({
               </div>
             </div>
 
-            <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.petTitle")}</h4>
-                    <StatusPill tone={effectivePetEnabled ? "on" : "off"}>
-                      {effectivePetEnabled ? t("assistants.enabled") : t("assistants.disabled")}
-                    </StatusPill>
-                  </div>
-                  <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
-                    {t("assistants.petDescription")}
-                  </p>
-                </div>
-                <AssistantSwitch
-                  checked={effectivePetEnabled}
-                  disabled={busy || petSaveBusy || !onUpdatePetEnabled}
-                  label={t("assistants.groupSwitch")}
-                  onChange={(checked) => void togglePet(checked)}
-                />
-              </div>
-
-              <div className="mt-5">
-                {renderPetPersonaEditor()}
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -1515,9 +1396,7 @@ export function AssistantsTab({
                     {t("common:close")}
                   </button>
                 </div>
-                <div className={settingsDialogBodyClass}>
-                  {expandedPromptBlock === "voice_secretary" ? renderVoiceGuidanceEditor(true) : renderPetPersonaEditor(true)}
-                </div>
+                <div className={settingsDialogBodyClass}>{renderVoiceGuidanceEditor(true)}</div>
               </div>
             </div>
           </BodyPortal>

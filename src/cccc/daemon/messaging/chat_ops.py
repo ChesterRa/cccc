@@ -25,7 +25,6 @@ from ...kernel.messaging import (
 )
 from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
-from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...util.time import utc_now_iso
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -47,14 +46,6 @@ logger = logging.getLogger("cccc.daemon.server")
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
-
-
-def _is_internal_pet_sender(group: Any, by: str) -> bool:
-    actor_id = str(by or "").strip()
-    if actor_id != PET_ACTOR_ID:
-        return False
-    return isinstance(get_pet_actor(group), dict)
-
 
 def _wake_group_on_human_message(
     group: Any,
@@ -321,13 +312,6 @@ def handle_send(
     if group is None:
         resp = _error("group_not_found", f"group not found: {group_id}")
         return diag.finish_response(resp)
-    if _is_internal_pet_sender(group, by):
-        return diag.finish_response(
-            _error(
-                "pet_visible_chat_forbidden",
-                "Pet cannot send or reply visible chat directly; use pet decisions instead.",
-            )
-        )
     if client_id:
         existing = _tracked_send_existing_result(group, client_id=client_id, by=by)
         if existing is not None:
@@ -516,12 +500,6 @@ def handle_send(
     diag.mark("schedule_delivery")
     schedule_chat_side_effects(
         group=group,
-        by=by,
-        event_id=event_id,
-        event_ts=event_ts,
-        text=text,
-        pet_review_reason="chat_message",
-        pet_review_immediate=reply_required,
         automation_on_new_message=automation_on_new_message,
     )
     diag.mark("schedule_side_effects")
@@ -782,14 +760,6 @@ def handle_reply(
     if group is None:
         resp = _error("group_not_found", f"group not found: {group_id}")
         return diag.finish_response(resp)
-    if _is_internal_pet_sender(group, by):
-        return diag.finish_response(
-            _error(
-                "pet_visible_chat_forbidden",
-                "Pet cannot send or reply visible chat directly; use pet decisions instead.",
-            )
-        )
-
     if client_id:
         existing = find_existing_reply_result(group, client_id=client_id, by=by, reply_to=reply_to)
         if existing is not None:
@@ -961,12 +931,6 @@ def handle_reply(
     diag.mark("schedule_delivery")
     schedule_chat_side_effects(
         group=group,
-        by=by,
-        event_id=event_id,
-        event_ts=event_ts,
-        text=text,
-        pet_review_reason="chat_reply",
-        pet_review_immediate=reply_required,
         automation_on_new_message=automation_on_new_message,
     )
     diag.mark("schedule_side_effects")

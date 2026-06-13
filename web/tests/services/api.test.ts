@@ -1607,46 +1607,6 @@ describe("api.fetchContext dedupe", () => {
     expect(resp2.ok).toBe(true);
   });
 
-  it("reuses the in-flight pet peer context request for the same group", async () => {
-    const firstRead = createDeferred<{
-      status: number;
-      ok: boolean;
-      text: () => Promise<string>;
-    }>();
-
-    fetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      const method = String(init?.method || "GET").toUpperCase();
-      if (path === "/api/v1/groups/g-demo/pet-context" && method === "GET") {
-        return firstRead.promise;
-      }
-      return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
-    });
-
-    const api = await import("../../src/services/api");
-    const req1 = api.fetchPetPeerContext("g-demo");
-    const req2 = api.fetchPetPeerContext("g-demo");
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    firstRead.resolve({
-      status: 200,
-      ok: true,
-      text: async () =>
-        JSON.stringify({
-          ok: true,
-          result: {
-            persona: "quiet",
-            snapshot: "snapshot",
-            source: "help",
-          },
-        }),
-    });
-
-    const [resp1, resp2] = await Promise.all([req1, req2]);
-    expect(resp1.ok).toBe(true);
-    expect(resp2.ok).toBe(true);
-  });
-
   it("clears the shared context request before contextSync", async () => {
     const firstRead = createDeferred<{
       status: number;

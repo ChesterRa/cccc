@@ -335,7 +335,6 @@ class TestActorRuntimeOps(unittest.TestCase):
             with (
                 patch.object(actor_runtime_ops, "find_actor", return_value=actor),
                 patch.object(actor_runtime_ops, "runtime_start_preflight_error", return_value=""),
-                patch.object(actor_runtime_ops, "request_pet_review"),
                 patch(
                     "cccc.daemon.actors.web_model_browser_delivery.web_model_browser_delivery_enabled",
                     return_value=True,
@@ -415,7 +414,6 @@ class TestActorRuntimeOps(unittest.TestCase):
                 patch.object(actor_runtime_ops.pty_runner, "PTY_SUPPORTED", True),
                 patch.object(actor_runtime_ops, "runtime_start_preflight_error", return_value=""),
                 patch.object(actor_runtime_ops, "start_pty_actor_with_runtime_resume", side_effect=fake_start_pty_actor_with_runtime_resume),
-                patch.object(actor_runtime_ops, "request_pet_review"),
                 patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]),
             ):
                 result = actor_runtime_ops.start_actor_process(
@@ -487,7 +485,6 @@ class TestActorRuntimeOps(unittest.TestCase):
                 patch.object(actor_runtime_ops.pty_runner, "PTY_SUPPORTED", True),
                 patch.object(actor_runtime_ops, "runtime_start_preflight_error", return_value=""),
                 patch.object(actor_runtime_ops, "start_pty_actor_with_runtime_resume", side_effect=fake_start_pty_actor_with_runtime_resume),
-                patch.object(actor_runtime_ops, "request_pet_review"),
             ):
                 result = actor_runtime_ops.start_actor_process(
                     group,

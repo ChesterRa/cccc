@@ -16,7 +16,6 @@ import json
 import logging
 import threading
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -45,7 +44,6 @@ from ...kernel.actors import get_effective_role, list_actors
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
-from ...kernel.pet_actor import PET_ACTOR_ID
 from ...kernel.ledger import append_event
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -62,8 +60,6 @@ from ...kernel.prompt_files import (
 from ...kernel.working_state import derive_effective_working_state
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
-from ..pet.profile_refresh import mark_pet_profile_refresh_applied
-from ..pet.review_scheduler import request_pet_review
 
 logger = logging.getLogger(__name__)
 _CONTEXT_DETAIL_FULL = "full"
@@ -74,49 +70,6 @@ _SUMMARY_REBUILD_IN_FLIGHT: Set[str] = set()
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
-
-
-_PET_FORBIDDEN_CONTEXT_OPS = {
-    "coordination.brief.update",
-    "coordination.note.add",
-    "task.create",
-    "task.update",
-    "task.move",
-    "task.restore",
-    "task.delete",
-    "meta.merge",
-    "role_notes.set",
-    "agent_state.clear",
-}
-
-
-def _check_pet_context_permission(by: str, op_name: str, *, target_actor_id: Optional[str] = None) -> Optional[str]:
-    if str(by or "").strip() != PET_ACTOR_ID:
-        return None
-    if op_name in _PET_FORBIDDEN_CONTEXT_OPS:
-        return f"Permission denied: pet cannot run {op_name}"
-    if op_name == "agent_state.update":
-        target = str(target_actor_id or "").strip()
-        if target and target != PET_ACTOR_ID:
-            return f"Permission denied: pet can only update its own agent_state ({PET_ACTOR_ID})"
-    return None
-
-
-def _validate_pet_agent_state_update(raw: Dict[str, Any], *, actor_id: str) -> Optional[str]:
-    target = str(actor_id or "").strip()
-    if target != PET_ACTOR_ID:
-        return f"Permission denied: pet can only update its own agent_state ({PET_ACTOR_ID})"
-    allowed = {"op", "actor_id", "agent_id", "user_model", "user_profile"}
-    extra = sorted(key for key in raw.keys() if key not in allowed)
-    if extra:
-        return "Permission denied: pet agent_state.update only allows user_model; disallowed keys: " + ", ".join(extra)
-    return None
-
-
-def _status_value(value: Any) -> str:
-    if isinstance(value, Enum):
-        return str(value.value or "")
-    return str(value or "").strip().lower()
 
 
 def _parse_task_status(value: Any) -> TaskStatus:
@@ -262,54 +215,6 @@ def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
     if result.get("task_type") is None:
         result.pop("task_type", None)
     return result
-
-
-_EMPTY_TASK_PET_SIGNATURE: Tuple[str, str, Tuple[str, ...], str] = ("", "", (), "")
-_EMPTY_TASK_PET_REASONS: frozenset[str] = frozenset()
-
-
-def _task_pet_profile(task: Optional[Task]) -> Tuple[Tuple[str, str, Tuple[str, ...], str], frozenset[str]]:
-    if task is None:
-        return _EMPTY_TASK_PET_SIGNATURE, _EMPTY_TASK_PET_REASONS
-    status = _status_value(getattr(task, "status", ""))
-    waiting_on = _status_value(getattr(task, "waiting_on", ""))
-    blocked_by = tuple(
-        item
-        for item in (str(raw or "").strip() for raw in list(getattr(task, "blocked_by", []) or []))
-        if item
-    )
-    handoff_to = str(getattr(task, "handoff_to", "") or "").strip()
-    signature = (status, waiting_on, blocked_by, handoff_to)
-    if status in {"done", "completed", "archived"}:
-        return signature, _EMPTY_TASK_PET_REASONS
-    reasons: set[str] = set()
-    if waiting_on == "user":
-        reasons.add("task_waiting_user")
-    if blocked_by or waiting_on in {"actor", "external"}:
-        reasons.add("task_blocked")
-    if handoff_to:
-        reasons.add("task_handoff")
-    return signature, frozenset(reasons)
-
-
-def _task_pet_review_delta(
-    before: Tuple[Tuple[str, str, Tuple[str, ...], str], frozenset[str]],
-    after: Tuple[Tuple[str, str, Tuple[str, ...], str], frozenset[str]],
-) -> Tuple[set[str], bool]:
-    before_signature, before_reasons = before
-    after_signature, after_reasons = after
-    if not before_reasons and not after_reasons:
-        return set(), False
-    if before_signature == after_signature and before_reasons == after_reasons:
-        return set(), False
-    after_status = str(after_signature[0] or "").strip().lower()
-    immediate = False
-    if after_reasons:
-        if not before_reasons or after_reasons != before_reasons:
-            immediate = True
-        elif before_signature != after_signature and after_status == TaskStatus.ACTIVE.value:
-            immediate = True
-    return set(before_reasons | after_reasons), immediate
 
 
 def _agent_state_to_dict(agent: AgentState) -> Dict[str, Any]:
@@ -541,10 +446,6 @@ def _check_permission(
     group = load_group(group_id)
     if group is None:
         return None
-
-    pet_err = _check_pet_context_permission(by, op_name, target_actor_id=target_actor_id)
-    if pet_err:
-        return pet_err
 
     role = "user" if by == "user" else get_effective_role(group, by)
     if role in {"user", "foreman"}:
@@ -1059,9 +960,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     agents_dirty = False
     dirty_task_ids: List[str] = []
     deleted_task_ids: List[str] = []
-    pet_user_model_updates: Dict[str, str] = {}
-    pet_review_reasons: Set[str] = set()
-    pet_review_immediate = False
     changes: List[Dict[str, Any]] = []
     tasks_changed = False
     agents_changed = False
@@ -1108,8 +1006,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     brief.updated_at = _utc_now_iso()
                     context.coordination.brief = brief
                     context_dirty = True
-                    pet_review_reasons.add("coordination_brief_changed")
-                    pet_review_immediate = True
                     _mark_change(idx, op_name, "Updated coordination brief")
                 continue
 
@@ -1194,13 +1090,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 tasks_by_id[task.id] = task
                 dirty_task_ids.append(task.id)
                 tasks_changed = True
-                review_reasons, review_immediate = _task_pet_review_delta(
-                    (_EMPTY_TASK_PET_SIGNATURE, _EMPTY_TASK_PET_REASONS),
-                    _task_pet_profile(task),
-                )
-                if review_reasons:
-                    pet_review_reasons.update(review_reasons)
-                    pet_review_immediate = pet_review_immediate or review_immediate
                 _mark_change(idx, op_name, f"Created task {task.id}: {task.title}", task_id=task.id)
                 continue
 
@@ -1212,7 +1101,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, task=task)
                 if perm_err:
                     raise ValueError(perm_err)
-                before_pet_profile = _task_pet_profile(task)
                 updated = False
                 if "title" in raw:
                     value = _normalize_text(raw.get("title"), max_len=240)
@@ -1284,13 +1172,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if task.id not in dirty_task_ids:
                         dirty_task_ids.append(task.id)
                     tasks_changed = True
-                    review_reasons, review_immediate = _task_pet_review_delta(
-                        before_pet_profile,
-                        _task_pet_profile(task),
-                    )
-                    if review_reasons:
-                        pet_review_reasons.update(review_reasons)
-                        pet_review_immediate = pet_review_immediate or review_immediate
                     _mark_change(idx, op_name, f"Updated task {task.id}", task_id=task.id)
                 continue
 
@@ -1313,7 +1194,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, task=task)
                 if perm_err:
                     raise ValueError(perm_err)
-                before_pet_profile = _task_pet_profile(task)
                 new_status = _parse_task_status(raw.get("status"))
                 prev_status = task.status
                 if prev_status == new_status:
@@ -1327,13 +1207,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if task.id not in dirty_task_ids:
                     dirty_task_ids.append(task.id)
                 tasks_changed = True
-                review_reasons, review_immediate = _task_pet_review_delta(
-                    before_pet_profile,
-                    _task_pet_profile(task),
-                )
-                if review_reasons:
-                    pet_review_reasons.update(review_reasons)
-                    pet_review_immediate = pet_review_immediate or review_immediate
                 _mark_change(idx, op_name, f"Moved task {task.id} to {new_status.value}", task_id=task.id)
 
                 assignee_id = str(task.assignee or "").strip()
@@ -1425,7 +1298,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(perm_err)
                 if task.status != TaskStatus.ARCHIVED:
                     raise ValueError(f"op[{idx}] task.restore requires archived task")
-                before_pet_profile = _task_pet_profile(task)
                 restore_to = str(task.archived_from or TaskStatus.PLANNED.value).strip().lower() or TaskStatus.PLANNED.value
                 try:
                     task.status = TaskStatus(restore_to)
@@ -1436,13 +1308,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if task.id not in dirty_task_ids:
                     dirty_task_ids.append(task.id)
                 tasks_changed = True
-                review_reasons, review_immediate = _task_pet_review_delta(
-                    before_pet_profile,
-                    _task_pet_profile(task),
-                )
-                if review_reasons:
-                    pet_review_reasons.update(review_reasons)
-                    pet_review_immediate = pet_review_immediate or review_immediate
                 _mark_change(idx, op_name, f"Restored task {task.id}", task_id=task.id)
                 continue
 
@@ -1457,10 +1322,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 delete_targets, delete_reason = _task_delete_plan(task, tasks_by_id, group_id=group_id, by=by)
                 if delete_reason:
                     raise ValueError(f"op[{idx}] task.delete rejected: {delete_reason}")
-                delete_pet_reasons: Set[str] = set()
-                for delete_task in delete_targets:
-                    _, reasons = _task_pet_profile(delete_task)
-                    delete_pet_reasons.update(reasons)
 
                 delete_ids = {item.id for item in delete_targets}
                 delete_titles = {str(item.title or "").strip() for item in delete_targets if str(item.title or "").strip()}
@@ -1490,8 +1351,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                         dirty_task_ids.remove(delete_task.id)
                     deleted_task_ids.append(delete_task.id)
                 tasks_changed = True
-                if delete_pet_reasons:
-                    pet_review_reasons.update(delete_pet_reasons)
                 if len(delete_targets) == 1:
                     _mark_change(idx, op_name, f"Deleted task {task_id}", task_id=task_id)
                 else:
@@ -1505,10 +1364,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, target_actor_id=actor_id)
                 if perm_err:
                     raise ValueError(perm_err)
-                if by == PET_ACTOR_ID:
-                    pet_update_err = _validate_pet_agent_state_update(raw, actor_id=actor_id)
-                    if pet_update_err:
-                        raise ValueError(pet_update_err)
                 agent = _get_or_create_agent(agents_state, actor_id)
                 updated = False
                 hot = agent.hot if isinstance(agent.hot, AgentStateHot) else AgentStateHot()
@@ -1560,8 +1415,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if warm.user_model != value:
                         warm.user_model = value
                         updated = True
-                        if value:
-                            pet_user_model_updates[actor_id] = value
                 if "persona_notes" in raw or "notes" in raw:
                     source = raw.get("persona_notes") if "persona_notes" in raw else raw.get("notes")
                     value = _normalize_text(source, max_len=600)
@@ -1589,10 +1442,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, target_actor_id=actor_id)
                 if perm_err:
                     raise ValueError(perm_err)
-                if by == PET_ACTOR_ID:
-                    pet_update_err = _validate_pet_agent_state_update(raw, actor_id=actor_id)
-                    if pet_update_err:
-                        raise ValueError(pet_update_err)
                 agent = _get_or_create_agent(agents_state, actor_id)
                 agent.hot = AgentStateHot()
                 agent.warm = AgentStateWarm()
@@ -1684,19 +1533,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             if agents_dirty:
                 storage.save_agents(agents_state)
                 _sync_agents_mind_context_runtime(storage, agents_state)
-                for actor_id, user_model in pet_user_model_updates.items():
-                    try:
-                        mark_pet_profile_refresh_applied(
-                            group_id,
-                            actor_id=actor_id,
-                            user_model=user_model,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "pet_profile_refresh_apply_mark_failed group_id=%s actor_id=%s",
-                            group_id,
-                            actor_id,
-                        )
             if context_dirty or tasks_changed or agents_changed:
                 storage.bump_version_state(
                     context_changed=context_dirty,
@@ -1722,18 +1558,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     sync_event_id = str(event.get("id") or "").strip()
             except Exception:
                 pass
-
-        if not dry_run and pet_review_reasons:
-            for reason in sorted(pet_review_reasons):
-                try:
-                    request_pet_review(
-                        group_id,
-                        reason=reason,
-                        source_event_id=sync_event_id,
-                        immediate=pet_review_immediate,
-                    )
-                except Exception:
-                    logger.exception("pet_review_request_failed group_id=%s reason=%s", group_id, reason)
 
         result: Dict[str, Any] = {
             "success": True,

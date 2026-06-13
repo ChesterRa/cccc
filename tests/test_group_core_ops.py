@@ -218,7 +218,7 @@ class TestGroupCoreOps(unittest.TestCase):
                     "notify_tail": True,
                     "notify_lines": 12,
                 }
-                group.doc["features"] = {"desktop_pet_enabled": True, "panorama_enabled": True}
+                group.doc["features"] = {"legacy_flag": True, "panorama_enabled": True}
                 group.doc["automation"] = {
                     "version": 7,
                     "rules": [custom_rule],

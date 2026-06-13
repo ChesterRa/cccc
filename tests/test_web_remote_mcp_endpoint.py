@@ -191,7 +191,6 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertNotIn("cccc_voice_secretary_document", names)
             self.assertNotIn("cccc_voice_secretary_request", names)
             self.assertNotIn("cccc_voice_secretary_composer", names)
-            self.assertNotIn("cccc_pet_decisions", names)
             repo_spec = next((item for item in tools if isinstance(item, dict) and item.get("name") == "cccc_repo"), {})
             self.assertTrue(((repo_spec.get("annotations") or {}).get("readOnlyHint")))
 

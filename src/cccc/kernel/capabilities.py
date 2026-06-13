@@ -49,9 +49,7 @@ CAPABILITY_ADMIN_TOOLS: Tuple[str, ...] = (
     "cccc_capability_uninstall",
 )
 
-# Pet keeps a dedicated minimal core surface. The mutation lane stays on
-# cccc_pet_decisions, with cccc_agent_state reserved for profile refresh.
-PET_CORE_TOOLS: Tuple[str, ...] = (
+VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = (
     "cccc_help",
     "cccc_bootstrap",
     "cccc_project_info",
@@ -59,9 +57,6 @@ PET_CORE_TOOLS: Tuple[str, ...] = (
     "cccc_inbox_mark_read",
     "cccc_context_get",
     "cccc_agent_state",
-)
-
-VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = PET_CORE_TOOLS + (
     "cccc_voice_secretary_document",
     "cccc_voice_secretary_composer",
     "cccc_voice_secretary_request",
@@ -87,14 +82,13 @@ WEB_MODEL_FOREMAN_TOOLS: Tuple[str, ...] = WEB_MODEL_CORE_TOOLS + CORE_ADMIN_TOO
 # role-aware core schema. Built-in capability packs stay behind capability_use
 # instead of being eagerly listed for every Web Model actor.
 WEB_MODEL_ADVERTISED_EXCLUDED_TOOLS: Tuple[str, ...] = (
-    "cccc_pet_decisions",
     "cccc_voice_secretary_document",
     "cccc_voice_secretary_request",
     "cccc_voice_secretary_composer",
 )
 
 SPECIALIZED_CORE_TOOL_NAMES: Tuple[str, ...] = tuple(
-    sorted((set(PET_CORE_TOOLS) | set(VOICE_SECRETARY_CORE_TOOLS) | set(WEB_MODEL_CORE_TOOLS)) - set(CORE_TOOL_NAMES))
+    sorted((set(VOICE_SECRETARY_CORE_TOOLS) | set(WEB_MODEL_CORE_TOOLS)) - set(CORE_TOOL_NAMES))
 )
 
 
@@ -133,14 +127,6 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
             "cccc_automation",
         ),
         "tags": ("automation", "ops"),
-    },
-    "pack:pet": {
-        "title": "Pet Decision Surface",
-        "description": "Structured Web Pet reminder decision storage for the internal pet actor.",
-        "tool_names": (
-            "cccc_pet_decisions",
-        ),
-        "tags": ("pet", "decision", "web-pet"),
     },
     "pack:context-advanced": {
         "title": "Context Advanced",
@@ -1156,14 +1142,11 @@ def web_model_advertised_tool_names(all_tool_names: Iterable[str], *, actor_role
 def resolve_core_tool_names(
     *,
     actor_role: str = "",
-    is_pet: bool = False,
     is_voice_secretary: bool = False,
     is_web_model: bool = False,
 ) -> Set[str]:
     if bool(is_voice_secretary):
         return set(VOICE_SECRETARY_CORE_TOOLS)
-    if bool(is_pet):
-        return set(PET_CORE_TOOLS)
     if bool(is_web_model):
         return set(WEB_MODEL_CORE_TOOLS)
     role = str(actor_role or "").strip().lower()
@@ -1176,13 +1159,11 @@ def resolve_visible_tool_names(
     enabled_capability_ids: Iterable[str],
     *,
     actor_role: str = "",
-    is_pet: bool = False,
     is_voice_secretary: bool = False,
     is_web_model: bool = False,
 ) -> Set[str]:
     visible = resolve_core_tool_names(
         actor_role=actor_role,
-        is_pet=is_pet,
         is_voice_secretary=is_voice_secretary,
         is_web_model=is_web_model,
     )

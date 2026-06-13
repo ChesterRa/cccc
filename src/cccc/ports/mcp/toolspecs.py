@@ -195,18 +195,6 @@ MCP_TOOLS = [
         ),
     },
     {
-        "name": "cccc_pet_decisions",
-        "description": "Pet-only decision surface: action=get|replace|clear. The pet actor should write structured Web Pet decisions here instead of sending reminder-like chat messages.",
-        "inputSchema": _obj(
-            {
-                **_COMMON_GROUP,
-                **_COMMON_ACTOR,
-                "action": {"type": "string", "enum": ["get", "replace", "clear"], "default": "get"},
-                "decisions": {"type": "array", "items": {"type": "object"}},
-            }
-        ),
-    },
-    {
         "name": "cccc_voice_secretary_document",
         "description": "Voice Secretary-only input/document surface. voice_secretary_input notifications normally include a daemon-delivered input_envelope rendered as Work orders; use read_new_input only for legacy pointer notifications, recovery, or manual debugging. Use list/create/archive for document lifecycle. Edit repo markdown directly; this tool has no save action.",
         "inputSchema": _obj(

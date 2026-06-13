@@ -384,7 +384,7 @@ class TestAssistantOps(unittest.TestCase):
 
         self.assertTrue(default_due)
 
-    def test_state_exposes_builtin_assistants(self) -> None:
+    def test_state_exposes_builtin_assistant(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
@@ -392,7 +392,6 @@ class TestAssistantOps(unittest.TestCase):
 
             self.assertTrue(state.ok, getattr(state, "error", None))
             assistants_by_id = (state.result or {}).get("assistants_by_id") if isinstance(state.result, dict) else {}
-            self.assertIn("pet", assistants_by_id)
             self.assertIn("voice_secretary", assistants_by_id)
             self.assertFalse(bool(assistants_by_id["voice_secretary"].get("enabled")))
             self.assertEqual(assistants_by_id["voice_secretary"].get("lifecycle"), "disabled")
@@ -908,7 +907,6 @@ class TestAssistantOps(unittest.TestCase):
             visible_tools = set((state.result or {}).get("visible_tools") or [])
             self.assertIn("cccc_voice_secretary_document", visible_tools)
             self.assertIn("cccc_voice_secretary_request", visible_tools)
-            self.assertNotIn("cccc_pet_decisions", visible_tools)
             self.assertNotIn("cccc_message_send", visible_tools)
             self.assertNotIn("cccc_message_reply", visible_tools)
         finally:
@@ -5552,25 +5550,6 @@ class TestAssistantOps(unittest.TestCase):
             input_text = str((batch.result or {}).get("input_text") or "")
             self.assertIn("capture the key launch risks", input_text)
             self.assertIn("Publishable document refinement request", input_text)
-        finally:
-            cleanup()
-
-    def test_pet_settings_are_read_only_in_assistant_seam(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            group_id = self._create_group()
-            update, _ = self._call(
-                "assistant_settings_update",
-                {
-                    "group_id": group_id,
-                    "by": "user",
-                    "assistant_id": "pet",
-                    "patch": {"enabled": True},
-                },
-            )
-
-            self.assertFalse(update.ok)
-            self.assertEqual(update.error.code, "assistant_settings_read_only")
         finally:
             cleanup()
 

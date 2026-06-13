@@ -48,8 +48,6 @@ from .pty_app_server_exit import stop_codex_app_server_for_pty_actor_if_needed
 from .im.bootstrap_im_ops import autostart_enabled_im_bridges
 from .group.bootstrap_actor_ops import autostart_running_groups
 from .assistants.voice_idle_review_scheduler import recover_pending_voice_idle_reviews
-from .pet.review_scheduler import recover_pending_pet_reviews
-from .pet.profile_refresh import recover_due_pet_profile_refreshes
 from .mcp_install import (
     is_mcp_installed as runtime_is_mcp_installed,
     ensure_mcp_installed as runtime_ensure_mcp_installed,
@@ -1108,8 +1106,6 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
         # Bootstrap background work only after the daemon socket is ready, but
         # don't block the accept loop (clients should see the daemon as responsive).
-        recover_pending_pet_reviews()
-        recover_due_pet_profile_refreshes()
         recover_pending_voice_idle_reviews()
         start_bootstrap_thread(
             maybe_autostart_running_groups=_maybe_autostart_running_groups,

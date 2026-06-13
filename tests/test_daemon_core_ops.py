@@ -65,7 +65,7 @@ class TestDaemonCoreOps(unittest.TestCase):
                         },
                         "runtime_visibility": {
                             "peer_runtime": "hidden",
-                            "pet_runtime": "visible",
+                            "assistant_runtime": "hidden",
                         },
                     },
                 },
@@ -87,7 +87,33 @@ class TestDaemonCoreOps(unittest.TestCase):
             )
             runtime_visibility = obs.get("runtime_visibility") if isinstance(obs.get("runtime_visibility"), dict) else {}
             self.assertEqual(str(runtime_visibility.get("peer_runtime") or ""), "hidden")
-            self.assertEqual(str(runtime_visibility.get("pet_runtime") or ""), "visible")
+            self.assertEqual(str(runtime_visibility.get("assistant_runtime") or ""), "hidden")
+        finally:
+            cleanup()
+
+    def test_observability_runtime_visibility_migrates_legacy_assistant_key(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.settings import save_settings
+
+            save_settings(
+                {
+                    "observability": {
+                        "runtime_visibility": {
+                            "pet_runtime": "hidden",
+                        }
+                    }
+                }
+            )
+
+            get, _ = self._call("observability_get", {})
+            self.assertTrue(get.ok, getattr(get, "error", None))
+            obs = (get.result or {}).get("observability") if isinstance(get.result, dict) else {}
+            self.assertIsInstance(obs, dict)
+            assert isinstance(obs, dict)
+            runtime_visibility = obs.get("runtime_visibility") if isinstance(obs.get("runtime_visibility"), dict) else {}
+            self.assertEqual(str(runtime_visibility.get("assistant_runtime") or ""), "hidden")
+            self.assertNotIn("pet_runtime", runtime_visibility)
         finally:
             cleanup()
 

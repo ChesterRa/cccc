@@ -145,7 +145,7 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
     # Runtime surfaces exposed in the standard Web UI.
     "runtime_visibility": {
         "peer_runtime": "visible",
-        "pet_runtime": "hidden",
+        "assistant_runtime": "hidden",
     },
 }
 
@@ -279,9 +279,13 @@ def _merge_observability(raw: Any) -> Dict[str, Any]:
             runtime_visibility.get("peer_runtime"),
             str(runtime_visibility_base["peer_runtime"]),
         )
-        runtime_visibility_base["pet_runtime"] = _as_runtime_visibility(
-            runtime_visibility.get("pet_runtime"),
-            str(runtime_visibility_base["pet_runtime"]),
+        assistant_runtime = runtime_visibility.get("assistant_runtime")
+        if assistant_runtime is None:
+            # Legacy <= 0.4.25 key; preserve existing built-in assistant visibility preferences.
+            assistant_runtime = runtime_visibility.get("pet_runtime")
+        runtime_visibility_base["assistant_runtime"] = _as_runtime_visibility(
+            assistant_runtime,
+            str(runtime_visibility_base["assistant_runtime"]),
         )
     base["runtime_visibility"] = runtime_visibility_base
 
@@ -397,10 +401,10 @@ def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
                     runtime_visibility_patch.get("peer_runtime"),
                     str(runtime_visibility.get("peer_runtime", "visible")),
                 )
-            if "pet_runtime" in runtime_visibility_patch:
-                runtime_visibility["pet_runtime"] = _as_runtime_visibility(
-                    runtime_visibility_patch.get("pet_runtime"),
-                    str(runtime_visibility.get("pet_runtime", "hidden")),
+            if "assistant_runtime" in runtime_visibility_patch:
+                runtime_visibility["assistant_runtime"] = _as_runtime_visibility(
+                    runtime_visibility_patch.get("assistant_runtime"),
+                    str(runtime_visibility.get("assistant_runtime", "hidden")),
                 )
             merged["runtime_visibility"] = runtime_visibility
 

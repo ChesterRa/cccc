@@ -1,7 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
-const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ default: m.WebPet })));
 import { AppBackground } from "./components/app/AppBackground";
 import { AppFeedback } from "./components/app/AppFeedback";
 import { AppShell } from "./components/app/AppShell";
@@ -31,7 +30,7 @@ import {
 } from "./stores";
 import { useChatOutboxStore } from "./stores/chatOutboxStore";
 import type { ChatMessageData, LedgerEvent } from "./types";
-import { shouldMountAppModals, shouldMountWebPet } from "./utils/appLazyMount";
+import { shouldMountAppModals } from "./utils/appLazyMount";
 import { publishCapabilityChanged } from "./utils/capabilityEvents";
 import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 
@@ -105,7 +104,7 @@ export default function App() {
     })
   );
   const peerRuntimeVisibility = useObservabilityStore((state) => state.peerRuntimeVisibility);
-  const petRuntimeVisibility = useObservabilityStore((state) => state.petRuntimeVisibility);
+  const assistantRuntimeVisibility = useObservabilityStore((state) => state.assistantRuntimeVisibility);
 
   const {
     activeGroupId,
@@ -155,12 +154,9 @@ export default function App() {
             (actor) => !actors.some((existing) => String(existing.id || "") === String(actor.id || ""))
           ),
         ],
-        {
-        peerRuntimeVisibility,
-        petRuntimeVisibility,
-      }
+        { peerRuntimeVisibility, assistantRuntimeVisibility }
       ),
-    [actors, internalRuntimeActors, peerRuntimeVisibility, petRuntimeVisibility]
+    [actors, internalRuntimeActors, peerRuntimeVisibility, assistantRuntimeVisibility]
   );
 
   useEffect(() => {
@@ -202,7 +198,7 @@ export default function App() {
 
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
-    if (!gid || petRuntimeVisibility !== "visible") {
+    if (!gid) {
       return undefined;
     }
     void refreshInternalRuntimeActors(gid);
@@ -210,7 +206,7 @@ export default function App() {
       void refreshInternalRuntimeActors(gid);
     }, 60000);
     return () => window.clearInterval(interval);
-  }, [selectedGroupId, petRuntimeVisibility, refreshInternalRuntimeActors]);
+  }, [selectedGroupId, refreshInternalRuntimeActors]);
 
   // Custom hooks
   const { connectStream, fetchContext, cleanup: cleanupSSE } = useSSE({
@@ -332,10 +328,6 @@ export default function App() {
 
   const hasReplyTarget = !!replyTarget;
   const hasComposerFiles = composerFiles.length > 0;
-  const shouldRenderWebPet = shouldMountWebPet({
-    groupId: selectedGroupId,
-    desktopPetEnabled: groupSettings?.desktop_pet_enabled,
-  });
 
   useAppGroupLifecycle({
     selectedGroupId,
@@ -456,12 +448,6 @@ export default function App() {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       />
-
-      {shouldRenderWebPet ? (
-        <Suspense fallback={null}>
-          <WebPet groupId={selectedGroupId} />
-        </Suspense>
-      ) : null}
 
       <AppFeedback
         isDark={isDark}

@@ -9,7 +9,6 @@ from ...kernel.group import load_group
 from ...kernel.inbox import find_event
 from ...kernel.ledger import append_event
 from .delivery import emit_system_notify
-from ..pet.review_scheduler import request_pet_review
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -54,16 +53,6 @@ def handle_system_notify(
         context=context,
     )
     event = emit_system_notify(group, by=by, notify=notify)
-    if kind == "error":
-        try:
-            request_pet_review(
-                group.group_id,
-                reason="system_error",
-                source_event_id=str(event.get("id") or "").strip(),
-                immediate=True,
-            )
-        except Exception:
-            pass
     return DaemonResponse(ok=True, result={"event": event})
 
 

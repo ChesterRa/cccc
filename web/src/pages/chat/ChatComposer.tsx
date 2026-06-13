@@ -3,15 +3,14 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, PetIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
 import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import { GroupCombobox } from "../../components/GroupCombobox";
-import { updateSettings } from "../../services/api";
-import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
+import { useGroupStore } from "../../stores";
 import { getComposerDestGroupDisplayValue } from "../../stores/useComposerStore";
 import { filterSlashCommands, getVisibleSlashCommandPage, type SlashCommandItem } from "../../utils/slashCommands";
 import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
@@ -149,12 +148,6 @@ export function ChatComposer({
   const { t } = useTranslation('chat');
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const refreshSettings = useGroupStore((state) => state.refreshSettings);
-  const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
-  const requestAssistantOpen = useBuiltInAssistantStore((state) => state.requestOpen);
-  const showError = useUIStore((state) => state.showError);
-  const showNotice = useUIStore((state) => state.showNotice);
-  const [petBusy, setPetBusy] = useState(false);
-  const petEnabled = Boolean(groupSettings?.desktop_pet_enabled);
 
   const readRootFontScale = () => {
     if (typeof document === "undefined") return 1;
@@ -239,62 +232,6 @@ export function ChatComposer({
     if (!selectedGroupId || groupSettings) return;
     void refreshSettings(selectedGroupId);
   }, [groupSettings, refreshSettings, selectedGroupId]);
-
-  const activatePet = useCallback(async () => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid || busy === "send" || petBusy) return;
-    if (petEnabled) {
-      const confirmed = window.confirm(t("builtInAssistantPetStopConfirm", { defaultValue: "Stop PET?" }));
-      if (!confirmed) return;
-      setPetBusy(true);
-      try {
-        const resp = await updateSettings(gid, { desktop_pet_enabled: false });
-        if (!resp.ok) {
-          showError(resp.error.message);
-          return;
-        }
-        await refreshSettings(gid);
-        await refreshInternalRuntimeActors(gid);
-        showNotice({
-          message: t("builtInAssistantPetDisabled", { defaultValue: "PET disabled for this group." }),
-        });
-      } catch {
-        showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
-      } finally {
-        setPetBusy(false);
-      }
-      return;
-    }
-    setPetBusy(true);
-    try {
-      const resp = await updateSettings(gid, { desktop_pet_enabled: true });
-      if (!resp.ok) {
-        showError(resp.error.message);
-        return;
-      }
-      await refreshSettings(gid);
-      await refreshInternalRuntimeActors(gid);
-      showNotice({
-        message: t("builtInAssistantPetEnabled", { defaultValue: "PET enabled for this group." }),
-      });
-      requestAssistantOpen(gid, "pet");
-    } catch {
-      showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
-    } finally {
-      setPetBusy(false);
-    }
-  }, [
-    busy,
-    petBusy,
-    petEnabled,
-    refreshInternalRuntimeActors,
-    refreshSettings,
-    requestAssistantOpen,
-    selectedGroupId,
-    showError,
-    showNotice,
-    t,
-  ]);
 
   const chipBaseClass =
     "flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-[10px] font-medium leading-none transition-all sm:px-2.5 sm:text-[11px]";
@@ -990,41 +927,6 @@ export function ChatComposer({
                 >
                   <AttachmentIcon size={18} />
                 </button>
-
-                {actionVisibility.showPetShortcut ? (
-                  <button
-                    type="button"
-                    className={classNames(
-                      "relative flex h-11 w-11 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-9",
-                      petEnabled
-                        ? "border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/15"
-                        : "glass-btn text-[var(--color-text-secondary)]",
-                    )}
-                    onClick={() => void activatePet()}
-                    disabled={!selectedGroupId || busy === "send" || petBusy}
-                    aria-label={
-                      petEnabled
-                        ? t("builtInAssistantPetTurnOff", { defaultValue: "Turn PET off" })
-                        : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" })
-                    }
-                    title={
-                      petEnabled
-                        ? t("builtInAssistantPetTurnOff", { defaultValue: "Turn PET off" })
-                        : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" })
-                    }
-                  >
-                    <PetIcon size={17} aria-hidden="true" />
-                    <span
-                      className={classNames(
-                        "absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full",
-                        petEnabled
-                          ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]"
-                          : isDark ? "bg-white/20" : "bg-gray-300",
-                      )}
-                      aria-hidden="true"
-                    />
-                  </button>
-                ) : null}
 
                 <div className="min-w-0 sm:min-w-max">
                 <VoiceSecretaryComposerControl

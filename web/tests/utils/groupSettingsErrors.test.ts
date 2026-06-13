@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import { formatGroupSettingsUpdateError } from "../../src/utils/groupSettingsErrors";
 
 const translations: Record<string, string> = {
-  "modals:context.desktopPetRequiresForeman": "Add a foreman actor before turning on Web Pet.",
-  "modals:context.desktopPetStartFailedWithCause": "Failed to start the Web Pet runtime: {{cause}}",
   "modals:context.failedToUpdateSettingsWithCause": "Failed to update group settings: {{cause}}",
   "modals:context.settingsPermissionDenied": "You do not have permission to update these settings.",
 };
@@ -25,23 +23,14 @@ function t(key: string, fallbackOrOptions?: unknown, maybeOptions?: unknown): st
 }
 
 describe("formatGroupSettingsUpdateError", () => {
-  it("maps the desktop pet foreman requirement to a localized message", () => {
+  it("uses group-settings failure details as the localized cause", () => {
     const result = formatGroupSettingsUpdateError(t as never, {
       code: "group_settings_update_failed",
-      message: "desktop pet requires a foreman actor",
-      details: { reason: "desktop_pet_requires_foreman" },
+      message: "settings update failed",
+      details: { cause: "unsupported feature key" },
     });
 
-    expect(result).toBe("Add a foreman actor before turning on Web Pet.");
-  });
-
-  it("derives legacy pet start failures from the raw message when details are missing", () => {
-    const result = formatGroupSettingsUpdateError(t as never, {
-      code: "group_settings_update_failed",
-      message: "failed to start pet actor: playwright missing",
-    });
-
-    expect(result).toBe("Failed to start the Web Pet runtime: playwright missing");
+    expect(result).toBe("Failed to update group settings: unsupported feature key");
   });
 
   it("uses localized code-level fallbacks for common settings errors", () => {

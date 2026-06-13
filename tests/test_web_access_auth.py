@@ -54,7 +54,7 @@ class TestWebAccessAuth(unittest.TestCase):
             self.assertTrue(bool(session.get("can_access_global_settings")))
             runtime_visibility = session.get("runtime_visibility") if isinstance(session.get("runtime_visibility"), dict) else {}
             self.assertEqual(str(runtime_visibility.get("peer_runtime") or ""), "visible")
-            self.assertEqual(str(runtime_visibility.get("pet_runtime") or ""), "hidden")
+            self.assertEqual(str(runtime_visibility.get("assistant_runtime") or ""), "hidden")
         finally:
             cleanup()
 
@@ -90,7 +90,7 @@ class TestWebAccessAuth(unittest.TestCase):
                 {
                     "runtime_visibility": {
                         "peer_runtime": "hidden",
-                        "pet_runtime": "visible",
+                        "assistant_runtime": "hidden",
                     }
                 }
             )
@@ -109,7 +109,7 @@ class TestWebAccessAuth(unittest.TestCase):
             self.assertFalse(bool(session.get("can_access_global_settings")))
             runtime_visibility = session.get("runtime_visibility") if isinstance(session.get("runtime_visibility"), dict) else {}
             self.assertEqual(str(runtime_visibility.get("peer_runtime") or ""), "hidden")
-            self.assertEqual(str(runtime_visibility.get("pet_runtime") or ""), "visible")
+            self.assertEqual(str(runtime_visibility.get("assistant_runtime") or ""), "hidden")
         finally:
             cleanup()
 

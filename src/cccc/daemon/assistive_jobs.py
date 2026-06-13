@@ -7,13 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Set
 
-from ...paths import ensure_home
-from ...util.fs import atomic_write_json, read_json
+from ..paths import ensure_home
+from ..util.fs import atomic_write_json, read_json
 
 LOGGER = logging.getLogger(__name__)
 
-JOB_KIND_PET_REVIEW = "pet_review"
-JOB_KIND_PET_PROFILE_REFRESH = "pet_profile_refresh"
 JOB_KIND_VOICE_IDLE_REVIEW = "voice_idle_review"
 
 TRIGGER_STARTUP_RESUME = "startup_resume"
@@ -539,29 +537,8 @@ def recover_jobs(*, job_kinds: Optional[Iterable[str]] = None) -> None:
             _pump_job(pair_gid, pair_kind)
 
 
-def _dispatch_pet_review(group_id: str, reasons: Set[str], source_event_id: str, trigger_class: str) -> bool:
-    del trigger_class
-    from . import review_scheduler
-
-    review_scheduler._emit_pet_review(group_id, reasons, source_event_id)
-    return True
-
-
-def _dispatch_pet_profile_refresh(group_id: str, reasons: Set[str], source_event_id: str, trigger_class: str) -> bool:
-    from . import profile_refresh
-
-    return bool(
-        profile_refresh._dispatch_profile_refresh(
-            group_id,
-            reasons=reasons,
-            source_event_id=source_event_id,
-            trigger_class=trigger_class,
-        )
-    )
-
-
 def _dispatch_voice_idle_review(group_id: str, reasons: Set[str], source_event_id: str, trigger_class: str) -> bool:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return bool(
         voice_idle_review_scheduler._dispatch_idle_review(
@@ -573,121 +550,43 @@ def _dispatch_voice_idle_review(group_id: str, reasons: Set[str], source_event_i
     )
 
 
-def _pet_review_debounce_seconds() -> float:
-    from . import review_scheduler
-
-    return float(review_scheduler.PET_REVIEW_DEBOUNCE_SECONDS)
-
-
-def _pet_review_min_interval_seconds() -> float:
-    from . import review_scheduler
-
-    return float(review_scheduler.PET_REVIEW_MIN_INTERVAL_SECONDS)
-
-
-def _pet_review_max_delay_seconds() -> float:
-    from . import review_scheduler
-
-    return float(review_scheduler.PET_REVIEW_MAX_DELAY_SECONDS)
-
-
-def _pet_review_lease_seconds() -> float:
-    from . import review_scheduler
-
-    return float(getattr(review_scheduler, "PET_REVIEW_LEASE_SECONDS", 90.0))
-
-
-def _pet_review_can_run(group_id: str) -> bool:
-    from . import review_scheduler
-
-    return bool(review_scheduler._can_review_now(group_id))
-
-
-def _pet_review_unavailable_reason(group_id: str) -> str:
-    from . import review_scheduler
-
-    return str(review_scheduler._review_unavailable_reason(group_id) or "job_unavailable")
-
-
-def _pet_profile_refresh_lease_seconds() -> float:
-    from . import profile_refresh
-
-    return float(getattr(profile_refresh, "PET_PROFILE_REFRESH_LEASE_SECONDS", 300.0))
-
-
-def _pet_profile_refresh_can_run(group_id: str) -> bool:
-    from . import profile_refresh
-
-    return bool(profile_refresh._can_refresh_now(group_id))
-
-
-def _pet_profile_refresh_unavailable_reason(group_id: str) -> str:
-    from . import profile_refresh
-
-    return str(profile_refresh._profile_refresh_unavailable_reason(group_id) or "job_unavailable")
-
-
 def _voice_idle_review_debounce_seconds() -> float:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return float(voice_idle_review_scheduler.VOICE_IDLE_REVIEW_DEBOUNCE_SECONDS)
 
 
 def _voice_idle_review_min_interval_seconds() -> float:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return float(voice_idle_review_scheduler.VOICE_IDLE_REVIEW_MIN_INTERVAL_SECONDS)
 
 
 def _voice_idle_review_max_delay_seconds() -> float:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return float(voice_idle_review_scheduler.VOICE_IDLE_REVIEW_MAX_DELAY_SECONDS)
 
 
 def _voice_idle_review_lease_seconds() -> float:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return float(voice_idle_review_scheduler.VOICE_IDLE_REVIEW_LEASE_SECONDS)
 
 
 def _voice_idle_review_can_run(group_id: str) -> bool:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return bool(voice_idle_review_scheduler._can_idle_review_now(group_id))
 
 
 def _voice_idle_review_unavailable_reason(group_id: str) -> str:
-    from ..assistants import voice_idle_review_scheduler
+    from .assistants import voice_idle_review_scheduler
 
     return str(voice_idle_review_scheduler._idle_review_unavailable_reason(group_id) or "job_unavailable")
 
 
 def _register_default_assistive_jobs() -> None:
-    register_assistive_job(
-        AssistiveJobDefinition(
-            job_kind=JOB_KIND_PET_REVIEW,
-            debounce_seconds=_pet_review_debounce_seconds,
-            min_interval_seconds=_pet_review_min_interval_seconds,
-            max_delay_seconds=_pet_review_max_delay_seconds,
-            lease_seconds=_pet_review_lease_seconds,
-            can_run=_pet_review_can_run,
-            unavailable_reason=_pet_review_unavailable_reason,
-            dispatch=_dispatch_pet_review,
-        )
-    )
-    register_assistive_job(
-        AssistiveJobDefinition(
-            job_kind=JOB_KIND_PET_PROFILE_REFRESH,
-            debounce_seconds=lambda: 0.0,
-            min_interval_seconds=lambda: 0.0,
-            max_delay_seconds=lambda: 0.0,
-            lease_seconds=_pet_profile_refresh_lease_seconds,
-            can_run=_pet_profile_refresh_can_run,
-            unavailable_reason=_pet_profile_refresh_unavailable_reason,
-            dispatch=_dispatch_pet_profile_refresh,
-        )
-    )
     register_assistive_job(
         AssistiveJobDefinition(
             job_kind=JOB_KIND_VOICE_IDLE_REVIEW,

@@ -1,54 +1,71 @@
 import { describe, expect, it } from "vitest";
 import {
   filterVisibleRuntimeActors,
-  isPetRuntimeActor,
+  isAssistantRuntimeActor,
+  isUnsupportedInternalRuntimeActor,
   isRuntimeSurfaceActorVisible,
 } from "../../src/utils/runtimeVisibility";
 
 describe("runtimeVisibility", () => {
   const foreman = { id: "foreman", role: "foreman" };
   const peer = { id: "peer-1", role: "peer" };
-  const pet = { id: "pet-peer", internal_kind: "pet" };
+  const voice = { id: "voice-secretary", internal_kind: "voice_secretary" };
+  const legacy = { id: "legacy-internal", internal_kind: "legacy" };
 
-  it("detects pet runtime actors from internal kind or reserved id", () => {
-    expect(isPetRuntimeActor(pet)).toBe(true);
-    expect(isPetRuntimeActor({ id: "pet-peer" })).toBe(true);
-    expect(isPetRuntimeActor(peer)).toBe(false);
+  it("detects unsupported internal runtime actors", () => {
+    expect(isUnsupportedInternalRuntimeActor(legacy)).toBe(true);
+    expect(isUnsupportedInternalRuntimeActor(voice)).toBe(false);
+    expect(isUnsupportedInternalRuntimeActor(peer)).toBe(false);
+    expect(isAssistantRuntimeActor(voice)).toBe(true);
+    expect(isAssistantRuntimeActor(peer)).toBe(false);
   });
 
-  it("applies separate visibility modes for standard and pet runtimes", () => {
+  it("applies peer runtime visibility only to standard runtime actors", () => {
     expect(
       isRuntimeSurfaceActorVisible(peer, {
         peerRuntimeVisibility: "visible",
-        petRuntimeVisibility: "hidden",
       })
     ).toBe(true);
     expect(
       isRuntimeSurfaceActorVisible(peer, {
         peerRuntimeVisibility: "hidden",
-        petRuntimeVisibility: "visible",
       })
     ).toBe(false);
     expect(
-      isRuntimeSurfaceActorVisible(pet, {
-        peerRuntimeVisibility: "visible",
-        petRuntimeVisibility: "hidden",
-      })
-    ).toBe(false);
-    expect(
-      isRuntimeSurfaceActorVisible(pet, {
+      isRuntimeSurfaceActorVisible(voice, {
         peerRuntimeVisibility: "hidden",
-        petRuntimeVisibility: "visible",
+        assistantRuntimeVisibility: "visible",
       })
     ).toBe(true);
+  });
+
+  it("applies assistant runtime visibility to Voice Secretary", () => {
+    expect(
+      isRuntimeSurfaceActorVisible(voice, {
+        peerRuntimeVisibility: "visible",
+        assistantRuntimeVisibility: "hidden",
+      })
+    ).toBe(false);
+    expect(
+      isRuntimeSurfaceActorVisible(legacy, {
+        peerRuntimeVisibility: "visible",
+        assistantRuntimeVisibility: "visible",
+      })
+    ).toBe(false);
   });
 
   it("filters runtime actors without hiding actor identity elsewhere", () => {
     expect(
-      filterVisibleRuntimeActors([foreman, peer, pet], {
-        peerRuntimeVisibility: "hidden",
-        petRuntimeVisibility: "visible",
+      filterVisibleRuntimeActors([foreman, peer, voice, legacy], {
+        peerRuntimeVisibility: "visible",
+        assistantRuntimeVisibility: "visible",
       }).map((actor) => actor.id)
-    ).toEqual(["pet-peer"]);
+    ).toEqual(["foreman", "peer-1", "voice-secretary"]);
+    expect(
+      filterVisibleRuntimeActors([foreman, peer, voice, legacy], {
+        peerRuntimeVisibility: "hidden",
+        assistantRuntimeVisibility: "visible",
+      }).map((actor) => actor.id)
+    ).toEqual(["voice-secretary"]);
   });
 });

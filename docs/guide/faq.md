@@ -2,6 +2,26 @@
 
 Frequently asked questions about CCCC.
 
+## Positioning
+
+### How does CCCC compare to native agent teams and other tools?
+
+**vs. native agent teams (Claude Code subagents/agent teams and similar single-vendor features).**
+Native teams give you the smoothest experience inside one vendor and one session — if you only run Claude Code and your work fits in a session, they are a great default. CCCC adds what a single vendor structurally cannot:
+
+- **Cross-vendor groups** — Claude Code, Codex CLI, Gemini CLI, Kimi CLI, ChatGPT Web, and more in one group, so you can route work to whichever model or subscription fits each role.
+- **Durable state** — groups, messages, read/ack receipts, and tasks live in an append-only ledger owned by a daemon. Restarting a terminal (or your machine) does not dissolve the team.
+- **Remote operations** — check, pause, resume, and redirect a running group from Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or Weixin.
+- **An audit trail** — every message and its delivery state is replayable for review and debugging.
+
+**vs. parallel task runners (worktree/task-board tools).**
+These tools excel at fanning out isolated tasks in parallel. CCCC's focus is the coordination layer they intentionally skip: agents that talk to each other, hand off work, acknowledge attention messages, and get nudged when they stall — plus daemon-owned lifecycle and IM-side operations. The two approaches compose well: keep a task runner for fan-out and use CCCC as the durable coordination plane.
+
+**vs. IM assistant gateways (personal-assistant products that live in your chat app).**
+Those products put a general assistant in your messenger. CCCC is built for delivery-grade collaboration on real work: tracked tasks with owners and outcomes, read/ack semantics, multi-agent groups bound to a repository scope, and a tiered token and capability-allowlist security model.
+
+In short: CCCC does not replace your agents — it is the coordination layer that turns them into a durable, observable team. See also [Positioning](/reference/positioning) for what CCCC deliberately is and is not.
+
 ## Installation & Setup
 
 ### How do I install CCCC?

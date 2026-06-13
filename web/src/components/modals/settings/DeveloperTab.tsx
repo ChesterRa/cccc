@@ -31,8 +31,8 @@ interface DeveloperTabProps {
   setTerminalScrollbackLines: (v: number) => void;
   peerRuntimeVisibility: RuntimeVisibilityMode;
   setPeerRuntimeVisibility: (v: RuntimeVisibilityMode) => void;
-  petRuntimeVisibility: RuntimeVisibilityMode;
-  setPetRuntimeVisibility: (v: RuntimeVisibilityMode) => void;
+  assistantRuntimeVisibility: RuntimeVisibilityMode;
+  setAssistantRuntimeVisibility: (v: RuntimeVisibilityMode) => void;
   obsBusy: boolean;
   onSaveObservability: () => void;
   // Debug snapshot
@@ -82,8 +82,8 @@ export function DeveloperTab({
   setTerminalScrollbackLines,
   peerRuntimeVisibility,
   setPeerRuntimeVisibility,
-  petRuntimeVisibility,
-  setPetRuntimeVisibility,
+  assistantRuntimeVisibility,
+  setAssistantRuntimeVisibility,
   obsBusy,
   onSaveObservability,
   debugSnapshot,
@@ -244,20 +244,21 @@ export function DeveloperTab({
                       {t("developer.peerRuntimeHint")}
                     </div>
                   </div>
+
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                    <label className={labelClass()}>{t("developer.petRuntime")}</label>
+                    <label className={labelClass()}>{t("developer.assistantRuntime")}</label>
                     <SelectCombobox
                       items={[
                         { value: "hidden", label: t("developer.hidden") },
                         { value: "visible", label: t("developer.visible") },
                       ]}
-                      value={petRuntimeVisibility}
-                      onChange={(value) => setPetRuntimeVisibility(value === "visible" ? "visible" : "hidden")}
-                      ariaLabel={t("developer.petRuntime")}
+                      value={assistantRuntimeVisibility}
+                      onChange={(value) => setAssistantRuntimeVisibility(value === "hidden" ? "hidden" : "visible")}
+                      ariaLabel={t("developer.assistantRuntime")}
                       className={inputClass()}
                     />
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                      {t("developer.petRuntimeHint")}
+                      {t("developer.assistantRuntimeHint")}
                     </div>
                   </div>
                 </div>

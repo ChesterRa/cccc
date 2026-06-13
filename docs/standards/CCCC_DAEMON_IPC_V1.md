@@ -1380,7 +1380,7 @@ process; heavy ASR runtimes remain behind an explicit local command adapter.
 
 Args:
 ```ts
-{ group_id: string; assistant_id?: "pet" | "voice_secretary" }
+{ group_id: string; assistant_id?: "voice_secretary" }
 ```
 
 Result:
@@ -1405,8 +1405,7 @@ Result:
 
 #### `assistant_settings_update`
 
-Update group-scoped built-in assistant settings. `pet` is read-only in M0 and
-mirrors `group_settings_update.patch.desktop_pet_enabled`.
+Update group-scoped built-in assistant settings.
 
 When `voice_secretary.enabled=true`, the daemon also materializes a hidden
 internal actor with `internal_kind="voice_secretary"` and `actor_id="voice-secretary"`.
@@ -1870,7 +1869,7 @@ update it for control-plane repair.
 
 Args:
 ```ts
-{ group_id: string; by?: string; assistant_id: "voice_secretary" | "pet"; lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed"; health?: Record<string, unknown> }
+{ group_id: string; by?: string; assistant_id: "voice_secretary"; lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed"; health?: Record<string, unknown> }
 ```
 
 Result:

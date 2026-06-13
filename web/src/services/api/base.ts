@@ -218,10 +218,6 @@ export function groupPromptsRequestKey(groupId: string): string {
   return `group-prompts:${String(groupId || "").trim()}`;
 }
 
-export function petPeerContextRequestKey(groupId: string, fresh: boolean, verbose: boolean): string {
-  return `pet-peer-context:${String(groupId || "").trim()}:${fresh ? "fresh" : "default"}:${verbose ? "verbose" : "lite"}`;
-}
-
 export function ledgerStatusesRequestKey(groupId: string, eventIds: string[]): string {
   const normalizedIds = eventIds.map((eventId) => String(eventId || "").trim()).filter((eventId) => eventId);
   return `ledger-statuses:${String(groupId || "").trim()}:${normalizedIds.join(",")}`;

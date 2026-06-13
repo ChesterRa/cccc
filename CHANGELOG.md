@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow SemVer/PEP 440.
 
+## [Unreleased]
+
+### Removed
+- **PET and WebPet have been removed** from the daemon, MCP tool surface, Web UI, settings, release workflow, and generated Web assets. Voice Secretary remains the supported built-in assistant.
+
+### Changed
+- **Legacy `## @pet` help blocks are treated as preserved legacy content**, not as an active assistant prompt surface.
+- **Unsupported internal actors are skipped during group start/autostart**, preventing stale internal runtime records from being launched.
+
 ## [0.4.26] — 2026-06-10
 
 ### Added

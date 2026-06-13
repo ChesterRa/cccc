@@ -9,10 +9,3 @@ export function shouldMountAppModals(input: {
   if (String(input.recipientsEventId || "").trim()) return true;
   return Object.values(input.modals || {}).some((value) => Boolean(value));
 }
-
-export function shouldMountWebPet(input: {
-  groupId?: string | null;
-  desktopPetEnabled?: boolean | null;
-}): boolean {
-  return !!String(input.groupId || "").trim() && input.desktopPetEnabled === true;
-}

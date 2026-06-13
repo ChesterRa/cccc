@@ -1016,8 +1016,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             (runtime_visibility or {}).get("peer_runtime") or "visible"
                         ).strip().lower()
                         or "visible",
-                        "pet_runtime": str(
-                            (runtime_visibility or {}).get("pet_runtime") or "hidden"
+                        "assistant_runtime": str(
+                            (runtime_visibility or {}).get("assistant_runtime") or "hidden"
                         ).strip().lower()
                         or "hidden",
                     },
@@ -1293,8 +1293,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch.setdefault("terminal_ui", {})["scrollback_lines"] = int(req.terminal_ui_scrollback_lines)
         if req.peer_runtime_visibility is not None:
             patch.setdefault("runtime_visibility", {})["peer_runtime"] = str(req.peer_runtime_visibility)
-        if req.pet_runtime_visibility is not None:
-            patch.setdefault("runtime_visibility", {})["pet_runtime"] = str(req.pet_runtime_visibility)
+        if req.assistant_runtime_visibility is not None:
+            patch.setdefault("runtime_visibility", {})["assistant_runtime"] = str(req.assistant_runtime_visibility)
 
         resp = await ctx.daemon({"op": "observability_update", "args": {"by": req.by, "patch": patch}})
 

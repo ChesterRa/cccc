@@ -1,4 +1,20 @@
-import { defineConfig } from 'vitepress'
+import { defineConfig, type HeadConfig } from 'vitepress'
+
+// Privacy-friendly visit counting (no cookies, no personal data).
+// To enable: create a site at https://www.goatcounter.com (free for open source),
+// then set the site code here, e.g. 'cccc'. Leave empty to ship no analytics at all.
+const GOATCOUNTER_CODE = ''
+
+const analyticsHead: HeadConfig[] = GOATCOUNTER_CODE
+  ? [[
+      'script',
+      {
+        'data-goatcounter': `https://${GOATCOUNTER_CODE}.goatcounter.com/count`,
+        async: '',
+        src: 'https://gc.zgo.at/count.js'
+      }
+    ]]
+  : []
 
 export default defineConfig({
   title: 'CCCC',
@@ -24,7 +40,8 @@ export default defineConfig({
   ],
 
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/cccc/logo.svg' }]
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/cccc/logo.svg' }],
+    ...analyticsHead
   ],
 
   themeConfig: {

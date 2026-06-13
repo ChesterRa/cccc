@@ -363,10 +363,10 @@ class TestGroupCopyOps(unittest.TestCase):
                 actors.extend(
                     [
                         {
-                            "id": "pet-peer",
+                            "id": "internal-helper",
                             "runtime": "codex",
                             "runner": "headless",
-                            "internal_kind": "pet",
+                            "internal_kind": "legacy",
                             "enabled": True,
                         },
                         {

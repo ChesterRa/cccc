@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from ...kernel.context import ContextStorage
-from ...kernel.actors import list_actors
+from ...kernel.actors import is_internal_actor, is_supported_internal_actor, list_actors
 from ...kernel.group import load_group
 from ...kernel.runtime import runtime_start_preflight_error
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
@@ -25,7 +25,6 @@ from ..assistants.voice_secretary_runtime_ops import (
     restore_voice_secretary_actor_state,
     sync_voice_secretary_actor_from_foreman,
 )
-from ..pet.pet_runtime_ops import capture_pet_actor_state, restore_pet_actor_state, sync_pet_actor_from_foreman
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -79,28 +78,6 @@ def autostart_running_groups(
                 pass
             continue
 
-        pet_state_before = capture_pet_actor_state(group, load_actor_private_env=load_actor_private_env)
-        try:
-            sync_pet_actor_from_foreman(
-                group,
-                effective_runner_kind=effective_runner_kind,
-                load_actor_private_env=load_actor_private_env,
-                update_actor_private_env=update_actor_private_env,
-                delete_actor_private_env=delete_actor_private_env,
-                resolve_linked_actor_before_start=resolve_linked_actor_before_start,
-            )
-        except Exception as e:
-            logger.warning("Pet actor sync failed for %s: %s", group_id, e)
-            try:
-                restore_pet_actor_state(
-                    group,
-                    None if str(e).strip() == "desktop pet requires a foreman actor" else pet_state_before,
-                    update_actor_private_env=update_actor_private_env,
-                    delete_actor_private_env=delete_actor_private_env,
-                )
-            except Exception:
-                pass
-
         voice_state_before = capture_voice_secretary_actor_state(group, load_actor_private_env=load_actor_private_env)
         try:
             sync_voice_secretary_actor_from_foreman(
@@ -128,6 +105,14 @@ def autostart_running_groups(
                 continue
             actor_id = str(actor.get("id") or "").strip()
             if not actor_id:
+                continue
+            if is_internal_actor(actor) and not is_supported_internal_actor(actor):
+                logger.info(
+                    "autostart skipped unsupported internal actor group=%s actor=%s kind=%s",
+                    group_id,
+                    actor_id,
+                    str(actor.get("internal_kind") or "").strip(),
+                )
                 continue
             if not coerce_bool(actor.get("enabled"), default=True):
                 continue

@@ -42,7 +42,6 @@ _BOOTSTRAP_INTERRUPT_NOTIFY_KINDS = {
     "help_nudge",
     "keepalive",
     "nudge",
-    "pet_review",
     "silence_check",
     "standup",
 }
