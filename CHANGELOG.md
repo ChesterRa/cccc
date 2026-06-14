@@ -6,12 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
-### Removed
-- **PET and WebPet have been removed** from the daemon, MCP tool surface, Web UI, settings, release workflow, and generated Web assets. Voice Secretary remains the supported built-in assistant.
+## [0.4.27] — 2026-06-15
+
+### Added
+- **Agents can now suggest the user's next message** by attaching `suggested_user_message` when sending or replying to the user. CCCC Web shows the suggestion as editable gray prefill text in the composer; the user can accept it with Tab or the inline suggestion button, edit it, or ignore it.
+- **The suggested-message field is available through daemon messaging, Web messaging, and MCP messaging APIs**, with focused safeguards so suggestions are only surfaced for the active user-facing composer context.
+- **ChatGPT Web Model delivery now includes a lightweight app-permission hint** when a browser-delivered message appears to be waiting on ChatGPT-side app approval.
 
 ### Changed
+- **ChatGPT Web Model setup has been reorganized around the real setup order**: configure Web Access, create a ChatGPT Web Model actor in the target group, sign in to ChatGPT, connect the MCP app, then save an explicit delivery target.
+- **ChatGPT delivery targets are now explicit and easier to reason about**. CCCC can bind to a saved conversation URL, use the current inspected ChatGPT chat when the user saves it, or start a new chat on the next delivery and bind it once ChatGPT creates the final `/c/...` URL.
+- **Automatic ChatGPT page refresh recovery is disabled by default**. The legacy refresh mechanism remains available through `CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD=1` for fragile browser sessions.
+- **CCCC no longer tries to automate ChatGPT app permission approval clicks**. Users should approve the CCCC app in ChatGPT, preferably with ChatGPT's "Always allow" option when they trust the local connector.
 - **Legacy `## @pet` help blocks are treated as preserved legacy content**, not as an active assistant prompt surface.
 - **Unsupported internal actors are skipped during group start/autostart**, preventing stale internal runtime records from being launched.
+
+### Removed
+- **PET and WebPet have been removed** from the daemon, MCP tool surface, Web UI, settings, release workflow, and generated Web assets. Voice Secretary remains the supported built-in assistant.
+- **PET-specific local review, task proposal, reminder, context refresh, WebPet animation, and PET settings surfaces are no longer active product paths**.
+
+### Fixed
+- **Starting a new ChatGPT chat on next delivery now reports and persists the final bound conversation more reliably** after the first browser-delivered prompt.
+- **ChatGPT target setup no longer treats diagnostic browser history as a saved delivery target**. A `last_tab_url` is informational only until the user saves a target.
+- **Suggested next-message prompts no longer reappear after a newer user reply**, even when the chat view is filtered or showing a jump-to window.
+- **Suggested next-message prompts are hidden when the composer is routed to another group**, preventing an agent-proposed reply for one group from being sent to another.
+
+### Tests
+- Added and updated coverage for PET removal boundaries, legacy help parsing, ChatGPT target drafting, browser recovery behavior, app-permission hints, new-chat binding, suggested-message contracts, and composer suggestion freshness/routing.
 
 ## [0.4.26] — 2026-06-10
 

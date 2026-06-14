@@ -124,6 +124,13 @@ export default defineConfig({
           text: 'Release Hub',
           items: [
             { text: 'Overview', link: '/release/' },
+            { text: 'v0.4.27 Release Notes', link: '/release/v0.4.27_release_notes' },
+            { text: 'v0.4.26 Release Notes', link: '/release/v0.4.26_release_notes' },
+            { text: 'v0.4.25 Release Notes', link: '/release/v0.4.25_release_notes' },
+            { text: 'v0.4.24 Release Notes', link: '/release/v0.4.24_release_notes' },
+            { text: 'v0.4.23 Release Notes', link: '/release/v0.4.23_release_notes' },
+            { text: 'v0.4.22 Release Notes', link: '/release/v0.4.22_release_notes' },
+            { text: 'v0.4.21 Release Notes', link: '/release/v0.4.21_release_notes' },
             { text: 'v0.4.20 Release Notes', link: '/release/v0.4.20_release_notes' },
             { text: 'v0.4.19 Release Notes', link: '/release/v0.4.19_release_notes' },
             { text: 'v0.4.18 Release Notes', link: '/release/v0.4.18_release_notes' },
