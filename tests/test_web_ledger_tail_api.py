@@ -284,3 +284,85 @@ class TestWebLedgerTailApi(unittest.TestCase):
             self.assertEqual((message or {}).get("_web_model_delivery_status", {}).get("state"), "failed")
         finally:
             cleanup()
+
+    def test_ledger_statuses_include_web_model_delivery_bound(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "ledger-web-model-bound", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "web-1",
+                    "title": "Web 1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            send, _ = self._call("send", {"group_id": group_id, "by": "user", "to": ["web-1"], "text": "start new chat"})
+            self.assertTrue(send.ok, getattr(send, "error", None))
+            sent_event = (send.result or {}).get("event") or {}
+            event_id = str(sent_event.get("id") or "").strip()
+            self.assertTrue(event_id)
+
+            from cccc.kernel.group import load_group
+            from cccc.kernel.ledger import append_event
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            append_event(
+                group.ledger_path,
+                kind="web_model.browser_delivery.pending",
+                group_id=group_id,
+                scope_key="",
+                by="system",
+                data={
+                    "actor_id": "web-1",
+                    "turn_id": "turn-1",
+                    "delivery_id": "delivery-1",
+                    "event_ids": [event_id],
+                    "pending_conversation_url": True,
+                },
+            )
+            append_event(
+                group.ledger_path,
+                kind="web_model.browser_delivery.bound",
+                group_id=group_id,
+                scope_key="",
+                by="system",
+                data={
+                    "actor_id": "web-1",
+                    "turn_id": "turn-1",
+                    "delivery_id": "delivery-1",
+                    "event_ids": [event_id],
+                    "bound_conversation_url": "https://chatgpt.com/c/new-chat",
+                },
+            )
+
+            with self._client() as client:
+                statuses_resp = client.post(
+                    f"/api/v1/groups/{group_id}/ledger/statuses",
+                    json={"event_ids": [event_id]},
+                )
+                tail_resp = client.get(
+                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+                )
+
+            self.assertEqual(statuses_resp.status_code, 200)
+            status = (((statuses_resp.json().get("result") or {}).get("statuses") or {}).get(event_id) or {})
+            self.assertEqual((status.get("web_model_delivery_status") or {}).get("state"), "bound")
+
+            self.assertEqual(tail_resp.status_code, 200)
+            events = (tail_resp.json().get("result") or {}).get("events") or []
+            message = next((event for event in events if str(event.get("id") or "") == event_id), None)
+            self.assertIsNotNone(message)
+            self.assertEqual((message or {}).get("_web_model_delivery_status", {}).get("state"), "bound")
+        finally:
+            cleanup()

@@ -1,4 +1,4 @@
-"""Low-frequency auto-confirm watcher for ChatGPT web-model tool prompts."""
+"""Optional browser recovery watcher for ChatGPT Web Model deliveries."""
 
 from __future__ import annotations
 
@@ -11,36 +11,35 @@ from typing import Any, Dict, Optional
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...ports import web_model_browser_sidecar as browser_sidecar
-from ..browser.projected_browser_runtime import _wait_cdp_endpoint
 from ...util.time import parse_utc_iso, utc_now_iso
+from ..browser.projected_browser_runtime import _wait_cdp_endpoint
 
-_LOG = logging.getLogger("cccc.daemon.web_model.tool_confirm")
+_LOG = logging.getLogger("cccc.daemon.web_model.browser_recovery")
 _WATCHERS_LOCK = threading.Lock()
 _WATCHERS: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
-_DEFAULT_INTERVAL_SECONDS = 5.0
+_DEFAULT_RECOVERY_INTERVAL_SECONDS = 5.0
 _DEFAULT_INACTIVITY_RELOAD_SECONDS = 60.0
 _DEFAULT_RELOAD_COOLDOWN_SECONDS = 45.0
 _DEFAULT_RELOAD_WINDOW_SECONDS = 30.0 * 60.0
 _DELIVERY_SUBMITTING_RELOAD_GRACE_SECONDS = 180.0
 
 
-def web_model_tool_auto_confirm_enabled() -> bool:
-    raw = str(os.environ.get("CCCC_WEB_MODEL_AUTO_CONFIRM_TOOLS") or "").strip().lower()
-    return raw not in {"0", "false", "no", "off", "disabled"}
-
-
-def web_model_tool_auto_confirm_interval_seconds() -> float:
-    raw = str(os.environ.get("CCCC_WEB_MODEL_AUTO_CONFIRM_INTERVAL_SECONDS") or "").strip()
-    try:
-        value = float(raw) if raw else _DEFAULT_INTERVAL_SECONDS
-    except Exception:
-        value = _DEFAULT_INTERVAL_SECONDS
-    return max(3.0, min(value, 60.0))
+def _truthy_env(name: str) -> bool:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "enabled"}
 
 
 def web_model_browser_auto_reload_enabled() -> bool:
-    raw = str(os.environ.get("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD") or "").strip().lower()
-    return raw not in {"0", "false", "no", "off", "disabled"}
+    return _truthy_env("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD")
+
+
+def web_model_browser_recovery_interval_seconds() -> float:
+    raw = str(os.environ.get("CCCC_WEB_MODEL_BROWSER_RECOVERY_INTERVAL_SECONDS") or "").strip()
+    try:
+        value = float(raw) if raw else _DEFAULT_RECOVERY_INTERVAL_SECONDS
+    except Exception:
+        value = _DEFAULT_RECOVERY_INTERVAL_SECONDS
+    return max(3.0, min(value, 60.0))
 
 
 def web_model_browser_auto_reload_inactivity_seconds() -> float:
@@ -116,8 +115,23 @@ def start_web_model_browser_reload_window(
     turn_id: str = "",
     event_ids: Optional[list[str]] = None,
     target_url: str = "",
-) -> None:
-    """Start the bounded recovery window after a browser delivery succeeds."""
+) -> bool:
+    """Start a bounded auto-reload recovery window when the feature is enabled."""
+
+    if not web_model_browser_auto_reload_enabled():
+        try:
+            browser_sidecar.record_chatgpt_browser_state(
+                group_id,
+                actor_id,
+                {
+                    "auto_reload_active": False,
+                    "auto_reload_completed_reason": "disabled",
+                    "auto_reload_last_error": "",
+                },
+            )
+        except Exception:
+            pass
+        return False
 
     now_dt = _now_dt()
     now = _iso_from_dt(now_dt)
@@ -143,8 +157,9 @@ def start_web_model_browser_reload_window(
                 "auto_reload_last_error": "",
             },
         )
+        return True
     except Exception:
-        pass
+        return False
 
 
 def record_web_model_browser_progress(group_id: str, actor_id: str, *, reason: str, detail: str = "") -> bool:
@@ -215,80 +230,13 @@ def _active_cdp_port(group_id: str, actor_id: str) -> int:
     return port if _wait_cdp_endpoint(port, timeout_seconds=0.4) else 0
 
 
-def _record_auto_confirm(group_id: str, actor_id: str, result: Dict[str, Any]) -> None:
-    clicked = int(result.get("clicked") or 0)
-    if clicked <= 0:
-        return
-    now = utc_now_iso()
-    try:
-        current = browser_sidecar.read_chatgpt_browser_state(group_id, actor_id)
-    except Exception:
-        current = {}
-    try:
-        total = int(current.get("auto_confirm_total") or 0) + clicked
-    except Exception:
-        total = clicked
-    details = result.get("details") if isinstance(result.get("details"), list) else []
-    page_url = str(result.get("page_url") or "").strip()
-    browser_sidecar.record_chatgpt_browser_state(
-        group_id,
-        actor_id,
-        {
-            "auto_confirm_last_at": now,
-            "auto_confirm_last_count": clicked,
-            "auto_confirm_total": total,
-            "auto_confirm_last_page_url": page_url,
-            "auto_confirm_last_details": details[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-        },
-    )
-    record_web_model_browser_progress(group_id, actor_id, reason="auto_confirm", detail=page_url)
-    try:
-        group = load_group(group_id)
-        if group is not None:
-            append_event(
-                group.ledger_path,
-                kind="web_model.browser_tool_confirm.approved",
-                group_id=group.group_id,
-                scope_key="",
-                by="system",
-                data={
-                    "actor_id": actor_id,
-                    "clicked": clicked,
-                    "page_url": page_url,
-                    "details": details[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-                    "auto": True,
-                },
-            )
-    except Exception:
-        pass
-
-
 def _reload_chatgpt_projected_session(group_id: str, actor_id: str, *, target_url: str) -> Dict[str, Any]:
     from .web_model_browser_session import reload_web_model_chatgpt_browser_session
 
     return reload_web_model_chatgpt_browser_session(group_id=group_id, actor_id=actor_id, target_url=target_url)
 
 
-def _auto_confirm_chatgpt_projected_session(group_id: str, actor_id: str, *, target_url: str) -> Dict[str, Any]:
-    from .web_model_browser_session import auto_confirm_web_model_chatgpt_tool_prompts
-
-    return auto_confirm_web_model_chatgpt_tool_prompts(
-        group_id=group_id,
-        actor_id=actor_id,
-        target_url=target_url,
-        max_clicks=browser_sidecar.TOOL_CONFIRM_MAX_CLICKS,
-    )
-
-
-def _maybe_reload_stale_chatgpt_page(
-    group_id: str,
-    actor_id: str,
-    *,
-    browser: Any,
-    target_url: str,
-    preferred_page: Any = None,
-    fallback_page: Any = None,
-) -> Dict[str, Any]:
+def _maybe_reload_stale_chatgpt_page(group_id: str, actor_id: str, *, target_url: str) -> Dict[str, Any]:
     if not web_model_browser_auto_reload_enabled():
         return {"reloaded": False, "reason": "disabled"}
     try:
@@ -403,104 +351,6 @@ def _maybe_reload_stale_chatgpt_page(
     return {"reloaded": True, "action": action, "before_url": before_url, "after_url": after_url, "reload_count": count}
 
 
-def _record_auto_confirm_scan(group_id: str, actor_id: str, result: Dict[str, Any]) -> None:
-    clicked = int(result.get("clicked") or 0)
-    candidate_count = int(result.get("candidate_count") or 0)
-    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-    if clicked <= 0 and candidate_count <= 0 and not errors:
-        return
-    try:
-        browser_sidecar.record_chatgpt_browser_state(
-            group_id,
-            actor_id,
-            {
-                "auto_confirm_scan_at": utc_now_iso(),
-                "auto_confirm_pages_seen": int(result.get("pages_seen") or 0),
-                "auto_confirm_candidate_count": max(0, candidate_count),
-                "auto_confirm_last_errors": errors[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-            },
-        )
-    except Exception:
-        pass
-
-
-def auto_confirm_chatgpt_tool_prompts(group_id: str, actor_id: str) -> Dict[str, Any]:
-    state = browser_sidecar.read_chatgpt_browser_state(group_id, actor_id)
-    target_url = browser_sidecar._normalize_chatgpt_url(state.get("conversation_url"))
-    if _delivery_submit_recent(state):
-        result = {
-            "browser_active": True,
-            "clicked": 0,
-            "candidate_count": 0,
-            "details": [],
-            "errors": [],
-            "pages_seen": 0,
-            "skipped": "delivery_submitting",
-        }
-        return result
-    reload_result: Dict[str, Any] = {}
-    try:
-        confirm_result = _auto_confirm_chatgpt_projected_session(group_id, actor_id, target_url=target_url)
-    except Exception as exc:
-        confirm_result = {
-            "browser_active": True,
-            "clicked": 0,
-            "candidate_count": 0,
-            "details": [],
-            "errors": [{"error": str(exc)[:300]}],
-            "pages_seen": 0,
-        }
-    if not bool(confirm_result.get("browser_active")):
-        result = {
-            "browser_active": False,
-            "clicked": 0,
-            "candidate_count": 0,
-            "details": [],
-            "errors": confirm_result.get("errors") if isinstance(confirm_result.get("errors"), list) else [],
-            "pages_seen": 0,
-        }
-        _record_auto_confirm_scan(group_id, actor_id, result)
-        return result
-
-    clicked = max(0, int(confirm_result.get("clicked") or 0))
-    candidate_count = max(0, int(confirm_result.get("candidate_count") or 0))
-    details = confirm_result.get("details") if isinstance(confirm_result.get("details"), list) else []
-    errors = confirm_result.get("errors") if isinstance(confirm_result.get("errors"), list) else []
-    pages_seen = max(0, int(confirm_result.get("pages_seen") or 0))
-    interim = {
-        "browser_active": True,
-        "clicked": clicked,
-        "candidate_count": candidate_count,
-        "details": details[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-        "errors": errors[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-        "pages_seen": pages_seen,
-    }
-    page_url = str(confirm_result.get("page_url") or "").strip()
-    if page_url:
-        interim["page_url"] = page_url
-    _record_auto_confirm(group_id, actor_id, interim)
-    reload_result = _maybe_reload_stale_chatgpt_page(
-        group_id,
-        actor_id,
-        browser=None,
-        target_url=target_url,
-    )
-    result = {
-        "browser_active": True,
-        "clicked": clicked,
-        "candidate_count": candidate_count,
-        "details": details[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-        "errors": errors[:browser_sidecar.TOOL_CONFIRM_MAX_CLICKS],
-        "pages_seen": pages_seen,
-    }
-    if page_url:
-        result["page_url"] = page_url
-    if reload_result:
-        result["auto_reload"] = reload_result
-    _record_auto_confirm_scan(group_id, actor_id, result)
-    return result
-
-
 def _watcher_worker(group_id: str, actor_id: str, stop_event: threading.Event, *, logger: Optional[logging.Logger] = None) -> None:
     log = logger or _LOG
     key = _key(group_id, actor_id)
@@ -508,19 +358,18 @@ def _watcher_worker(group_id: str, actor_id: str, stop_event: threading.Event, *
     try:
         while not stop_event.is_set():
             try:
-                result = auto_confirm_chatgpt_tool_prompts(group_id, actor_id)
-                if bool(result.get("browser_active")):
+                if _active_cdp_port(group_id, actor_id) > 0:
                     missing_cdp_cycles = 0
                 else:
                     missing_cdp_cycles += 1
-                clicked = int(result.get("clicked") or 0)
-                if clicked > 0:
-                    log.info("[web-model-tool-confirm] approved group=%s actor=%s clicked=%s", group_id, actor_id, clicked)
+                result = _maybe_reload_stale_chatgpt_page(group_id, actor_id, target_url="")
+                if bool(result.get("reloaded")):
+                    log.info("[web-model-browser-recovery] reloaded group=%s actor=%s action=%s", group_id, actor_id, result.get("action"))
             except Exception as exc:
-                log.debug("[web-model-tool-confirm] scan failed group=%s actor=%s error=%s", group_id, actor_id, exc)
+                log.debug("[web-model-browser-recovery] scan failed group=%s actor=%s error=%s", group_id, actor_id, exc)
             if missing_cdp_cycles >= 3:
                 break
-            if stop_event.wait(web_model_tool_auto_confirm_interval_seconds()):
+            if stop_event.wait(web_model_browser_recovery_interval_seconds()):
                 break
     finally:
         with _WATCHERS_LOCK:
@@ -529,9 +378,9 @@ def _watcher_worker(group_id: str, actor_id: str, stop_event: threading.Event, *
                 _WATCHERS.pop(key, None)
 
 
-def ensure_web_model_tool_confirm_watcher(group_id: str, actor_id: str, *, logger: Optional[logging.Logger] = None) -> bool:
+def ensure_web_model_browser_recovery_watcher(group_id: str, actor_id: str, *, logger: Optional[logging.Logger] = None) -> bool:
     gid, aid = _key(group_id, actor_id)
-    if not gid or not aid or not web_model_tool_auto_confirm_enabled():
+    if not gid or not aid or not web_model_browser_auto_reload_enabled():
         return False
     if _active_cdp_port(gid, aid) <= 0:
         return False
@@ -545,7 +394,7 @@ def ensure_web_model_tool_confirm_watcher(group_id: str, actor_id: str, *, logge
             target=_watcher_worker,
             args=(gid, aid, stop_event),
             kwargs={"logger": logger},
-            name=f"cccc-web-model-tool-confirm-{gid}-{aid}",
+            name=f"cccc-web-model-browser-recovery-{gid}-{aid}",
             daemon=True,
         )
         _WATCHERS[key] = (thread, stop_event)
@@ -553,7 +402,7 @@ def ensure_web_model_tool_confirm_watcher(group_id: str, actor_id: str, *, logge
         return True
 
 
-def stop_web_model_tool_confirm_watcher(group_id: str, actor_id: str) -> bool:
+def stop_web_model_browser_recovery_watcher(group_id: str, actor_id: str) -> bool:
     key = _key(group_id, actor_id)
     with _WATCHERS_LOCK:
         current = _WATCHERS.pop(key, None)
@@ -563,7 +412,7 @@ def stop_web_model_tool_confirm_watcher(group_id: str, actor_id: str) -> bool:
     return True
 
 
-def stop_all_web_model_tool_confirm_watchers() -> None:
+def stop_all_web_model_browser_recovery_watchers() -> None:
     with _WATCHERS_LOCK:
         watchers = list(_WATCHERS.values())
         _WATCHERS.clear()

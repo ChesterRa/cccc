@@ -84,16 +84,9 @@ export type WebModelBrowserSession = {
   pending_new_chat_url?: string;
   pending_new_chat_bind_started_at?: string;
   new_chat_bound_at?: string;
+  target_saved_at?: string;
+  delivery_target?: WebModelDeliveryTarget;
   bootstrap_seed_delivered_at?: string;
-  auto_confirm_scan_at?: string;
-  auto_confirm_pages_seen?: number;
-  auto_confirm_candidate_count?: number;
-  auto_confirm_last_at?: string;
-  auto_confirm_last_count?: number;
-  auto_confirm_total?: number;
-  auto_confirm_last_page_url?: string;
-  auto_confirm_last_details?: Array<Record<string, unknown>>;
-  auto_confirm_last_errors?: Array<Record<string, unknown>>;
   auto_reload_active?: boolean;
   auto_reload_window_started_at?: string;
   auto_reload_window_expires_at?: string;
@@ -147,7 +140,10 @@ export type WebModelHealthSnapshot = {
     label?: string;
     reason?: string;
     url?: string;
+    saved_at?: string;
+    next_delivery?: string;
   };
+  delivery_target?: WebModelDeliveryTarget;
   delivery?: {
     state?: string;
     label?: string;
@@ -166,6 +162,18 @@ export type WebModelHealthSnapshot = {
     label?: string;
     reason?: string;
   };
+};
+
+export type WebModelDeliveryTarget = {
+  state?: "none" | "bound_existing_chat" | "new_chat_armed" | "new_chat_submitted" | string;
+  kind?: "none" | "existing_chat" | "new_chat" | string;
+  url?: string;
+  saved_at?: string;
+  submitted_at?: string;
+  delivery_id?: string;
+  next_delivery?: "blocked" | "existing_chat" | "new_chat" | "wait_for_new_chat_bind" | string;
+  label?: string;
+  detail?: string;
 };
 
 export type WebModelBrowserSurfaceResult = {

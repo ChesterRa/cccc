@@ -47,9 +47,12 @@
   "webModelDelivery": {
     "submitting": "Delivering to ChatGPT",
     "submitted": "Delivered to ChatGPT",
+    "bound": "ChatGPT chat bound",
     "pending": "Delivered; binding ChatGPT chat",
     "ambiguous": "Delivery unverified",
-    "failed": "ChatGPT delivery failed"
+    "failed": "ChatGPT delivery failed",
+    "permissionHint": "ChatGPT may be waiting for you to approve CCCC app access. Switch to ChatGPT and click Allow; choose Always allow if it is available. After approving, return here to continue.",
+    "permissionHintDismiss": "Don't show again"
   },
   "sendBlockedGroupStopped": "This group is not running. Start the group before sending a message to agents.",
   "sendBlockedGroupPaused": "This group is paused. Resume the group before sending a message to agents.",

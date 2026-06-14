@@ -51,102 +51,12 @@ SEND_BUTTON_SELECTORS = [
     'button[aria-label*="发送"]',
     'button[aria-label*="送信"]',
 ]
-TOOL_CONFIRM_MAX_CLICKS = 3
 CDP_CONNECT_TIMEOUT_MS = 5000
 DEFAULT_BROWSER_DELIVERY_TIMEOUT_SECONDS = 120.0
 
 
 class _UnsafeSubmitState(RuntimeError):
     pass
-
-
-def _chatgpt_tool_confirm_script() -> str:
-    return r"""
-    (args) => {
-        const maxClicks = Math.max(1, Math.min(Number(args?.maxClicks || 1), 3));
-        const clickedRecentlyMs = 30000;
-        const now = Date.now();
-        const rejectLabels = new Set(["拒绝", "deny", "cancel", "取消"]);
-        const sharedDataNeedles = [
-            "共享数据包括",
-            "shared data",
-            "data shared",
-            "will share",
-            "share data",
-            "shared with",
-            "data includes"
-        ];
-        const detailsNeedles = ["详细信息", "details", "learn more", "more details"];
-
-        const textOf = (node) => String(node?.innerText || node?.textContent || "").trim();
-        const normalized = (value) => String(value || "").trim().replace(/\s+/g, " ");
-        const labelKey = (value) => normalized(value).toLowerCase();
-        const isVisible = (node) => {
-            if (!node || !(node instanceof HTMLElement)) return false;
-            const style = window.getComputedStyle(node);
-            if (style.visibility === "hidden" || style.display === "none") return false;
-            const rect = node.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        };
-        const hasRejectButton = (root) => {
-            for (const button of root.querySelectorAll("button")) {
-                if (!isVisible(button)) continue;
-                if (button.classList.contains("btn-secondary") && rejectLabels.has(labelKey(textOf(button)))) return true;
-                if (rejectLabels.has(labelKey(textOf(button)))) return true;
-            }
-            return false;
-        };
-        const hasSharedDataText = (root) => {
-            const text = labelKey(textOf(root));
-            return sharedDataNeedles.some((needle) => text.includes(needle));
-        };
-        const hasDetailsControl = (root) => {
-            const text = labelKey(textOf(root));
-            if (detailsNeedles.some((needle) => text.includes(needle))) return true;
-            for (const button of root.querySelectorAll("button")) {
-                if (!isVisible(button)) continue;
-                const label = labelKey(textOf(button));
-                if (detailsNeedles.some((needle) => label.includes(needle))) return true;
-            }
-            return false;
-        };
-        const hasToolConfirmBody = (root) => {
-            if (!root.querySelector("h2")) return false;
-            if (hasSharedDataText(root)) return true;
-            if (root.querySelector("p") && hasDetailsControl(root)) return true;
-            return false;
-        };
-        const panelFor = (button) => {
-            let node = button;
-            for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
-                if (!(node instanceof HTMLElement)) continue;
-                if (!isVisible(node)) continue;
-                if (!hasToolConfirmBody(node)) continue;
-                if (!hasRejectButton(node)) continue;
-                return node;
-            }
-            return null;
-        };
-
-        const out = [];
-        for (const button of document.querySelectorAll("button")) {
-            if (out.length >= maxClicks) break;
-            if (!isVisible(button)) continue;
-            if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
-            const label = labelKey(textOf(button));
-            if (!button.classList.contains("btn-primary") && label !== "确认") continue;
-            const clickedAt = Number(button.getAttribute("data-cccc-auto-confirm-clicked-at") || 0);
-            if (clickedAt && now - clickedAt < clickedRecentlyMs) continue;
-            const panel = panelFor(button);
-            if (!panel) continue;
-            const title = normalized(textOf(panel.querySelector("h2"))).slice(0, 160);
-            const candidateId = `cccc-tool-confirm-${now}-${out.length}`;
-            button.setAttribute("data-cccc-auto-confirm-candidate-id", candidateId);
-            out.push({ candidate_id: candidateId, title, label: normalized(textOf(button)).slice(0, 32) });
-        }
-        return { clicked: 0, candidates: out, details: out };
-    }
-    """
 
 
 def _normalize_chatgpt_url(value: Any, *, require_conversation: bool = False) -> str:
@@ -313,6 +223,7 @@ def reset_chatgpt_browser_actor_runtime_state(group_id: str, actor_id: str) -> N
             "pending_new_chat_last_event_ids": [],
             "pending_new_chat_last_tab_url": "",
             "new_chat_bound_at": "",
+            "target_saved_at": "",
             "bootstrap_seed_delivered_at": "",
             "bootstrap_seed_version": "",
             "bootstrap_seed_digest": "",
@@ -1171,61 +1082,6 @@ def _submission_diagnostics(page: Any, selector: str) -> dict[str, Any]:
     return {}
 
 
-def _auto_confirm_page_tool_prompts(page: Any, *, max_clicks: int = TOOL_CONFIRM_MAX_CLICKS) -> dict[str, Any]:
-    url = str(getattr(page, "url", "") or "")
-    if not _normalize_chatgpt_url(url):
-        return {"clicked": 0, "details": [], "skipped": "non_chatgpt_page"}
-    try:
-        result = page.evaluate(
-            _chatgpt_tool_confirm_script(),
-            {"maxClicks": max(1, min(int(max_clicks or 1), TOOL_CONFIRM_MAX_CLICKS))},
-        )
-    except Exception as exc:
-        return {"clicked": 0, "details": [], "error": str(exc)[:1000]}
-    if not isinstance(result, dict):
-        return {"clicked": 0, "details": []}
-    candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
-    details: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    clicked = 0
-    for raw in candidates[: max(1, min(int(max_clicks or 1), TOOL_CONFIRM_MAX_CLICKS))]:
-        if not isinstance(raw, dict):
-            continue
-        candidate_id = str(raw.get("candidate_id") or "").strip()
-        if not candidate_id:
-            continue
-        selector = f'button[data-cccc-auto-confirm-candidate-id="{candidate_id}"]'
-        try:
-            locator = page.locator(selector).first
-            if locator.count() <= 0:
-                continue
-            locator.click(timeout=3000)
-            clicked += 1
-            details.append(
-                {
-                    "title": str(raw.get("title") or "")[:160],
-                    "label": str(raw.get("label") or "")[:32],
-                }
-            )
-            if clicked >= TOOL_CONFIRM_MAX_CLICKS:
-                break
-        except Exception as exc:
-            errors.append(
-                {
-                    "title": str(raw.get("title") or "")[:160],
-                    "error": str(exc)[:300],
-                }
-            )
-    out: dict[str, Any] = {
-        "clicked": max(0, clicked),
-        "candidate_count": len(candidates),
-        "details": details[:TOOL_CONFIRM_MAX_CLICKS],
-    }
-    if errors:
-        out["errors"] = errors[:TOOL_CONFIRM_MAX_CLICKS]
-    return out
-
-
 def _submission_echo_found(page: Any, prompt: str) -> bool:
     needles = _submission_echo_needles(prompt)
     if not needles:
@@ -1538,6 +1394,60 @@ def _stale_submitting_delivery(session: dict[str, Any]) -> bool:
     return age is not None and age >= _delivery_timeout_seconds(session)
 
 
+def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]:
+    conversation_url = _conversation_url_from_tab(session.get("conversation_url"))
+    pending_new_chat = bool(session.get("pending_new_chat_bind"))
+    pending_submitted = bool(session.get("pending_new_chat_submitted"))
+    pending_url = _normalize_chatgpt_url(session.get("pending_new_chat_url")) or CHATGPT_URL
+    saved_at = str(
+        session.get("target_saved_at")
+        or session.get("new_chat_bound_at")
+        or session.get("pending_new_chat_bind_started_at")
+        or ""
+    ).strip()
+    if conversation_url:
+        return {
+            "state": "bound_existing_chat",
+            "kind": "existing_chat",
+            "url": conversation_url,
+            "saved_at": saved_at,
+            "next_delivery": "existing_chat",
+            "label": "Existing ChatGPT chat",
+            "detail": "Next delivery goes to the saved ChatGPT conversation URL.",
+        }
+    if pending_new_chat and pending_submitted:
+        return {
+            "state": "new_chat_submitted",
+            "kind": "new_chat",
+            "url": pending_url,
+            "saved_at": saved_at,
+            "submitted_at": str(session.get("pending_new_chat_submitted_at") or "").strip(),
+            "delivery_id": str(session.get("pending_new_chat_delivery_id") or "").strip(),
+            "next_delivery": "wait_for_new_chat_bind",
+            "label": "Binding new ChatGPT chat",
+            "detail": "The first prompt was submitted; CCCC is waiting for ChatGPT to expose the final /c/... URL.",
+        }
+    if pending_new_chat:
+        return {
+            "state": "new_chat_armed",
+            "kind": "new_chat",
+            "url": pending_url,
+            "saved_at": saved_at,
+            "next_delivery": "new_chat",
+            "label": "New ChatGPT chat on next delivery",
+            "detail": "Next delivery starts a fresh ChatGPT chat, then binds its final /c/... URL.",
+        }
+    return {
+        "state": "none",
+        "kind": "none",
+        "url": "",
+        "saved_at": saved_at,
+        "next_delivery": "blocked",
+        "label": "No target selected",
+        "detail": "Save an existing ChatGPT conversation or choose new-chat delivery.",
+    }
+
+
 def build_chatgpt_web_model_health_snapshot(
     *,
     group_id: str,
@@ -1591,23 +1501,24 @@ def build_chatgpt_web_model_health_snapshot(
         browser_label = "Not open"
         browser_reason = "Open ChatGPT to sign in or inspect the page."
 
+    delivery_target = _chatgpt_delivery_target_snapshot(session)
     conversation_url = str(session.get("conversation_url") or "").strip()
     pending_new_chat = bool(session.get("pending_new_chat_bind"))
     pending_new_chat_url = str(session.get("pending_new_chat_url") or "").strip()
     if conversation_url:
         target_state = "bound"
-        target_label = "Bound chat"
-        target_reason = "Browser delivery targets the bound ChatGPT conversation."
+        target_label = str(delivery_target.get("label") or "Bound chat")
+        target_reason = str(delivery_target.get("detail") or "Browser delivery targets the bound ChatGPT conversation.")
         target_url = conversation_url
     elif pending_new_chat:
         target_state = "new_chat_pending"
-        target_label = "New chat pending"
-        target_reason = "Next delivery creates or finishes binding a ChatGPT conversation."
+        target_label = str(delivery_target.get("label") or "New chat pending")
+        target_reason = str(delivery_target.get("detail") or "Next delivery creates or finishes binding a ChatGPT conversation.")
         target_url = pending_new_chat_url or CHATGPT_URL
     else:
         target_state = "missing"
-        target_label = "No target selected"
-        target_reason = "Choose an existing ChatGPT chat or arm new-chat delivery."
+        target_label = str(delivery_target.get("label") or "No target selected")
+        target_reason = str(delivery_target.get("detail") or "Save an existing ChatGPT chat or choose new-chat delivery.")
         target_url = ""
 
     raw_delivery_status = str(session.get("last_delivery_status") or "").strip().lower()
@@ -1639,6 +1550,10 @@ def build_chatgpt_web_model_health_snapshot(
         delivery_state = "failed"
         delivery_label = "Delivery failed"
         delivery_reason = last_error or "The last ChatGPT delivery did not complete."
+    elif raw_delivery_status == "bound":
+        delivery_state = "bound"
+        delivery_label = "Chat bound"
+        delivery_reason = "The submitted prompt has been bound to a ChatGPT conversation."
     elif raw_delivery_status == "submitted" or last_delivery_at:
         delivery_state = "submitted"
         delivery_label = "Submitted"
@@ -1698,7 +1613,10 @@ def build_chatgpt_web_model_health_snapshot(
             "label": target_label,
             "reason": target_reason,
             "url": target_url,
+            "saved_at": str(delivery_target.get("saved_at") or ""),
+            "next_delivery": str(delivery_target.get("next_delivery") or ""),
         },
+        "delivery_target": delivery_target,
         "delivery": {
             "state": delivery_state,
             "label": delivery_label,
@@ -1710,7 +1628,7 @@ def build_chatgpt_web_model_health_snapshot(
             "last_submission_evidence": str(session.get("last_submission_evidence") or ""),
             "last_send_selector": str(session.get("last_send_selector") or ""),
             "last_error": "" if delivery_state == "pending_bind" and last_error == "conversation_url_pending" else last_error,
-            "cursor_committed": delivery_state in {"submitted", "pending_bind", "ambiguous"},
+            "cursor_committed": delivery_state in {"submitted", "bound", "pending_bind", "ambiguous"},
         },
         "next_action": next_action,
     }
@@ -1755,16 +1673,8 @@ def _session_payload(
         else [],
         "pending_new_chat_last_tab_url": str(state.get("pending_new_chat_last_tab_url") or ""),
         "new_chat_bound_at": str(state.get("new_chat_bound_at") or ""),
+        "target_saved_at": str(state.get("target_saved_at") or ""),
         "bootstrap_seed_delivered_at": str(state.get("bootstrap_seed_delivered_at") or ""),
-        "auto_confirm_scan_at": str(state.get("auto_confirm_scan_at") or ""),
-        "auto_confirm_pages_seen": int(state.get("auto_confirm_pages_seen") or 0),
-        "auto_confirm_candidate_count": int(state.get("auto_confirm_candidate_count") or 0),
-        "auto_confirm_last_at": str(state.get("auto_confirm_last_at") or ""),
-        "auto_confirm_last_count": int(state.get("auto_confirm_last_count") or 0),
-        "auto_confirm_total": int(state.get("auto_confirm_total") or 0),
-        "auto_confirm_last_page_url": str(state.get("auto_confirm_last_page_url") or ""),
-        "auto_confirm_last_details": state.get("auto_confirm_last_details") if isinstance(state.get("auto_confirm_last_details"), list) else [],
-        "auto_confirm_last_errors": state.get("auto_confirm_last_errors") if isinstance(state.get("auto_confirm_last_errors"), list) else [],
         "auto_reload_active": bool(state.get("auto_reload_active")),
         "auto_reload_window_started_at": str(state.get("auto_reload_window_started_at") or ""),
         "auto_reload_window_expires_at": str(state.get("auto_reload_window_expires_at") or ""),
@@ -1788,6 +1698,7 @@ def _session_payload(
     }
     if inspection:
         payload.update(inspection)
+    payload["delivery_target"] = _chatgpt_delivery_target_snapshot(payload)
     return payload
 
 
@@ -1805,8 +1716,9 @@ def chatgpt_browser_session_cached_status(group_id: str, actor_id: str) -> dict[
 
 
 def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, Any]:
+    resolution: dict[str, Any] = {}
     try:
-        resolve_pending_chatgpt_conversation(group_id, actor_id)
+        resolution = resolve_pending_chatgpt_conversation(group_id, actor_id)
     except Exception:
         pass
     actor_state = read_chatgpt_browser_state(group_id, actor_id)
@@ -1814,12 +1726,18 @@ def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, An
     state = _combined_session_state(actor_state, browser_state)
     port = int(browser_state.get("cdp_port") or 0)
     if port <= 0 or not _wait_cdp_endpoint(port, timeout_seconds=0.4):
-        return _session_payload(state)
+        payload = _session_payload(state)
+        if bool(resolution.get("resolved")):
+            payload["pending_new_chat_resolution"] = dict(resolution)
+        return payload
     try:
         inspection = _inspect_chatgpt_browser(port, input_timeout_seconds=0.8)
     except Exception as exc:
         inspection = {"ready": False, "login_required": True, "error": str(exc)[:1000]}
-    return _session_payload(state, inspection)
+    payload = _session_payload(state, inspection)
+    if bool(resolution.get("resolved")):
+        payload["pending_new_chat_resolution"] = dict(resolution)
+    return payload
 
 
 def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conversation_url: str) -> dict[str, Any]:
@@ -1829,6 +1747,13 @@ def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conv
     now = utc_now_iso()
     pending_url = _normalize_chatgpt_url(state.get("pending_new_chat_url")) or CHATGPT_URL
     seed_url = _normalize_chatgpt_url(state.get("bootstrap_seed_conversation_url"))
+    pending_delivery_id = str(state.get("pending_new_chat_delivery_id") or "").strip()
+    pending_turn_id = str(state.get("pending_new_chat_last_turn_id") or "").strip()
+    pending_event_ids = [
+        str(item or "").strip()
+        for item in (state.get("pending_new_chat_last_event_ids") if isinstance(state.get("pending_new_chat_last_event_ids"), list) else [])
+        if str(item or "").strip()
+    ]
     update = {
         "conversation_url": normalized,
         "pending_new_chat_bind": False,
@@ -1841,13 +1766,29 @@ def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conv
         "pending_new_chat_last_event_ids": [],
         "pending_new_chat_last_tab_url": "",
         "new_chat_bound_at": now,
+        "target_saved_at": now,
         "last_tab_url": normalized,
+        "last_delivery_status": "bound",
+        "last_delivery_id": pending_delivery_id or str(state.get("last_delivery_id") or "").strip(),
+        "last_turn_id": pending_turn_id or str(state.get("last_turn_id") or "").strip(),
+        "last_event_ids": pending_event_ids or (state.get("last_event_ids") if isinstance(state.get("last_event_ids"), list) else []),
+        "last_delivery_at": now,
         "last_error": "",
     }
     if seed_url and seed_url == pending_url and str(state.get("bootstrap_seed_delivered_at") or "").strip():
         update["bootstrap_seed_conversation_url"] = normalized
     _write_state(state_root, {**state, **update})
-    return {"ok": True, "resolved": True, "conversation_url": normalized}
+    return {
+        "ok": True,
+        "resolved": True,
+        "conversation_url": normalized,
+        "target_url": pending_url,
+        "delivery_id": pending_delivery_id,
+        "turn_id": pending_turn_id,
+        "event_ids": pending_event_ids,
+        "submitted_at": str(state.get("pending_new_chat_submitted_at") or "").strip(),
+        "bound_at": now,
+    }
 
 
 def _page_pending_delivery_id(page: Any) -> str:
@@ -1879,8 +1820,6 @@ def resolve_pending_chatgpt_conversation(group_id: str, actor_id: str) -> dict[s
         return {"ok": True, "resolved": False, "pending": True, "submitted": False}
     candidates = (
         state.get("conversation_url"),
-        state.get("last_tab_url"),
-        state.get("auto_confirm_last_page_url"),
         state.get("pending_new_chat_last_tab_url"),
     )
     for candidate in candidates:

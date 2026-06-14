@@ -1,6 +1,6 @@
 import type { LedgerEvent, WebModelDeliveryStatusPayload } from "../types";
 
-export type WebModelDeliveryState = "submitting" | "submitted" | "pending" | "ambiguous" | "failed";
+export type WebModelDeliveryState = "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed";
 
 export type WebModelDeliveryStatus = {
   state: WebModelDeliveryState;
@@ -10,13 +10,63 @@ export type WebModelDeliveryStatus = {
   detail: string;
 };
 
+export const WEB_MODEL_DELIVERY_APP_PERMISSION_HINT_MAX_AGE_MS = 30 * 60 * 1000;
+
+export function webModelDeliveryNeedsAppPermissionHint(
+  status?: WebModelDeliveryStatus | null,
+  dismissed = false,
+): boolean {
+  if (dismissed) return false;
+  return (
+    status?.state === "submitting" ||
+    status?.state === "submitted" ||
+    status?.state === "pending" ||
+    status?.state === "bound" ||
+    status?.state === "ambiguous"
+  );
+}
+
+export function webModelDeliveryStatusIsFreshForAppPermissionHint(
+  status?: WebModelDeliveryStatus | null,
+  nowMs = Date.now(),
+  maxAgeMs = WEB_MODEL_DELIVERY_APP_PERMISSION_HINT_MAX_AGE_MS,
+): boolean {
+  if (!status) return false;
+  const updatedMs = Date.parse(String(status.updatedAt || ""));
+  if (!Number.isFinite(updatedMs)) return false;
+  const ageMs = Number(nowMs) - updatedMs;
+  return ageMs >= 0 && ageMs <= Math.max(0, Number(maxAgeMs));
+}
+
+export function latestWebModelDeliveryStatusNeedingAppPermissionHint(
+  statuses: Record<string, WebModelDeliveryStatus> | undefined,
+  dismissed = false,
+  options?: { nowMs?: number; maxAgeMs?: number },
+): WebModelDeliveryStatus | null {
+  if (dismissed || !statuses) return null;
+  const nowMs = options?.nowMs ?? Date.now();
+  const maxAgeMs = options?.maxAgeMs ?? WEB_MODEL_DELIVERY_APP_PERMISSION_HINT_MAX_AGE_MS;
+  let latest: WebModelDeliveryStatus | null = null;
+  for (const status of Object.values(statuses)) {
+    if (!webModelDeliveryNeedsAppPermissionHint(status)) continue;
+    if (!webModelDeliveryStatusIsFreshForAppPermissionHint(status, nowMs, maxAgeMs)) continue;
+    if (!latest || String(status.updatedAt || "") >= String(latest.updatedAt || "")) {
+      latest = status;
+    }
+  }
+  return latest;
+}
+
 const DELIVERY_KIND_TO_STATE: Record<string, WebModelDeliveryState> = {
   "web_model.browser_delivery.submitting": "submitting",
   "web_model.browser_delivery.submitted": "submitted",
+  "web_model.browser_delivery.bound": "bound",
   "web_model.browser_delivery.pending": "pending",
   "web_model.browser_delivery.ambiguous": "ambiguous",
   "web_model.browser_delivery.failed": "failed",
 };
+
+const DELIVERY_STATES: WebModelDeliveryState[] = ["submitting", "submitted", "bound", "pending", "ambiguous", "failed"];
 
 function eventData(event: LedgerEvent): Record<string, unknown> {
   return event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
@@ -45,7 +95,7 @@ function statusFromMessageEvent(event: LedgerEvent): WebModelDeliveryStatus | nu
   const payload = event._web_model_delivery_status as WebModelDeliveryStatusPayload | undefined;
   if (!payload || typeof payload !== "object") return null;
   const state = String(payload.state || "").trim() as WebModelDeliveryState;
-  if (!state || !["submitting", "submitted", "pending", "ambiguous", "failed"].includes(state)) return null;
+  if (!state || !DELIVERY_STATES.includes(state)) return null;
   return {
     state,
     actorId: String(payload.actor_id || "").trim(),

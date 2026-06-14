@@ -47,9 +47,12 @@
   "webModelDelivery": {
     "submitting": "正在投递到 ChatGPT",
     "submitted": "已投递到 ChatGPT",
+    "bound": "已绑定 ChatGPT 会话",
     "pending": "已投递，正在绑定 ChatGPT 会话",
     "ambiguous": "ChatGPT 投递未能确认",
-    "failed": "ChatGPT 投递失败"
+    "failed": "ChatGPT 投递失败",
+    "permissionHint": "ChatGPT 可能正在等待你批准 CCCC app 权限。请切到 ChatGPT 页面，点击 Allow；如果看到 Always allow，建议选择它。批准后回到这里继续。",
+    "permissionHintDismiss": "不再提示"
   },
   "sendBlockedGroupStopped": "工作组未启动，无法发送给智能体。请先启动工作组后再发送。",
   "sendBlockedGroupPaused": "工作组已暂停，消息不会投递给智能体。请先恢复工作组后再发送。",

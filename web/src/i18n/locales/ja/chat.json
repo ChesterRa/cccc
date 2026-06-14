@@ -47,9 +47,12 @@
   "webModelDelivery": {
     "submitting": "ChatGPT に配信中",
     "submitted": "ChatGPT に配信済み",
+    "bound": "ChatGPT 会話を紐付け済み",
     "pending": "配信済み、ChatGPT 会話を紐付け中",
     "ambiguous": "ChatGPT 配信を確認できません",
-    "failed": "ChatGPT 配信に失敗"
+    "failed": "ChatGPT 配信に失敗",
+    "permissionHint": "ChatGPT が CCCC app の許可待ちになっている可能性があります。ChatGPT 画面に切り替えて Allow をクリックしてください。Always allow が表示される場合は選択することをおすすめします。許可後、この画面に戻って続行してください。",
+    "permissionHintDismiss": "今後表示しない"
   },
   "sendBlockedGroupStopped": "このグループは起動していません。エージェントに送信する前にグループを開始してください。",
   "sendBlockedGroupPaused": "このグループは一時停止中です。エージェントに送信する前にグループを再開してください。",

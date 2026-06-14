@@ -4,8 +4,15 @@ import { useTranslation } from "react-i18next";
 import type { Actor, GroupMeta, RemoteAccessState } from "../../../types";
 import * as api from "../../../services/api";
 import { copyTextToClipboard } from "../../../utils/copy";
+import {
+  defaultTargetDraftFromSession,
+  isChatGptConversationUrl,
+  liveBrowserConversationUrlFromSession,
+  savedTargetDraftFromSession,
+  targetDraftMatchesSaved,
+} from "../../../utils/webModelTargetDraft";
+import type { TargetDraftMode } from "../../../utils/webModelTargetDraft";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
-import { SelectCombobox } from "../../SelectCombobox";
 import {
   dangerButtonClass,
   inputClass,
@@ -119,34 +126,6 @@ function shortConversationLabel(url?: string): string {
   }
 }
 
-function isChatGptConversationUrl(url?: string): boolean {
-  const value = String(url || "").trim();
-  if (!value) return false;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "https:") return false;
-    const host = parsed.hostname.toLowerCase();
-    if (host !== "chatgpt.com" && !host.endsWith(".chatgpt.com")) return false;
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    return parts.some((part, index) => part === "c" && Boolean(parts[index + 1]));
-  } catch {
-    return false;
-  }
-}
-
-function isChatGptUrl(url?: string): boolean {
-  const value = String(url || "").trim();
-  if (!value) return false;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "https:") return false;
-    const host = parsed.hostname.toLowerCase();
-    return host === "chatgpt.com" || host.endsWith(".chatgpt.com");
-  } catch {
-    return false;
-  }
-}
-
 type SetupTone = "ready" | "needs" | "warn" | "neutral";
 
 function setupPillClass(tone: SetupTone): string {
@@ -215,20 +194,18 @@ export default function WebModelConnectorsTab({
   const [actorId, setActorId] = useState("");
   const [busy, setBusy] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
-  const [startBusyId, setStartBusyId] = useState("");
   const [revokeBusyId, setRevokeBusyId] = useState("");
-  const [actorCreateBusy, setActorCreateBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [browserSession, setBrowserSession] = useState<api.WebModelBrowserSession | null>(null);
   const [browserSessionsByActor, setBrowserSessionsByActor] = useState<Record<string, api.WebModelBrowserSession>>({});
   const [browserBusy, setBrowserBusy] = useState(false);
   const [showBrowserSurface, setShowBrowserSurface] = useState(false);
-  const [chatManagerOpen, setChatManagerOpen] = useState(false);
   const [browserSurfaceRefreshNonce, setBrowserSurfaceRefreshNonce] = useState(0);
   const [browserSurfaceRestartNonce, setBrowserSurfaceRestartNonce] = useState(0);
   const [conversationUrlDraft, setConversationUrlDraft] = useState("");
-  const [createActorGroupId, setCreateActorGroupId] = useState("");
+  const [targetDraftMode, setTargetDraftMode] = useState<TargetDraftMode>("existing");
+  const [targetDraftTouched, setTargetDraftTouched] = useState(false);
   const currentSelectionRef = useRef({ groupId: "", actorId: "" });
 
   useEffect(() => {
@@ -252,58 +229,39 @@ export default function WebModelConnectorsTab({
     () => webModelActors.find((actor) => actor.id === actorId) || null,
     [actorId, webModelActors],
   );
-  const actorRows = useMemo(
-    () => webModelActors.map((actor) => ({
-      actor,
-      connector: currentGroupActiveConnectors.find((connector) => String(connector.actor_id || "") === actor.id) || null,
-    })),
-    [currentGroupActiveConnectors, webModelActors],
+  const selectedConnector = useMemo(
+    () => {
+      if (!selectedActor) return null;
+      return currentGroupActiveConnectors.find((connector) => String(connector.actor_id || "") === selectedActor.id) || null;
+    },
+    [currentGroupActiveConnectors, selectedActor],
   );
-  const chatGptActorRow = actorRows[0] || null;
-  const extraChatGptActorRows = actorRows.slice(1);
+  const chatGptActor = webModelActors[0] || null;
+  const extraChatGptActors = webModelActors.slice(1);
   const ownerGroup = useMemo(
     () => groups.find((group) => String(group.group_id || "").trim() === groupId) || null,
     [groupId, groups],
   );
   const ownerGroupLabel = String(ownerGroup?.title || ownerGroup?.group_id || "").trim();
-  const ownerActorLabel = chatGptActorRow
-    ? String(chatGptActorRow.actor.title || chatGptActorRow.actor.id || "").trim()
+  const ownerActorLabel = chatGptActor
+    ? String(chatGptActor.title || chatGptActor.id || "").trim()
     : "";
-  const preferredCreateActorGroupId = useMemo(() => {
-    const preferred = String(currentGroupId || "").trim();
-    if (preferred && groups.some((group) => String(group.group_id || "").trim() === preferred)) return preferred;
-    return String(groups[0]?.group_id || "").trim();
-  }, [currentGroupId, groups]);
-  const createActorGroup = useMemo(
-    () => groups.find((group) => String(group.group_id || "").trim() === createActorGroupId) || null,
-    [createActorGroupId, groups],
-  );
-  const createActorGroupLabel = String(createActorGroup?.title || createActorGroup?.group_id || "").trim();
-
   const configuredPublicUrl = String(remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "").trim();
   const publicEndpointReady = Boolean(configuredPublicUrl && isHttpsUrl(configuredPublicUrl));
   const uiAccessTokenPresent = Boolean(remoteState?.config?.access_token_configured || remoteState?.diagnostics?.access_token_present);
   const selectedBrowserSession = browserSessionsByActor[browserSessionKey(groupId, actorId)] || browserSession || null;
   const selectedHealth = selectedBrowserSession?.health_snapshot || null;
+  const deliveryTarget = selectedBrowserSession?.delivery_target || selectedHealth?.delivery_target || null;
+  const deliveryTargetState = String(deliveryTarget?.state || "").trim();
+  const deliveryTargetSavedAt = String(deliveryTarget?.saved_at || selectedBrowserSession?.target_saved_at || selectedHealth?.target?.saved_at || "").trim();
   const browserActive = Boolean(selectedBrowserSession?.active || showBrowserSurface);
   const browserReady = Boolean(selectedBrowserSession?.ready);
   const boundConversationUrl = String(selectedBrowserSession?.conversation_url || "").trim();
   const pendingNewChatBind = Boolean(selectedBrowserSession?.pending_new_chat_bind);
   const pendingNewChatUrl = String(selectedBrowserSession?.pending_new_chat_url || "").trim();
-  const currentBrowserUrl = String(selectedBrowserSession?.tab_url || selectedBrowserSession?.last_tab_url || "").trim();
-  const currentBrowserConversationUrl = isChatGptConversationUrl(currentBrowserUrl) ? currentBrowserUrl : "";
-  const hasDeliveryTarget = Boolean(boundConversationUrl || pendingNewChatBind);
-  const targetModeLabel = boundConversationUrl
-    ? wm("target.existingChat")
-    : pendingNewChatBind
-      ? wm("target.newChatNextDelivery")
-      : wm("target.noneSelected");
-  const targetModeTone: SetupTone = hasDeliveryTarget ? "ready" : "needs";
-  const targetModeDetail = boundConversationUrl
-    ? shortConversationLabel(boundConversationUrl)
-    : pendingNewChatBind
-      ? wm("target.newChatDetail")
-      : wm("target.noneDetail");
+  const liveBrowserUrl = String(selectedBrowserSession?.tab_url || "").trim();
+  const currentBrowserUrl = liveBrowserUrl || String(selectedBrowserSession?.last_tab_url || "").trim();
+  const currentBrowserConversationUrl = liveBrowserConversationUrlFromSession(selectedBrowserSession);
   const browserStatusLabel = String(selectedHealth?.browser?.label || "").trim() || (browserReady
     ? wm("browser.ready")
     : browserActive
@@ -314,13 +272,147 @@ export default function WebModelConnectorsTab({
     : pendingNewChatBind
       ? wm("target.newChatArmed")
       : wm("target.needed"));
-  const setupReady = browserReady && Boolean(boundConversationUrl || pendingNewChatBind);
-  const setupSummary = setupReady
-    ? `${browserStatusLabel} · ${targetStatusLabel}`
-    : !browserReady
-      ? wm("chatSetup.summarySignIn")
-      : wm("chatSetup.summaryChooseTarget");
+  const savedTargetLabel = boundConversationUrl
+    ? wm("target.savedExisting")
+    : deliveryTargetState === "new_chat_submitted"
+      ? wm("target.savedBinding")
+      : pendingNewChatBind
+        ? wm("target.savedNewChat")
+        : wm("target.savedNone");
+  const savedTargetDetail = boundConversationUrl
+    ? shortConversationLabel(boundConversationUrl)
+    : deliveryTargetState === "new_chat_submitted"
+      ? wm("target.bindingDetail")
+      : pendingNewChatBind
+        ? wm("target.savedNewChatDetail")
+        : wm("target.savedNoneDetail");
+  const savedTargetTone: SetupTone = boundConversationUrl || pendingNewChatBind ? "ready" : "needs";
+  const nextDeliveryDetail = boundConversationUrl
+    ? wm("target.nextExisting", { target: shortConversationLabel(boundConversationUrl) })
+    : deliveryTargetState === "new_chat_submitted"
+      ? wm("target.nextWaitBinding")
+      : pendingNewChatBind
+        ? wm("target.nextNewChat")
+        : wm("target.nextBlocked");
+  const currentBrowserDetail = currentBrowserConversationUrl
+    ? shortConversationLabel(currentBrowserConversationUrl)
+    : currentBrowserUrl
+      ? shortConversationLabel(currentBrowserUrl) || currentBrowserUrl
+      : wm("target.currentBrowserEmpty");
+  const savedTargetDraft = savedTargetDraftFromSession(selectedBrowserSession);
+  const targetDraftUrl = String(conversationUrlDraft || "").trim();
+  const targetDraftMatchesSavedTarget = targetDraftMatchesSaved({
+    mode: targetDraftMode,
+    url: targetDraftUrl,
+    saved: savedTargetDraft,
+  });
+  const targetDraftDirty = !targetDraftMatchesSavedTarget;
+  const targetDraftError = targetDraftMode === "existing" && targetDraftDirty && !isChatGptConversationUrl(targetDraftUrl)
+      ? wm("target.urlInvalid")
+      : "";
+  const targetUseCurrentAvailable = Boolean(currentBrowserConversationUrl && currentBrowserConversationUrl !== targetDraftUrl);
+  const targetSaveDisabled = browserBusy || !groupId || !actorId || Boolean(targetDraftError) || !targetDraftDirty;
+  const chooseTargetMode = (mode: TargetDraftMode) => {
+    setTargetDraftMode(mode);
+    setTargetDraftTouched(true);
+  };
+  const targetRadioClass = (mode: TargetDraftMode) => [
+    "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
+    targetDraftMode === mode
+      ? "border-[var(--color-text-primary)] bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-primary)]"
+      : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+  ].join(" ");
   const selectedActorLabel = selectedActor ? String(selectedActor.title || selectedActor.id || "").trim() : "";
+  const selectedActorRunning = Boolean(selectedActor?.running);
+  const queuedCount = webModelQueuedCount(selectedActor);
+  const selectedMcpUrl = connectorMcpUrl(selectedConnector || null);
+  const selectedConnectorUrl = String(selectedConnector?.connector_url || "").trim();
+  const selectedMcpUrlForValidation = selectedMcpUrl || selectedConnectorUrl;
+  const mcpUrlLocalWarning = Boolean(selectedMcpUrlForValidation) && isLocalConnectorUrl(selectedMcpUrlForValidation);
+  const mcpUrlHttpsWarning = Boolean(selectedMcpUrlForValidation) && !isHttpsUrl(selectedMcpUrlForValidation);
+  const mcpLastCallFailed = String(selectedConnector?.last_call_status || "").trim() === "error";
+  const chatGptSeen = Boolean(selectedConnector?.last_activity_at);
+  const mcpStatusLabel = !selectedConnector
+    ? wm("mcp.urlNotCreated")
+    : !selectedMcpUrl
+      ? wm("mcp.needsRotation")
+      : mcpLastCallFailed
+        ? wm("mcp.lastCallFailed")
+        : chatGptSeen
+          ? wm("activity.seenAt", { time: formatTime(selectedConnector?.last_activity_at) })
+          : wm("mcp.waitingFirstCall");
+  const mcpStatusTone: SetupTone = mcpLastCallFailed
+    ? "warn"
+    : selectedMcpUrl && chatGptSeen
+      ? "ready"
+      : selectedMcpUrl
+        ? "needs"
+        : "needs";
+  const webAccessReady = publicEndpointReady && uiAccessTokenPresent;
+  const actorPrerequisiteLabel = selectedActor
+    ? selectedActorRunning
+      ? wm("prerequisites.actorReady", { actor: selectedActorLabel || actorId })
+      : wm("prerequisites.actorStopped", { actor: selectedActorLabel || actorId })
+    : wm("prerequisites.actorMissing");
+  const actorPrerequisiteTone: SetupTone = selectedActor ? (selectedActorRunning ? "ready" : "needs") : "needs";
+  const browserSummaryTone: SetupTone = browserReady ? "ready" : browserActive ? "needs" : "neutral";
+  const webAccessPrerequisiteLabel = webAccessReady
+    ? wm("prerequisites.webAccessReady")
+    : publicEndpointReady
+      ? wm("prerequisites.accessTokenNeeded")
+      : wm("prerequisites.publicHttpsNeeded");
+  const setupReady = webAccessReady
+    && selectedActorRunning
+    && browserReady
+    && Boolean(selectedMcpUrl)
+    && chatGptSeen
+    && !mcpLastCallFailed
+    && Boolean(boundConversationUrl || pendingNewChatBind);
+  const runtimeStatus = setupReady
+    ? { label: wm("summary.ready"), tone: "ready" as const }
+    : mcpLastCallFailed
+      ? { label: wm("summary.needsAttention"), tone: "warn" as const }
+      : selectedMcpUrl && !chatGptSeen
+        ? { label: wm("summary.waitingForMcp"), tone: "needs" as const }
+        : { label: wm("summary.needsSetup"), tone: "needs" as const };
+  const nextSetupAction = !publicEndpointReady
+    ? wm("next.setPublicHttps")
+    : !uiAccessTokenPresent
+      ? wm("next.createAccessToken")
+      : !selectedActor
+        ? wm("next.createActorInGroup")
+        : !selectedActorRunning
+          ? wm("next.startActorInGroup")
+          : !browserReady
+            ? wm("next.signIn")
+            : !selectedMcpUrl
+              ? selectedConnector
+                ? wm("next.rotateConnector")
+                : wm("next.createConnector")
+              : mcpLastCallFailed
+                ? wm("next.inspectMcpError")
+                : !chatGptSeen
+                  ? wm("next.pasteMcpUrl")
+                  : !boundConversationUrl && !pendingNewChatBind
+                    ? wm("next.bindTarget")
+                    : healthNextActionText(selectedHealth, wm) || wm("next.ready");
+  const mcpInstructionDetail = selectedMcpUrl
+    ? wm("mcp.copyReadyHint")
+    : selectedConnector
+      ? wm("mcp.rotateHint")
+      : wm("mcp.createHint");
+
+  useEffect(() => {
+    if (targetDraftTouched) return;
+    const draft = defaultTargetDraftFromSession(selectedBrowserSession, currentBrowserConversationUrl);
+    setTargetDraftMode(draft.mode);
+    setConversationUrlDraft(draft.url);
+  }, [currentBrowserConversationUrl, selectedBrowserSession, targetDraftTouched]);
+
+  useEffect(() => {
+    if (isActive) setTargetDraftTouched(false);
+  }, [actorId, groupId, isActive]);
+
   const pushNotice = useCallback((value: string) => {
     setNotice(value);
     window.setTimeout(() => setNotice(""), 1600);
@@ -461,12 +553,6 @@ export default function WebModelConnectorsTab({
       if (groupsResp.ok) {
         const nextGroups = groupsResp.result?.groups || [];
         setGroups(nextGroups);
-        setCreateActorGroupId((current) => {
-          if (current && nextGroups.some((group) => String(group.group_id || "").trim() === current)) return current;
-          const preferred = String(currentGroupId || "").trim();
-          if (preferred && nextGroups.some((group) => String(group.group_id || "").trim() === preferred)) return preferred;
-          return String(nextGroups[0]?.group_id || "").trim();
-        });
       } else {
         setError(groupsResp.error?.message || wm("errors.loadGroupsFailed"));
       }
@@ -475,7 +561,7 @@ export default function WebModelConnectorsTab({
     } finally {
       setBusy(false);
     }
-  }, [currentGroupId, isActive, loadConnectors, wm]);
+  }, [isActive, loadConnectors, wm]);
 
   useEffect(() => {
     void loadInitial();
@@ -485,7 +571,14 @@ export default function WebModelConnectorsTab({
     if (!isActive || !groups.length) return;
     let cancelled = false;
     const locateExistingActor = async () => {
-      for (const group of groups) {
+      const preferredGroupId = String(currentGroupId || "").trim();
+      const orderedGroups = preferredGroupId
+        ? [
+          ...groups.filter((group) => String(group.group_id || "").trim() === preferredGroupId),
+          ...groups.filter((group) => String(group.group_id || "").trim() !== preferredGroupId),
+        ]
+        : groups;
+      for (const group of orderedGroups) {
         const gid = String(group.group_id || "").trim();
         if (!gid) continue;
         const resp = await api.fetchActors(gid, true, { noCache: true });
@@ -504,14 +597,13 @@ export default function WebModelConnectorsTab({
       setActorId("");
       setBrowserSession(null);
       setBrowserSessionsByActor({});
-      setChatManagerOpen(false);
       setShowBrowserSurface(false);
     };
     void locateExistingActor();
     return () => {
       cancelled = true;
     };
-  }, [groups, isActive]);
+  }, [currentGroupId, groups, isActive]);
 
   useEffect(() => {
     if (!isActive || !groupId) {
@@ -519,7 +611,6 @@ export default function WebModelConnectorsTab({
       setActorId("");
       setBrowserSession(null);
       setBrowserSessionsByActor({});
-      setChatManagerOpen(false);
       setShowBrowserSurface(false);
       return;
     }
@@ -560,7 +651,7 @@ export default function WebModelConnectorsTab({
   }, [groupId, isActive, loadBrowserSessionsForActors, webModelActors]);
 
   useEffect(() => {
-    if (!isActive || !groupId || !actorId || !selectedActor || (!chatManagerOpen && !showBrowserSurface)) return;
+    if (!isActive || !groupId || !actorId || !selectedActor) return;
     let cancelled = false;
     const refresh = async () => {
       const gid = groupId;
@@ -586,49 +677,7 @@ export default function WebModelConnectorsTab({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [actorId, chatManagerOpen, groupId, isActive, selectedActor, showBrowserSurface]);
-
-  const createChatGptWebModelActor = async () => {
-    const gid = String(createActorGroupId || preferredCreateActorGroupId || "").trim();
-    if (!gid) {
-      setError(wm("errors.createOrSelectGroup"));
-      return;
-    }
-    setActorCreateBusy(true);
-    setError("");
-    try {
-      const resp = await api.addActor(
-        gid,
-        "",
-        "peer",
-        "web_model",
-        "headless",
-        "",
-        undefined,
-        { title: "ChatGPT Web Model" },
-      );
-      if (!resp.ok) {
-        setError(resp.error?.message || wm("errors.createActorFailed"));
-        return;
-      }
-      const createdActorId = String(resp.result?.actor?.id || "").trim();
-      setGroupId(gid);
-      if (createdActorId) setActorId(createdActorId);
-      await loadActorsForGroup(gid);
-      if (createdActorId) {
-        setActorId(createdActorId);
-        await loadBrowserSession(gid, createdActorId);
-      }
-      setChatManagerOpen(true);
-      setShowBrowserSurface(true);
-      setBrowserSurfaceRefreshNonce((value) => value + 1);
-      pushNotice(wm("notices.actorCreated"));
-    } catch {
-      setError(wm("errors.createActorFailed"));
-    } finally {
-      setActorCreateBusy(false);
-    }
-  };
+  }, [actorId, groupId, isActive, selectedActor]);
 
   const createConnector = async (targetActorId = actorId) => {
     const aid = String(targetActorId || "").trim();
@@ -661,29 +710,6 @@ export default function WebModelConnectorsTab({
     }
   };
 
-  const startWebModelActor = async (targetActorId: string) => {
-    const aid = String(targetActorId || "").trim();
-    if (!groupId || !aid) return;
-    setStartBusyId(aid);
-    setError("");
-    try {
-      const resp = await api.startActor(groupId, aid);
-      if (resp.ok) {
-        pushNotice(wm("notices.actorStarted"));
-        await loadActorsForGroup(groupId);
-        setChatManagerOpen(true);
-        setShowBrowserSurface(true);
-        setBrowserSurfaceRefreshNonce((value) => value + 1);
-      } else {
-        setError(resp.error?.message || wm("errors.startActorFailed"));
-      }
-    } catch {
-      setError(wm("errors.startActorFailed"));
-    } finally {
-      setStartBusyId("");
-    }
-  };
-
   const revokeConnector = async (connectorId: string) => {
     const cid = String(connectorId || "").trim();
     if (!cid) return;
@@ -705,7 +731,6 @@ export default function WebModelConnectorsTab({
 
   const openBrowserLogin = async () => {
     setError("");
-    setChatManagerOpen(true);
     setShowBrowserSurface(true);
     setBrowserSurfaceRefreshNonce((value) => value + 1);
     pushNotice(wm("notices.signInSurfaceOpened"));
@@ -784,7 +809,7 @@ export default function WebModelConnectorsTab({
     }
   };
 
-  const bindConversation = async (conversationUrl = "", options?: { newChat?: boolean }) => {
+  const bindConversation = async (conversationUrl = "", options?: { newChat?: boolean; notice?: string }) => {
     if (!groupId || !actorId) return;
     setBrowserBusy(true);
     setError("");
@@ -807,8 +832,11 @@ export default function WebModelConnectorsTab({
         const currentSelection = currentSelectionRef.current;
         if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
           setBrowserSession(nextSession);
-          setConversationUrlDraft("");
-          pushNotice(options?.newChat ? wm("notices.newChatSelected") : wm("notices.conversationBound"));
+          const draft = savedTargetDraftFromSession(nextSession);
+          setTargetDraftMode(draft.mode);
+          setConversationUrlDraft(draft.url);
+          setTargetDraftTouched(false);
+          pushNotice(options?.notice || (options?.newChat ? wm("notices.newChatSelected") : wm("notices.conversationBound")));
         }
       } else {
         setError(resp.error?.message || wm("errors.bindConversationFailed"));
@@ -820,30 +848,18 @@ export default function WebModelConnectorsTab({
     }
   };
 
-  const startNewConversationAutoBind = async () => {
-    const gid = groupId;
-    const aid = actorId;
-    const seedUrl = isChatGptUrl(currentBrowserUrl) && !isChatGptConversationUrl(currentBrowserUrl)
-      ? currentBrowserUrl
-      : "https://chatgpt.com/";
-    await bindConversation(seedUrl, { newChat: true });
-    const currentSelection = currentSelectionRef.current;
-    if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
-      setShowBrowserSurface(true);
-      setBrowserSurfaceRefreshNonce((value) => value + 1);
+  const saveDeliveryTarget = async () => {
+    if (targetSaveDisabled) return;
+    if (targetDraftMode === "new") {
+      await bindConversation("https://chatgpt.com/", {
+        newChat: true,
+        notice: wm("notices.targetSavedNewChat"),
+      });
+      return;
     }
-  };
-
-  const manageActorChat = (aid: string) => {
-    const nextActorId = String(aid || "").trim();
-    if (!nextActorId) return;
-    const key = browserSessionKey(groupId, nextActorId);
-    setActorId(nextActorId);
-    setBrowserSession(browserSessionsByActor[key] || null);
-    setChatManagerOpen(true);
-    setShowBrowserSurface(false);
-    setConversationUrlDraft(String(browserSessionsByActor[key]?.conversation_url || ""));
-    void loadBrowserSession(groupId, nextActorId);
+    await bindConversation(targetDraftUrl, {
+      notice: wm("notices.targetSavedExisting"),
+    });
   };
 
   const copyValue = async (value: string, labelText: string) => {
@@ -881,414 +897,100 @@ export default function WebModelConnectorsTab({
         ) : null}
 
         <section className={settingsWorkspacePanelClass(isDark)}>
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_auto] lg:items-start">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("owner.title")}</div>
-              <div className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {chatGptActorRow ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("summary.title")}</div>
+                <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(runtimeStatus.tone)].join(" ")}>
+                  {runtimeStatus.label}
+                </span>
+                {queuedCount > 0 ? (
+                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-200">
+                    {wm("queue.queued", { count: queuedCount })}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                {wm("next.prefix", { action: nextSetupAction })}
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <SetupStatusLine label={wm("summary.webAccess")} detail={webAccessPrerequisiteLabel} tone={webAccessReady ? "ready" : "needs"} />
+            <SetupStatusLine label={wm("summary.actor")} detail={actorPrerequisiteLabel} tone={actorPrerequisiteTone} />
+            <SetupStatusLine label={wm("summary.chatgpt")} detail={browserStatusLabel} tone={browserSummaryTone} />
+            <SetupStatusLine label={wm("summary.mcpApp")} detail={mcpStatusLabel} tone={mcpStatusTone} />
+            <SetupStatusLine label={wm("summary.deliveryTarget")} detail={savedTargetLabel} tone={savedTargetTone} />
+          </div>
+        </section>
+
+        <section className={settingsWorkspacePanelClass(isDark)}>
+          <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.title")}</div>
+          <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
+            {wm("prerequisites.description")}
+          </p>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3 first:border-t-0 first:pt-0 lg:border-t-0 lg:pt-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.webAccessStepTitle")}</div>
+                <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(webAccessReady ? "ready" : "needs")].join(" ")}>
+                  {webAccessPrerequisiteLabel}
+                </span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                {wm("prerequisites.webAccessStepDescription")}
+              </p>
+              <div className="mt-2 break-all font-mono text-xs text-[var(--color-text-primary)]">
+                {configuredPublicUrl || wm("prerequisites.noPublicUrl")}
+              </div>
+              {onOpenWebAccess ? (
+                <button type="button" onClick={onOpenWebAccess} className={[secondaryButtonClass("sm"), "mt-3"].join(" ")}>
+                  {wm("buttons.openWebAccess")}
+                </button>
+              ) : null}
+            </div>
+            <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3 lg:border-t-0 lg:pt-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.actorStepTitle")}</div>
+                <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(actorPrerequisiteTone)].join(" ")}>
+                  {actorPrerequisiteLabel}
+                </span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                {selectedActor ? wm("prerequisites.actorStepReadyDescription") : wm("prerequisites.actorStepDescription")}
+              </p>
+              <div className="mt-2 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                {chatGptActor ? (
                   <>
                     <span className="font-medium text-[var(--color-text-primary)]">{ownerGroupLabel || groupId}</span>
                     <span className="mx-1 text-[var(--color-text-muted)]">/</span>
                     <span className="font-mono text-[var(--color-text-primary)]">{ownerActorLabel || actorId}</span>
                   </>
+                ) : groups.length ? (
+                  <span>{wm("prerequisites.actorCreateHint")}</span>
                 ) : (
-                  <span>{wm("owner.none")}</span>
+                  <span>{wm("prerequisites.noGroupAvailable")}</span>
                 )}
               </div>
-              <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                {wm("owner.hint")}
-              </div>
+              {extraChatGptActors.length ? (
+                <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                  {wm("actorSection.multipleWarning")}
+                </div>
+              ) : null}
             </div>
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.title")}</div>
-              <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
-                {wm("prerequisites.description")}
-              </p>
-              <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
-                <div className="font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.setupOrderTitle")}</div>
-                <ol className="mt-1 list-decimal space-y-1 pl-4">
-                  <li>{wm("prerequisites.setupOrder.publicAccess")}</li>
-                  <li>{wm("prerequisites.setupOrder.actor")}</li>
-                  <li>{wm("prerequisites.setupOrder.chatgptSettings")}</li>
-                  <li>{wm("prerequisites.setupOrder.createApp")}</li>
-                  <li>{wm("prerequisites.setupOrder.signInAndTarget")}</li>
-                </ol>
-              </div>
-              <div className="mt-2 break-all font-mono text-xs text-[var(--color-text-primary)]">
-                {configuredPublicUrl || wm("prerequisites.noPublicUrl")}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <span
-                  className={[
-                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold",
-                    publicEndpointReady
-                      ? "border-emerald-500/30 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
-                      : "border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-300",
-                  ].join(" ")}
-                >
-                  {publicEndpointReady ? wm("prerequisites.publicHttpsReady") : wm("prerequisites.publicHttpsNeeded")}
-                </span>
-                <span
-                  className={[
-                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold",
-                    uiAccessTokenPresent
-                      ? "border-emerald-500/30 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
-                      : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
-                  ].join(" ")}
-                >
-                  {uiAccessTokenPresent ? wm("prerequisites.accessTokenReady") : wm("prerequisites.accessTokenNeeded")}
-                </span>
-              </div>
-            </div>
-            {onOpenWebAccess ? (
-              <button type="button" onClick={onOpenWebAccess} className={secondaryButtonClass("sm")}>
-                {wm("buttons.openWebAccess")}
-              </button>
-            ) : null}
           </div>
         </section>
 
-        <section className={settingsWorkspacePanelClass(isDark)}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("actorSection.title")}</div>
-              <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                {wm("actorSection.description")}
-              </div>
-            </div>
-          </div>
-          {extraChatGptActorRows.length ? (
-            <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-              {wm("actorSection.multipleWarning")}
-            </div>
-          ) : null}
-          <div className="mt-3 space-y-3">
-            {chatGptActorRow ? [chatGptActorRow].map(({ actor, connector }) => {
-              const queuedCount = webModelQueuedCount(actor);
-              const mcpUrl = connectorMcpUrl(connector || null);
-              const connectorUrl = String(connector?.connector_url || "").trim();
-              const rowLocalWarning = Boolean(mcpUrl || connectorUrl) && isLocalConnectorUrl(mcpUrl || connectorUrl);
-              const rowHttpsWarning = Boolean(mcpUrl || connectorUrl) && !isHttpsUrl(mcpUrl || connectorUrl);
-              const actorLabel = String(actor.title || actor.id || "").trim() || actor.id;
-              const selected = actor.id === actorId;
-              const rowSession = browserSessionsByActor[browserSessionKey(groupId, actor.id)] || {};
-              const rowHealth = rowSession.health_snapshot || null;
-              const targetUrl = String(rowSession.conversation_url || "").trim();
-              const rowPendingNewChat = Boolean(rowSession.pending_new_chat_bind);
-              const rowPendingUrl = String(rowSession.pending_new_chat_url || "").trim();
-              const targetReady = Boolean(targetUrl);
-              const actorRunning = Boolean(actor.running);
-              const chatGptSeen = Boolean(connector?.last_activity_at);
-              const browserLoginReady = Boolean(rowSession.ready);
-              const browserOpen = Boolean(rowSession.active);
-              const targetDetail = targetReady
-                ? shortConversationLabel(targetUrl)
-                : rowPendingNewChat
-                  ? String(rowHealth?.target?.label || "").trim() || wm("target.newChatArmed")
-                  : String(rowHealth?.target?.label || "").trim() || wm("common.notSet");
-              const mcpDetail = mcpUrl ? (chatGptSeen ? wm("mcp.connected") : wm("mcp.urlReady")) : connector ? wm("mcp.needsRotation") : wm("mcp.notCreated");
-              const browserDetail = String(rowHealth?.browser?.label || "").trim() || (browserLoginReady ? wm("browser.signedIn") : browserOpen ? wm("browser.openSignInNeeded") : wm("browser.notOpen"));
-              const browserNeedsSignIn = String(rowHealth?.browser?.state || "").trim() === "sign_in_required";
-              const cardStatus = !publicEndpointReady
-                ? { label: wm("cardStatus.needsPublicUrl"), tone: "needs" as const }
-                : !actorRunning
-                  ? { label: wm("cardStatus.needsStart"), tone: "needs" as const }
-                  : !mcpUrl
-                    ? { label: wm("cardStatus.needsMcpUrl"), tone: "needs" as const }
-                    : !chatGptSeen
-                      ? { label: wm("cardStatus.connectInChatGpt"), tone: "needs" as const }
-                      : browserNeedsSignIn
-                        ? { label: wm("cardStatus.needsSignIn"), tone: "needs" as const }
-                        : !browserLoginReady
-                          ? { label: wm("cardStatus.openChatGpt"), tone: "needs" as const }
-                        : !targetReady && !rowPendingNewChat
-                          ? { label: wm("cardStatus.needsTargetChat"), tone: "needs" as const }
-                          : { label: wm("cardStatus.ready"), tone: "ready" as const };
-              const mcpTone: SetupTone = mcpUrl && chatGptSeen ? "ready" : mcpUrl ? "neutral" : "needs";
-              const targetTone: SetupTone = String(rowHealth?.target?.state || "").trim() === "missing" ? "needs" : targetReady || rowPendingNewChat ? "ready" : "needs";
-              const browserState = String(rowHealth?.browser?.state || "").trim();
-              const browserTone: SetupTone = browserState === "failed" ? "warn" : browserState === "ready" ? "ready" : browserLoginReady ? "ready" : browserOpen ? "needs" : "neutral";
-              const healthNextAction = healthNextActionText(rowHealth, wm);
-              const nextAction = !publicEndpointReady
-                ? wm("next.setPublicHttps")
-                : !actorRunning
-                  ? wm("next.startActor")
-                  : !mcpUrl
-                    ? connector
-                      ? wm("next.rotateConnector")
-                      : wm("next.createConnector")
-                    : !chatGptSeen
-                      ? wm("next.pasteMcpUrl")
-                    : browserNeedsSignIn
-                      ? wm("next.signIn")
-                    : !targetReady && !rowPendingNewChat
-                      ? wm("next.bindTarget")
-                    : !browserLoginReady
-                      ? wm("next.verifyProfile")
-                      : healthNextAction || wm("next.ready");
-              const setupPrimary = actorRunning && Boolean(mcpUrl) && chatGptSeen && (!browserLoginReady || (!targetReady && !rowPendingNewChat));
-              return (
-                <div
-                  key={actor.id}
-                  className={[
-                    "rounded-xl border px-3 py-3 sm:px-4",
-                    selected
-                      ? "border-[rgba(35,36,37,0.28)] bg-[var(--glass-tab-bg)] dark:border-white/18"
-                      : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]",
-                  ].join(" ")}
-                >
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]">
-                        <span>{actorLabel}</span>
-                        <span
-                          className={[
-                            "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                            setupPillClass(cardStatus.tone),
-                          ].join(" ")}
-                        >
-                          {cardStatus.label}
-                        </span>
-                        {queuedCount > 0 ? (
-                          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-200">
-                            {wm("queue.queued", { count: queuedCount })}
-                          </span>
-                        ) : null}
-                      </div>
+        {!selectedActor ? (
+          <section className={settingsWorkspacePanelClass(isDark)}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("empty.title")}</div>
+            <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
+              {wm("empty.description")}
+            </p>
+          </section>
+        ) : null}
 
-                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                        <SetupStatusLine label={wm("setupLine.mcpApp")} detail={mcpDetail} tone={mcpTone} />
-                        <SetupStatusLine label={wm("setupLine.chatgptSession")} detail={browserDetail} tone={browserTone} />
-                        <SetupStatusLine label={wm("setupLine.targetChat")} detail={targetDetail} tone={targetTone} />
-                      </div>
-
-                      <div className="mt-3 text-sm leading-5 text-[var(--color-text-secondary)]">
-                        {wm("next.prefix", { action: nextAction })}
-                      </div>
-
-                      {connector && !mcpUrl ? (
-                        <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          {wm("warnings.rotateOldConnector")}
-                        </div>
-                      ) : null}
-                      {rowLocalWarning ? (
-                        <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          {wm("warnings.localMcpUrl")}
-                        </div>
-                      ) : null}
-                      {rowHttpsWarning && !rowLocalWarning ? (
-                        <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          {wm("warnings.nonHttpsMcpUrl")}
-                        </div>
-                      ) : null}
-
-                      <details className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                        <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("details.summary")}</summary>
-                        <div className="mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[120px_1fr]">
-                          {connector ? (
-                            <>
-                              <span>{wm("details.chatgptApp")}</span>
-                              <span>{chatGptSeen ? wm("activity.seenAt", { time: formatTime(connector.last_activity_at) }) : wm("activity.notSeenYet")}</span>
-                            </>
-                          ) : (
-                            <>
-                              <span>{wm("details.chatgptApp")}</span>
-                              <span>{wm("mcp.noAppUrl")}</span>
-                            </>
-                          )}
-                          <span>{wm("details.targetChat")}</span>
-                          <span className="break-all font-mono">
-                            {targetUrl || (rowPendingNewChat ? wm("target.newPending", { url: rowPendingUrl || "https://chatgpt.com/" }) : wm("common.none"))}
-                          </span>
-                          {connector?.connector_id ? (
-                            <>
-                              <span>{wm("details.mcpUrlId")}</span>
-                              <span className="break-all font-mono">{connector.connector_id}</span>
-                            </>
-                          ) : null}
-                          {connector ? (
-                            <>
-                              <span>{wm("details.remote")}</span>
-                              <span>{connectorActivityLabel(connector, wm)}</span>
-                            </>
-                          ) : null}
-                      {connector?.last_error ? (
-                            <>
-                              <span>{wm("details.lastMcpError")}</span>
-                              <span className="break-all text-rose-600 dark:text-rose-300">{connector.last_error}</span>
-                            </>
-                          ) : null}
-                          {rowSession.last_turn_id ? (
-                            <>
-                              <span>{wm("details.lastTurn")}</span>
-                              <span className="break-all font-mono">{rowSession.last_turn_id}</span>
-                            </>
-                          ) : null}
-                          {rowSession.profile_dir ? (
-                            <>
-                              <span>{wm("details.profile")}</span>
-                              <span className="break-all font-mono">{rowSession.profile_dir}</span>
-                            </>
-                          ) : null}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {connector ? (
-                            <button
-                              type="button"
-                              onClick={() => void createConnector(actor.id)}
-                              disabled={createBusy || !groupId}
-                              className={secondaryButtonClass("sm")}
-                            >
-                              {wm("buttons.rotateMcpUrl")}
-                            </button>
-                          ) : null}
-                          {connector ? (
-                            <button
-                              type="button"
-                              onClick={() => void revokeConnector(connector.connector_id)}
-                              disabled={revokeBusyId === connector.connector_id}
-                              className={dangerButtonClass("sm")}
-                            >
-                              {wm("buttons.revokeMcpUrl")}
-                            </button>
-                          ) : null}
-                        </div>
-                      </details>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-2 xl:max-w-[360px] xl:justify-end">
-                      {!actorRunning ? (
-                        <button
-                          type="button"
-                          onClick={() => void startWebModelActor(actor.id)}
-                          disabled={startBusyId === actor.id}
-                          className={primaryButtonClass(startBusyId === actor.id)}
-                        >
-                          {wm("buttons.startActor")}
-                        </button>
-                      ) : null}
-                      {mcpUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => void copyValue(mcpUrl, wm("copyLabels.mcpUrl"))}
-                          className={chatGptSeen ? secondaryButtonClass("sm") : primaryButtonClass(false)}
-                        >
-                          {wm("buttons.copyMcpUrl")}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => void createConnector(actor.id)}
-                          disabled={createBusy || !groupId}
-                          className={primaryButtonClass(createBusy)}
-                        >
-                          {wm("buttons.createMcpUrl")}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => manageActorChat(actor.id)}
-                        className={setupPrimary ? primaryButtonClass(false) : secondaryButtonClass("sm")}
-                      >
-                        {wm("buttons.setupChatGpt")}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            }) : (
-                <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-4">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {wm("empty.title")}
-                </div>
-                <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
-                  {wm("empty.description")}
-                </p>
-                <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("empty.browserTitle")}</div>
-                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                        {wm("empty.browserDescription")}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void openBrowserLogin()}
-                      disabled={browserBusy}
-                      className={primaryButtonClass(browserBusy)}
-                    >
-                      {wm("buttons.openChatGpt")}
-                    </button>
-                  </div>
-                  {showBrowserSurface ? (
-                    <div className="mt-3 overflow-hidden rounded-xl border border-[var(--glass-border-subtle)]">
-                      <ProjectedBrowserSurfacePanel
-                        key={`chatgpt-setup-surface:${browserSurfaceRestartNonce}`}
-                        isDark={isDark}
-                        refreshNonce={browserSurfaceRefreshNonce}
-                        viewportClassName="h-[58vh] min-h-[420px] max-h-[720px]"
-                        loadSession={loadBrowserSurfaceSession}
-                        startSession={startBrowserSurfaceSession}
-                        webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl("", "")}
-                        fallbackUrl="https://chatgpt.com/"
-                        labels={{
-                          starting: wm("browserSurface.starting"),
-                          waiting: wm("browserSurface.waiting"),
-                          ready: wm("browserSurface.ready"),
-                          failed: wm("browserSurface.failed"),
-                          closed: wm("browserSurface.closed"),
-                          reconnecting: wm("browserSurface.reconnecting"),
-                          reconnect: wm("browserSurface.reconnect"),
-                          frameAlt: wm("browserSurface.frameAlt"),
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-                  <label className="block">
-                    <span className={labelClass(isDark)}>{wm("empty.ownerGroup")}</span>
-                    {groups.length > 1 ? (
-                      <SelectCombobox
-                        items={groups
-                          .map((group) => {
-                            const gid = String(group.group_id || "").trim();
-                            const label = String(group.title || group.group_id || "").trim();
-                            return gid ? { value: gid, label } : null;
-                          })
-                          .filter((item): item is { value: string; label: string } => item !== null)}
-                        value={createActorGroupId}
-                        onChange={setCreateActorGroupId}
-                        ariaLabel={wm("empty.ownerGroup")}
-                        className={inputClass(isDark)}
-                        searchable
-                      />
-                    ) : (
-                      <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">
-                        {createActorGroupLabel || wm("empty.noGroupAvailable")}
-                      </div>
-                    )}
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void createChatGptWebModelActor()}
-                    disabled={actorCreateBusy || !String(createActorGroupId || preferredCreateActorGroupId || "").trim()}
-                    className={primaryButtonClass(actorCreateBusy)}
-                  >
-                    {wm("buttons.createActor")}
-                  </button>
-                </div>
-                {!groups.length ? (
-                  <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                    {wm("empty.createGroupFirst")}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {chatManagerOpen && selectedActor ? (
+        {selectedActor ? (
           <section className={settingsWorkspacePanelClass(isDark)}>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
@@ -1296,30 +998,13 @@ export default function WebModelConnectorsTab({
                   {wm("chatSetup.title", { actor: selectedActorLabel || actorId })}
                 </div>
                 <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
-                  {setupSummary}
+                  {wm("chatSetup.description")}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-start gap-2 sm:justify-end">
-                <span
-                  className={[
-                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold",
-                    setupReady
-                      ? "border-emerald-500/30 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
-                      : "border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-300",
-                  ].join(" ")}
-                >
-                  {setupReady ? wm("chatSetup.ready") : wm("chatSetup.setupNeeded")}
+                <span className={["inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold", setupPillClass(runtimeStatus.tone)].join(" ")}>
+                  {runtimeStatus.label}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setChatManagerOpen(false);
-                    setShowBrowserSurface(false);
-                  }}
-                  className={secondaryButtonClass("sm")}
-                >
-                  {wm("buttons.hide")}
-                </button>
               </div>
             </div>
 
@@ -1346,126 +1031,294 @@ export default function WebModelConnectorsTab({
                     >
                       {wm("buttons.openChatGpt")}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void checkBrowserSessionStatus()}
+                      disabled={browserBusy || !groupId || !actorId}
+                      className={secondaryButtonClass("sm")}
+                    >
+                      {wm("buttons.checkStatus")}
+                    </button>
+                  </div>
+                </div>
+                {showBrowserSurface && groupId && actorId ? (
+                  <div className="mt-3">
+                    <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+                        {wm("embedded.reloadDescription")}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void reloadEmbeddedBrowser()}
+                        disabled={browserBusy || !groupId || !actorId}
+                        className={secondaryButtonClass("sm")}
+                      >
+                        {wm("buttons.reloadChatGpt")}
+                      </button>
+                    </div>
+                    <ProjectedBrowserSurfacePanel
+                      key={`chatgpt-actor-surface:${groupId}:${actorId}:${browserSurfaceRestartNonce}`}
+                      isDark={isDark}
+                      refreshNonce={browserSurfaceRefreshNonce}
+                      viewportClassName="h-[68vh] min-h-[460px] max-h-[780px]"
+                      loadSession={loadBrowserSurfaceSession}
+                      startSession={startBrowserSurfaceSession}
+                      webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl(groupId, actorId)}
+                      fallbackUrl="https://chatgpt.com/"
+                      labels={{
+                        starting: wm("browserSurface.starting"),
+                        waiting: wm("browserSurface.waiting"),
+                        ready: wm("browserSurface.ready"),
+                        failed: wm("browserSurface.failed"),
+                        closed: wm("browserSurface.closed"),
+                        reconnecting: wm("browserSurface.reconnecting"),
+                        reconnect: wm("browserSurface.reconnect"),
+                        frameAlt: wm("browserSurface.frameAlt"),
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </SetupSection>
+
+              <SetupSection title={wm("chatSetup.mcpAppTitle")}>
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(mcpStatusTone)].join(" ")}>
+                        {mcpStatusLabel}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                      {mcpInstructionDetail}
+                    </p>
+                    <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                      <li>{wm("mcp.instructionOpenSettings")}</li>
+                      <li>{wm("mcp.instructionCreateApp")}</li>
+                      <li>{wm("mcp.instructionEnableConnector")}</li>
+                    </ol>
+                    <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                      <span>{wm("mcp.permissionHint")}</span>
+                      <a
+                        href="https://help.openai.com/en/articles/11487775-apps-in-chatgpt"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ml-2 font-semibold underline-offset-2 hover:underline"
+                      >
+                        {wm("mcp.permissionDocsLink")}
+                      </a>
+                    </div>
+                    {selectedConnector && !selectedMcpUrl ? (
+                      <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                        {wm("warnings.rotateOldConnector")}
+                      </div>
+                    ) : null}
+                    {mcpUrlLocalWarning ? (
+                      <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                        {wm("warnings.localMcpUrl")}
+                      </div>
+                    ) : null}
+                    {mcpUrlHttpsWarning && !mcpUrlLocalWarning ? (
+                      <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                        {wm("warnings.nonHttpsMcpUrl")}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2 md:justify-end">
+                    {selectedMcpUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => void copyValue(selectedMcpUrl, wm("copyLabels.mcpUrl"))}
+                        className={chatGptSeen ? secondaryButtonClass("sm") : primaryButtonClass(false)}
+                      >
+                        {wm("buttons.copyMcpUrl")}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void createConnector(actorId)}
+                        disabled={createBusy || !groupId || !actorId || !webAccessReady}
+                        className={primaryButtonClass(createBusy)}
+                      >
+                        {selectedConnector ? wm("buttons.rotateMcpUrl") : wm("buttons.createMcpUrl")}
+                      </button>
+                    )}
                   </div>
                 </div>
               </SetupSection>
 
               <SetupSection title={wm("chatSetup.deliveryTargetTitle")}>
-                <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                      {wm("target.deliveryTarget")}
-                    </div>
-                    <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(targetModeTone)].join(" ")}>
-                      {targetModeLabel}
-                    </span>
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-                    {boundConversationUrl ? (
-                      <span>
-                        {wm("target.futureMessagesPrefix")}{" "}
-                        <span className="break-all font-mono text-[var(--color-text-primary)]">{targetModeDetail}</span>
-                        {" "}{wm("target.futureMessagesSuffix")}
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                  <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                        {wm("target.savedTarget")}
+                      </div>
+                      <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(savedTargetTone)].join(" ")}>
+                        {savedTargetLabel}
                       </span>
-                    ) : (
-                      <span>{targetModeDetail}</span>
-                    )}
-                  </div>
-                  {boundConversationUrl && currentBrowserUrl && currentBrowserUrl !== boundConversationUrl ? (
-                    <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                      {wm("target.browserAtDifferentTarget", {
-                        current: currentBrowserConversationUrl ? shortConversationLabel(currentBrowserConversationUrl) : wm("target.chatgptHome"),
-                      })}
                     </div>
-                  ) : null}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void bindConversation(currentBrowserConversationUrl)}
-                    disabled={browserBusy || !currentBrowserConversationUrl || !groupId || !actorId}
-                    className={currentBrowserConversationUrl && !boundConversationUrl ? primaryButtonClass(browserBusy) : secondaryButtonClass("sm")}
-                  >
-                    {wm("buttons.useCurrentChat")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void startNewConversationAutoBind()}
-                    disabled={browserBusy || !groupId || !actorId}
-                    className={!boundConversationUrl && !pendingNewChatBind ? primaryButtonClass(browserBusy) : secondaryButtonClass("sm")}
-                  >
-                    {pendingNewChatBind ? wm("buttons.newChatSelected") : wm("buttons.startNewChat")}
-                  </button>
-                </div>
-                <details className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                  <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("target.manualFallback")}</summary>
-                  <div className="mt-2 grid gap-3 lg:grid-cols-[1fr_auto]">
-                    <label className="block">
-                      <span className={labelClass(isDark)}>{wm("target.conversationUrl")}</span>
-                      <input
-                        value={conversationUrlDraft}
-                        onChange={(event) => setConversationUrlDraft(event.target.value)}
-                        placeholder="https://chatgpt.com/c/..."
-                        className={inputClass(isDark)}
-                      />
-                    </label>
-                    <div className="flex items-end">
-                      <button
-                        type="button"
-                        onClick={() => void bindConversation(conversationUrlDraft)}
-                        disabled={browserBusy || !groupId || !actorId || !isChatGptConversationUrl(conversationUrlDraft)}
-                        className={secondaryButtonClass("sm")}
-                      >
-                        {wm("buttons.saveTargetUrl")}
-                      </button>
+                    <div className="mt-2 break-all text-sm leading-6 text-[var(--color-text-secondary)]">
+                      {savedTargetDetail}
+                    </div>
+                    <div className="mt-2 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                      {deliveryTargetSavedAt
+                        ? wm("target.savedAt", { time: formatTime(deliveryTargetSavedAt) })
+                        : wm("target.notSavedYet")}
+                    </div>
+                    <div className="mt-3 rounded-md border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
+                      <span className="font-semibold text-[var(--color-text-primary)]">{wm("target.nextDelivery")}</span>
+                      <span className="ml-2">{nextDeliveryDetail}</span>
                     </div>
                   </div>
-                </details>
-              </SetupSection>
 
-              {showBrowserSurface && groupId && actorId ? (
-                <SetupSection title={wm("embedded.title")}>
-                  <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
-                      {wm("embedded.reloadDescription")}
+                  <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                      {wm("target.currentBrowserTab")}
+                    </div>
+                    <div className="mt-2 break-all text-sm leading-6 text-[var(--color-text-secondary)]">
+                      {currentBrowserDetail}
+                    </div>
+                    {boundConversationUrl && currentBrowserUrl && currentBrowserUrl !== boundConversationUrl ? (
+                      <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                        {wm("target.currentTabNotTarget")}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                        {wm("target.changeTarget")}
+                      </div>
+                      <div className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">
+                        {targetDraftDirty ? wm("target.unsavedChanges") : wm("target.noUnsavedChanges")}
+                      </div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => void reloadEmbeddedBrowser()}
-                      disabled={browserBusy || !groupId || !actorId}
-                      className={secondaryButtonClass("sm")}
+                      onClick={() => void saveDeliveryTarget()}
+                      disabled={targetSaveDisabled}
+                      className={targetDraftDirty ? primaryButtonClass(browserBusy) : secondaryButtonClass("sm")}
                     >
-                      {wm("buttons.reloadChatGpt")}
+                      {wm("buttons.saveTarget")}
                     </button>
                   </div>
-                  <ProjectedBrowserSurfacePanel
-                    key={`chatgpt-actor-surface:${groupId}:${actorId}:${browserSurfaceRestartNonce}`}
-                    isDark={isDark}
-                    refreshNonce={browserSurfaceRefreshNonce}
-                    viewportClassName="h-[68vh] min-h-[460px] max-h-[780px]"
-                    loadSession={loadBrowserSurfaceSession}
-                    startSession={startBrowserSurfaceSession}
-                    webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl(groupId, actorId)}
-                    fallbackUrl="https://chatgpt.com/"
-                    labels={{
-                      starting: wm("browserSurface.starting"),
-                      waiting: wm("browserSurface.waiting"),
-                      ready: wm("browserSurface.ready"),
-                      failed: wm("browserSurface.failed"),
-                      closed: wm("browserSurface.closed"),
-                      reconnecting: wm("browserSurface.reconnecting"),
-                      reconnect: wm("browserSurface.reconnect"),
-                      frameAlt: wm("browserSurface.frameAlt"),
-                    }}
-                  />
-                </SetupSection>
-              ) : null}
+
+                  <fieldset className="mt-3 space-y-3">
+                    <legend className="sr-only">{wm("target.changeTarget")}</legend>
+                    <label className={targetRadioClass("existing")}>
+                      <input
+                        type="radio"
+                        name="chatgpt-delivery-target"
+                        checked={targetDraftMode === "existing"}
+                        onChange={() => chooseTargetMode("existing")}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-[rgb(35,36,37)] dark:accent-white"
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold">{wm("target.optionExisting")}</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-tertiary)]">
+                          {wm("target.optionExistingDetail")}
+                        </span>
+                      </span>
+                    </label>
+
+                    {targetDraftMode === "existing" ? (
+                      <div className="ml-6 space-y-2 border-l border-[var(--glass-border-subtle)] pl-3">
+                        <label className="block">
+                          <span className={labelClass(isDark)}>{wm("target.conversationUrl")}</span>
+                          <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                            <input
+                              value={conversationUrlDraft}
+                              onFocus={() => {
+                                setTargetDraftMode("existing");
+                                setTargetDraftTouched(true);
+                              }}
+                              onChange={(event) => {
+                                setTargetDraftMode("existing");
+                                setConversationUrlDraft(event.target.value);
+                                setTargetDraftTouched(true);
+                              }}
+                              placeholder="https://chatgpt.com/c/..."
+                              className={inputClass(isDark)}
+                            />
+                            {targetUseCurrentAvailable ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTargetDraftMode("existing");
+                                  setConversationUrlDraft(currentBrowserConversationUrl);
+                                  setTargetDraftTouched(true);
+                                }}
+                                className={secondaryButtonClass("sm")}
+                              >
+                                {wm("buttons.useCurrentTab")}
+                              </button>
+                            ) : null}
+                          </div>
+                        </label>
+                        <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+                          {currentBrowserConversationUrl
+                            ? wm("target.currentTab", { target: shortConversationLabel(currentBrowserConversationUrl) })
+                            : wm("target.currentTabUnavailable")}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <label className={targetRadioClass("new")}>
+                      <input
+                        type="radio"
+                        name="chatgpt-delivery-target"
+                        checked={targetDraftMode === "new"}
+                        onChange={() => chooseTargetMode("new")}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-[rgb(35,36,37)] dark:accent-white"
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold">{wm("target.optionNew")}</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-tertiary)]">
+                          {wm("target.optionNewDetail")}
+                        </span>
+                      </span>
+                    </label>
+                  </fieldset>
+                  {targetDraftError ? (
+                    <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                      {targetDraftError}
+                    </div>
+                  ) : null}
+                </div>
+              </SetupSection>
 
               <details className="text-xs leading-5 text-[var(--color-text-tertiary)]">
                 <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("advanced.summary")}</summary>
                 <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[140px_1fr]">
                   <span>{wm("advanced.status")}</span>
-                  <span>{browserStatusLabel} · {targetStatusLabel}</span>
+                  <span>{runtimeStatus.label}</span>
+                  <span>{wm("advanced.browser")}</span>
+                  <span>{browserStatusLabel}</span>
+                  <span>{wm("advanced.mcpApp")}</span>
+                  <span>{mcpStatusLabel}</span>
+                  {selectedConnector?.connector_id ? (
+                    <>
+                      <span>{wm("details.mcpUrlId")}</span>
+                      <span className="break-all font-mono">{selectedConnector.connector_id}</span>
+                    </>
+                  ) : null}
+                  {selectedConnector ? (
+                    <>
+                      <span>{wm("details.remote")}</span>
+                      <span>{connectorActivityLabel(selectedConnector, wm)}</span>
+                    </>
+                  ) : null}
+                  {selectedConnector?.last_error ? (
+                    <>
+                      <span>{wm("details.lastMcpError")}</span>
+                      <span className="break-all text-rose-600 dark:text-rose-300">{selectedConnector.last_error}</span>
+                    </>
+                  ) : null}
+                  <span>{wm("advanced.targetStatus")}</span>
+                  <span>{targetStatusLabel}</span>
                   {healthNextActionText(selectedHealth, wm) ? (
                     <>
                       <span>{wm("advanced.recommended")}</span>
@@ -1512,6 +1365,26 @@ export default function WebModelConnectorsTab({
                   ) : null}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  {selectedConnector ? (
+                    <button
+                      type="button"
+                      onClick={() => void createConnector(actorId)}
+                      disabled={createBusy || !groupId || !actorId}
+                      className={secondaryButtonClass("sm")}
+                    >
+                      {wm("buttons.rotateMcpUrl")}
+                    </button>
+                  ) : null}
+                  {selectedConnector ? (
+                    <button
+                      type="button"
+                      onClick={() => void revokeConnector(selectedConnector.connector_id)}
+                      disabled={revokeBusyId === selectedConnector.connector_id}
+                      className={dangerButtonClass("sm")}
+                    >
+                      {wm("buttons.revokeMcpUrl")}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => void checkBrowserSessionStatus()}

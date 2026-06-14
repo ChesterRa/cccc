@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import yaml
 from fastapi.testclient import TestClient
@@ -1124,6 +1124,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                         "pending_new_chat_last_event_ids": [],
                         "pending_new_chat_last_tab_url": "",
                         "new_chat_bound_at": "",
+                        "target_saved_at": ANY,
                         "bootstrap_seed_delivered_at": "",
                         "bootstrap_seed_version": "",
                         "bootstrap_seed_digest": "",
@@ -1250,6 +1251,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(state.get("pending_new_chat_submitted"), False)
             self.assertEqual(state.get("pending_new_chat_delivery_id"), "")
             self.assertTrue(str(state.get("pending_new_chat_bind_started_at") or ""))
+            self.assertTrue(str(state.get("target_saved_at") or ""))
         finally:
             cleanup()
 
@@ -1282,6 +1284,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(state.get("conversation_url"), "")
             self.assertEqual(state.get("pending_new_chat_bind"), True)
             self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
+            self.assertTrue(str(state.get("target_saved_at") or ""))
         finally:
             cleanup()
 

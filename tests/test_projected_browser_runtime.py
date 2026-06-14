@@ -701,46 +701,6 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertTrue(browser["submitted_without_conversation_url"])
         self.assertEqual(browser["submission_evidence"], "message_echo")
 
-    def test_chatgpt_auto_confirm_command_uses_projected_session_page(self) -> None:
-        from cccc.daemon.browser import projected_browser_runtime as runtime
-
-        page = _FakePage()
-        page.url = "https://chatgpt.com/c/bound-session"
-        projected = _FakeSubmitRuntime(page)
-        session = runtime.ProjectedBrowserSession(
-            session_key="test-browser-session",
-            profile_dir=runtime.Path("/tmp/projected-browser-test"),
-            url="https://chatgpt.com",
-            width=1280,
-            height=800,
-            headless=False,
-            channel_candidates=("chrome",),
-        )
-
-        with patch(
-            "cccc.ports.web_model_browser_sidecar._auto_confirm_page_tool_prompts",
-            return_value={
-                "clicked": 1,
-                "candidate_count": 1,
-                "details": [{"title": "Run tool?", "label": "Confirm"}],
-            },
-        ) as auto_confirm:
-            result = session._apply_command(
-                projected,
-                "chatgpt_auto_confirm_tools",
-                {
-                    "target_url": "https://chatgpt.com/c/bound-session",
-                    "max_clicks": 2,
-                },
-            )
-
-        auto_confirm.assert_called_once_with(page, max_clicks=2)
-        self.assertTrue(result.get("browser_active"))
-        self.assertEqual(result.get("clicked"), 1)
-        self.assertEqual(result.get("candidate_count"), 1)
-        self.assertEqual(result.get("pages_seen"), 1)
-        self.assertEqual(result.get("page_url"), "https://chatgpt.com/c/bound-session")
-
     def test_multiple_projected_browser_viewers_do_not_evict_each_other(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 

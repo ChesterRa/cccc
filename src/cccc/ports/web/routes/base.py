@@ -438,7 +438,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 if method != "tools/call" or not requested_tool_name or requested_tool_name == "cccc_runtime_complete_turn":
                     return
                 try:
-                    from ....daemon.actors.web_model_tool_confirm_watcher import record_web_model_browser_progress
+                    from ....daemon.actors.web_model_browser_recovery_watcher import record_web_model_browser_progress
 
                     await run_in_threadpool(
                         record_web_model_browser_progress,
@@ -597,6 +597,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             metadata = surface.get("metadata") if isinstance(surface.get("metadata"), dict) else {}
             if metadata.get("cdp_port") and not browser.get("cdp_port"):
                 browser["cdp_port"] = metadata.get("cdp_port")
+        resolution = browser.get("pending_new_chat_resolution") if isinstance(browser.get("pending_new_chat_resolution"), dict) else {}
+        if bool(resolution.get("resolved")):
+            try:
+                from ....daemon.actors.web_model_browser_delivery import append_pending_new_chat_bound_event
+
+                bound_event = await run_in_threadpool(append_pending_new_chat_bound_event, group_id, actor_id, resolution)
+                if bound_event:
+                    browser["pending_new_chat_resolution_event_id"] = str(bound_event.get("id") or "")
+            except Exception:
+                pass
         health_snapshot = build_chatgpt_web_model_health_snapshot(
             group_id=group_id,
             actor_id=actor_id,
@@ -679,6 +689,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "pending_new_chat_last_event_ids": [],
                     "pending_new_chat_last_tab_url": "",
                     "new_chat_bound_at": "",
+                    "target_saved_at": "",
                     "bootstrap_seed_delivered_at": "",
                     "bootstrap_seed_version": "",
                     "bootstrap_seed_digest": "",
@@ -716,6 +727,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 detail={"code": "chatgpt_tab_not_found", "message": "open ChatGPT or paste a ChatGPT conversation URL before binding", "details": {}},
             )
         pending_new_chat = not bool(conversation_url)
+        saved_at = utc_now_iso()
         await run_in_threadpool(
             record_chatgpt_browser_state,
             group_id,
@@ -724,7 +736,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "conversation_url": conversation_url,
                 "pending_new_chat_bind": pending_new_chat,
                 "pending_new_chat_url": pending_url if pending_new_chat else "",
-                "pending_new_chat_bind_started_at": utc_now_iso() if pending_new_chat else "",
+                "pending_new_chat_bind_started_at": saved_at if pending_new_chat else "",
                 "pending_new_chat_submitted": False,
                 "pending_new_chat_submitted_at": "",
                 "pending_new_chat_delivery_id": "",
@@ -732,6 +744,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "pending_new_chat_last_event_ids": [],
                 "pending_new_chat_last_tab_url": "",
                 "new_chat_bound_at": "",
+                "target_saved_at": saved_at,
                 "bootstrap_seed_delivered_at": "",
                 "bootstrap_seed_version": "",
                 "bootstrap_seed_digest": "",

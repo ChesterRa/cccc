@@ -332,7 +332,7 @@ cccc setup --runtime kimi
 cccc setup --runtime custom
 ```
 
-`web_model` does not use `cccc setup`; create the single `ChatGPT Web Model` actor, copy its remote MCP URL from Web Settings, and bind one specific ChatGPT conversation.
+`web_model` does not use `cccc setup`; create the single `ChatGPT Web Model` actor from the CCCC Web group, then use Web Settings to sign in to ChatGPT, copy its remote MCP URL, and bind one specific ChatGPT conversation.
 
 ### Runtime Detection
 

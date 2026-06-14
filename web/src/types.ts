@@ -208,7 +208,7 @@ export type LedgerEventStatusPayload = {
 };
 
 export type WebModelDeliveryStatusPayload = {
-  state?: "submitting" | "submitted" | "pending" | "ambiguous" | "failed" | string;
+  state?: "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed" | string;
   actor_id?: string;
   delivery_id?: string;
   updated_at?: string;

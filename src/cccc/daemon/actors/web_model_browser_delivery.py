@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
-from ...kernel.inbox import unread_messages
+from ...kernel.inbox import iter_events_reverse, unread_messages
 from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...kernel.web_model_connectors import list_web_model_connectors
@@ -36,6 +36,7 @@ from .web_model_runtime_ops import commit_web_model_delivered_turn
 _LOG = logging.getLogger("cccc.daemon.web_model.browser_delivery")
 _IN_FLIGHT_LOCK = threading.Lock()
 _IN_FLIGHT: set[tuple[str, str]] = set()
+_PENDING_BOUND_EVENT_LOCK = threading.Lock()
 
 _MODE_ENV_KEYS = (
     "CCCC_WEB_MODEL_DELIVERY_MODE",
@@ -335,6 +336,98 @@ def _append_delivery_event(
         return None
 
 
+def _normalized_event_ids(value: Any) -> List[str]:
+    return [
+        str(item or "").strip()
+        for item in (value if isinstance(value, list) else [])
+        if str(item or "").strip()
+    ]
+
+
+def _existing_pending_new_chat_bound_event(
+    *,
+    group: Any,
+    actor_id: str,
+    delivery_id: str,
+    event_ids: List[str],
+    conversation_url: str,
+) -> Optional[Dict[str, Any]]:
+    normalized_url = _conversation_url_from_tab(conversation_url) or str(conversation_url or "").strip()
+    for event in iter_events_reverse(group.ledger_path):
+        if str(event.get("kind") or "").strip() != "web_model.browser_delivery.bound":
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if str(data.get("actor_id") or "").strip() != actor_id:
+            continue
+        if not bool(data.get("resolved_pending_new_chat")):
+            continue
+        existing_delivery_id = str(data.get("delivery_id") or "").strip()
+        existing_event_ids = _normalized_event_ids(data.get("event_ids"))
+        existing_url = _conversation_url_from_tab(data.get("bound_conversation_url")) or str(data.get("bound_conversation_url") or "").strip()
+        delivery_matches = bool(delivery_id) and existing_delivery_id == delivery_id
+        event_ids_match = bool(event_ids) and existing_event_ids == event_ids
+        url_matches = not normalized_url or not existing_url or existing_url == normalized_url
+        if delivery_id and event_ids:
+            if delivery_matches and event_ids_match:
+                return event
+        elif delivery_id:
+            if delivery_matches and url_matches:
+                return event
+        elif event_ids and event_ids_match and url_matches:
+            return event
+    return None
+
+
+def append_pending_new_chat_bound_event(group_id: str, actor_id: str, resolution: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(resolution, dict) or not bool(resolution.get("resolved")):
+        return None
+    conversation_url = str(resolution.get("conversation_url") or "").strip()
+    if not conversation_url:
+        return None
+    event_ids = _normalized_event_ids(resolution.get("event_ids"))
+    delivery_id = str(resolution.get("delivery_id") or "").strip()
+    if not event_ids and not delivery_id:
+        return None
+    try:
+        group = load_group(group_id)
+    except Exception:
+        group = None
+    if group is None:
+        return None
+    turn = {
+        "turn_id": str(resolution.get("turn_id") or "").strip(),
+        "event_ids": event_ids,
+        "latest_event_id": event_ids[-1] if event_ids else "",
+    }
+    normalized_actor_id = str(actor_id or "").strip()
+    with _PENDING_BOUND_EVENT_LOCK:
+        existing = _existing_pending_new_chat_bound_event(
+            group=group,
+            actor_id=normalized_actor_id,
+            delivery_id=delivery_id,
+            event_ids=event_ids,
+            conversation_url=conversation_url,
+        )
+        if existing:
+            return existing
+        return _append_delivery_event(
+            group=group,
+            actor_id=normalized_actor_id,
+            turn=turn,
+            kind="web_model.browser_delivery.bound",
+            data={
+                "delivery_id": delivery_id,
+                "delivery_transport": "projected_session",
+                "target_url": str(resolution.get("target_url") or "").strip(),
+                "bound_conversation_url": conversation_url,
+                "pending_conversation_url": False,
+                "resolved_pending_new_chat": True,
+                "submitted_at": str(resolution.get("submitted_at") or "").strip(),
+                "bound_at": str(resolution.get("bound_at") or "").strip(),
+            },
+        )
+
+
 def _has_unread_work(group: Any, actor_id: str) -> bool:
     try:
         return bool(unread_messages(group, actor_id=actor_id, limit=1, kind_filter="all"))
@@ -367,6 +460,7 @@ def _pending_new_chat_state(group_id: str, actor_id: str) -> Dict[str, Any]:
             resolved = {"ok": False, "error": str(exc)}
         conversation_url = str(resolved.get("conversation_url") or "").strip() if isinstance(resolved, dict) else ""
         if conversation_url:
+            append_pending_new_chat_bound_event(group_id, actor_id, resolved if isinstance(resolved, dict) else {})
             return {
                 "target_url": conversation_url,
                 "auto_bind_new_chat": False,
@@ -659,9 +753,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             latest_event_id="",
         )
         try:
-            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
+            from .web_model_browser_recovery_watcher import ensure_web_model_browser_recovery_watcher, start_web_model_browser_reload_window
 
-            ensure_web_model_tool_confirm_watcher(group.group_id, aid, logger=_LOG)
+            ensure_web_model_browser_recovery_watcher(group.group_id, aid, logger=_LOG)
             start_web_model_browser_reload_window(
                 group.group_id,
                 aid,
@@ -710,9 +804,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
     if ok:
         delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
         try:
-            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
+            from .web_model_browser_recovery_watcher import ensure_web_model_browser_recovery_watcher, start_web_model_browser_reload_window
 
-            ensure_web_model_tool_confirm_watcher(group.group_id, aid, logger=_LOG)
+            ensure_web_model_browser_recovery_watcher(group.group_id, aid, logger=_LOG)
             start_web_model_browser_reload_window(
                 group.group_id,
                 aid,
@@ -755,6 +849,7 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "pending_new_chat_last_event_ids": [],
                     "pending_new_chat_last_tab_url": "",
                     "new_chat_bound_at": utc_now_iso(),
+                    "target_saved_at": utc_now_iso(),
                     "last_error": "",
                 },
             )
@@ -815,9 +910,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         ambiguous_evidence = str(ambiguous_browser.get("submission_evidence") or "submit_unverified").strip()
         ambiguous_send_selector = str(ambiguous_browser.get("send_selector") or "").strip()
         try:
-            from .web_model_tool_confirm_watcher import ensure_web_model_tool_confirm_watcher, start_web_model_browser_reload_window
+            from .web_model_browser_recovery_watcher import ensure_web_model_browser_recovery_watcher, start_web_model_browser_reload_window
 
-            ensure_web_model_tool_confirm_watcher(group.group_id, aid, logger=_LOG)
+            ensure_web_model_browser_recovery_watcher(group.group_id, aid, logger=_LOG)
             start_web_model_browser_reload_window(
                 group.group_id,
                 aid,

@@ -88,12 +88,41 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         self.assertEqual((snapshot.get("browser") or {}).get("state"), "ready")
         self.assertEqual((snapshot.get("target") or {}).get("state"), "new_chat_pending")
+        target = snapshot.get("delivery_target") or {}
+        self.assertEqual(target.get("state"), "new_chat_armed")
+        self.assertEqual(target.get("next_delivery"), "new_chat")
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "pending_bind")
         self.assertTrue(delivery.get("cursor_committed"))
         self.assertEqual(delivery.get("last_error"), "")
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "wait_for_chat_bind")
         self.assertNotEqual(snapshot.get("tone"), "error")
+
+    def test_health_snapshot_treats_bound_delivery_as_complete(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": True,
+                "tab_url": "https://chatgpt.com/c/newly-created",
+                "conversation_url": "https://chatgpt.com/c/newly-created",
+                "last_delivery_status": "bound",
+                "last_delivery_id": "delivery-1",
+                "last_turn_id": "turn-1",
+                "last_delivery_at": "2026-05-04T00:00:00Z",
+            },
+            browser_surface={"active": True, "state": "ready", "controller_attached": True, "last_frame_at": "2026-05-04T00:00:00Z"},
+        )
+
+        self.assertEqual((snapshot.get("target") or {}).get("state"), "bound")
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "bound")
+        self.assertTrue(delivery.get("cursor_committed"))
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
+        self.assertEqual(snapshot.get("tone"), "ready")
 
     def test_health_snapshot_derives_pending_bind_from_existing_fields(self) -> None:
         from cccc.ports.web_model_browser_sidecar import build_chatgpt_web_model_health_snapshot
@@ -154,6 +183,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             self.assertTrue(bool(status.get("active")))
             self.assertEqual(status.get("cdp_port"), 9222)
             self.assertEqual(status.get("conversation_url"), "https://chatgpt.com/c/test-chat")
+            self.assertEqual((status.get("delivery_target") or {}).get("state"), "bound_existing_chat")
             self.assertEqual(status.get("last_delivery_id"), "delivery-1")
             self.assertFalse(bool(status.get("ready")))
             self.assertFalse(bool(status.get("login_required")))
@@ -1017,7 +1047,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_resolve_pending_chatgpt_conversation_binds_from_state_url(self) -> None:
+    def test_resolve_pending_chatgpt_conversation_binds_from_pending_state_url(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
             read_chatgpt_browser_state,
             record_chatgpt_browser_state,
@@ -1038,7 +1068,8 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                     "pending_new_chat_delivery_id": "browser:test",
                     "pending_new_chat_last_turn_id": "turn-1",
                     "pending_new_chat_last_event_ids": ["evt-1"],
-                    "last_tab_url": "https://chatgpt.com/c/newly-created?model=gpt-5",
+                    "last_tab_url": "https://chatgpt.com/c/old-chat",
+                    "pending_new_chat_last_tab_url": "https://chatgpt.com/c/newly-created?model=gpt-5",
                     "bootstrap_seed_delivered_at": "2026-05-01T00:00:11Z",
                     "bootstrap_seed_conversation_url": "https://chatgpt.com/",
                 },
@@ -1049,12 +1080,58 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             self.assertTrue(result.get("ok"), result)
             self.assertTrue(result.get("resolved"), result)
             self.assertEqual(result.get("conversation_url"), "https://chatgpt.com/c/newly-created")
+            self.assertEqual(result.get("delivery_id"), "browser:test")
+            self.assertEqual(result.get("turn_id"), "turn-1")
+            self.assertEqual(result.get("event_ids"), ["evt-1"])
             state = read_chatgpt_browser_state("g-test", "peer1")
             self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/newly-created")
             self.assertEqual(state.get("pending_new_chat_bind"), False)
             self.assertEqual(state.get("pending_new_chat_submitted"), False)
             self.assertEqual(state.get("pending_new_chat_delivery_id"), "")
+            self.assertEqual(state.get("last_delivery_status"), "bound")
+            self.assertEqual(state.get("last_delivery_id"), "browser:test")
+            self.assertEqual(state.get("last_turn_id"), "turn-1")
+            self.assertEqual(state.get("last_event_ids"), ["evt-1"])
             self.assertEqual(state.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/c/newly-created")
+        finally:
+            cleanup()
+
+    def test_resolve_pending_chatgpt_conversation_ignores_stale_last_tab_after_submit(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            read_chatgpt_browser_state,
+            record_chatgpt_browser_process_state,
+            record_chatgpt_browser_state,
+            resolve_pending_chatgpt_conversation,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "",
+                    "pending_new_chat_bind": True,
+                    "pending_new_chat_url": "https://chatgpt.com/",
+                    "pending_new_chat_bind_started_at": "2026-05-01T00:00:00Z",
+                    "pending_new_chat_submitted": True,
+                    "pending_new_chat_submitted_at": "2026-05-01T00:00:10Z",
+                    "pending_new_chat_delivery_id": "browser:test",
+                    "pending_new_chat_last_tab_url": "",
+                    "last_tab_url": "https://chatgpt.com/c/old-chat",
+                },
+            )
+            record_chatgpt_browser_process_state({"cdp_port": 0})
+
+            result = resolve_pending_chatgpt_conversation("g-test", "peer1")
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertFalse(result.get("resolved"), result)
+            self.assertTrue(result.get("pending"), result)
+            self.assertTrue(result.get("submitted"), result)
+            state = read_chatgpt_browser_state("g-test", "peer1")
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("pending_new_chat_bind"), True)
         finally:
             cleanup()
 
@@ -1190,89 +1267,6 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_tool_confirm_matcher_script_targets_chatgpt_tool_confirm_panel(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import _chatgpt_tool_confirm_script
-
-        script = _chatgpt_tool_confirm_script()
-
-        self.assertIn("共享数据包括", script)
-        self.assertIn("详细信息", script)
-        self.assertIn("btn-primary", script)
-        self.assertIn("btn-secondary", script)
-        self.assertIn('querySelector("h2")', script)
-        self.assertIn('querySelector("p")', script)
-        self.assertIn("hasDetailsControl", script)
-        self.assertIn("hasSharedDataText(root)", script)
-        self.assertIn("data-cccc-auto-confirm-candidate-id", script)
-        self.assertNotIn("confirmLabels", script)
-
-    def test_auto_confirm_page_tool_prompts_skips_non_chatgpt_pages(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import _auto_confirm_page_tool_prompts
-
-        class FakePage:
-            url = "https://evilchatgpt.com/c/test-chat"
-
-            def evaluate(self, *_args, **_kwargs):  # pragma: no cover - should not be called
-                raise AssertionError("evaluate should not run for non-ChatGPT pages")
-
-        result = _auto_confirm_page_tool_prompts(FakePage())
-
-        self.assertEqual(result.get("clicked"), 0)
-        self.assertEqual(result.get("skipped"), "non_chatgpt_page")
-
-    def test_auto_confirm_page_tool_prompts_uses_dom_script(self) -> None:
-        from cccc.ports.web_model_browser_sidecar import _auto_confirm_page_tool_prompts
-
-        class FakePage:
-            url = "https://chatgpt.com/c/test-chat"
-
-            def __init__(self):
-                self.args = None
-                self.script = ""
-                self.clicked = False
-
-            def evaluate(self, script, args):
-                self.script = str(script)
-                self.args = args
-                return {
-                    "clicked": 0,
-                    "candidates": [
-                        {
-                            "candidate_id": "cand-1",
-                            "title": "Delete docs?",
-                            "label": "确认",
-                        }
-                    ],
-                }
-
-            def locator(self, selector):
-                self.selector = selector
-
-                class FakeLocator:
-                    @property
-                    def first(self):
-                        return self
-
-                    def count(self):
-                        return 1
-
-                    def click(self, timeout=0):
-                        page.clicked = True
-
-                page = self
-                return FakeLocator()
-
-        page = FakePage()
-        result = _auto_confirm_page_tool_prompts(page, max_clicks=2)
-
-        self.assertEqual(result.get("clicked"), 1)
-        self.assertEqual(result.get("candidate_count"), 1)
-        self.assertEqual((result.get("details") or [{}])[0].get("title"), "Delete docs?")
-        self.assertEqual(page.args, {"maxClicks": 2})
-        self.assertTrue(page.clicked)
-        self.assertIn('button[data-cccc-auto-confirm-candidate-id="cand-1"]', page.selector)
-        self.assertIn("shared data", page.script)
-
     def test_projected_chatgpt_session_requires_system_browser_cdp(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
 
@@ -1327,6 +1321,36 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_projected_chatgpt_session_without_saved_target_ignores_last_tab(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "conversation_url": "",
+                    "pending_new_chat_bind": False,
+                    "last_tab_url": "https://chatgpt.com/c/old-chat",
+                },
+            )
+            with (
+                patch.object(web_model_browser_session._MANAGER, "open", return_value={"active": True, "metadata": {}}) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session", return_value={"active": False}),
+            ):
+                web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(open_session.call_args.kwargs.get("url"), "https://chatgpt.com/")
+        finally:
+            cleanup()
+
     def test_projected_chatgpt_session_opens_new_chat_when_armed(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
         from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
@@ -1373,7 +1397,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 patch.object(web_model_browser_session._MANAGER, "info", return_value=existing),
                 patch.object(web_model_browser_session._MANAGER, "open", return_value={"active": True}) as open_session,
                 patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
-                patch.object(web_model_browser_session, "ensure_web_model_tool_confirm_watcher", return_value=True),
+                patch.object(web_model_browser_session, "ensure_web_model_browser_recovery_watcher", return_value=True),
             ):
                 result = web_model_browser_session.open_web_model_chatgpt_browser_session(
                     group_id="g-test",
@@ -1449,7 +1473,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 patch.object(web_model_browser_session._MANAGER, "close", return_value={"closed": True}) as close_manager,
                 patch.object(web_model_browser_session._MANAGER, "open", return_value=opened) as open_session,
                 patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
-                patch.object(web_model_browser_session, "ensure_web_model_tool_confirm_watcher", return_value=True),
+                patch.object(web_model_browser_session, "ensure_web_model_browser_recovery_watcher", return_value=True),
             ):
                 result = web_model_browser_session.open_web_model_chatgpt_browser_session(
                     group_id="g-test",
@@ -1499,7 +1523,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 patch.object(web_model_browser_session, "_wait_cdp_endpoint", return_value=True),
                 patch.object(web_model_browser_session._MANAGER, "open", return_value=opened) as open_session,
                 patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
-                patch.object(web_model_browser_session, "ensure_web_model_tool_confirm_watcher", return_value=True),
+                patch.object(web_model_browser_session, "ensure_web_model_browser_recovery_watcher", return_value=True),
             ):
                 result = web_model_browser_session.open_web_model_chatgpt_browser_session(
                     group_id="g-test",
@@ -1561,7 +1585,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             )
             with (
                 patch.object(web_model_browser_session, "close_web_model_chatgpt_browser_session") as close_session,
-                patch.object(web_model_browser_session, "stop_web_model_tool_confirm_watcher") as stop_watcher,
+                patch.object(web_model_browser_session, "stop_web_model_browser_recovery_watcher") as stop_watcher,
             ):
                 web_model_browser_session.clear_web_model_chatgpt_browser_actor_runtime(group_id="g-test", actor_id="peer1")
 
@@ -1615,15 +1639,9 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 actor_id="peer1",
                 target_url="https://chatgpt.com/c/test",
             )
-            confirm_result = web_model_browser_session.auto_confirm_web_model_chatgpt_tool_prompts(
-                group_id="g-test",
-                actor_id="peer1",
-                target_url="https://chatgpt.com/c/test",
-            )
 
         self.assertEqual(reload_result.get("error"), "browser_delivery_in_progress")
-        self.assertEqual(confirm_result.get("skipped"), "browser_delivery_in_progress")
-        self.assertGreaterEqual(info.call_count, 2)
+        info.assert_called_once()
         execute.assert_not_called()
 
     def test_close_chatgpt_browser_session_cleans_profile_processes_when_pid_state_is_stale(self) -> None:

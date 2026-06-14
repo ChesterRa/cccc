@@ -1056,6 +1056,7 @@ def _collect_ledger_event_statuses(
 _WEB_MODEL_DELIVERY_KIND_TO_STATE = {
     "web_model.browser_delivery.submitting": "submitting",
     "web_model.browser_delivery.submitted": "submitted",
+    "web_model.browser_delivery.bound": "bound",
     "web_model.browser_delivery.pending": "pending",
     "web_model.browser_delivery.ambiguous": "ambiguous",
     "web_model.browser_delivery.failed": "failed",
