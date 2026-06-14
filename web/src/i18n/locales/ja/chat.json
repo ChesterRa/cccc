@@ -43,6 +43,8 @@
   "send": "送信",
   "sendMessage": "メッセージを送信",
   "sendMessageWithShortcut": "メッセージを送信（{{shortcut}}）",
+  "suggestedUserMessageHint": "次のメッセージ候補です。Tab で入力欄に入れます。",
+  "suggestedUserMessageUse": "候補を使う",
   "sendFailed": "メッセージの送信に失敗しました。",
   "webModelDelivery": {
     "submitting": "ChatGPT に配信中",

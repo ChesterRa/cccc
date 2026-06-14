@@ -756,6 +756,41 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_and_reply_preserve_suggested_user_message(self) -> None:
+        """Suggested next-user text is normalized and stored as chat metadata."""
+        from cccc.contracts.v1 import SUGGESTED_USER_MESSAGE_MAX_CHARS
+
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            long_suggestion = "x" * (SUGGESTED_USER_MESSAGE_MAX_CHARS + 25)
+            send_resp, _ = self._call("send", {
+                "group_id": group_id,
+                "by": "peer1",
+                "to": ["user"],
+                "text": "I finished the review.",
+                "suggested_user_message": f"  {long_suggestion}  ",
+            })
+            self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
+            send_event = (send_resp.result or {}).get("event", {})
+            send_data = send_event.get("data", {})
+            self.assertEqual(send_data.get("to"), ["user"])
+            self.assertEqual(send_data.get("suggested_user_message"), "x" * SUGGESTED_USER_MESSAGE_MAX_CHARS)
+
+            reply_resp, _ = self._call("reply", {
+                "group_id": group_id,
+                "by": "peer1",
+                "reply_to": str(send_event.get("id") or ""),
+                "text": "One more note.",
+                "suggested_user_message": "  Please run the follow-up checks.  ",
+            })
+            self.assertTrue(reply_resp.ok, getattr(reply_resp, "error", None))
+            reply_event = (reply_resp.result or {}).get("event", {})
+            reply_data = reply_event.get("data", {})
+            self.assertEqual(reply_data.get("to"), ["user"])
+            self.assertEqual(reply_data.get("suggested_user_message"), "Please run the follow-up checks.")
+        finally:
+            cleanup()
+
     def test_send_and_reply_delivery_text_include_presentation_refs_for_pty_actor(self) -> None:
         """PTY delivery text should include compact presentation ref details."""
         _, cleanup = self._with_home()

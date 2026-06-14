@@ -97,6 +97,22 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIn("UTF-8 text", str((file_props.get("rel_path") or {}).get("description") or ""))
         self.assertIn("active scope", str((file_props.get("path") or {}).get("description") or ""))
 
+    def test_message_toolspec_exposes_suggested_user_message_as_optional_hint(self) -> None:
+        for tool_name in ("cccc_message_send", "cccc_message_reply"):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            self.assertIsInstance(props, dict)
+            field = props.get("suggested_user_message") if isinstance(props, dict) else {}
+            self.assertIsInstance(field, dict)
+            self.assertEqual(field.get("type"), "string")
+            desc = str(field.get("description") or "")
+            self.assertIn("CCCC Web composer", desc)
+            self.assertIn("not sent automatically", desc)
+            self.assertIn("must not be used for approvals", desc)
+            self.assertNotIn("suggested_user_message", schema.get("required") or [])
+
     def test_task_toolspec_exposes_type_enum(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_task"), None)
         self.assertIsInstance(spec, dict)

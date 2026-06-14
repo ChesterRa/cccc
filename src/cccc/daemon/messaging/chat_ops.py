@@ -10,7 +10,13 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from ...contracts.v1 import ChatMessageData, ChatStreamData, DaemonError, DaemonResponse
+from ...contracts.v1 import (
+    ChatMessageData,
+    ChatStreamData,
+    DaemonError,
+    DaemonResponse,
+    SUGGESTED_USER_MESSAGE_MAX_CHARS,
+)
 from ...kernel.actors import find_actor, list_actors, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.chat_idempotency import find_existing_reply_result
@@ -42,6 +48,13 @@ from .post_commit import run_chat_post_commit, run_group_chat_post_commit
 from .chat_diagnostics import make_chat_diagnostics
 
 logger = logging.getLogger("cccc.daemon.server")
+
+
+def _normalize_suggested_user_message(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text[:SUGGESTED_USER_MESSAGE_MAX_CHARS]
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -268,6 +281,7 @@ def handle_send(
     src_event_id = str(args.get("src_event_id") or "").strip()
     dst_group_id = str(args.get("dst_group_id") or "").strip()
     client_id = str(args.get("client_id") or "").strip()
+    suggested_user_message = _normalize_suggested_user_message(args.get("suggested_user_message"))
     source_platform = str(args.get("source_platform") or "").strip()
     source_user_name = str(args.get("source_user_name") or "").strip()
     source_user_id = str(args.get("source_user_id") or "").strip()
@@ -442,6 +456,7 @@ def handle_send(
             dst_group_id=dst_group_id or None,
             dst_to=dst_to if dst_group_id else None,
             client_id=client_id or None,
+            suggested_user_message=suggested_user_message,
         ).model_dump(),
     )
     diag.mark("append_event")
@@ -735,6 +750,7 @@ def handle_reply(
     priority = str(args.get("priority") or "normal").strip() or "normal"
     reply_required = coerce_bool(args.get("reply_required"))
     client_id = str(args.get("client_id") or "").strip()
+    suggested_user_message = _normalize_suggested_user_message(args.get("suggested_user_message"))
     diag = make_chat_diagnostics(
         op="reply",
         group_id=group_id,
@@ -858,6 +874,7 @@ def handle_reply(
             mention_user_ids=original_mention_user_ids or None,
             **build_sender_snapshot(group, by=by),
             client_id=client_id or None,
+            suggested_user_message=suggested_user_message,
         ).model_dump(),
     )
     diag.mark("append_event")

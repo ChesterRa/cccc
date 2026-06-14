@@ -124,6 +124,14 @@ MCP_TOOLS = [
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
                 "refs": {"type": "array", "items": {"type": "object"}},
+                "suggested_user_message": {
+                    "type": "string",
+                    "description": (
+                        "Optional next message to suggest to the human in the CCCC Web composer "
+                        "when this message is addressed to user. "
+                        "It is not sent automatically and must not be used for approvals, permissions, or decisions."
+                    ),
+                },
             },
             required=["text"],
         ),
@@ -190,6 +198,14 @@ MCP_TOOLS = [
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
                 "refs": {"type": "array", "items": {"type": "object"}},
+                "suggested_user_message": {
+                    "type": "string",
+                    "description": (
+                        "Optional next message to suggest to the human in the CCCC Web composer "
+                        "when this message is addressed to user. "
+                        "It is not sent automatically and must not be used for approvals, permissions, or decisions."
+                    ),
+                },
             },
             required=["text"],
         ),

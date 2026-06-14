@@ -100,6 +100,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "src_event_id": req.src_event_id,
                 "client_id": _normalize_client_id(req.client_id),
                 "refs": list(req.refs),
+                "suggested_user_message": req.suggested_user_message,
             },
         )
         return await _submit_message(daemon_req)
@@ -165,6 +166,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "reply_required": _normalize_reply_required(req.reply_required),
                 "client_id": _normalize_client_id(req.client_id),
                 "refs": list(req.refs),
+                "suggested_user_message": req.suggested_user_message,
             },
         )
         return await _submit_message(daemon_req)

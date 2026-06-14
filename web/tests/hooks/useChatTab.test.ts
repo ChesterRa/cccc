@@ -25,6 +25,7 @@ const { localStorageMock } = vi.hoisted(() => {
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
+  buildUnfilteredLiveChatMessages,
   buildComposerSendRoutingSnapshot,
   buildReplyAnchorTsMap,
   buildReplySlotTsMap,
@@ -50,6 +51,7 @@ import {
   isFormalChatMessageEvent,
   supportsChatStreamingPlaceholder,
 } from "../../src/utils/chatSend";
+import { latestSuggestedUserMessage } from "../../src/utils/suggestedUserMessage";
 import type { LedgerEvent } from "../../src/types";
 
 void localStorageMock;
@@ -235,6 +237,39 @@ describe("buildComposerSendRoutingSnapshot", () => {
       composerGroupSettled: true,
       isCrossGroup: true,
     });
+  });
+});
+
+describe("buildUnfilteredLiveChatMessages", () => {
+  it("keeps later user replies in the suggestion freshness source even when a view could be filtered", () => {
+    const events: LedgerEvent[] = [
+      {
+        id: "evt-agent",
+        kind: "chat.message",
+        ts: "2026-06-15T00:00:01Z",
+        by: "agent-1",
+        data: {
+          text: "Done.",
+          to: ["user"],
+          suggested_user_message: "Please continue.",
+        },
+      },
+      {
+        id: "evt-user",
+        kind: "chat.message",
+        ts: "2026-06-15T00:00:02Z",
+        by: "user",
+        data: {
+          text: "I already continued.",
+          to: ["agent-1"],
+        },
+      },
+    ];
+
+    const source = buildUnfilteredLiveChatMessages(events, [], { map: new Map(), next: 0 });
+
+    expect(source.map((event) => event.id)).toEqual(["evt-agent", "evt-user"]);
+    expect(latestSuggestedUserMessage(source)).toBeNull();
   });
 });
 

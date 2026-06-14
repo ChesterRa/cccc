@@ -43,6 +43,8 @@
   "send": "Send",
   "sendMessage": "Send message",
   "sendMessageWithShortcut": "Send message ({{shortcut}})",
+  "suggestedUserMessageHint": "Suggested next message. Press Tab to use it.",
+  "suggestedUserMessageUse": "Use suggestion",
   "sendFailed": "Failed to send message.",
   "webModelDelivery": {
     "submitting": "Delivering to ChatGPT",

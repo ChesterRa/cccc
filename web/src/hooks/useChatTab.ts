@@ -13,7 +13,7 @@ import {
 } from "../stores";
 import { getEffectiveComposerDestGroupId, isComposerGroupSettled } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
-import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
+import { useChatOutboxStore, selectOutboxEntries, type OutboxEntry } from "../stores/chatOutboxStore";
 import type {
   Actor,
   LedgerEvent,
@@ -645,6 +645,33 @@ export function mergeVisibleChatMessages(
   );
 }
 
+export type LogicalMessageOrderState = { map: Map<string, number>; next: number };
+
+export function buildUnfilteredLiveChatMessages(
+  events: LedgerEvent[],
+  outboxEntries: Pick<OutboxEntry, "localId" | "event">[],
+  orderState: LogicalMessageOrderState,
+): LedgerEvent[] {
+  const all = events.filter(isFormalChatMessageEvent);
+  const renderableCanonicalClientIds = new Set(
+    all
+      .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
+      .map((ev: LedgerEvent) => {
+        const data = ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
+        return data && typeof data.client_id === "string" ? data.client_id.trim() : "";
+      })
+      .filter((clientId: string) => clientId.length > 0)
+  );
+  const pendingEvents = outboxEntries
+    .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
+    .map((entry) => entry.event);
+
+  return sortChatMessages(
+    mergeVisibleChatMessages(all, [], pendingEvents, orderState),
+    new Map(),
+  );
+}
+
 interface UseChatTabOptions {
   selectedGroupId: string;
   selectedGroupRunning: boolean;
@@ -1017,40 +1044,27 @@ export function useChatTab({
     );
   }, [events, streamingEvents]);
 
+  const unfilteredLiveChatMessages = useMemo(
+    () => buildUnfilteredLiveChatMessages(events, outboxEntries, logicalMessageOrderStateRef.current),
+    [events, outboxEntries],
+  );
+
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
-    const all = events.filter(isFormalChatMessageEvent);
-    const renderableCanonicalClientIds = new Set(
-      all
-        .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
-        .map((ev: LedgerEvent) => {
-          const data = ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
-          return data && typeof data.client_id === "string" ? data.client_id.trim() : "";
-        })
-        .filter((clientId: string) => clientId.length > 0)
-    );
-    const pendingEvents = outboxEntries
-      .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
-      .map((entry) => entry.event);
-    const ordered = sortChatMessages(
-      mergeVisibleChatMessages(all, [], pendingEvents, logicalMessageOrderStateRef.current),
-      new Map(),
-    );
-
     if (chatFilter === "attention") {
-      return ordered.filter((ev: LedgerEvent) => {
+      return unfilteredLiveChatMessages.filter((ev: LedgerEvent) => {
         const d = ev.data as ChatMessageData | undefined;
         return String(d?.priority || "normal") === "attention";
       });
     }
     if (chatFilter === "task") {
-      return ordered.filter((ev: LedgerEvent) => {
+      return unfilteredLiveChatMessages.filter((ev: LedgerEvent) => {
         const d = ev.data as ChatMessageData | undefined;
         return !!d?.reply_required;
       });
     }
     if (chatFilter === "user") {
-      return ordered.filter((ev: LedgerEvent) => {
+      return unfilteredLiveChatMessages.filter((ev: LedgerEvent) => {
         const d = ev.data as ChatMessageData | undefined;
         const dst = typeof d?.dst_group_id === "string" ? String(d.dst_group_id || "").trim() : "";
         if (dst) return false;
@@ -1059,8 +1073,8 @@ export function useChatTab({
         return by === "user" || to.includes("user") || to.includes("@user");
       });
     }
-    return ordered;
-  }, [events, chatFilter, outboxEntries]);
+    return unfilteredLiveChatMessages;
+  }, [chatFilter, unfilteredLiveChatMessages]);
 
   // Chat messages (window or live)
   const chatMessages = useMemo(() => {
@@ -1671,6 +1685,7 @@ export function useChatTab({
   return {
     // Chat state
     chatMessages,
+    suggestionSourceMessages: unfilteredLiveChatMessages,
     liveWorkEvents,
     hasAnyChatMessages,
     chatFilter,

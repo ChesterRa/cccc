@@ -42,6 +42,7 @@ class SendRequest(BaseModel):
     src_event_id: str = Field(default="")
     client_id: str = Field(default="")
     refs: list[dict[str, Any]] = Field(default_factory=list)
+    suggested_user_message: str = Field(default="")
 
 
 class SendCrossGroupRequest(BaseModel):
@@ -79,6 +80,7 @@ class ReplyRequest(BaseModel):
     reply_required: bool = False
     client_id: str = Field(default="")
     refs: list[dict[str, Any]] = Field(default_factory=list)
+    suggested_user_message: str = Field(default="")
 
 
 class DebugClearLogsRequest(BaseModel):

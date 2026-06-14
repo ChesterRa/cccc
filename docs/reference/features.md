@@ -27,6 +27,8 @@ cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], o
 cccc_message_reply(reply_to="evt_xxx", text="Reply")
 ```
 
+Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.
+
 ### Read Receipts
 
 - Agents call `cccc_inbox_mark_read(event_id)` to mark as read

@@ -43,6 +43,8 @@
   "send": "发送",
   "sendMessage": "发送消息",
   "sendMessageWithShortcut": "发送消息（{{shortcut}}）",
+  "suggestedUserMessageHint": "建议的下一条消息。按 Tab 填入输入框。",
+  "suggestedUserMessageUse": "使用建议",
   "sendFailed": "发送消息失败。",
   "webModelDelivery": {
     "submitting": "正在投递到 ChatGPT",

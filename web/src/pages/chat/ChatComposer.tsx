@@ -3,7 +3,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, SparklesIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
@@ -15,6 +15,12 @@ import { getComposerDestGroupDisplayValue } from "../../stores/useComposerStore"
 import { filterSlashCommands, getVisibleSlashCommandPage, type SlashCommandItem } from "../../utils/slashCommands";
 import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
 import { ComposerFilePreview } from "./ComposerFilePreview";
+import {
+  composerTargetAllowsSuggestedUserMessage,
+  consumeSuggestedUserMessage,
+  latestSuggestedUserMessage,
+  readConsumedSuggestedUserMessageIds,
+} from "../../utils/suggestedUserMessage";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 
@@ -54,6 +60,7 @@ export interface ChatComposerProps {
   destGroupScopeLabel?: string;
   busy: string;
   recentMessages?: LedgerEvent[];
+  suggestionSourceMessages?: LedgerEvent[];
 
   // Reply
   replyTarget: ReplyTarget;
@@ -109,6 +116,7 @@ export function ChatComposer({
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
   recentMessages = [],
+  suggestionSourceMessages,
   replyTarget,
   onCancelReply,
   quotedPresentationRef,
@@ -144,6 +152,9 @@ export function ChatComposer({
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashVisibleCount, setSlashVisibleCount] = useState(SLASH_COMMAND_PAGE_SIZE);
   const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("prompt");
+  const [sessionConsumedSuggestedUserMessageIds, setSessionConsumedSuggestedUserMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
   const groupSettings = useGroupStore((state) => state.groupSettings);
@@ -272,6 +283,58 @@ export function ChatComposer({
     [slashSuggestions, slashVisibleCount],
   );
   const hasMoreSlashSuggestions = visibleSlashSuggestions.length < slashSuggestions.length;
+  const consumedSuggestedUserMessageIds = readConsumedSuggestedUserMessageIds();
+  for (const eventId of sessionConsumedSuggestedUserMessageIds) {
+    consumedSuggestedUserMessageIds.add(eventId);
+  }
+  const suggestedUserMessage = latestSuggestedUserMessage(
+    suggestionSourceMessages || recentMessages,
+    consumedSuggestedUserMessageIds,
+  );
+  const canShowSuggestedUserMessageForTarget = composerTargetAllowsSuggestedUserMessage({
+    selectedGroupId,
+    destGroupId,
+    composerGroupSettled,
+  });
+  const showSuggestedUserMessage = Boolean(
+    suggestedUserMessage
+    && canShowSuggestedUserMessageForTarget
+    && !composerText.trim()
+    && composerFiles.length === 0
+    && busy !== "send",
+  );
+  const suggestedUserMessageHelpId = showSuggestedUserMessage
+    ? `suggested-user-message-${suggestedUserMessage?.eventId || "current"}`
+    : undefined;
+  const suggestedUserMessageHintLabel = t("suggestedUserMessageHint", {
+    defaultValue: "Suggested next message. Press Tab to use it.",
+  });
+  const suggestedUserMessageUseLabel = t("suggestedUserMessageUse", {
+    defaultValue: "Use suggestion",
+  });
+  const markSuggestedUserMessageConsumed = useCallback(() => {
+    const eventId = String(suggestedUserMessage?.eventId || "").trim();
+    if (!eventId) return;
+    consumeSuggestedUserMessage(eventId);
+    setSessionConsumedSuggestedUserMessageIds((current) => {
+      if (current.has(eventId)) return current;
+      const next = new Set(current);
+      next.add(eventId);
+      return next;
+    });
+  }, [setSessionConsumedSuggestedUserMessageIds, suggestedUserMessage?.eventId]);
+  const acceptSuggestedUserMessage = useCallback(() => {
+    const text = String(suggestedUserMessage?.text || "").trim();
+    if (!showSuggestedUserMessage || !text) return;
+    markSuggestedUserMessageConsumed();
+    setComposerText(text);
+    requestAnimationFrame(() => {
+      const textarea = composerRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(text.length, text.length);
+    });
+  }, [composerRef, markSuggestedUserMessageConsumed, setComposerText, showSuggestedUserMessage, suggestedUserMessage?.text]);
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -318,6 +381,9 @@ export function ChatComposer({
   // Handle text changes.
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
+    if (showSuggestedUserMessage && val.trim()) {
+      markSuggestedUserMessageConsumed();
+    }
     isUserInputRef.current = true;
     setComposerText(val);
     const target = e.target;
@@ -413,6 +479,23 @@ export function ChatComposer({
         setMentionSelectedIndex(0);
         return;
       }
+    }
+    if (
+      showSuggestedUserMessage
+      && e.key === "Tab"
+      && !e.shiftKey
+      && !e.ctrlKey
+      && !e.metaKey
+      && !e.altKey
+    ) {
+      e.preventDefault();
+      acceptSuggestedUserMessage();
+      return;
+    }
+    if (showSuggestedUserMessage && e.key === "Escape") {
+      e.preventDefault();
+      markSuggestedUserMessageConsumed();
+      return;
     }
     if (e.key === "Enter" && !showMentionMenu) {
       if (showSlashMenu) return;
@@ -545,6 +628,9 @@ export function ChatComposer({
     shortcut: sendShortcutLabel,
     defaultValue: "Send message ({{shortcut}})",
   });
+  const composerPlaceholder = showSuggestedUserMessage
+    ? ""
+    : isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop');
 
   const groupOptions = useMemo(() => {
     const cur = String(selectedGroupId || "").trim();
@@ -824,7 +910,8 @@ export function ChatComposer({
               <textarea
                 ref={composerRef as RefObject<HTMLTextAreaElement>}
                 className={classNames(
-                  "w-full bg-transparent border-0 px-4 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
+                  "w-full bg-transparent border-0 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
+                  showSuggestedUserMessage ? "pl-11 pr-4" : "px-4",
                 )}
                 style={{
                   minHeight: `${Math.max(baseComposerHeight + 6, 52)}px`,
@@ -832,7 +919,7 @@ export function ChatComposer({
                   fontSize: `${composerFontSize}px`,
                   lineHeight: `${composerLineHeight}px`,
                 }}
-                placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
+                placeholder={composerPlaceholder}
                 rows={1}
                 value={composerText}
                 onPaste={handlePaste}
@@ -840,7 +927,45 @@ export function ChatComposer({
                 onKeyDown={handleKeyDown}
                 onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
                 aria-label={t('messageInput')}
+                aria-describedby={suggestedUserMessageHelpId}
               />
+              {showSuggestedUserMessage && suggestedUserMessage ? (
+                <button
+                  type="button"
+                  className={classNames(
+                    "absolute left-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    isDark
+                      ? "text-white/45 hover:bg-white/10 hover:text-white/75"
+                      : "text-gray-400 hover:bg-black/[0.06] hover:text-gray-600",
+                  )}
+                  onClick={acceptSuggestedUserMessage}
+                  aria-label={suggestedUserMessageUseLabel}
+                  title={suggestedUserMessageUseLabel}
+                >
+                  <SparklesIcon size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              {showSuggestedUserMessage && suggestedUserMessage ? (
+                <div
+                  className={classNames(
+                    "pointer-events-none absolute inset-x-0 top-0 overflow-hidden py-3 pl-11 pr-4 whitespace-pre-wrap",
+                    isDark ? "text-white/22" : "text-gray-400/80",
+                  )}
+                  style={{
+                    maxHeight: `${maxComposerHeight}px`,
+                    fontSize: `${composerFontSize}px`,
+                    lineHeight: `${composerLineHeight}px`,
+                  }}
+                  aria-hidden="true"
+                >
+                  {suggestedUserMessage.text}
+                </div>
+              ) : null}
+              {showSuggestedUserMessage && suggestedUserMessageHelpId ? (
+                <span id={suggestedUserMessageHelpId} className="sr-only">
+                  {suggestedUserMessageHintLabel}
+                </span>
+              ) : null}
 
               {/* Mention menu */}
               {showMentionMenu && mentionSuggestions.length > 0 && (
@@ -905,7 +1030,6 @@ export function ChatComposer({
                 />
               )}
             </div>
-
             {/* Row 3 — Action bar */}
             <div
               className={classNames(

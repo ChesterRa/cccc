@@ -71,9 +71,15 @@ def message_send(
     priority: str = "normal",
     reply_required: bool = False,
     refs: Optional[List[Dict[str, Any]]] = None,
+    suggested_user_message: str = "",
 ) -> Dict[str, Any]:
     """Send a message to the group (or cross-group)."""
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
+    suggestion = _normalize_runtime_escaped_text(
+        group_id=group_id,
+        actor_id=actor_id,
+        text=str(suggested_user_message or ""),
+    ).strip()
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
@@ -81,6 +87,11 @@ def message_send(
 
     dst_gid = str(dst_group_id or "").strip()
     if dst_gid and dst_gid != str(group_id or "").strip():
+        if suggestion:
+            raise MCPError(
+                code="suggested_user_message_not_supported",
+                message="suggested_user_message is only supported for messages in the current group",
+            )
         return _call_daemon_or_raise(
             {
                 "op": "send_cross_group",
@@ -109,6 +120,7 @@ def message_send(
                 "priority": prio,
                 "reply_required": reply_required_flag,
                 "refs": refs if refs is not None else [],
+                "suggested_user_message": suggestion,
             },
         }
     )
@@ -176,6 +188,7 @@ def message_reply(
     priority: str = "normal",
     reply_required: bool = False,
     refs: Optional[List[Dict[str, Any]]] = None,
+    suggested_user_message: str = "",
 ) -> Dict[str, Any]:
     """Reply to a message."""
     if not str(reply_to or "").strip():
@@ -185,6 +198,11 @@ def message_reply(
             recommended_action="Use the event_id/reply_to from the message or delivered turn envelope; if unsure, inspect cccc_inbox_list or the current turn events.",
         )
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
+    suggestion = _normalize_runtime_escaped_text(
+        group_id=group_id,
+        actor_id=actor_id,
+        text=str(suggested_user_message or ""),
+    ).strip()
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
@@ -201,6 +219,7 @@ def message_reply(
                 "priority": prio,
                 "reply_required": reply_required_flag,
                 "refs": refs if refs is not None else [],
+                "suggested_user_message": suggestion,
             },
         }
     )

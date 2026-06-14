@@ -151,6 +151,7 @@ export type ChatMessageData = {
   pending_event_id?: string;
   pending_placeholder?: boolean;
   client_id?: string;
+  suggested_user_message?: string;
   quote_text?: string;
   src_group_id?: string;
   src_event_id?: string;

@@ -38,7 +38,14 @@ from .group_space import (
     SpaceQueueSummary,
 )
 from .ipc import DaemonError, DaemonRequest, DaemonResponse
-from .message import Attachment, ChatMessageData, ChatReactionData, ChatStreamData, Reference
+from .message import (
+    Attachment,
+    ChatMessageData,
+    ChatReactionData,
+    ChatStreamData,
+    Reference,
+    SUGGESTED_USER_MESSAGE_MAX_CHARS,
+)
 from .notify import NotifyAckData, NotifyKind, NotifyPriority, SystemNotifyData
 from .presentation import (
     PresentationCard,
@@ -83,6 +90,7 @@ __all__ = [
     "DEFAULT_ASYNC_COMPLETION_SIGNAL",
     "Event",
     "SpaceBinding",
+    "SUGGESTED_USER_MESSAGE_MAX_CHARS",
     "SpaceBindingStatus",
     "SpaceLane",
     "SpaceCredentialSource",

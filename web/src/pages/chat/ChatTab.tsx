@@ -168,6 +168,7 @@ export function ChatTab({
   const {
     // Chat state
     chatMessages,
+    suggestionSourceMessages,
     liveWorkEvents,
     hasAnyChatMessages,
     chatFilter,
@@ -945,6 +946,7 @@ export function ChatTab({
             destGroupScopeLabel={destGroupScopeLabel}
             busy={busy}
             recentMessages={chatMessages}
+            suggestionSourceMessages={suggestionSourceMessages}
             replyTarget={replyTarget}
             onCancelReply={cancelReply}
             quotedPresentationRef={quotedPresentationRef}
