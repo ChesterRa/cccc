@@ -33,6 +33,21 @@ class SlackAdapter(IMAdapter):
     """
 
     platform = "slack"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "yes",
+        "files_out": "yes",
+        "threads": "no",
+        "reactions": "no",
+        "typing": "no",
+        "streaming": "no",
+        "voice_in": "no",
+        "markdown": "partial",
+    }
+    capability_notes = {
+        "threads": "thread_ts is not wired through the adapter yet",
+    }
 
     def __init__(
         self,
@@ -158,7 +173,7 @@ class SlackAdapter(IMAdapter):
             channel = event.get("channel", "")
             channel_type = str(event.get("channel_type") or "").strip().lower()
 
-            if not text or not channel:
+            if not channel:
                 return
 
             attachments: List[Dict[str, Any]] = []
@@ -191,6 +206,8 @@ class SlackAdapter(IMAdapter):
 
             # In non-private channels, require an explicit bot mention to route messages.
             if chat_type != "private" and not mentioned:
+                return
+            if not text and not attachments:
                 return
 
             # Strip self-mention from beginning (keeps in-text mentions intact)

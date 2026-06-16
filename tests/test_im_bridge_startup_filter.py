@@ -157,6 +157,63 @@ class TestImBridgeStartupFilter(unittest.TestCase):
             bridge._process_inbound()
             self.assertEqual(processed, ["no-ts"])
 
+    def test_attachment_only_routed_message_reaches_handler(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            group = self._make_group(Path(td))
+            adapter = _FakeAdapter(
+                [
+                    {
+                        "chat_id": "c1",
+                        "chat_title": "t",
+                        "chat_type": "private",
+                        "routed": True,
+                        "thread_id": 0,
+                        "text": "",
+                        "attachments": [
+                            {
+                                "provider": "test",
+                                "kind": "file",
+                                "file_name": "report.pdf",
+                                "mime_type": "application/pdf",
+                            }
+                        ],
+                        "from_user": "u",
+                        "message_id": "m_file",
+                    }
+                ]
+            )
+            bridge = IMBridge(group=group, adapter=adapter)
+            self.assertTrue(bridge.start())
+            bridge.key_manager.is_authorized = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
+
+            processed: List[Dict[str, Any]] = []
+
+            def _capture(
+                chat_id: str,
+                parsed: ParsedCommand,
+                from_user: str,
+                *,
+                attachments: List[Dict[str, Any]],
+                mention_user_ids: List[str] | None = None,
+                thread_id: int = 0,
+                message_id: str = "",
+                from_user_id: str = "",
+            ) -> None:
+                _ = chat_id
+                _ = from_user
+                _ = mention_user_ids
+                _ = thread_id
+                _ = message_id
+                _ = from_user_id
+                processed.append({"text": parsed.text, "attachments": attachments})
+
+            bridge._handle_message = _capture  # type: ignore[method-assign]
+            bridge._process_inbound()
+
+            self.assertEqual(len(processed), 1)
+            self.assertEqual(processed[0]["text"], "")
+            self.assertEqual(processed[0]["attachments"][0]["file_name"], "report.pdf")
+
     def test_millisecond_timestamp_is_supported(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             group = self._make_group(Path(td))

@@ -206,6 +206,154 @@ class TestMemoryRemeOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_memory_search_cjk_query_without_spaces_matches_memory(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("sdk-memory-cjk")
+
+            write_resp, _ = self._call(
+                "memory_write",
+                {
+                    "group_id": gid,
+                    "actor_id": "memory-worker",
+                    "target": "daily",
+                    "content": "偏好：回答应保持简洁，并使用中文。",
+                    "tags": ["reply-style"],
+                    "source_refs": ["message:cjk"],
+                    "idempotency_key": "sdk-memory-cjk-reply-style",
+                },
+            )
+            self.assertTrue(write_resp.ok, getattr(write_resp, "error", None))
+
+            search_resp, _ = self._call(
+                "memory_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "memory-worker",
+                    "query": "中文简洁回复",
+                    "limit": 5,
+                    "target": "daily",
+                    "tags": ["reply-style"],
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            payload = search_resp.result if isinstance(search_resp.result, dict) else {}
+            hits = payload.get("hits") if isinstance(payload.get("hits"), list) else []
+            self.assertGreaterEqual(len(hits), 1)
+            first = hits[0] if isinstance(hits[0], dict) else {}
+            self.assertIn("reply-style", first.get("tags") or [])
+            self.assertIn("message:cjk", first.get("sourceRefs") or [])
+        finally:
+            cleanup()
+
+    def test_local_keyword_search_respects_latin_token_boundaries(self) -> None:
+        import asyncio
+
+        from cccc.vendor.reme.core.enumeration import MemorySource
+        from cccc.vendor.reme.core.file_store import LocalFileStore
+        from cccc.vendor.reme.core.schema import FileMetadata, MemoryChunk
+        from cccc.vendor.reme.core.utils.common_utils import hash_text
+
+        async def _scenario(db_path: Path):
+            store = LocalFileStore(
+                store_name="token_boundary",
+                db_path=db_path,
+                vector_enabled=False,
+                fts_enabled=True,
+            )
+            await store.start()
+            chunks = [
+                MemoryChunk(
+                    id="capillary",
+                    path="/tmp/memory.md",
+                    source=MemorySource.MEMORY,
+                    start_line=1,
+                    end_line=1,
+                    text="Capillary calibration notes only.",
+                    hash=hash_text("capillary"),
+                ),
+                MemoryChunk(
+                    id="api",
+                    path="/tmp/memory.md",
+                    source=MemorySource.MEMORY,
+                    start_line=2,
+                    end_line=2,
+                    text="Public API contract remains stable.",
+                    hash=hash_text("api"),
+                ),
+            ]
+            await store.upsert_file(
+                FileMetadata(
+                    hash=hash_text("token-boundary"),
+                    mtime_ms=1,
+                    size=1,
+                    path="/tmp/memory.md",
+                    chunk_count=len(chunks),
+                ),
+                MemorySource.MEMORY,
+                chunks,
+            )
+            hits = await store.keyword_search("api", 5, [MemorySource.MEMORY])
+            await store.close()
+            return hits
+
+        with tempfile.TemporaryDirectory() as td:
+            hits = asyncio.run(_scenario(Path(td)))
+
+        self.assertEqual(len(hits), 1)
+        self.assertIn("Public API contract", hits[0].snippet)
+
+    def test_local_keyword_search_keeps_low_coverage_match_below_tight_threshold(self) -> None:
+        import asyncio
+
+        from cccc.vendor.reme.core.enumeration import MemorySource
+        from cccc.vendor.reme.core.file_store import LocalFileStore
+        from cccc.vendor.reme.core.schema import FileMetadata, MemoryChunk
+        from cccc.vendor.reme.core.utils.common_utils import hash_text
+
+        async def _scenario(db_path: Path):
+            store = LocalFileStore(
+                store_name="keyword_low_coverage",
+                db_path=db_path,
+                vector_enabled=False,
+                fts_enabled=True,
+            )
+            await store.start()
+            await store.upsert_file(
+                FileMetadata(
+                    hash=hash_text("keyword-low-coverage"),
+                    mtime_ms=1,
+                    size=1,
+                    path="/tmp/memory.md",
+                    chunk_count=1,
+                ),
+                MemorySource.MEMORY,
+                [
+                    MemoryChunk(
+                        id="project-only",
+                        path="/tmp/memory.md",
+                        source=MemorySource.MEMORY,
+                        start_line=1,
+                        end_line=1,
+                        text="Project status note without the requested detail.",
+                        hash=hash_text("project-only"),
+                    )
+                ],
+            )
+            hits = await store.keyword_search(
+                "project alpha beta gamma delta epsilon",
+                5,
+                [MemorySource.MEMORY],
+            )
+            await store.close()
+            return hits
+
+        with tempfile.TemporaryDirectory() as td:
+            hits = asyncio.run(_scenario(Path(td)))
+
+        self.assertEqual(len(hits), 1)
+        self.assertLess(hits[0].score, 0.6)
+
     def test_memory_search_daily_filter_accepts_windows_paths(self) -> None:
         from cccc.contracts.v1 import DaemonResponse
         from cccc.daemon.memory.memory_sdk_ops import handle_memory_search

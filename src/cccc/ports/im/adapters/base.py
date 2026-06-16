@@ -9,6 +9,34 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 
+DEFAULT_IM_CAPABILITIES: Dict[str, str] = {
+    "text_in": "no",
+    "text_out": "no",
+    "files_in": "no",
+    "files_out": "no",
+    "threads": "no",
+    "reactions": "no",
+    "typing": "no",
+    "streaming": "no",
+    "voice_in": "no",
+    "markdown": "no",
+}
+
+_CAPABILITY_STATES = frozenset({"yes", "partial", "no"})
+
+
+def normalize_im_capabilities(capabilities: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Return a stable capability map for IM status/diagnostics."""
+    merged = dict(DEFAULT_IM_CAPABILITIES)
+    if isinstance(capabilities, dict):
+        for key, value in capabilities.items():
+            if key not in merged:
+                continue
+            normalized = str(value or "").strip().lower()
+            merged[key] = normalized if normalized in _CAPABILITY_STATES else "no"
+    return merged
+
+
 class OutboundStreamHandle(TypedDict):
     """Handle returned by begin_stream for subsequent updates."""
 
@@ -28,6 +56,16 @@ class IMAdapter(ABC):
     """
 
     platform: str = "unknown"
+    capabilities: Dict[str, str] = {}
+    capability_notes: Dict[str, str] = {}
+
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Expose adapter capabilities for user-facing diagnostics."""
+        return {
+            "platform": str(getattr(self, "platform", "") or "unknown"),
+            "features": normalize_im_capabilities(getattr(self, "capabilities", {})),
+            "notes": dict(getattr(self, "capability_notes", {}) or {}),
+        }
 
     def _log(self, msg: str) -> None:
         """Log a message. Subclasses should override with actual logging."""

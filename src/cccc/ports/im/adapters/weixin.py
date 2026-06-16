@@ -29,6 +29,22 @@ class WeixinAdapter(IMAdapter):
     """Personal WeChat adapter backed by ``wechatbot-sdk``."""
 
     platform = "weixin"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "partial",
+        "files_out": "partial",
+        "threads": "no",
+        "reactions": "no",
+        "typing": "no",
+        "streaming": "no",
+        "voice_in": "partial",
+        "markdown": "partial",
+    }
+    capability_notes = {
+        "voice_in": "voice media is preserved as an attachment when the SDK exposes it",
+        "files_out": "image/file sending depends on the local Weixin bridge backend",
+    }
 
     def __init__(
         self,
