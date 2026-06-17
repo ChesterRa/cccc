@@ -229,6 +229,88 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_model_update_failure_preserves_ready_current_model(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import voice_models
+            from cccc.daemon.assistants.voice_models import VoiceModelError
+
+            self._write_voice_model_manifest(home)
+            installed = voice_models.install_voice_model("mock_asr")
+            self.assertEqual(str(installed.get("status") or ""), "ready")
+            install_dir = Path(str(installed.get("install_dir") or ""))
+            self.assertTrue(install_dir.joinpath("adapter.py").exists())
+
+            with patch(
+                "cccc.daemon.assistants.voice_models._download_artifact",
+                side_effect=VoiceModelError("voice_model_download_failed", "boom"),
+            ):
+                with self.assertRaises(VoiceModelError):
+                    voice_models.install_voice_model("mock_asr")
+
+            status = voice_models.get_voice_model_status("mock_asr")
+            self.assertEqual(str(status.get("status") or ""), "ready")
+            self.assertTrue(install_dir.joinpath("adapter.py").exists())
+            self.assertEqual((status.get("last_update_error") or {}).get("code"), "voice_model_download_failed")
+        finally:
+            cleanup()
+
+    def test_voice_model_manifest_change_reports_update_available(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import voice_models
+
+            manifest_path = self._write_voice_model_manifest(home)
+            installed = voice_models.install_voice_model("mock_asr")
+            self.assertEqual(str(installed.get("status") or ""), "ready")
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            entry = manifest["voice_secretary_asr_models"][0]
+            entry["artifacts"][0]["sha256"] = "0" * 64
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            status = voice_models.get_voice_model_status("mock_asr")
+            self.assertEqual(str(status.get("status") or ""), "ready")
+            self.assertTrue(status.get("update_available"))
+            self.assertTrue(str(status.get("installed_manifest_sha256") or ""))
+            self.assertNotEqual(status.get("installed_manifest_sha256"), status.get("manifest_sha256"))
+        finally:
+            cleanup()
+
+    def test_voice_model_changed_manifest_update_failure_preserves_ready_model(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import voice_models
+            from cccc.daemon.assistants.voice_models import VoiceModelError
+
+            manifest_path = self._write_voice_model_manifest(home)
+            installed = voice_models.install_voice_model("mock_asr")
+            self.assertEqual(str(installed.get("status") or ""), "ready")
+            install_dir = Path(str(installed.get("install_dir") or ""))
+            installed_manifest_sha256 = str(installed.get("installed_manifest_sha256") or "")
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            entry = manifest["voice_secretary_asr_models"][0]
+            entry["artifacts"][0]["sha256"] = "0" * 64
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with patch(
+                "cccc.daemon.assistants.voice_models._download_artifact",
+                side_effect=VoiceModelError("voice_model_download_failed", "boom"),
+            ):
+                with self.assertRaises(VoiceModelError):
+                    voice_models.install_voice_model("mock_asr")
+
+            status = voice_models.get_voice_model_status("mock_asr")
+            self.assertEqual(str(status.get("status") or ""), "ready")
+            self.assertTrue(status.get("update_available"))
+            self.assertTrue(install_dir.joinpath("adapter.py").exists())
+            self.assertEqual(str(status.get("installed_manifest_sha256") or ""), installed_manifest_sha256)
+            self.assertNotEqual(status.get("installed_manifest_sha256"), status.get("manifest_sha256"))
+            self.assertEqual((status.get("last_update_error") or {}).get("code"), "voice_model_download_failed")
+        finally:
+            cleanup()
+
     def test_voice_model_manifest_rejects_unsafe_install_paths(self) -> None:
         from cccc.daemon.assistants.voice_models import VoiceModelError, load_voice_model_catalog
 
@@ -1557,6 +1639,7 @@ class TestAssistantOps(unittest.TestCase):
             from cccc.daemon.assistants import voice_runtime_deps
 
             runtime_id = "sherpa_onnx_streaming"
+            voice_runtime_deps._STATUS_CACHE.clear()
             python_path = Path(home) / "cache" / "voice-runtimes" / runtime_id / ".venv" / "bin" / "python"
             python_path.parent.mkdir(parents=True, exist_ok=True)
             python_path.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -1577,10 +1660,16 @@ class TestAssistantOps(unittest.TestCase):
                     "missing_modules": ["sherpa_onnx", "numpy"],
                 },
             )
+            commands = []
+
+            def fake_run(command, **kwargs):
+                commands.append(list(command))
+                return type("Proc", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
             with patch.object(voice_runtime_deps, "_ensure_venv", return_value=python_path), patch.object(
                 voice_runtime_deps.subprocess,
                 "run",
-                return_value=type("Proc", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+                side_effect=fake_run,
             ), patch.object(
                 voice_runtime_deps,
                 "_module_status",
@@ -1590,6 +1679,43 @@ class TestAssistantOps(unittest.TestCase):
 
             self.assertEqual(str(installed.get("status") or ""), "ready")
             self.assertEqual(installed.get("missing_modules"), [])
+            self.assertTrue(
+                any(command[-4:] == ["install", "-U", "sherpa-onnx", "numpy"] for command in commands),
+                commands,
+            )
+        finally:
+            cleanup()
+
+    def test_voice_runtime_status_reports_latest_official_update(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import voice_runtime_deps
+
+            runtime_id = "sherpa_onnx_streaming"
+            voice_runtime_deps._STATUS_CACHE.clear()
+            python_path = Path(home) / "cache" / "voice-runtimes" / runtime_id / ".venv" / "bin" / "python"
+            python_path.parent.mkdir(parents=True, exist_ok=True)
+            python_path.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            with patch.object(
+                voice_runtime_deps,
+                "_module_status",
+                return_value={"sherpa_onnx": True, "numpy": True},
+            ), patch.object(
+                voice_runtime_deps,
+                "_package_versions",
+                return_value={"sherpa-onnx": "1.13.2", "numpy": "2.4.6"},
+            ), patch.object(
+                voice_runtime_deps,
+                "_fetch_pypi_latest_version",
+                return_value="1.13.3",
+            ):
+                status = voice_runtime_deps.get_voice_runtime_status(runtime_id)
+
+            self.assertEqual(str(status.get("installed_version") or ""), "1.13.2")
+            self.assertEqual(str(status.get("latest_version") or ""), "1.13.3")
+            self.assertTrue(status.get("update_available"))
+            self.assertEqual((status.get("package_versions") or {}).get("sherpa-onnx"), "1.13.2")
         finally:
             cleanup()
 

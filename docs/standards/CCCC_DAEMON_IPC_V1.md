@@ -1400,8 +1400,20 @@ Result:
   active_document_id?: string                    // daemon sidecar/internal compatibility only
   capture_target_document_id?: string            // daemon sidecar/internal compatibility only
   new_input_available?: boolean
+  service_runtime?: Record<string, unknown>
+  service_runtimes_by_id?: Record<string, unknown>
+  service_models?: Array<Record<string, unknown>>
+  service_models_by_id?: Record<string, unknown>
 }
 ```
+
+Voice service runtime records may include `primary_package`, `package_versions`,
+`installed_version`, `latest_version`, `latest_checked_at`,
+`latest_check_error`, and `update_available` so local ASR settings can show the
+installed sherpa-onnx version and whether a newer official PyPI release is
+available. Voice model records may include `installed_manifest_sha256`,
+`update_available`, `last_update_error`, and artifact source fields (`url`,
+`sha256`, `archive`) so model updates remain explicit and inspectable.
 
 #### `assistant_settings_update`
 
@@ -1491,7 +1503,8 @@ Download and verify a daemon-managed local Voice Secretary ASR model into
 CCCC-owned cache storage. Built-in releases include a default model manifest;
 tests and local development may add a local overlay at
 `CCCC_HOME/config/voice-models.json`. Each artifact entry must include a fixed
-URL and `sha256`.
+URL and `sha256`. Reinstalling/updating a model downloads into staging storage
+and replaces the active model only after all artifacts verify successfully.
 
 Args:
 ```ts
@@ -1514,6 +1527,8 @@ Result:
     installed_at?: string
     updated_at?: string
     error?: Record<string, unknown>
+    update_available?: boolean
+    installed_manifest_sha256?: string
   }
 }
 ```

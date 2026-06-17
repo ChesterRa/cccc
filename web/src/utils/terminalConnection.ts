@@ -1,3 +1,5 @@
+/* eslint-disable no-control-regex */
+
 export function buildTerminalConnectionKey(args: {
   activated: boolean;
   isRunning: boolean;
@@ -47,6 +49,8 @@ export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
 
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
+const terminalResponseSuppressionRuntimes = new Set(["codex", "droid", "gemini", "neovate"]);
+const terminalGeneratedInputSequencePattern = /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
 
 export type TerminalBinaryFrame =
   | { type: "input"; payload: Uint8Array }
@@ -72,6 +76,14 @@ export function encodeTerminalResizeFrame(cols: number, rows: number): Uint8Arra
     TERMINAL_FRAME_RESIZE,
     terminalTextEncoder.encode(JSON.stringify({ cols: Math.max(0, Math.floor(cols)), rows: Math.max(0, Math.floor(rows)) })),
   );
+}
+
+export function shouldSuppressTerminalGeneratedInput(data: string, runtime: string | null | undefined): boolean {
+  const normalizedRuntime = String(runtime || "").trim().toLowerCase();
+  if (!terminalResponseSuppressionRuntimes.has(normalizedRuntime)) return false;
+  const text = String(data || "");
+  if (!text) return false;
+  return terminalGeneratedInputSequencePattern.test(text);
 }
 
 export function decodeTerminalJsonFrame<T = Record<string, unknown>>(payload: Uint8Array): T | null {

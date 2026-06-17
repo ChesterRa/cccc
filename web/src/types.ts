@@ -758,7 +758,10 @@ export type AssistantServiceModel = {
   artifact_index?: number;
   artifact_count?: number;
   error?: Record<string, unknown>;
-  artifacts?: Array<{ path?: string; size_bytes?: number }>;
+  last_update_error?: Record<string, unknown>;
+  installed_manifest_sha256?: string;
+  update_available?: boolean;
+  artifacts?: Array<{ path?: string; url?: string; sha256?: string; size_bytes?: number; archive?: string }>;
 };
 
 export type AssistantServiceRuntime = {
@@ -769,6 +772,14 @@ export type AssistantServiceRuntime = {
   install_dir?: string;
   python?: string;
   packages?: string[];
+  primary_package?: string;
+  package_versions?: Record<string, string>;
+  installed_version?: string;
+  latest_version?: string;
+  latest_versions?: Record<string, string>;
+  latest_checked_at?: string;
+  latest_check_error?: Record<string, unknown>;
+  update_available?: boolean;
   modules?: Record<string, boolean>;
   missing_modules?: string[];
   installed_at?: string;

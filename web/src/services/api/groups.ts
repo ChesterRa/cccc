@@ -192,7 +192,10 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
           if (!artifact) return null;
           return {
             path: asOptionalString(artifact.path) || undefined,
+            url: asOptionalString(artifact.url) || undefined,
+            sha256: asOptionalString(artifact.sha256) || undefined,
             size_bytes: Number.isFinite(Number(artifact.size_bytes)) ? Number(artifact.size_bytes) : undefined,
+            archive: asOptionalString(artifact.archive) || undefined,
           };
         })
         .filter((item) => item !== null)
@@ -225,6 +228,9 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     artifact_index: Number.isFinite(Number(record.artifact_index)) ? Number(record.artifact_index) : undefined,
     artifact_count: Number.isFinite(Number(record.artifact_count)) ? Number(record.artifact_count) : undefined,
     error: asRecord(record.error) ?? undefined,
+    last_update_error: asRecord(record.last_update_error) ?? undefined,
+    installed_manifest_sha256: asOptionalString(record.installed_manifest_sha256) || undefined,
+    update_available: typeof record.update_available === "boolean" ? record.update_available : undefined,
     artifacts,
   };
 }
@@ -239,6 +245,22 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
   if (rawModules) {
     for (const [key, value] of Object.entries(rawModules)) modules[key] = Boolean(value);
   }
+  const rawPackageVersions = asRecord(record.package_versions);
+  const packageVersions: Record<string, string> = {};
+  if (rawPackageVersions) {
+    for (const [key, value] of Object.entries(rawPackageVersions)) {
+      const version = asString(value).trim();
+      if (key && version) packageVersions[key] = version;
+    }
+  }
+  const rawLatestVersions = asRecord(record.latest_versions);
+  const latestVersions: Record<string, string> = {};
+  if (rawLatestVersions) {
+    for (const [key, value] of Object.entries(rawLatestVersions)) {
+      const version = asString(value).trim();
+      if (key && version) latestVersions[key] = version;
+    }
+  }
   return {
     runtime_id: runtimeId,
     status: asOptionalString(record.status) || undefined,
@@ -247,6 +269,14 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     install_dir: asOptionalString(record.install_dir) || undefined,
     python: asOptionalString(record.python) || undefined,
     packages: Array.isArray(record.packages) ? record.packages.map((item) => String(item || "")).filter(Boolean) : undefined,
+    primary_package: asOptionalString(record.primary_package) || undefined,
+    package_versions: Object.keys(packageVersions).length > 0 ? packageVersions : undefined,
+    installed_version: asOptionalString(record.installed_version) || undefined,
+    latest_version: asOptionalString(record.latest_version) || undefined,
+    latest_versions: Object.keys(latestVersions).length > 0 ? latestVersions : undefined,
+    latest_checked_at: asOptionalString(record.latest_checked_at) || undefined,
+    latest_check_error: asRecord(record.latest_check_error) ?? undefined,
+    update_available: typeof record.update_available === "boolean" ? record.update_available : undefined,
     modules: Object.keys(modules).length > 0 ? modules : undefined,
     missing_modules: asStringArray(record.missing_modules),
     installed_at: asOptionalString(record.installed_at) || undefined,

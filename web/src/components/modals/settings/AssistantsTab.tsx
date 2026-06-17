@@ -94,6 +94,15 @@ function formatModelSize(bytes: number | undefined): string {
   return `${Math.round(value)} B`;
 }
 
+function firstArtifact(model: AssistantServiceModel | null | undefined) {
+  return model?.artifacts && model.artifacts.length > 0 ? model.artifacts[0] : null;
+}
+
+function shortHash(value: string | undefined): string {
+  const raw = String(value || "").trim();
+  return raw.length > 16 ? `${raw.slice(0, 12)}...${raw.slice(-6)}` : raw;
+}
+
 function serviceModelStatusLabel(
   status: string,
   model: AssistantServiceModel | null | undefined,
@@ -664,33 +673,46 @@ export function AssistantsTab({
   const streamingRuntimeStatus = String(streamingRuntime?.status || "not_installed").trim() || "not_installed";
   const streamingRuntimeInstalling = streamingRuntimeStatus === "installing";
   const streamingRuntimeReady = streamingRuntimeStatus === "ready";
+  const streamingRuntimeUpdateAvailable = Boolean(streamingRuntime?.update_available);
+  const streamingRuntimeInstalledVersion = String(streamingRuntime?.installed_version || "").trim();
+  const streamingRuntimeLatestVersion = String(streamingRuntime?.latest_version || "").trim();
+  const streamingRuntimeLatestError = String(streamingRuntime?.latest_check_error?.message || "").trim();
   const finalServiceAsrModelId = String(finalServiceAsrModel?.model_id || "").trim();
   const finalServiceAsrModelStatus = String(finalServiceAsrModel?.status || "not_installed").trim() || "not_installed";
   const finalServiceAsrModelInstalling = finalServiceAsrModelStatus === "downloading" || finalServiceAsrModelStatus === "installing";
   const finalServiceAsrModelReady = finalServiceAsrModelStatus === "ready";
+  const finalServiceAsrModelUpdateAvailable = Boolean(finalServiceAsrModel?.update_available);
   const finalServiceAsrModelSize = formatModelSize(finalServiceAsrModel?.total_size_bytes);
+  const finalServiceAsrArtifact = firstArtifact(finalServiceAsrModel);
   const liveServiceAsrModelId = String(liveServiceAsrModel?.model_id || "").trim();
   const liveServiceAsrModelStatus = String(liveServiceAsrModel?.status || "not_installed").trim() || "not_installed";
   const liveServiceAsrModelInstalling = liveServiceAsrModelStatus === "downloading" || liveServiceAsrModelStatus === "installing";
   const liveServiceAsrModelReady = liveServiceAsrModelStatus === "ready";
+  const liveServiceAsrModelUpdateAvailable = Boolean(liveServiceAsrModel?.update_available);
   const liveServiceAsrModelSize = formatModelSize(liveServiceAsrModel?.total_size_bytes);
+  const liveServiceAsrArtifact = firstArtifact(liveServiceAsrModel);
   const diarizationModel = serviceModelsById[DIARIZATION_MODEL_ID];
   const diarizationModelStatus = String(diarizationModel?.status || "not_installed").trim() || "not_installed";
   const diarizationModelInstalling = diarizationModelStatus === "downloading" || diarizationModelStatus === "installing";
   const diarizationModelReady = diarizationModelStatus === "ready";
+  const diarizationModelUpdateAvailable = Boolean(diarizationModel?.update_available);
   const diarizationModelSize = formatModelSize(diarizationModel?.total_size_bytes);
   const diarizationModelDiskSize = formatModelSize(diarizationModel?.disk_usage_bytes);
+  const diarizationModelArtifact = firstArtifact(diarizationModel);
   const localAsrInstalling = serviceRuntimeInstallBusy || streamingRuntimeInstalling || liveServiceAsrModelInstalling || finalServiceAsrModelInstalling;
   const localAsrReady = streamingRuntimeReady && liveServiceAsrModelReady && finalServiceAsrModelReady;
   const localAsrFailed = streamingRuntimeStatus === "failed" || liveServiceAsrModelStatus === "failed" || finalServiceAsrModelStatus === "failed";
-  const localAsrStatusTone: "on" | "off" | "info" = localAsrReady ? "on" : localAsrFailed ? "off" : "info";
+  const localAsrUpdateAvailable = streamingRuntimeUpdateAvailable || liveServiceAsrModelUpdateAvailable || finalServiceAsrModelUpdateAvailable;
+  const localAsrStatusTone: "on" | "off" | "info" = localAsrReady && !localAsrUpdateAvailable ? "on" : localAsrFailed ? "off" : "info";
   const localAsrStatusLabel = localAsrInstalling
     ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
-    : localAsrReady
-      ? t("assistants.localAsrReady", { defaultValue: "Ready" })
-      : localAsrFailed
-        ? t("assistants.localAsrFailed", { defaultValue: "Needs repair" })
-        : t("assistants.localAsrSetupNeeded", { defaultValue: "Setup needed" });
+    : localAsrUpdateAvailable
+      ? t("assistants.localAsrUpdateAvailable", { defaultValue: "Update available" })
+      : localAsrReady
+        ? t("assistants.localAsrReady", { defaultValue: "Ready" })
+        : localAsrFailed
+          ? t("assistants.localAsrFailed", { defaultValue: "Needs repair" })
+          : t("assistants.localAsrSetupNeeded", { defaultValue: "Setup needed" });
   const localAsrDiskUsage = formatModelSize(
     Number(streamingRuntime?.disk_usage_bytes || 0)
     + Number(liveServiceAsrModel?.disk_usage_bytes || 0)
@@ -754,7 +776,8 @@ export function AssistantsTab({
       const saved = await saveVoiceSettings({ backend: "assistant_service_local_asr" });
       if (!isCurrentGroup(gid)) return;
       if (!saved) return;
-      if (!streamingRuntimeReady) {
+      const updating = localAsrUpdateAvailable;
+      if (!streamingRuntimeReady || streamingRuntimeUpdateAvailable) {
         const runtimeResp = await api.installVoiceAssistantRuntime(gid, {
           runtimeId: STREAMING_ASR_RUNTIME_ID,
           by: "user",
@@ -766,15 +789,17 @@ export function AssistantsTab({
           return;
         }
       }
-      if (!liveServiceAsrModelReady && liveServiceAsrModelId) {
+      if ((!liveServiceAsrModelReady || liveServiceAsrModelUpdateAvailable) && liveServiceAsrModelId) {
         const installed = await installLocalAsrModel(liveServiceAsrModelId);
         if (!installed) return;
       }
-      if (!finalServiceAsrModelReady && finalServiceAsrModelId) {
+      if ((!finalServiceAsrModelReady || finalServiceAsrModelUpdateAvailable) && finalServiceAsrModelId) {
         const installed = await installLocalAsrModel(finalServiceAsrModelId);
         if (!installed) return;
       }
-      setNotice(t("assistants.localAsrInstallStarted", { defaultValue: "Local ASR setup started." }));
+      setNotice(updating
+        ? t("assistants.localAsrUpdateStarted", { defaultValue: "Local ASR update started." })
+        : t("assistants.localAsrInstallStarted", { defaultValue: "Local ASR setup started." }));
       await loadAssistants({ quiet: true });
     } catch {
       if (!isCurrentGroup(gid)) return;
@@ -804,7 +829,9 @@ export function AssistantsTab({
         setError(resp.error?.message || t("assistants.diarizationModelInstallFailed", { defaultValue: "Failed to install speaker diarization model." }));
         return;
       }
-      setNotice(t("assistants.diarizationModelInstallStarted", { defaultValue: "Speaker diarization model download started." }));
+      setNotice(diarizationModelUpdateAvailable
+        ? t("assistants.diarizationModelUpdateStarted", { defaultValue: "Speaker-label model update started." })
+        : t("assistants.diarizationModelInstallStarted", { defaultValue: "Speaker diarization model download started." }));
       await loadAssistants({ quiet: true });
     } catch {
       if (!isCurrentGroup(gid)) return;
@@ -1107,17 +1134,19 @@ export function AssistantsTab({
                           </div>
                           <button
                             type="button"
-                            onClick={() => void (localAsrFailed ? reinstallLocalAsrBundle() : installLocalAsrBundle())}
-                            disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr || localAsrReady}
-                            className={localAsrReady ? secondaryButtonClass("sm") : primaryButtonClass(false)}
+                            onClick={() => void installLocalAsrBundle()}
+                            disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr || (localAsrReady && !localAsrUpdateAvailable)}
+                            className={localAsrReady && !localAsrUpdateAvailable ? secondaryButtonClass("sm") : primaryButtonClass(false)}
                           >
-                            {localAsrReady
-                              ? t("assistants.localAsrInstalled", { defaultValue: "Installed" })
-                              : localAsrFailed
-                                ? t("assistants.localAsrRepair", { defaultValue: "Repair local ASR" })
-                                : localAsrInstalling
-                                  ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
-                                  : t("assistants.localAsrInstall", { defaultValue: "Install local ASR" })}
+                            {localAsrInstalling
+                              ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
+                              : localAsrUpdateAvailable
+                                ? t("assistants.localAsrUpdate", { defaultValue: "Update local ASR" })
+                                : localAsrReady
+                                  ? t("assistants.localAsrUpToDate", { defaultValue: "Up to date" })
+                                  : localAsrFailed
+                                    ? t("assistants.localAsrRepair", { defaultValue: "Repair local ASR" })
+                                    : t("assistants.localAsrInstall", { defaultValue: "Install local ASR" })}
                           </button>
                         </div>
                         <div className="mt-4 grid gap-2 lg:grid-cols-3">
@@ -1129,10 +1158,23 @@ export function AssistantsTab({
                               <StatusPill tone={streamingRuntimeReady ? "on" : streamingRuntimeStatus === "failed" ? "off" : "info"}>
                                 {t("assistants.componentStatusShort", { status: streamingRuntimeStatus, defaultValue: "{{status}}" })}
                               </StatusPill>
+                              {streamingRuntimeUpdateAvailable ? (
+                                <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                              ) : null}
                             </div>
                             <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
                               {t("assistants.localAsrEngineHint", { defaultValue: "sherpa-onnx runtime environment." })}
                             </p>
+                            {streamingRuntimeInstalledVersion || streamingRuntimeLatestVersion ? (
+                              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                                {streamingRuntimeInstalledVersion
+                                  ? t("assistants.localAsrEngineInstalledVersion", { version: streamingRuntimeInstalledVersion, defaultValue: "Installed {{version}}" })
+                                  : t("assistants.localAsrEngineVersionUnknown", { defaultValue: "Installed version unknown" })}
+                                {streamingRuntimeLatestVersion
+                                  ? ` · ${t("assistants.localAsrEngineLatestVersion", { version: streamingRuntimeLatestVersion, defaultValue: "Latest official {{version}}" })}`
+                                  : ""}
+                              </p>
+                            ) : null}
                           </div>
                           <div className={localVoiceModelCardClass()}>
                             <div className="flex flex-wrap items-center gap-2">
@@ -1142,6 +1184,9 @@ export function AssistantsTab({
                               <StatusPill tone={liveServiceAsrModelReady ? "on" : liveServiceAsrModelStatus === "failed" ? "off" : "info"}>
                                 {serviceModelStatusLabel(liveServiceAsrModelStatus, liveServiceAsrModel, t)}
                               </StatusPill>
+                              {liveServiceAsrModelUpdateAvailable ? (
+                                <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                              ) : null}
                               {liveServiceAsrModelSize ? <StatusPill tone="info">{liveServiceAsrModelSize}</StatusPill> : null}
                             </div>
                             <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -1156,6 +1201,9 @@ export function AssistantsTab({
                               <StatusPill tone={finalServiceAsrModelReady ? "on" : finalServiceAsrModelStatus === "failed" ? "off" : "info"}>
                                 {serviceModelStatusLabel(finalServiceAsrModelStatus, finalServiceAsrModel, t)}
                               </StatusPill>
+                              {finalServiceAsrModelUpdateAvailable ? (
+                                <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                              ) : null}
                               {finalServiceAsrModelSize ? <StatusPill tone="info">{finalServiceAsrModelSize}</StatusPill> : null}
                             </div>
                             <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -1179,6 +1227,9 @@ export function AssistantsTab({
                             <StatusPill tone={diarizationModelReady ? "on" : diarizationModelStatus === "failed" ? "off" : "info"}>
                               {serviceModelStatusLabel(diarizationModelStatus, diarizationModel, t)}
                             </StatusPill>
+                            {diarizationModelUpdateAvailable ? (
+                              <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                            ) : null}
                             <StatusPill tone="info">{t("assistants.optional", { defaultValue: "Optional" })}</StatusPill>
                             {diarizationModelSize ? <StatusPill tone="info">{diarizationModelSize}</StatusPill> : null}
                           </div>
@@ -1194,14 +1245,16 @@ export function AssistantsTab({
                         <button
                           type="button"
                           onClick={() => void installDiarizationModel()}
-                          disabled={busy || voiceSaveBusy || diarizationModelInstalling || diarizationModelReady}
+                          disabled={busy || voiceSaveBusy || diarizationModelInstalling || (diarizationModelReady && !diarizationModelUpdateAvailable)}
                           className={secondaryButtonClass("sm")}
                         >
-                          {diarizationModelReady
-                            ? t("assistants.diarizationModelInstalled", { defaultValue: "Model installed" })
-                            : diarizationModelInstalling
-                              ? t("assistants.diarizationModelInstalling", { defaultValue: "Downloading..." })
-                              : t("assistants.diarizationModelInstall", { defaultValue: "Install speaker model" })}
+                          {diarizationModelInstalling
+                            ? t("assistants.diarizationModelInstalling", { defaultValue: "Downloading..." })
+                            : diarizationModelUpdateAvailable
+                              ? t("assistants.diarizationModelUpdate", { defaultValue: "Update speaker model" })
+                              : diarizationModelReady
+                                ? t("assistants.diarizationModelInstalled", { defaultValue: "Model installed" })
+                                : t("assistants.diarizationModelInstall", { defaultValue: "Install speaker model" })}
                         </button>
                       </div>
 
@@ -1219,18 +1272,54 @@ export function AssistantsTab({
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.speakerLabelsCacheLabel", { defaultValue: "Speaker-label cache" })}: </span>
                               {diarizationModelDiskSize || t("assistants.none", { defaultValue: "none" })}
                             </div>
+                            <div>
+                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrRuntimeVersionLabel", { defaultValue: "Runtime version" })}: </span>
+                              {streamingRuntimeInstalledVersion || "-"}
+                              {streamingRuntimeLatestVersion ? ` / ${streamingRuntimeLatestVersion}` : ""}
+                            </div>
+                            <div>
+                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrLatestCheckedLabel", { defaultValue: "Latest check" })}: </span>
+                              {streamingRuntime?.latest_checked_at || t("assistants.notChecked", { defaultValue: "not checked" })}
+                            </div>
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrRuntimePath", { defaultValue: "Runtime path" })}: </span>
                               {streamingRuntime?.install_dir || "-"}
                             </div>
+                            {streamingRuntimeLatestError ? (
+                              <div className="break-words text-amber-700 dark:text-amber-300 md:col-span-2">
+                                <span className="font-semibold">{t("assistants.localAsrLatestCheckError", { defaultValue: "Latest check failed" })}: </span>
+                                {streamingRuntimeLatestError}
+                              </div>
+                            ) : null}
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.liveAsrModelPath", { defaultValue: "Live model path" })}: </span>
                               {liveServiceAsrModel?.install_dir || "-"}
                             </div>
+                            {liveServiceAsrArtifact?.url ? (
+                              <div className="break-words md:col-span-2">
+                                <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.liveAsrModelSource", { defaultValue: "Live model source" })}: </span>
+                                {liveServiceAsrArtifact.url}
+                                {liveServiceAsrArtifact.sha256 ? ` · sha256 ${shortHash(liveServiceAsrArtifact.sha256)}` : ""}
+                              </div>
+                            ) : null}
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.finalAsrModelPath", { defaultValue: "Final model path" })}: </span>
                               {finalServiceAsrModel?.install_dir || "-"}
                             </div>
+                            {finalServiceAsrArtifact?.url ? (
+                              <div className="break-words md:col-span-2">
+                                <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.finalAsrModelSource", { defaultValue: "Final model source" })}: </span>
+                                {finalServiceAsrArtifact.url}
+                                {finalServiceAsrArtifact.sha256 ? ` · sha256 ${shortHash(finalServiceAsrArtifact.sha256)}` : ""}
+                              </div>
+                            ) : null}
+                            {diarizationModelArtifact?.url ? (
+                              <div className="break-words md:col-span-2">
+                                <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.speakerLabelsModelSource", { defaultValue: "Speaker model source" })}: </span>
+                                {diarizationModelArtifact.url}
+                                {diarizationModelArtifact.sha256 ? ` · sha256 ${shortHash(diarizationModelArtifact.sha256)}` : ""}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button

@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -29,8 +34,12 @@ _SUPPORTED_PYTHON_LABEL = "Python 3.9+"
 _SUPPORTED_PYTHON_COMMANDS = ("python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python")
 _SHERPA_ONNX_STREAMING_PACKAGES = ("sherpa-onnx", "numpy")
 _SHERPA_ONNX_STREAMING_MODULES = ("sherpa_onnx", "numpy")
+_SHERPA_ONNX_PRIMARY_PACKAGE = "sherpa-onnx"
 _STATUS_CACHE_TTL_SECONDS = 30.0
 _DISK_USAGE_CACHE_TTL_SECONDS = 300.0
+_LATEST_VERSION_CACHE_TTL_SECONDS = 24 * 60 * 60
+_FAILED_LATEST_VERSION_CACHE_TTL_SECONDS = 60 * 60
+_LATEST_VERSION_TIMEOUT_SECONDS = 4
 _STATUS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _DISK_USAGE_CACHE: Dict[str, tuple[float, int]] = {}
 
@@ -82,6 +91,12 @@ def _write_state(runtime_id: str, payload: Dict[str, Any]) -> None:
 def _runtime_packages(runtime_id: str) -> tuple[str, ...]:
     if runtime_id == VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING:
         return _SHERPA_ONNX_STREAMING_PACKAGES
+    raise VoiceRuntimeDepsError("voice_runtime_unknown", f"unknown voice runtime: {runtime_id}")
+
+
+def _runtime_primary_package(runtime_id: str) -> str:
+    if runtime_id == VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING:
+        return _SHERPA_ONNX_PRIMARY_PACKAGE
     raise VoiceRuntimeDepsError("voice_runtime_unknown", f"unknown voice runtime: {runtime_id}")
 
 
@@ -241,6 +256,168 @@ def _module_status(python_path: Path, modules: tuple[str, ...]) -> Dict[str, boo
     return {name: bool(payload.get(name)) for name in modules}
 
 
+def _package_versions(python_path: Path, packages: tuple[str, ...]) -> Dict[str, str]:
+    if not python_path.exists():
+        return {name: "" for name in packages}
+    script = (
+        "import importlib.metadata as md, json; "
+        f"pkgs={list(packages)!r}; "
+        "out={}; "
+        "\nfor p in pkgs:\n"
+        "    try:\n"
+        "        out[p] = md.version(p)\n"
+        "    except md.PackageNotFoundError:\n"
+        "        out[p] = ''\n"
+        "print(json.dumps(out))"
+    )
+    try:
+        proc = subprocess.run(
+            [str(python_path), "-c", script],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=30,
+        )
+    except Exception:
+        return {name: "" for name in packages}
+    if proc.returncode != 0:
+        return {name: "" for name in packages}
+    try:
+        payload = json.loads(str(proc.stdout or "{}"))
+    except Exception:
+        payload = {}
+    return {name: str(payload.get(name) or "").strip() for name in packages}
+
+
+def _parse_utc_iso(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_version_cache_stale(checked_at: Any, *, failed: bool = False) -> bool:
+    parsed = _parse_utc_iso(checked_at)
+    if parsed is None:
+        return True
+    age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    ttl = _FAILED_LATEST_VERSION_CACHE_TTL_SECONDS if failed else _LATEST_VERSION_CACHE_TTL_SECONDS
+    return age >= ttl
+
+
+def _fetch_pypi_latest_version(package: str) -> str:
+    normalized = urllib.parse.quote(str(package or "").strip(), safe="")
+    if not normalized:
+        return ""
+    with urllib.request.urlopen(
+        f"https://pypi.org/pypi/{normalized}/json",
+        timeout=_LATEST_VERSION_TIMEOUT_SECONDS,
+    ) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    info = payload.get("info") if isinstance(payload, dict) else {}
+    return str((info or {}).get("version") or "").strip()
+
+
+def _version_parts(value: str) -> list[tuple[int, int | str]]:
+    parts: list[tuple[int, int | str]] = []
+    for token in re.findall(r"\d+|[A-Za-z]+", str(value or "")):
+        if token.isdigit():
+            parts.append((0, int(token)))
+        else:
+            parts.append((1, token.lower()))
+    return parts
+
+
+def _compare_versions(left: str, right: str) -> int:
+    left_parts = _version_parts(left)
+    right_parts = _version_parts(right)
+    max_len = max(len(left_parts), len(right_parts))
+    for index in range(max_len):
+        left_part = left_parts[index] if index < len(left_parts) else (0, 0)
+        right_part = right_parts[index] if index < len(right_parts) else (0, 0)
+        if left_part == right_part:
+            continue
+        return 1 if left_part > right_part else -1
+    return 0
+
+
+def _version_is_newer(latest: str, installed: str) -> bool:
+    latest = str(latest or "").strip()
+    installed = str(installed or "").strip()
+    if not latest or not installed or latest == installed:
+        return False
+    return _compare_versions(latest, installed) > 0
+
+
+def _cached_latest_versions(runtime_id: str, state: Dict[str, Any], package_versions: Dict[str, str]) -> Dict[str, Any]:
+    primary_package = _runtime_primary_package(runtime_id)
+    latest_versions = state.get("latest_versions") if isinstance(state.get("latest_versions"), dict) else {}
+    latest_versions = {str(key): str(value or "").strip() for key, value in latest_versions.items()}
+    checked_at = str(state.get("latest_checked_at") or "").strip()
+    latest_error = state.get("latest_check_error") if isinstance(state.get("latest_check_error"), dict) else {}
+    if not str(package_versions.get(primary_package) or "").strip():
+        return {
+            "latest_versions": latest_versions,
+            "latest_checked_at": checked_at,
+            "latest_check_error": latest_error,
+        }
+    if not _latest_version_cache_stale(checked_at, failed=bool(latest_error)):
+        return {
+            "latest_versions": latest_versions,
+            "latest_checked_at": checked_at,
+            "latest_check_error": latest_error,
+        }
+    checked_at = utc_now_iso()
+    latest_error = {}
+    try:
+        latest = _fetch_pypi_latest_version(primary_package)
+        if latest:
+            latest_versions[primary_package] = latest
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+        latest_error = {
+            "code": "voice_runtime_latest_check_failed",
+            "message": str(exc),
+            "package": primary_package,
+        }
+    merged_state = {
+        **state,
+        "package_versions": package_versions,
+        "latest_versions": latest_versions,
+        "latest_checked_at": checked_at,
+        "latest_check_error": latest_error,
+    }
+    _write_state(runtime_id, merged_state)
+    return {
+        "latest_versions": latest_versions,
+        "latest_checked_at": checked_at,
+        "latest_check_error": latest_error,
+    }
+
+
+def _runtime_version_fields(runtime_id: str, state: Dict[str, Any], package_versions: Dict[str, str]) -> Dict[str, Any]:
+    primary_package = _runtime_primary_package(runtime_id)
+    latest = _cached_latest_versions(runtime_id, state, package_versions)
+    latest_versions = latest["latest_versions"]
+    installed_version = str(package_versions.get(primary_package) or "").strip()
+    latest_version = str(latest_versions.get(primary_package) or "").strip()
+    return {
+        "primary_package": primary_package,
+        "package_versions": package_versions,
+        "installed_version": installed_version,
+        "latest_version": latest_version,
+        "latest_versions": latest_versions,
+        "latest_checked_at": latest["latest_checked_at"],
+        "latest_check_error": latest["latest_check_error"],
+        "update_available": _version_is_newer(latest_version, installed_version),
+    }
+
+
 def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING) -> Dict[str, Any]:
     runtime_id = str(runtime_id or "").strip() or VOICE_RUNTIME_ID_SHERPA_ONNX_STREAMING
     now = time.monotonic()
@@ -254,6 +431,7 @@ def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STRE
     state = _read_state(runtime_id)
     python_path = _venv_python(runtime_id)
     modules_ready = _module_status(python_path, modules)
+    package_versions = _package_versions(python_path, packages)
     missing = [name for name, ready in modules_ready.items() if not ready]
     state_status = str(state.get("status") or "").strip()
     status = VOICE_RUNTIME_STATUS_READY if not missing else (state_status or VOICE_RUNTIME_STATUS_NOT_INSTALLED)
@@ -267,6 +445,7 @@ def get_voice_runtime_status(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_STRE
         "install_dir": str(_runtime_root(runtime_id)),
         "python": str(python_path) if python_path.exists() else "",
         "packages": list(packages),
+        **_runtime_version_fields(runtime_id, state, package_versions),
         "modules": modules_ready,
         "missing_modules": missing,
         "updated_at": str(state.get("updated_at") or ""),
@@ -284,9 +463,16 @@ def get_voice_runtime_status_snapshot(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_
     status = str(state.get("status") or "").strip() or VOICE_RUNTIME_STATUS_NOT_INSTALLED
     python_path = _venv_python(runtime_id)
     modules = _runtime_modules(runtime_id)
+    packages = _runtime_packages(runtime_id)
     modules_ready = state.get("modules") if isinstance(state.get("modules"), dict) else {}
     clean_modules = {name: bool(modules_ready.get(name)) for name in modules}
     missing_modules = [name for name, ready in clean_modules.items() if not ready]
+    package_versions = state.get("package_versions") if isinstance(state.get("package_versions"), dict) else {}
+    clean_package_versions = {name: str(package_versions.get(name) or "").strip() for name in packages}
+    latest_versions = state.get("latest_versions") if isinstance(state.get("latest_versions"), dict) else {}
+    primary_package = _runtime_primary_package(runtime_id)
+    installed_version = str(clean_package_versions.get(primary_package) or "").strip()
+    latest_version = str(latest_versions.get(primary_package) or "").strip()
     if status == VOICE_RUNTIME_STATUS_READY and not modules_ready:
         missing_modules = []
     return {
@@ -296,7 +482,15 @@ def get_voice_runtime_status_snapshot(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_
         "installed": status == VOICE_RUNTIME_STATUS_READY,
         "install_dir": str(_runtime_root(runtime_id)),
         "python": str(python_path) if python_path.exists() else str(state.get("python") or ""),
-        "packages": list(_runtime_packages(runtime_id)),
+        "packages": list(packages),
+        "primary_package": primary_package,
+        "package_versions": clean_package_versions,
+        "installed_version": installed_version,
+        "latest_version": latest_version,
+        "latest_versions": {str(key): str(value or "").strip() for key, value in latest_versions.items()},
+        "latest_checked_at": str(state.get("latest_checked_at") or ""),
+        "latest_check_error": state.get("latest_check_error") if isinstance(state.get("latest_check_error"), dict) else {},
+        "update_available": _version_is_newer(latest_version, installed_version),
         "modules": clean_modules,
         "missing_modules": missing_modules,
         "updated_at": str(state.get("updated_at") or ""),
@@ -363,7 +557,7 @@ def install_voice_runtime_deps(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_ST
         python_path = _ensure_venv(runtime_id)
         commands: List[List[str]] = [
             [str(python_path), "-m", "pip", "install", "-U", "pip"],
-            [str(python_path), "-m", "pip", "install", *packages],
+            [str(python_path), "-m", "pip", "install", "-U", *packages],
         ]
         for command in commands:
             started = time.monotonic()
@@ -400,6 +594,7 @@ def install_voice_runtime_deps(runtime_id: str = VOICE_RUNTIME_ID_SHERPA_ONNX_ST
             "installed_at": utc_now_iso(),
             "error": {},
             "packages": list(packages),
+            "package_versions": _package_versions(python_path, packages),
             "python": str(python_path),
         }
         _write_state(runtime_id, payload)
