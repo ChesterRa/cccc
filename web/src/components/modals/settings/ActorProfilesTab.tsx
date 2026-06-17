@@ -58,7 +58,6 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   gemini: "gemini --yolo",
   grok: "grok",
   kimi: "kimi --yolo",
-  neovate: "neovate",
   opencode: "opencode",
   web_model: "",
   custom: "",

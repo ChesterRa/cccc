@@ -12,7 +12,6 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   grok: "logos/grok.svg",
   hermes: "logos/hermes.svg",
   kimi: "logos/kimi.png",
-  neovate: "logos/neovate.png",
   opencode: "logos/opencode.svg",
   web_model: "logos/codex.png",
 };

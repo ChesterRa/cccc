@@ -81,10 +81,12 @@ This checks Python version, available runtimes, and daemon status.
 - Codex CLI (`codex`)
 - Droid (`droid`)
 - Gemini CLI (`gemini`)
+- Grok Build (`grok`)
+- Hermes Agent (`hermes`)
 - Kimi CLI (`kimi`)
+- OpenCode (`opencode`)
 - Amp (`amp`)
 - Auggie (`auggie`)
-- Neovate (`neovate`)
 - Custom (manual fallback; provide your own command and MCP wiring)
 
 ### What's the difference between Foreman and Peer?

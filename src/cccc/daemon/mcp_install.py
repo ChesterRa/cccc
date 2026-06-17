@@ -297,8 +297,6 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
         return ["amp", "mcp", "add", "cccc", *cccc_cmd]
     if runtime == "auggie":
         return ["auggie", "mcp", "add", "cccc", "--", *cccc_cmd]
-    if runtime == "neovate":
-        return ["neovate", "mcp", "add", "-g", "cccc", *cccc_cmd]
     if runtime == "gemini":
         return ["gemini", "mcp", "add", "-s", "user", "cccc", *cccc_cmd]
     if runtime == "grok":
@@ -414,21 +412,6 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         if not settings_path.exists():
             return "missing"
         doc = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
-        if not isinstance(doc, dict):
-            return "missing"
-        servers = doc.get("mcpServers")
-        if not isinstance(servers, dict):
-            return "missing"
-        entry = servers.get("cccc")
-        if entry is None:
-            return "missing"
-        return "ready" if _json_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
-
-    if runtime == "neovate":
-        config_path = _home_dir(env) / ".neovate" / "config.json"
-        if not config_path.exists():
-            return "missing"
-        doc = json.loads(config_path.read_text(encoding="utf-8") or "{}")
         if not isinstance(doc, dict):
             return "missing"
         servers = doc.get("mcpServers")

@@ -391,7 +391,7 @@ class PtySession:
             data = (self._query_tail or b"") + chunk
             writer_attached = self._writer_fd is not None
             runtime = str(self._runtime or "").strip().lower()
-            backend_handles_device_attributes = runtime in {"gemini", "droid", "neovate"}
+            backend_handles_device_attributes = runtime in {"gemini", "droid"}
             for query, response in query_responses:
                 if query not in data:
                     continue

@@ -49,7 +49,7 @@ export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
 
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
-const terminalResponseSuppressionRuntimes = new Set(["codex", "droid", "gemini", "neovate"]);
+const terminalResponseSuppressionRuntimes = new Set(["codex", "droid", "gemini"]);
 const terminalGeneratedInputSequencePattern = /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
 
 export type TerminalBinaryFrame =

@@ -86,20 +86,14 @@ DEFAULT_RUNTIME_POOL: List[RuntimePoolEntry] = [
         notes="Auggie (Augment CLI); MCP support",
     ),
     RuntimePoolEntry(
-        runtime="neovate",
-        priority=6,
-        scenarios=["coding"],
-        notes="Neovate Code; MCP support",
-    ),
-    RuntimePoolEntry(
         runtime="gemini",
-        priority=7,
+        priority=6,
         scenarios=["coding", "general"],
         notes="Gemini CLI; MCP support",
     ),
     RuntimePoolEntry(
         runtime="kimi",
-        priority=8,
+        priority=7,
         scenarios=["coding", "general"],
         notes="Kimi CLI; MCP support",
     ),

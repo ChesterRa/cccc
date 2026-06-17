@@ -409,7 +409,6 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             "grok",
             "hermes",
             "kimi",
-            "neovate",
             "opencode",
             "web_model",
             "custom",

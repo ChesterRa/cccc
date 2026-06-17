@@ -24,7 +24,6 @@ AgentRuntime = Literal[
     "grok",
     "hermes",
     "kimi",
-    "neovate",
     "opencode",
     "web_model",
     "custom",

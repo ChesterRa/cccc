@@ -131,7 +131,6 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             "grok",
             "hermes",
             "kimi",
-            "neovate",
             "opencode",
             "web_model",
             "custom",

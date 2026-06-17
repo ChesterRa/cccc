@@ -313,12 +313,14 @@ Recommended options:
 | codex | `codex` | Codex CLI |
 | droid | `droid` | Droid |
 | gemini | `gemini` | Gemini CLI |
+| grok | `grok` | Grok Build |
+| hermes | `hermes --tui --yolo` | Hermes Agent |
 | kimi | `kimi --yolo` | Kimi CLI |
-| neovate | `neovate` | Neovate Code |
+| opencode | `opencode` | OpenCode |
 | web_model | Remote MCP + browser delivery | ChatGPT Web conversation with an MCP-capable GPT-5.x session; GPT-5.x Pro is advisory-only and has no reliable CCCC local access |
 | custom | Custom | Any command |
 
-CCCC first-class runtime support is the nine named runtimes above. `custom` remains the manual fallback for any other command.
+CCCC first-class runtime support is the named runtimes above. `custom` remains the manual fallback for any other command.
 
 ### Setup Commands
 
@@ -328,9 +330,11 @@ cccc setup --runtime codex
 cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
-cccc setup --runtime neovate
 cccc setup --runtime gemini
+cccc setup --runtime grok
+cccc setup --runtime hermes
 cccc setup --runtime kimi
+cccc setup --runtime opencode
 cccc setup --runtime custom
 ```
 

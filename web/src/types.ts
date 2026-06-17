@@ -1392,7 +1392,6 @@ export const SUPPORTED_RUNTIMES = [
   "droid",
   "amp",
   "auggie",
-  "neovate",
   "gemini",
   "grok",
   "hermes",
@@ -1414,7 +1413,6 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
   kimi: { label: "Kimi CLI", desc: "" },
-  neovate: { label: "Neovate Code", desc: "" },
   opencode: { label: "OpenCode", desc: "Uses inline OpenCode MCP config at actor launch" },
   web_model: { label: "ChatGPT Web Model", desc: "ChatGPT browser delivery + remote MCP connector" },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
@@ -1470,10 +1468,6 @@ export const RUNTIME_COLORS: Record<string, {
   kimi: {
     bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
     bgLight: "bg-lime-50", textLight: "text-lime-700", borderLight: "border-lime-300", dotLight: "bg-lime-500"
-  },
-  neovate: {
-    bg: "bg-fuchsia-900/30", text: "text-fuchsia-300", border: "border-fuchsia-600/50", dot: "bg-fuchsia-400",
-    bgLight: "bg-fuchsia-50", textLight: "text-fuchsia-700", borderLight: "border-fuchsia-300", dotLight: "bg-fuchsia-500"
   },
   opencode: {
     bg: "bg-stone-900/40", text: "text-stone-200", border: "border-stone-500/60", dot: "bg-stone-300",

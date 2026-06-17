@@ -10,7 +10,7 @@
 ### Coordinate your coding agents like a group chat
 
 **Read receipts, delivery tracking, and remote ops from your phone —
-for Claude Code, Codex, Gemini, and 9 more runtimes in one durable group.**
+for Claude Code, Codex, Gemini, and 8 more runtimes in one durable group.**
 
 Run multiple coding agents as a **persistent, coordinated team** — not a pile of disconnected terminal sessions.
 
@@ -57,7 +57,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, Gemini CLI, and 6 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -184,7 +184,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 12 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 11 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Command / Surface |
 |---------|-------------|-------------------|
@@ -198,7 +198,6 @@ CCCC orchestrates agents across 12 first-class runtimes, with `custom` available
 | Amp | Auto MCP setup | `amp` |
 | Auggie | Auto MCP setup | `auggie` |
 | Kimi CLI | Auto MCP setup | `kimi` |
-| Neovate | Auto MCP setup | `neovate` |
 | OpenCode | Auto MCP setup via runtime config | `opencode` |
 | Custom | Manual | Any command |
 
