@@ -43,6 +43,39 @@ class TestFederationPairingRemote(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_connection_payload_allows_private_issuer_endpoint_declaration(self) -> None:
+        from cccc.kernel.federation.pairing import create_pairing_invite
+        from cccc.kernel.federation.pairing_remote import build_connection_payload
+
+        home, cleanup = self._home()
+        try:
+            invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=home)
+            payload = build_connection_payload(
+                invite,
+                issuer_endpoint="http://10.0.0.5:8858/base/",
+                issuer_group_title="Issuer",
+                home=home,
+            )
+
+            self.assertEqual(payload["issuer_endpoint"], "http://10.0.0.5:8858")
+            self.assertTrue(str(payload["integrity"]).startswith("sha256:"))
+        finally:
+            cleanup()
+
+    def test_connection_payload_rejects_metadata_and_link_local_declarations(self) -> None:
+        from cccc.kernel.federation.pairing import create_pairing_invite
+        from cccc.kernel.federation.pairing_remote import build_connection_payload
+
+        home, cleanup = self._home()
+        try:
+            invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=home)
+            with self.assertRaises(ValueError):
+                build_connection_payload(invite, issuer_endpoint="http://169.254.169.254/latest", home=home)
+            with self.assertRaises(ValueError):
+                build_connection_payload(invite, issuer_endpoint="http://169.254.1.20:8858", home=home)
+        finally:
+            cleanup()
+
     def test_connection_payload_integrity_covers_issuer_group_title(self) -> None:
         from cccc.kernel.federation.pairing import create_pairing_invite
         from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request
@@ -122,6 +155,63 @@ class TestFederationPairingRemote(unittest.TestCase):
         self.assertEqual(normalize_issuer_endpoint("http://127.0.0.1:5555/ui/", allow_localhost=True), "http://127.0.0.1:5555")
         with self.assertRaises(ValueError):
             normalize_issuer_endpoint("http://127.0.0.1:5555", allow_localhost=False)
+
+    def test_remote_submit_rejects_private_endpoint_by_default_and_allows_with_admin_env(self) -> None:
+        from cccc.kernel.federation.pairing import create_pairing_invite
+        from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request
+
+        issuer_home, issuer_cleanup = self._home()
+        joiner_home, joiner_cleanup = self._home()
+        try:
+            invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=issuer_home)
+            payload = build_connection_payload(invite, issuer_endpoint="http://10.0.0.5:8858", home=issuer_home)
+            calls = []
+
+            def fake_client(endpoint: str, body: dict, *, timeout_seconds: float = 3.0) -> dict:
+                calls.append((endpoint, body, timeout_seconds))
+                return {"request": {"request_id": "preq_remote", "status": "pending"}}
+
+            with self.assertRaises(ValueError):
+                submit_remote_pairing_request(payload, local_group_id="g_joiner", client=fake_client, home=joiner_home)
+            self.assertEqual(calls, [])
+
+            old_value = os.environ.get("CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS")
+            os.environ["CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS"] = "1"
+            try:
+                outbound = submit_remote_pairing_request(payload, local_group_id="g_joiner", client=fake_client, home=joiner_home)
+            finally:
+                if old_value is None:
+                    os.environ.pop("CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS", None)
+                else:
+                    os.environ["CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS"] = old_value
+
+            self.assertEqual(calls[0][0], "http://10.0.0.5:8858/api/federation/pairing/requests/remote")
+            self.assertEqual(outbound["status"], "submitted")
+        finally:
+            issuer_cleanup()
+            joiner_cleanup()
+
+    def test_remote_submit_rejects_metadata_and_link_local_even_when_private_env_enabled(self) -> None:
+        from cccc.kernel.federation.pairing import create_pairing_invite
+        from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request
+
+        issuer_home, issuer_cleanup = self._home()
+        joiner_home, joiner_cleanup = self._home()
+        old_value = os.environ.get("CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS")
+        os.environ["CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS"] = "1"
+        try:
+            invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=issuer_home)
+            for endpoint in ("http://169.254.169.254/latest", "http://169.254.1.20:8858"):
+                with self.assertRaises(ValueError):
+                    payload = build_connection_payload(invite, issuer_endpoint=endpoint, home=issuer_home)
+                    submit_remote_pairing_request(payload, local_group_id="g_joiner", client=lambda *_args, **_kwargs: {}, home=joiner_home)
+        finally:
+            if old_value is None:
+                os.environ.pop("CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS", None)
+            else:
+                os.environ["CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS"] = old_value
+            issuer_cleanup()
+            joiner_cleanup()
 
     def test_submit_remote_pairing_request_records_outbound_without_local_code_lookup(self) -> None:
         from cccc.kernel.federation.pairing import list_pairing_outbounds

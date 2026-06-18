@@ -1707,6 +1707,8 @@
     "issuerEndpointHelp": "填写当前 CCCC Web 实例的外部可访问 base URL，例如公网 URL、反向代理或隧道地址。",
     "issuerEndpointLocalOnlyHelp": "这个 endpoint 指向当前浏览器所在的本地实例。除非对方 CCCC 实例能访问它，否则只适合同实例 / 本地测试。",
     "issuerEndpointInvalid": "请输入有效的 http(s) 签发方 endpoint。",
+    "privateIssuerEndpointBlocked": "当前实例未允许内网签发方 endpoint。请让管理员允许内网 federation endpoint，或使用对方 CCCC 实例可访问的地址。",
+    "unsafeIssuerEndpointBlocked": "这个签发方 endpoint 不允许使用。请使用可路由的 CCCC endpoint，避免 metadata、link-local、multicast 或保留网段地址。",
     "sha256Unavailable": "当前浏览器上下文无法创建带签名的连接 payload，因为 SHA-256 不可用。请通过 HTTPS 或 localhost 打开 CCCC 后重试。",
     "oneTimeConnectionInfo": "一次性连接信息",
     "oneTimeConnectionInfoHelp": "把这段 payload 发给远端 CCCC 工作组。它只显示一次，并会很快过期。",

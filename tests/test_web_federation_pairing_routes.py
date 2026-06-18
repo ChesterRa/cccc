@@ -208,6 +208,37 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_pairing_connection_info_allows_private_issuer_endpoint_declaration(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._client()
+            headers = self._admin_header()
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={"group_id": "g_issuer"},
+                headers=headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+
+            info = client.post(
+                "/api/federation/pairing/connection-info",
+                json={
+                    "group_id": "g_issuer",
+                    "invite_id": invite_body["invite_id"],
+                    "issuer_endpoint": "http://10.0.0.5:8858/path",
+                    "issuer_group_title": "Issuer Group",
+                },
+                headers=headers,
+            )
+
+            self.assertEqual(info.status_code, 200, info.text)
+            payload = info.json()["result"]["payload"]
+            self.assertEqual(payload["issuer_endpoint"], "http://10.0.0.5:8858")
+            self.assertEqual(payload["code"], invite_body["pairing_code"])
+        finally:
+            cleanup()
+
     def test_pairing_connection_info_requires_invite_group_access_and_match(self) -> None:
         _, cleanup = self._with_home()
         try:

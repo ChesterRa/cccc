@@ -117,6 +117,8 @@ describe("federation settings placement", () => {
     expect(src).not.toContain("assertSha256Available();");
     expect(src).not.toContain("crypto.subtle.digest");
     expect(src).toContain('t("federation.issuerEndpointInvalid")');
+    expect(src).toContain("userFacingPairingErrorKey");
+    expect(src).not.toContain('setInviteError(infoResp.error.message || t("federation.createInviteFailed"))');
   });
 
   it("libp2p connection info includes the current group title for remote display", () => {
@@ -214,6 +216,8 @@ describe("federation settings placement", () => {
       expect(locale.federation?.issuerEndpointHelp).toBeTruthy();
       expect(locale.federation?.issuerEndpointLocalOnlyHelp).toBeTruthy();
       expect(locale.federation?.issuerEndpointInvalid).toBeTruthy();
+      expect(locale.federation?.privateIssuerEndpointBlocked).toBeTruthy();
+      expect(locale.federation?.unsafeIssuerEndpointBlocked).toBeTruthy();
       expect(locale.federation?.sha256Unavailable).toBeTruthy();
       expect(locale.federation?.pasteConnectionInfo).toBeTruthy();
       expect(locale.federation?.remotePayloadPlaceholder).toBeTruthy();

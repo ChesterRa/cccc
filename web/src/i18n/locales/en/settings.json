@@ -1707,6 +1707,8 @@
     "issuerEndpointHelp": "Use the externally reachable base URL for this CCCC Web instance, such as a public URL, reverse proxy, or tunnel.",
     "issuerEndpointLocalOnlyHelp": "This endpoint points at the current browser's local instance. It is useful only for same-instance/local testing unless the other CCCC instance can reach it.",
     "issuerEndpointInvalid": "Enter a valid http(s) issuer endpoint.",
+    "privateIssuerEndpointBlocked": "Private network issuer endpoints are blocked on this instance. Ask an administrator to allow private federation endpoints, or use an endpoint reachable by the other CCCC instance.",
+    "unsafeIssuerEndpointBlocked": "This issuer endpoint is not allowed. Use a routable CCCC endpoint and avoid metadata, link-local, multicast, or reserved network addresses.",
     "sha256Unavailable": "This browser context cannot create the signed connection payload because SHA-256 is unavailable. Open CCCC over HTTPS or localhost and try again.",
     "oneTimeConnectionInfo": "One-time connection info",
     "oneTimeConnectionInfoHelp": "Send this payload to the remote CCCC group. It is shown once and expires shortly.",

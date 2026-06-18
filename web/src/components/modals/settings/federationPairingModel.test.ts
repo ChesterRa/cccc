@@ -23,6 +23,7 @@ import {
   projectSyncableOutbounds,
   projectTrustedPeers,
   safePairingCodeText,
+  userFacingPairingErrorKey,
   shouldUsePairingCodeHelp,
 } from "./federationPairingModel";
 
@@ -219,5 +220,11 @@ describe("federationPairingModel", () => {
     expect(shouldUsePairingCodeHelp("pairing code not found")).toBe(true);
     expect(shouldUsePairingCodeHelp("pairing code expired")).toBe(true);
     expect(shouldUsePairingCodeHelp("network failed")).toBe(false);
+  });
+
+  it("maps backend issuer endpoint policy errors to user-facing locale keys", () => {
+    expect(userFacingPairingErrorKey("private issuer_endpoint is not allowed")).toBe("federation.privateIssuerEndpointBlocked");
+    expect(userFacingPairingErrorKey("unsafe issuer_endpoint is not allowed")).toBe("federation.unsafeIssuerEndpointBlocked");
+    expect(userFacingPairingErrorKey("remote pairing request failed")).toBeNull();
   });
 });

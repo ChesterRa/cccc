@@ -19,6 +19,7 @@ import {
   projectRecentOutbounds,
   projectTrustedPeers,
   shouldUsePairingCodeHelp,
+  userFacingPairingErrorKey,
 } from "./federationPairingModel";
 import {
   dangerButtonClass,
@@ -106,7 +107,8 @@ export function FederationLibp2pPairingSection({
           issuerGroupTitle: currentGroupTitle || currentGroupId,
         });
         if (!infoResp.ok) {
-          setInviteError(infoResp.error.message || t("federation.createInviteFailed"));
+          const errorKey = userFacingPairingErrorKey(infoResp.error.message);
+          setInviteError(errorKey ? t(errorKey) : (infoResp.error.message || t("federation.createInviteFailed")));
           return;
         }
         setCreatedInfo(JSON.stringify(infoResp.result.payload, null, 2));
@@ -153,7 +155,8 @@ export function FederationLibp2pPairingSection({
         setRequestNotice(t("federation.waitingApproval"));
         await refreshPairing();
       } else {
-        setRequestError(shouldUsePairingCodeHelp(resp.error.message) ? t("federation.pairingCodeInvalidOrExpired") : (resp.error.message || t("federation.submitRequestFailed")));
+        const errorKey = userFacingPairingErrorKey(resp.error.message);
+        setRequestError(errorKey ? t(errorKey) : (shouldUsePairingCodeHelp(resp.error.message) ? t("federation.pairingCodeInvalidOrExpired") : (resp.error.message || t("federation.submitRequestFailed"))));
       }
     } finally {
       setBusy(false);

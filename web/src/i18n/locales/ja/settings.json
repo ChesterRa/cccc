@@ -1707,6 +1707,8 @@
     "issuerEndpointHelp": "この CCCC Web インスタンスの外部到達可能な base URL を入れてください。公開 URL、リバースプロキシ、トンネルなどです。",
     "issuerEndpointLocalOnlyHelp": "この endpoint は現在のブラウザのローカルインスタンスを指しています。相手 CCCC インスタンスから到達できない限り、same-instance / local testing 用です。",
     "issuerEndpointInvalid": "有効な http(s) 発行元 endpoint を入力してください。",
+    "privateIssuerEndpointBlocked": "このインスタンスではプライベートネットワークの発行元 endpoint が許可されていません。管理者に private federation endpoints の許可を依頼するか、相手の CCCC インスタンスから到達できる endpoint を使用してください。",
+    "unsafeIssuerEndpointBlocked": "この発行元 endpoint は使用できません。到達可能な CCCC endpoint を使い、metadata、link-local、multicast、予約済みネットワークアドレスは避けてください。",
     "sha256Unavailable": "SHA-256 が利用できないため、このブラウザコンテキストでは署名付き接続 payload を作成できません。HTTPS または localhost で CCCC を開いて再試行してください。",
     "oneTimeConnectionInfo": "一回限りの接続情報",
     "oneTimeConnectionInfoHelp": "この payload をリモート CCCC グループへ送ってください。一度だけ表示され、短時間で期限切れになります。",
