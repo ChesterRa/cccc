@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.28] — 2026-06-18
+
+### Changed
+- **Local ASR maintenance is easier to understand**. Voice Secretary local ASR status now reports installed/latest sherpa-onnx versions, update availability, update errors, and artifact source details so users can tell when local speech components should be refreshed.
+- **Neovate is no longer listed as a formal CCCC runtime**. The dedicated runtime, MCP setup path, Web metadata, docs, and logo asset have been removed; unsupported CLIs can still be wired through `custom`.
+
+### Fixed
+- **Local ASR model updates preserve the last verified install on failure**, so a failed download or replacement does not disable an already-ready model.
+- **Web terminals suppress terminal-generated color/device query responses** that could otherwise appear as stray text in the input path with newer CLI/runtime combinations.
+- **Fresh context reads now have deterministic cache-test coverage**, reducing CI flakes around stale in-flight context requests.
+
 ## [0.4.27] — 2026-06-15
 
 ### Added

@@ -4,12 +4,13 @@ Use this page to find published release notes.
 
 ## Latest
 
+- [v0.4.28 Release Notes](/release/v0.4.28_release_notes)
 - [v0.4.27 Release Notes](/release/v0.4.27_release_notes)
 - [v0.4.26 Release Notes](/release/v0.4.26_release_notes)
-- [v0.4.25 Release Notes](/release/v0.4.25_release_notes)
 
 ## v0.4 Series
 
+- [v0.4.25 Release Notes](/release/v0.4.25_release_notes)
 - [v0.4.24 Release Notes](/release/v0.4.24_release_notes)
 - [v0.4.23 Release Notes](/release/v0.4.23_release_notes)
 - [v0.4.22 Release Notes](/release/v0.4.22_release_notes)
