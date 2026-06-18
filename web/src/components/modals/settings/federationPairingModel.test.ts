@@ -223,7 +223,6 @@ describe("federationPairingModel", () => {
   });
 
   it("maps backend issuer endpoint policy errors to user-facing locale keys", () => {
-    expect(userFacingPairingErrorKey("private issuer_endpoint is not allowed")).toBe("federation.privateIssuerEndpointBlocked");
     expect(userFacingPairingErrorKey("unsafe issuer_endpoint is not allowed")).toBe("federation.unsafeIssuerEndpointBlocked");
     expect(userFacingPairingErrorKey("remote pairing request failed")).toBeNull();
   });

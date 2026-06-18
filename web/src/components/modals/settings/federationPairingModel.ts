@@ -176,7 +176,6 @@ export function shouldUsePairingCodeHelp(errorMessage: string | undefined | null
 
 export function userFacingPairingErrorKey(errorMessage: string | undefined | null): string | null {
   const msg = String(errorMessage || "").toLowerCase();
-  if (msg.includes("private issuer_endpoint")) return "federation.privateIssuerEndpointBlocked";
   if (msg.includes("unsafe issuer_endpoint") || msg.includes("link-local") || msg.includes("metadata")) {
     return "federation.unsafeIssuerEndpointBlocked";
   }

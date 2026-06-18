@@ -216,7 +216,6 @@ describe("federation settings placement", () => {
       expect(locale.federation?.issuerEndpointHelp).toBeTruthy();
       expect(locale.federation?.issuerEndpointLocalOnlyHelp).toBeTruthy();
       expect(locale.federation?.issuerEndpointInvalid).toBeTruthy();
-      expect(locale.federation?.privateIssuerEndpointBlocked).toBeTruthy();
       expect(locale.federation?.unsafeIssuerEndpointBlocked).toBeTruthy();
       expect(locale.federation?.sha256Unavailable).toBeTruthy();
       expect(locale.federation?.pasteConnectionInfo).toBeTruthy();

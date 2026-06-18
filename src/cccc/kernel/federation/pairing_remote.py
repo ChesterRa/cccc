@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import os
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +18,6 @@ from .pairing_outbound_sync import approve_outbound_from_remote_request
 
 _REMOTE_REQUEST_PATH = "/api/federation/pairing/requests/remote"
 _REMOTE_REQUEST_STATUS_PATH = "/api/federation/pairing/requests/remote/status"
-_ALLOW_PRIVATE_FEDERATION_ENV = "CCCC_ALLOW_PRIVATE_FEDERATION_ENDPOINTS"
 
 
 @dataclass(frozen=True)
@@ -89,7 +87,7 @@ def parse_connection_payload(raw: Any) -> ConnectionPayload:
     )
 
 
-def normalize_issuer_endpoint(raw: str, *, allow_localhost: bool = False, allow_private: bool = False) -> str:
+def normalize_issuer_endpoint(raw: str, *, allow_localhost: bool = True, allow_private: bool = True) -> str:
     value = str(raw or "").strip()
     if not value:
         raise ValueError("issuer_endpoint is required")
@@ -103,8 +101,8 @@ def normalize_issuer_endpoint(raw: str, *, allow_localhost: bool = False, allow_
     return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
 
 
-def issuer_remote_request_url(endpoint: str, *, allow_localhost: bool = False) -> str:
-    return normalize_issuer_endpoint(endpoint, allow_localhost=allow_localhost, allow_private=_private_federation_endpoints_allowed()) + _REMOTE_REQUEST_PATH
+def issuer_remote_request_url(endpoint: str, *, allow_localhost: bool = True) -> str:
+    return normalize_issuer_endpoint(endpoint, allow_localhost=allow_localhost, allow_private=True) + _REMOTE_REQUEST_PATH
 
 
 def issuer_remote_request_status_url(
@@ -112,10 +110,10 @@ def issuer_remote_request_status_url(
     *,
     request_id: str,
     invite_id: str,
-    allow_localhost: bool = False,
+    allow_localhost: bool = True,
 ) -> str:
     query = urlencode({"request_id": str(request_id or "").strip(), "invite_id": str(invite_id or "").strip()})
-    return normalize_issuer_endpoint(endpoint, allow_localhost=allow_localhost, allow_private=_private_federation_endpoints_allowed()) + _REMOTE_REQUEST_STATUS_PATH + "?" + query
+    return normalize_issuer_endpoint(endpoint, allow_localhost=allow_localhost, allow_private=True) + _REMOTE_REQUEST_STATUS_PATH + "?" + query
 
 
 def submit_remote_pairing_request(
@@ -124,7 +122,7 @@ def submit_remote_pairing_request(
     local_group_id: str,
     local_group_title: str = "",
     client: Optional[Callable[..., Dict[str, Any]]] = None,
-    allow_localhost: bool = False,
+    allow_localhost: bool = True,
     home: Optional[Path] = None,
 ) -> Dict[str, Any]:
     local_gid = str(local_group_id or "").strip()
@@ -162,7 +160,7 @@ def submit_remote_pairing_request(
         "outbound_id": "pout_" + hashlib.sha256(f"{endpoint}|{local_gid}|{parsed.nonce}|{parsed.pairing_code}".encode("utf-8")).hexdigest()[:16],
         "status": status,
         "local_group_id": local_gid,
-        "issuer_endpoint": normalize_issuer_endpoint(parsed.issuer_endpoint, allow_localhost=allow_localhost, allow_private=_private_federation_endpoints_allowed()),
+        "issuer_endpoint": normalize_issuer_endpoint(parsed.issuer_endpoint, allow_localhost=allow_localhost, allow_private=True),
         "issuer_group_id": parsed.issuer_group_id,
         "issuer_group_title": parsed.issuer_group_title,
         "issuer_peer_id": parsed.issuer_peer_id,
@@ -190,7 +188,7 @@ def sync_remote_pairing_outbound(
     outbound_id: str,
     *,
     client: Optional[Callable[..., Dict[str, Any]]] = None,
-    allow_localhost: bool = False,
+    allow_localhost: bool = True,
     home: Optional[Path] = None,
 ) -> Dict[str, Any]:
     outbound = get_pairing_outbound(outbound_id, home=home)
@@ -294,10 +292,6 @@ def _validate_integrity(payload: ConnectionPayload) -> None:
 
 def _constant_time_equal(a: str, b: str) -> bool:
     return hashlib.sha256(str(a or "").encode("utf-8")).digest() == hashlib.sha256(str(b or "").encode("utf-8")).digest()
-
-
-def _private_federation_endpoints_allowed() -> bool:
-    return str(os.environ.get(_ALLOW_PRIVATE_FEDERATION_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _reject_unsafe_host(host: str, *, allow_localhost: bool, allow_private: bool) -> None:
