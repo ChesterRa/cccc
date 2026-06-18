@@ -19,6 +19,7 @@ from ....kernel.federation.pairing import (
     create_pairing_invite,
     create_pairing_request,
     delete_pairing_outbound,
+    get_pairing_invite,
     get_pairing_invite_for_code,
     get_pairing_request_public_status,
     get_local_identity,
@@ -26,11 +27,12 @@ from ....kernel.federation.pairing import (
     list_pairing_outbounds,
     list_pairing_requests,
     list_trusts,
+    prepare_pairing_invite_for_connection_info,
     reject_pairing_request,
     revoke_trust,
     upsert_pairing_outbound,
 )
-from ....kernel.federation.pairing_remote import sync_remote_pairing_outbound, submit_remote_pairing_request
+from ....kernel.federation.pairing_remote import build_connection_payload, sync_remote_pairing_outbound, submit_remote_pairing_request
 from ....kernel.federation.registration import (
     delete_registration,
     get_registration,
@@ -89,6 +91,13 @@ class PairingInviteCreateRequest(BaseModel):
     remote_peer_id: str = ""
     multiaddrs: List[str] = Field(default_factory=list)
     ttl_seconds: int = 600
+
+
+class PairingConnectionInfoRequest(BaseModel):
+    group_id: str
+    invite_id: str
+    issuer_endpoint: str
+    issuer_group_title: str = ""
 
 
 class PairingRequestCreateRequest(BaseModel):
@@ -273,6 +282,26 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
         return {"ok": True, "result": {"invite": invite}}
+
+    @router.post("/pairing/connection-info")
+    async def federation_pairing_connection_info(request: Request, req: PairingConnectionInfoRequest) -> Dict[str, Any]:
+        gid = str(req.group_id or "").strip()
+        _require_group_or_403(request, gid)
+        invite = get_pairing_invite(req.invite_id)
+        if not invite:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "pairing invite not found", "details": {}})
+        if str(invite.get("group_id") or "").strip() != gid:
+            raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "pairing invite is not in this group", "details": {}})
+        try:
+            invite = prepare_pairing_invite_for_connection_info(req.invite_id)
+            payload = build_connection_payload(
+                invite,
+                issuer_endpoint=req.issuer_endpoint,
+                issuer_group_title=req.issuer_group_title,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
+        return {"ok": True, "result": {"payload": payload}}
 
     @router.post("/pairing/requests")
     async def federation_pairing_request_create(request: Request, req: PairingRequestCreateRequest) -> Dict[str, Any]:

@@ -37,6 +37,7 @@ _TRUST_PREFIX = "ptrust_"
 _OUTBOUND_PREFIX = "pout_"
 _CODE_ALPHABET = string.ascii_uppercase + string.digits
 _DEFAULT_TTL_SECONDS = 600
+_INVITE_CODE_CACHE: Dict[str, str] = {}
 
 
 def _identity_path(home: Optional[Path] = None) -> Path:
@@ -185,6 +186,7 @@ def create_pairing_invite(
     }
     store["invites"][invite_id] = invite
     _save_store(store, home)
+    _INVITE_CODE_CACHE[invite_id] = code
     out = _project_invite(invite)
     out["pairing_code"] = code
     _publish_pairing_event("federation.pairing.invite_created", {
@@ -213,6 +215,48 @@ def get_pairing_invite_for_code(pairing_code: str, *, invite_id: str = "", home:
     if expected_invite_id and str(invite.get("invite_id") or "") != expected_invite_id:
         return None
     return _project_invite(invite)
+
+
+def get_pairing_invite(invite_id: str, *, home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    iid = str(invite_id or "").strip()
+    if not iid:
+        return None
+    invite = _load_store(home)["invites"].get(iid)
+    if not isinstance(invite, dict):
+        return None
+    out = _project_invite(invite)
+    cached_code = _INVITE_CODE_CACHE.get(iid, "")
+    if cached_code:
+        out["pairing_code"] = cached_code
+    return out
+
+
+def get_cached_pairing_invite_code(invite_id: str) -> str:
+    return _INVITE_CODE_CACHE.get(str(invite_id or "").strip(), "")
+
+
+def prepare_pairing_invite_for_connection_info(invite_id: str, *, home: Optional[Path] = None) -> Dict[str, Any]:
+    iid = str(invite_id or "").strip()
+    if not iid:
+        raise ValueError("pairing invite not found")
+    store = _load_store(home)
+    invite = store["invites"].get(iid)
+    if not isinstance(invite, dict):
+        raise ValueError("pairing invite not found")
+    status = str(invite.get("status") or "").strip()
+    if status != "pending":
+        raise ValueError("pairing invite must be pending")
+    if _is_expired(invite):
+        invite["status"] = "expired"
+        invite["updated_at"] = utc_now_iso()
+        _save_store(store, home)
+        raise ValueError("pairing invite expired")
+    code = _INVITE_CODE_CACHE.get(iid, "")
+    if not code:
+        raise ValueError("pairing invite code is no longer available")
+    out = _project_invite(invite)
+    out["pairing_code"] = code
+    return out
 
 
 def create_pairing_request(

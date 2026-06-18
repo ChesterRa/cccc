@@ -5,7 +5,6 @@ import { RefreshIcon } from "../../Icons";
 import * as api from "../../../services/api";
 import type { FederationIdentity, FederationPairingOutbound, FederationPairingRequest, FederationRegistration, FederationTrust } from "../../../services/api/federation";
 import {
-  buildConnectionInfoPayload,
   canCreateInvite,
   canSubmitPairingRequest,
   filterLibp2pRegistrations,
@@ -19,7 +18,6 @@ import {
   projectPairingOverview,
   projectRecentOutbounds,
   projectTrustedPeers,
-  safePairingCodeText,
   shouldUsePairingCodeHelp,
 } from "./federationPairingModel";
 import {
@@ -43,31 +41,6 @@ interface Props {
   trusts: FederationTrust[];
   outbounds: FederationPairingOutbound[];
   refreshPairing: () => Promise<void>;
-}
-
-async function digestHex(value: string): Promise<string> {
-  assertSha256Available();
-  const encoded = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", encoded);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function assertSha256Available(): void {
-  if (typeof crypto === "undefined" || !crypto.subtle) {
-    throw new Error("SHA-256 is unavailable in this browser context");
-  }
-}
-
-async function connectionInfo(opts: {
-  code: string;
-  groupId: string;
-  groupTitle?: string;
-  identity: FederationIdentity | null;
-  issuerEndpoint: string;
-  inviteId: string;
-  expiresAt: string;
-}): Promise<string> {
-  return JSON.stringify(await buildConnectionInfoPayload({ ...opts, digestHex }), null, 2);
 }
 
 function defaultIssuerEndpoint(): string {
@@ -122,33 +95,31 @@ export function FederationLibp2pPairingSection({
     setCopyNotice("");
     setBusy(true);
     try {
-      assertSha256Available();
       const normalizedEndpoint = normalizeIssuerEndpoint(issuerEndpoint);
       setIssuerEndpoint(normalizedEndpoint);
       const resp = await api.createFederationPairingInvite({ groupId: currentGroupId });
       if (resp.ok) {
-        const code = safePairingCodeText(resp.result.invite.pairing_code, t("federation.codeUnavailable"));
-        setCreatedInfo(await connectionInfo({
-          code,
+        const infoResp = await api.createFederationPairingConnectionInfo({
           groupId: currentGroupId,
-          groupTitle: currentGroupTitle || currentGroupId,
-          identity,
-          issuerEndpoint: normalizedEndpoint,
           inviteId: resp.result.invite.invite_id,
-          expiresAt: resp.result.invite.expires_at,
-        }));
+          issuerEndpoint: normalizedEndpoint,
+          issuerGroupTitle: currentGroupTitle || currentGroupId,
+        });
+        if (!infoResp.ok) {
+          setInviteError(infoResp.error.message || t("federation.createInviteFailed"));
+          return;
+        }
+        setCreatedInfo(JSON.stringify(infoResp.result.payload, null, 2));
         await refreshPairing();
       } else {
         setInviteError(resp.error.message || t("federation.createInviteFailed"));
       }
-    } catch (error) {
-      setInviteError(String((error as Error).message || "") === "SHA-256 is unavailable in this browser context"
-        ? t("federation.sha256Unavailable")
-        : t("federation.issuerEndpointInvalid"));
+    } catch {
+      setInviteError(t("federation.issuerEndpointInvalid"));
     } finally {
       setBusy(false);
     }
-  }, [currentGroupId, currentGroupTitle, identity, issuerEndpoint, refreshPairing, t]);
+  }, [currentGroupId, currentGroupTitle, issuerEndpoint, refreshPairing, t]);
 
   const onCopyConnectionInfo = useCallback(async () => {
     if (!createdInfo) return;

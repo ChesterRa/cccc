@@ -140,6 +140,13 @@ export interface RemotePairingRequestInput {
   payload: Record<string, unknown>;
 }
 
+export interface PairingConnectionInfoInput {
+  groupId: string;
+  inviteId: string;
+  issuerEndpoint: string;
+  issuerGroupTitle?: string;
+}
+
 export function buildFederationTargetBody(input: FederationTargetInput): Record<string, unknown> {
   return {
     group_id: input.groupId,
@@ -195,6 +202,18 @@ export async function createFederationPairingInvite(input: PairingInviteInput) {
       remote_peer_id: input.remotePeerId,
       multiaddrs: input.multiaddrs ?? [],
       ttl_seconds: input.ttlSeconds ?? 600,
+    }),
+  });
+}
+
+export async function createFederationPairingConnectionInfo(input: PairingConnectionInfoInput) {
+  return apiJson<{ payload: Record<string, unknown> }>("/api/federation/pairing/connection-info", {
+    method: "POST",
+    body: JSON.stringify({
+      group_id: input.groupId,
+      invite_id: input.inviteId,
+      issuer_endpoint: input.issuerEndpoint,
+      issuer_group_title: input.issuerGroupTitle ?? "",
     }),
   });
 }

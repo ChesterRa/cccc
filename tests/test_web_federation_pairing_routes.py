@@ -168,6 +168,164 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_pairing_connection_info_payload_integrity_is_valid(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.federation.pairing_remote import parse_connection_payload, _validate_integrity
+
+            client = self._client()
+            headers = self._admin_header()
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={"group_id": "g_issuer"},
+                headers=headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+
+            info = client.post(
+                "/api/federation/pairing/connection-info",
+                json={
+                    "group_id": "g_issuer",
+                    "invite_id": invite_body["invite_id"],
+                    "issuer_endpoint": "issuer.example/path?ignored=1#frag",
+                    "issuer_group_title": "Issuer Group",
+                },
+                headers=headers,
+            )
+
+            self.assertEqual(info.status_code, 200, info.text)
+            payload = info.json()["result"]["payload"]
+            self.assertEqual(payload["issuer_endpoint"], "https://issuer.example")
+            self.assertEqual(payload["issuer_group_id"], "g_issuer")
+            self.assertEqual(payload["issuer_group_title"], "Issuer Group")
+            self.assertEqual(payload["code"], invite_body["pairing_code"])
+            self.assertEqual(payload["nonce"], invite_body["invite_id"])
+            self.assertTrue(str(payload["integrity"]).startswith("sha256:"))
+            parsed = parse_connection_payload(payload)
+            _validate_integrity(parsed)
+            self.assertNotIn("pairing_code_hash", info.text)
+        finally:
+            cleanup()
+
+    def test_pairing_connection_info_requires_invite_group_access_and_match(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._client()
+            admin_headers = self._admin_header()
+            scoped_headers = self._scoped_header(["g_allowed"])
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={"group_id": "g_secret"},
+                headers=admin_headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+
+            denied_group = client.post(
+                "/api/federation/pairing/connection-info",
+                json={
+                    "group_id": "g_secret",
+                    "invite_id": invite_body["invite_id"],
+                    "issuer_endpoint": "https://issuer.example",
+                    "issuer_group_title": "Secret",
+                },
+                headers=scoped_headers,
+            )
+            self.assertEqual(denied_group.status_code, 403, denied_group.text)
+
+            mismatch = client.post(
+                "/api/federation/pairing/connection-info",
+                json={
+                    "group_id": "g_allowed",
+                    "invite_id": invite_body["invite_id"],
+                    "issuer_endpoint": "https://issuer.example",
+                    "issuer_group_title": "Allowed",
+                },
+                headers=scoped_headers,
+            )
+            self.assertEqual(mismatch.status_code, 403, mismatch.text)
+            self.assertNotIn(invite_body["pairing_code"], mismatch.text)
+        finally:
+            cleanup()
+
+    def test_pairing_connection_info_rejects_requested_invite_without_leaking_code(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._client()
+            headers = self._admin_header()
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={"group_id": "g_issuer"},
+                headers=headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+            request = client.post(
+                "/api/federation/pairing/requests",
+                json={
+                    "pairing_code": invite_body["pairing_code"],
+                    "requester_group_id": "g_joiner",
+                    "requester_peer_id": "peer_joiner",
+                    "invite_id": invite_body["invite_id"],
+                },
+                headers=headers,
+            )
+            self.assertEqual(request.status_code, 200, request.text)
+
+            info = client.post(
+                "/api/federation/pairing/connection-info",
+                json={
+                    "group_id": "g_issuer",
+                    "invite_id": invite_body["invite_id"],
+                    "issuer_endpoint": "https://issuer.example",
+                    "issuer_group_title": "Issuer",
+                },
+                headers=headers,
+            )
+
+            self.assertEqual(info.status_code, 400, info.text)
+            self.assertIn("pending", info.text)
+            self.assertNotIn(invite_body["pairing_code"], info.text)
+            self.assertNotIn("pairing_code_hash", info.text)
+        finally:
+            cleanup()
+
+    def test_pairing_connection_info_rejects_expired_invite_without_leaking_code(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._client()
+            headers = self._admin_header()
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={"group_id": "g_issuer", "ttl_seconds": -1},
+                headers=headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+
+            info = client.post(
+                "/api/federation/pairing/connection-info",
+                json={
+                    "group_id": "g_issuer",
+                    "invite_id": invite_body["invite_id"],
+                    "issuer_endpoint": "https://issuer.example",
+                    "issuer_group_title": "Issuer",
+                },
+                headers=headers,
+            )
+
+            self.assertEqual(info.status_code, 400, info.text)
+            self.assertIn("expired", info.text)
+            self.assertNotIn(invite_body["pairing_code"], info.text)
+            self.assertNotIn("pairing_code_hash", info.text)
+
+            listed = client.get("/api/federation/pairing/requests?group_id=g_issuer", headers=headers)
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual(listed.json()["result"]["requests"], [])
+        finally:
+            cleanup()
+
     def test_same_instance_group_connection_info_code_creates_request(self) -> None:
         _, cleanup = self._with_home()
         try:
