@@ -123,6 +123,7 @@ MCP_TOOLS = [
                 },
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
+                "idempotency_key": {"type": "string", "description": "Stable caller retry key; used for federation remote delivery when dst_group_id targets a trusted remote group"},
                 "refs": {"type": "array", "items": {"type": "object"}},
             },
             required=["text"],
@@ -1295,5 +1296,73 @@ MCP_TOOLS = [
             },
             required=["registration_id", "idempotency_key"],
         ),
+    },
+    {
+        "name": "cccc_federation_identity",
+        "description": "Return this runtime's stable public federation identity (node_id/peer_id). No secret material is returned.",
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": _obj({}),
+    },
+    {
+        "name": "cccc_pairing_invite_create",
+        "description": "Create a short-lived libp2p federation pairing invite. The plaintext pairing_code is returned once; only a hash is persisted.",
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "remote_group_id": {"type": "string"},
+                "remote_peer_id": {"type": "string"},
+                "multiaddrs": {"type": "array", "items": {"type": "string"}},
+                "ttl_seconds": {"type": "integer", "default": 600},
+            },
+            required=["remote_group_id", "remote_peer_id"],
+        ),
+    },
+    {
+        "name": "cccc_pairing_request_create",
+        "description": "Create a pending pairing request from a plaintext pairing_code. Does not create a registration until approval.",
+        "inputSchema": _obj(
+            {
+                "pairing_code": {"type": "string"},
+                "requester_group_id": {"type": "string"},
+                "requester_peer_id": {"type": "string"},
+                "requester_multiaddrs": {"type": "array", "items": {"type": "string"}},
+            },
+            required=["pairing_code", "requester_group_id", "requester_peer_id"],
+        ),
+    },
+    {
+        "name": "cccc_pairing_request_list",
+        "description": "List libp2p federation pairing requests, optionally scoped to group_id.",
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": _obj({**_COMMON_GROUP}),
+    },
+    {
+        "name": "cccc_pairing_approve",
+        "description": "Approve a pending pairing request and create/replay the active libp2p registration and trust record.",
+        "inputSchema": _obj(
+            {
+                "request_id": {"type": "string"},
+                "approver_user_id": {"type": "string"},
+            },
+            required=["request_id"],
+        ),
+    },
+    {
+        "name": "cccc_pairing_reject",
+        "description": "Reject a pending pairing request. Rejected requests cannot later be approved.",
+        "inputSchema": _obj(
+            {
+                "request_id": {"type": "string"},
+                "rejected_by": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            required=["request_id"],
+        ),
+    },
+    {
+        "name": "cccc_pairing_trust_list",
+        "description": "List approved libp2p federation trust records, optionally scoped to group_id.",
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": _obj({**_COMMON_GROUP}),
     },
 ]

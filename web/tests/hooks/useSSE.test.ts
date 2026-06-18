@@ -77,7 +77,7 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
     });
   });
 
-  it("marks the group stopped when the last running actor stops", () => {
+  it("preserves stopped fallback when the last running actor stops", () => {
     const actors: Actor[] = [
       { id: "peer-1", running: true, effective_working_state: "working" },
     ];
@@ -86,6 +86,11 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
       id: "peer-1",
       running: false,
       effective_working_state: "stopped",
+    }, {
+      lifecycle_state: "stopped",
+      runtime_running: false,
+      running_actor_count: 0,
+      has_running_foreman: false,
     })).toMatchObject({
       lifecycle_state: "stopped",
       runtime_running: false,

@@ -52,7 +52,7 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain('val.lastIndexOf("@")');
     expect(composerSource).toContain('val.lastIndexOf("#")');
     expect(composerSource).toContain("getAgentMentionDisplayToken(selected)");
-    expect(composerSource).toContain('`#${selected.label}`');
+    expect(composerSource).toContain("getComposerGroupMentionInsertToken(selected)");
     // A `#<group>` selection inserts a delegation-context token but must NOT
     // set a cross-group destination.
     expect(composerSource).not.toContain("setDestGroupId(selected.value)");
@@ -114,6 +114,11 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("pruneComposerGroupMentionTokens");
     expect(composerSource).toContain("pruneComposerAgentMentionTokens");
     expect(composerSource).toContain("mentionOverlay");
+  });
+
+  it("renders selected # and @ mentions with a clear overlay highlight", () => {
+    expect(composerSource).toContain("bg-sky-400/25 px-1 text-transparent ring-1 ring-inset ring-sky-300/60");
+    expect(composerSource).toContain("bg-violet-400/25 px-1 text-transparent ring-1 ring-inset ring-violet-300/60");
   });
 
   it("keeps textarea fixed while only the mention overlay tracks scroll", () => {

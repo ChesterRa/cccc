@@ -1,4 +1,5 @@
 import type { Actor, GroupMeta } from "../../types";
+import type { FederationTrust } from "../../services/api/federation";
 
 export type ComposerMentionKind = "agent" | "group";
 
@@ -10,6 +11,13 @@ export type ComposerMentionSuggestion = {
   meta?: string;
   keywords?: string[];
 };
+
+export function getComposerGroupMentionInsertToken(selected: ComposerMentionSuggestion): string {
+  const label = String(selected.label || "").trim();
+  const value = String(selected.value || "").trim();
+  const token = label || value;
+  return token.startsWith("#") ? token : `#${token}`;
+}
 
 function matchesMentionFilter(item: ComposerMentionSuggestion, needle: string): boolean {
   if (!needle) return true;
@@ -55,16 +63,65 @@ function buildGroupMentionSuggestions(groups: GroupMeta[], needle: string): Comp
       const title = String(group.title || "").trim();
       const topic = String(group.topic || "").trim();
       const label = title || topic || groupId;
+      const remoteEndpoint = String(group.federation_remote_endpoint || "").trim();
+      const remotePeerId = String(group.federation_remote_peer_id || "").trim();
       return {
         kind: "group" as const,
         value: groupId,
         label,
-        description: topic || undefined,
-        meta: label !== groupId ? groupId : undefined,
-        keywords: [groupId, title, topic].filter(Boolean),
+        description: group.federation_remote ? groupId : (remoteEndpoint || topic || undefined),
+        meta: group.federation_remote ? (remotePeerId || undefined) : (label !== groupId ? groupId : undefined),
+        keywords: [groupId, title, topic, remoteEndpoint, remotePeerId].filter(Boolean),
       };
     })
     .filter((item) => matchesMentionFilter(item, needle));
+}
+
+function endpointDisplayName(endpoint: string): string {
+  const value = String(endpoint || "").trim();
+  if (!value) return "";
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`).host;
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  }
+}
+
+export function buildFederationRouteGroups(trusts: FederationTrust[] | undefined | null): GroupMeta[] {
+  const out: GroupMeta[] = [];
+  for (const trust of trusts || []) {
+    if (String(trust.status || "").trim() !== "active") continue;
+    const groupId = String(trust.remote_group_id || "").trim();
+    if (!groupId) continue;
+    const title = String(trust.remote_group_title || "").trim();
+    const endpoint = String(trust.remote_endpoint || "").trim();
+    const endpointName = endpointDisplayName(endpoint);
+    const peerId = String(trust.remote_peer_id || "").trim();
+    out.push({
+      group_id: groupId,
+      title: title || endpointName || "Remote CCCC group",
+      topic: groupId,
+      federation_remote: true,
+      federation_local_group_id: String(trust.group_id || "").trim(),
+      federation_remote_endpoint: endpoint,
+      federation_remote_peer_id: peerId,
+      federation_trust_id: String(trust.trust_id || "").trim(),
+    });
+  }
+  return out;
+}
+
+export function mergeComposerRouteGroups(localGroups: GroupMeta[], federationGroups: GroupMeta[]): GroupMeta[] {
+  const byId = new Map<string, GroupMeta>();
+  for (const group of localGroups || []) {
+    const groupId = String(group.group_id || "").trim();
+    if (groupId) byId.set(groupId, group);
+  }
+  for (const group of federationGroups || []) {
+    const groupId = String(group.group_id || "").trim();
+    if (groupId && !byId.has(groupId)) byId.set(groupId, group);
+  }
+  return [...byId.values()];
 }
 
 function containsRouteToken(text: string, token: string): boolean {

@@ -1,0 +1,326 @@
+import tempfile
+import unittest
+from contextlib import ExitStack
+from pathlib import Path
+from unittest.mock import patch
+
+
+class TestFederationReplyRelay(unittest.TestCase):
+    def _isolated_home(self, td: str) -> ExitStack:
+        stack = ExitStack()
+        home = Path(td)
+        stack.enter_context(patch("cccc.kernel.federation.pairing.ensure_home", return_value=home))
+        stack.enter_context(patch("cccc.kernel.federation.registration.ensure_home", return_value=home))
+        stack.enter_context(patch("cccc.kernel.federation.peer_addresses.ensure_home", return_value=home))
+        return stack
+
+    def test_falls_back_to_active_route_for_same_remote_peer_when_source_transport_differs(self) -> None:
+        from cccc.daemon.federation.reply_relay import federation_reply_registration_id
+        from cccc.kernel.federation import pairing as pairing_kernel
+
+        original_data = {
+            "source_platform": "peer_cccc_http",
+            "source_user_id": "peer-main",
+            "src_group_id": "g_main",
+            "src_event_id": "remote-event-1",
+        }
+
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+            request = pairing_kernel.create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_main",
+                requester_peer_id="peer-main",
+                requester_multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-main"],
+            )
+            approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            registration_id = federation_reply_registration_id(group_id="g_cross", original_data=original_data)
+
+        self.assertEqual(registration_id, approved["registration"]["registration_id"])
+
+    def test_prefers_exact_transport_route_before_fallback_route(self) -> None:
+        from cccc.daemon.federation.reply_relay import federation_reply_registration_id
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.kernel.federation.registration import upsert_registration
+
+        original_data = {
+            "source_platform": "peer_cccc_http",
+            "source_user_id": "peer-main",
+            "src_group_id": "g_main",
+            "src_event_id": "remote-event-1",
+        }
+
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+            request = pairing_kernel.create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_main",
+                requester_peer_id="peer-main",
+            )
+            pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+            http_registration = upsert_registration(
+                "g_cross",
+                "http://127.0.0.1:8858",
+                transport="peer_cccc_http",
+                remote_group_id="g_main",
+                remote_peer_id="peer-main",
+            )
+            store = pairing_kernel._load_store(Path(td))  # type: ignore[attr-defined]
+            store["trusts"]["ptrust_http"] = {
+                "trust_id": "ptrust_http",
+                "request_id": "",
+                "registration_id": http_registration["registration_id"],
+                "group_id": "g_cross",
+                "remote_group_id": "g_main",
+                "remote_peer_id": "peer-main",
+                "multiaddrs": [],
+                "transport": "peer_cccc_http",
+                "status": "active",
+                "created_at": "2026-06-17T00:00:00Z",
+                "updated_at": "2026-06-17T00:00:00Z",
+            }
+            pairing_kernel._save_store(store, Path(td))  # type: ignore[attr-defined]
+
+            registration_id = federation_reply_registration_id(group_id="g_cross", original_data=original_data)
+
+        self.assertEqual(registration_id, http_registration["registration_id"])
+
+    def test_fallback_skips_libp2p_route_without_known_addresses(self) -> None:
+        from cccc.daemon.federation.reply_relay import federation_reply_registration_id
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.kernel.federation.registration import upsert_registration
+
+        original_data = {
+            "source_platform": "peer_cccc_http",
+            "source_user_id": "peer-main",
+            "src_group_id": "g_main",
+            "src_event_id": "remote-event-1",
+        }
+
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+            request = pairing_kernel.create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_main",
+                requester_peer_id="peer-main",
+            )
+            pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+            http_registration = upsert_registration(
+                "g_cross",
+                "http://127.0.0.1:8858",
+                transport="peer_cccc_http",
+                remote_group_id="g_main",
+                remote_peer_id="peer-main",
+            )
+            store = pairing_kernel._load_store(Path(td))  # type: ignore[attr-defined]
+            store["trusts"]["ptrust_http"] = {
+                "trust_id": "ptrust_http",
+                "request_id": "",
+                "registration_id": http_registration["registration_id"],
+                "group_id": "g_cross",
+                "remote_group_id": "g_main",
+                "remote_peer_id": "peer-main",
+                "multiaddrs": [],
+                "transport": "peer_cccc_http",
+                "status": "active",
+                "created_at": "2026-06-17T00:00:00Z",
+                "updated_at": "2026-06-17T00:00:00Z",
+            }
+            pairing_kernel._save_store(store, Path(td))  # type: ignore[attr-defined]
+
+            registration_id = federation_reply_registration_id(group_id="g_cross", original_data=original_data)
+
+        self.assertEqual(registration_id, http_registration["registration_id"])
+
+    def test_fallback_prefers_http_route_over_libp2p_route_for_same_peer(self) -> None:
+        from cccc.daemon.federation.reply_relay import federation_reply_registration_id
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.kernel.federation.registration import upsert_registration
+
+        original_data = {
+            "source_platform": "peer_cccc_http",
+            "source_user_id": "peer-main",
+            "src_group_id": "g_main",
+            "src_event_id": "remote-event-1",
+        }
+
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+            request = pairing_kernel.create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_main",
+                requester_peer_id="peer-main",
+                requester_multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-main"],
+            )
+            pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+            http_registration = upsert_registration(
+                "g_cross",
+                "http://127.0.0.1:8858",
+                transport="peer_cccc_http",
+                remote_group_id="g_main",
+                remote_peer_id="peer-main",
+            )
+            store = pairing_kernel._load_store(Path(td))  # type: ignore[attr-defined]
+            store["trusts"]["ptrust_http"] = {
+                "trust_id": "ptrust_http",
+                "request_id": "",
+                "registration_id": http_registration["registration_id"],
+                "group_id": "g_cross",
+                "remote_group_id": "g_main",
+                "remote_peer_id": "peer-main",
+                "multiaddrs": [],
+                "transport": "peer_cccc_http",
+                "status": "active",
+                "created_at": "2026-06-17T00:00:01Z",
+                "updated_at": "2026-06-17T00:00:01Z",
+            }
+            pairing_kernel._save_store(store, Path(td))  # type: ignore[attr-defined]
+
+            registration_id = federation_reply_registration_id(group_id="g_cross", original_data=original_data)
+
+        self.assertEqual(registration_id, http_registration["registration_id"])
+
+    def test_only_unaddressable_libp2p_fallback_returns_diagnostic_error(self) -> None:
+        from cccc.daemon.federation.reply_relay import relay_federation_reply
+        from cccc.kernel.federation import pairing as pairing_kernel
+
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+            request = pairing_kernel.create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_main",
+                requester_peer_id="peer-main",
+            )
+            pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            resp = relay_federation_reply(
+                group_id="g_cross",
+                original_data={
+                    "source_platform": "peer_cccc_http",
+                    "source_user_id": "peer-main",
+                    "src_group_id": "g_main",
+                    "src_event_id": "remote-event-1",
+                },
+                reply_event_id="reply-event-1",
+                text="answer",
+                to=["user"],
+                priority="normal",
+                reply_required=False,
+                refs=[],
+            )
+
+        self.assertIsNotNone(resp)
+        assert resp is not None
+        self.assertFalse(resp.ok)
+        self.assertIsNotNone(resp.error)
+        assert resp.error is not None
+        self.assertEqual(resp.error.code, "federation_reply_route_not_found")
+        self.assertEqual(resp.error.details["remote_group_id"], "g_main")
+        self.assertEqual(resp.error.details["remote_peer_id"], "peer-main")
+
+    def test_missing_reply_route_returns_diagnostic_error(self) -> None:
+        from cccc.daemon.federation.reply_relay import relay_federation_reply
+
+        resp = relay_federation_reply(
+            group_id="g_cross",
+            original_data={
+                "source_platform": "peer_cccc_http",
+                "source_user_id": "peer-main",
+                "src_group_id": "g_main",
+                "src_event_id": "remote-event-1",
+            },
+            reply_event_id="reply-event-1",
+            text="answer",
+            to=["user"],
+            priority="normal",
+            reply_required=False,
+            refs=[],
+        )
+
+        self.assertIsNotNone(resp)
+        assert resp is not None
+        self.assertFalse(resp.ok)
+        self.assertIsNotNone(resp.error)
+        assert resp.error is not None
+        self.assertEqual(resp.error.code, "federation_reply_route_not_found")
+        self.assertEqual(resp.error.details["remote_group_id"], "g_main")
+        self.assertEqual(resp.error.details["source_platform"], "peer_cccc_http")
+
+    def test_http_inbound_source_multiaddrs_refreshes_libp2p_reply_route(self) -> None:
+        import os
+
+        from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.kernel.federation.registration import list_registrations
+        import yaml
+
+        old_home = os.environ.get("CCCC_HOME")
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            os.environ["CCCC_HOME"] = td
+            try:
+                group_dir = Path(td) / "groups" / "g_cross"
+                group_dir.mkdir(parents=True)
+                (group_dir / "context").mkdir()
+                (group_dir / "state").mkdir()
+                (group_dir / "group.yaml").write_text(
+                    yaml.safe_dump(
+                        {
+                            "v": 1,
+                            "group_id": "g_cross",
+                            "title": "cross",
+                            "state": "active",
+                            "active_scope_key": "",
+                            "actors": [
+                                {"id": "foreman", "title": "foreman", "role": "foreman", "enabled": True}
+                            ],
+                        },
+                        sort_keys=False,
+                    ),
+                    encoding="utf-8",
+                )
+                invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+                request = pairing_kernel.create_pairing_request(
+                    invite["pairing_code"],
+                    requester_group_id="g_main",
+                    requester_peer_id="peer-main",
+                    requester_multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-main"],
+                )
+                pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+                resp = handle_send(
+                    {
+                        "group_id": "g_cross",
+                        "text": "hello",
+                        "to": ["@foreman"],
+                        "source_platform": "peer_cccc_http",
+                        "source_user_id": "peer-main",
+                        "src_group_id": "g_main",
+                        "src_event_id": "remote-event-1",
+                        "source_multiaddrs": ["/ip4/127.0.0.1/tcp/5001/p2p/peer-main"],
+                        "client_id": "remote-event-1",
+                    },
+                    coerce_bool=bool,
+                    normalize_attachments=lambda raw, group: [],
+                    effective_runner_kind=lambda group_id: "pty",
+                    auto_wake_recipients=lambda group, to, by: [],
+                    automation_on_resume=lambda group: None,
+                    automation_on_new_message=lambda group: None,
+                    clear_pending_system_notifies=lambda group_id, actors: None,
+                )
+
+                self.assertTrue(resp.ok)
+                registrations = list_registrations(home=Path(td))
+                libp2p = [reg for reg in registrations if str(reg.get("transport") or "") == "libp2p_cccc"]
+                self.assertEqual(libp2p[0]["multiaddrs"], ["/ip4/127.0.0.1/tcp/5001/p2p/peer-main"])
+                trust = pairing_kernel.list_trusts(group_id="g_cross", home=Path(td))[0]
+                self.assertEqual(trust["multiaddrs"], ["/ip4/127.0.0.1/tcp/5001/p2p/peer-main"])
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+
+
+if __name__ == "__main__":
+    unittest.main()

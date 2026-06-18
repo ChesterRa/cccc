@@ -17,8 +17,10 @@ from .base import (
     get_transport,
     register_transport,
 )
+from .libp2p_cccc import Libp2pCcccTransport
 from .peer_cccc_http import PeerCcccHttpTransport
 
+register_transport(Libp2pCcccTransport())
 register_transport(PeerCcccHttpTransport())
 
 __all__ = [
@@ -30,5 +32,6 @@ __all__ = [
     "available_transports",
     "get_transport",
     "register_transport",
+    "Libp2pCcccTransport",
     "PeerCcccHttpTransport",
 ]

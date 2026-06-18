@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildComposerMentionSuggestions,
+  buildFederationRouteGroups,
+  getComposerGroupMentionInsertToken,
   extractSegmentTargetActor,
   getComposerGroupRouteDestination,
   hasComposerGroupRouteToken,
@@ -128,6 +130,144 @@ describe("buildComposerMentionSuggestions", () => {
         meta: "g_sdk",
       }),
     ]);
+  });
+
+  it("builds group suggestions for trusted remote federation groups", () => {
+    const remoteGroups = buildFederationRouteGroups([
+      {
+        trust_id: "ptrust_1",
+        status: "active",
+        group_id: "g_owner",
+        remote_group_id: "g_remote",
+        remote_group_title: "Remote Product",
+        remote_peer_id: "peer_remote",
+        remote_endpoint: "https://remote.example",
+      },
+    ]);
+
+    const items = buildComposerMentionSuggestions({
+      kind: "group",
+      filter: "remote",
+      recipientActors: [],
+      groups: remoteGroups,
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "group",
+        value: "g_remote",
+        label: "Remote Product",
+        description: "g_remote",
+        meta: "peer_remote",
+      }),
+    ]);
+  });
+
+  it("builds group suggestions for active HTTP federation routes with empty multiaddrs", () => {
+    const remoteGroups = buildFederationRouteGroups([
+      {
+        trust_id: "ptrust_9263feebd4920ad3",
+        request_id: "preq_1",
+        registration_id: "reg_81761c7e6e309356",
+        status: "active",
+        transport: "peer_cccc_http",
+        group_id: "g_owner",
+        remote_group_id: "g_0fb5f39478cc",
+        remote_group_title: "CCCC Cross Test",
+        remote_peer_id: "peer_00e780d5eb7bad9dea41bba479a9c292",
+        remote_endpoint: "http://127.0.0.1:8858",
+        multiaddrs: [],
+      },
+    ]);
+
+    const items = buildComposerMentionSuggestions({
+      kind: "group",
+      filter: "CCCC",
+      recipientActors: [],
+      groups: remoteGroups,
+    });
+
+    expect(remoteGroups).toHaveLength(1);
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "group",
+        value: "g_0fb5f39478cc",
+        label: "CCCC Cross Test",
+        description: "g_0fb5f39478cc",
+        meta: "peer_00e780d5eb7bad9dea41bba479a9c292",
+      }),
+    ]);
+  });
+
+  it("excludes revoked federation routes from # suggestions", () => {
+    const remoteGroups = buildFederationRouteGroups([
+      {
+        trust_id: "ptrust_revoked",
+        status: "revoked",
+        group_id: "g_owner",
+        remote_group_id: "g_0fb5f39478cc",
+        remote_group_title: "CCCC Cross Test",
+        remote_peer_id: "peer_00e780d5eb7bad9dea41bba479a9c292",
+        remote_endpoint: "http://127.0.0.1:8858",
+      },
+    ]);
+
+    const items = buildComposerMentionSuggestions({
+      kind: "group",
+      filter: "CCCC Cross Test",
+      recipientActors: [],
+      groups: remoteGroups,
+    });
+
+    expect(remoteGroups).toEqual([]);
+    expect(items).toEqual([]);
+  });
+
+  it("does not use opaque remote group ids as the primary # suggestion label", () => {
+    const remoteGroups = buildFederationRouteGroups([
+      {
+        trust_id: "ptrust_1",
+        status: "active",
+        remote_group_id: "g_0fb5f39478cc",
+        remote_peer_id: "peer_00e780d5eb7bad9dea41bba479a9c292",
+        remote_endpoint: "https://remote.example",
+      },
+    ]);
+
+    const items = buildComposerMentionSuggestions({
+      kind: "group",
+      filter: "remote",
+      recipientActors: [],
+      groups: remoteGroups,
+    });
+
+    expect(items[0]).toEqual(expect.objectContaining({
+      label: "remote.example",
+      description: "g_0fb5f39478cc",
+      meta: "peer_00e780d5eb7bad9dea41bba479a9c292",
+    }));
+  });
+
+  it("inserts the readable remote group label for federation # suggestions", () => {
+    const [remoteGroup] = buildFederationRouteGroups([
+      {
+        trust_id: "ptrust_1",
+        status: "active",
+        remote_group_id: "g_0fb5f39478cc",
+        remote_group_title: "Remote Product",
+        remote_peer_id: "peer_00e780d5eb7bad9dea41bba479a9c292",
+      },
+    ]);
+    const [item] = buildComposerMentionSuggestions({
+      kind: "group",
+      filter: "remote",
+      recipientActors: [],
+      groups: [remoteGroup],
+    });
+
+    expect(item.label).toBe("Remote Product");
+    expect(item.value).toBe("g_0fb5f39478cc");
+    expect(getComposerGroupMentionInsertToken(item)).toBe("#Remote Product");
   });
 });
 

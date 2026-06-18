@@ -27,6 +27,7 @@ from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
 from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...util.time import utc_now_iso
+from ..federation.reply_relay import can_relay_federation_reply, relay_federation_reply
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import append_mcp_reply_reminder, flush_pending_messages
@@ -280,6 +281,12 @@ def handle_send(
     source_platform = str(args.get("source_platform") or "").strip()
     source_user_name = str(args.get("source_user_name") or "").strip()
     source_user_id = str(args.get("source_user_id") or "").strip()
+    source_multiaddrs_raw = args.get("source_multiaddrs")
+    source_multiaddrs = (
+        [str(item).strip() for item in source_multiaddrs_raw if str(item).strip()]
+        if isinstance(source_multiaddrs_raw, list)
+        else []
+    )
     diag = make_chat_diagnostics(
         op="send",
         group_id=group_id,
@@ -321,6 +328,23 @@ def handle_send(
     if group is None:
         resp = _error("group_not_found", f"group not found: {group_id}")
         return diag.finish_response(resp)
+    if source_multiaddrs and src_group_id and source_user_id:
+        try:
+            from ..federation.peer_address_sync import sync_federation_peer_multiaddrs
+
+            sync_federation_peer_multiaddrs(
+                group_id=group.group_id,
+                remote_group_id=src_group_id,
+                remote_peer_id=source_user_id,
+                multiaddrs=source_multiaddrs,
+            )
+        except Exception:
+            logger.exception(
+                "[federation] failed to sync source multiaddrs group=%s remote_group=%s peer=%s",
+                group.group_id,
+                src_group_id,
+                source_user_id,
+            )
     if _is_internal_pet_sender(group, by):
         return diag.finish_response(
             _error(
@@ -825,6 +849,7 @@ def handle_reply(
         if isinstance(original_mention_user_ids_raw, list)
         else []
     )
+    relayable_federation_reply = can_relay_federation_reply(group_id=group.group_id, original_data=original_data)
 
     if not to_tokens:
         to_tokens = default_reply_recipients(group, by=by, original_event=original)
@@ -843,7 +868,7 @@ def handle_reply(
         woken = auto_wake_recipients(group, to, by)
         diag.mark("auto_wake")
         if not matched_enabled:
-            if not woken:
+            if not woken and not relayable_federation_reply:
                 wanted = " ".join(to) if to else "@all"
                 return diag.finish_response(
                     _error(
@@ -891,6 +916,17 @@ def handle_reply(
         ).model_dump(),
     )
     diag.mark("append_event")
+    federation_reply_result = relay_federation_reply(
+        group_id=group.group_id,
+        original_data=original_data,
+        reply_event_id=str(event.get("id") or ""),
+        text=text,
+        to=to,
+        priority=priority,
+        reply_required=reply_required,
+        refs=refs,
+    )
+    diag.mark("federation_reply")
 
     ack_event: Optional[dict[str, Any]] = None
     try:
@@ -971,7 +1007,12 @@ def handle_reply(
     )
     diag.mark("schedule_side_effects")
 
-    return diag.finish_response(DaemonResponse(ok=True, result={"event": event, "ack_event": ack_event}))
+    result: Dict[str, Any] = {"event": event, "ack_event": ack_event}
+    if federation_reply_result is not None:
+        result["federation_reply"] = federation_reply_result.result if federation_reply_result.ok else {
+            "error": federation_reply_result.error.model_dump() if federation_reply_result.error is not None else None
+        }
+    return diag.finish_response(DaemonResponse(ok=True, result=result))
 
 
 def handle_stream_emit(args: Dict[str, Any]) -> DaemonResponse:

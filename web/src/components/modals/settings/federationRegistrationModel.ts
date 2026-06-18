@@ -49,7 +49,13 @@ export function isPeerHttpRemoteGroupMissing(transport: string, remoteGroupId: s
   return t === "peer_cccc_http" && String(remoteGroupId || "").trim().length === 0;
 }
 
+export function shouldShowRemoteUrlFields(transport: string): boolean {
+  const t = String(transport || "peer_cccc_http").trim() || "peer_cccc_http";
+  return t !== "libp2p_cccc";
+}
+
 export function canVerify(opts: { url: string; transport: string; remoteGroupId: string; busy: boolean }): boolean {
+  if (!shouldShowRemoteUrlFields(opts.transport)) return !opts.busy;
   return (
     String(opts.url || "").trim().length > 0 &&
     !opts.busy &&
@@ -65,6 +71,9 @@ export function canSubmitRegister(opts: {
   transport?: string;
   remoteGroupId?: string;
 }): boolean {
+  if (!shouldShowRemoteUrlFields(opts.transport ?? "peer_cccc_http")) {
+    return opts.verified && opts.selectedCount > 0 && !opts.busy;
+  }
   return (
     opts.verified &&
     String(opts.url || "").trim().length > 0 &&

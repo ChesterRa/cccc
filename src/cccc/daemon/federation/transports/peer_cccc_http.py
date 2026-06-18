@@ -19,6 +19,7 @@ from .base import (
     sent_result,
     transient_result,
 )
+from ..remote_payloads import build_remote_chat_payload
 
 # (url, body, credential) -> (http_status, response_json)
 HttpPost = Callable[[str, Dict[str, Any], str], Tuple[int, Dict[str, Any]]]
@@ -90,13 +91,7 @@ class PeerCcccHttpTransport(RemoteSendTransport):
             return gate
 
         url = f"{envelope.target.url}/api/v1/groups/{envelope.target.remote_group_id}/send"
-        body = {
-            "text": envelope.payload.text,
-            "to": list(envelope.payload.to),
-            "priority": envelope.payload.priority,
-            "reply_required": envelope.payload.reply_required,
-            "idempotency_key": envelope.idempotency_key,
-        }
+        body = build_remote_chat_payload(envelope)
 
         try:
             status, parsed = self._http_post(url, body, envelope.credential)

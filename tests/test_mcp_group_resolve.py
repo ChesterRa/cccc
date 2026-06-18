@@ -1,5 +1,7 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 _CLEAN_ENV = {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}
@@ -73,6 +75,65 @@ class TestMcpGroupResolve(unittest.TestCase):
             [item.get("group_id") for item in raised.exception.details.get("candidates", [])],
             ["g_one", "g_two"],
         )
+
+    def test_group_resolve_returns_current_group_federation_remote_title(self) -> None:
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.ports.mcp.common import runtime_context_override
+        from cccc.ports.mcp import common as mcp_common
+        from cccc.ports.mcp import server as mcp_server
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch.object(mcp_common, "call_daemon", return_value={"ok": True, "result": {"groups": []}}), \
+             runtime_context_override(home=td, group_id="g_local", actor_id="test-peer"):
+            request = pairing_kernel.create_pairing_request(
+                pairing_kernel.create_pairing_invite(group_id="g_local")["pairing_code"],
+                requester_group_id="g_remote",
+                requester_group_title="CCCC Cross Test",
+                requester_peer_id="peer_remote",
+            )
+            approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            out = mcp_server.handle_tool_call(
+                "cccc_group",
+                {"action": "resolve", "group_id": "g_local", "token": "#CCCC Cross Test"},
+            )
+
+        self.assertEqual(out.get("group_id"), "g_remote")
+        self.assertEqual(out.get("title"), "CCCC Cross Test")
+        self.assertEqual(out.get("matched_by"), "federation_remote_group_title")
+        self.assertEqual(out.get("registration_id"), approved["registration"]["registration_id"])
+        self.assertEqual(out.get("federation"), True)
+
+    def test_group_resolve_ignores_revoked_federation_remote_title(self) -> None:
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.ports.mcp.common import runtime_context_override
+        from cccc.ports.mcp import common as mcp_common
+        from cccc.ports.mcp import server as mcp_server
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch.object(mcp_common, "call_daemon", return_value={"ok": True, "result": {"groups": []}}), \
+             runtime_context_override(home=td, group_id="g_local", actor_id="test-peer"):
+            request = pairing_kernel.create_pairing_request(
+                pairing_kernel.create_pairing_invite(group_id="g_local")["pairing_code"],
+                requester_group_id="g_0fb5f39478cc",
+                requester_group_title="CCCC Cross Test",
+                requester_peer_id="peer_00e780d5eb7bad9dea41bba479a9c292",
+            )
+            approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+            pairing_kernel.revoke_trust(approved["trust"]["trust_id"], revoked_by="user-a")
+
+            with self.assertRaises(mcp_server.MCPError) as raised:
+                mcp_server.handle_tool_call(
+                    "cccc_group",
+                    {"action": "resolve", "group_id": "g_local", "token": "#CCCC Cross Test"},
+                )
+
+        self.assertEqual(raised.exception.code, "not_found")
+        self.assertIn("no group matches token: #CCCC Cross Test", str(raised.exception))
 
 
 if __name__ == "__main__":

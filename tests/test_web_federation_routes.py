@@ -150,6 +150,30 @@ class TestWebFederationRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_register_rejects_direct_libp2p_registration(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            admin, _ = self._tokens()
+            client = self._client()
+            r = client.post(
+                "/api/federation/register",
+                json={
+                    "group_id": "g_local",
+                    "url": "libp2p://peer-remote",
+                    "transport": "libp2p_cccc",
+                    "remote_group_id": "g_remote",
+                    "remote_peer_id": "peer-remote",
+                    "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer-remote"],
+                    "credential_ref": "fsec_remote_peer",
+                },
+                headers=self._hdr(admin),
+            )
+            self.assertEqual(r.status_code, 400)
+            self.assertIn("pairing", r.text)
+            self.assertNotIn("fsec_remote_peer", r.text)
+        finally:
+            cleanup()
+
     def test_status_filters_to_allowed_groups(self) -> None:
         _, cleanup = self._with_home()
         try:

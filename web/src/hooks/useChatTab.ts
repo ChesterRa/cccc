@@ -1,7 +1,7 @@
 // useChatTab - Encapsulates ChatTab business logic and state.
 // Reduces prop drilling by providing state from stores and computed values directly.
 
-import { useMemo, useCallback, useRef, useState } from "react";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useGroupStore,
@@ -16,6 +16,7 @@ import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type {
   Actor,
+  GroupMeta,
   LedgerEvent,
   ChatMessageData,
   MessageRef,
@@ -38,9 +39,20 @@ import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "./composerGroupMentions";
-import { pruneComposerAgentMentionTokens, pruneComposerGroupMentionTokens } from "./composerGroupMentions";
-import { buildComposerMentionSuggestions, type ComposerMentionKind } from "../pages/chat/chatMentionSuggestions";
+import {
+  buildComposerFederationRouteRefs,
+  pruneComposerAgentMentionTokens,
+  pruneComposerGroupMentionTokens,
+} from "./composerGroupMentions";
+import {
+  buildComposerMentionSuggestions,
+  buildFederationRouteGroups,
+  mergeComposerRouteGroups,
+  type ComposerMentionKind,
+} from "../pages/chat/chatMentionSuggestions";
+import type { FederationTrust } from "../services/api/federation";
 import { isDelegationSourceOutboundEvent } from "../components/messageBubbleDelegation";
+import { subscribeFederationPairingChanged } from "../utils/federationPairingEvents";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -68,6 +80,11 @@ export function shouldLockChatToBottomForSend(input: {
   if (Math.max(0, Number(input.chatUnreadCount) || 0) > 0) return false;
   if (shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot, input.now ?? Date.now())) return false;
   return true;
+}
+
+export function buildComposerTrustFetchGroupId(_selectedGroupId: string): string | undefined {
+  const gid = String(_selectedGroupId || "").trim();
+  return gid || undefined;
 }
 
 export function shouldShowInConversation(event: LedgerEvent): boolean {
@@ -796,28 +813,33 @@ export function buildComposerSendRecipientTokens({
 
 export function pruneMissingMentionRecipientTokens({
   toText,
+  mentionRecipientTokens: previousMentionRecipientTokens,
   liveAgentMentionTokens,
   validRecipientSet,
 }: {
   toText: string;
+  mentionRecipientTokens?: Set<string>;
   liveAgentMentionTokens: ComposerAgentMentionToken[];
   validRecipientSet: Set<string>;
 }): { toText: string; mentionRecipientTokens: Set<string> } {
+  const previousMentionTokens = previousMentionRecipientTokens || new Set<string>();
   const mentionRecipientTokens = new Set(
     (liveAgentMentionTokens || [])
       .filter((token) => token.scope === "selected")
       .map((token) => String(token.actorId || "").trim())
       .filter((token) => token && validRecipientSet.has(token)),
   );
-  if (mentionRecipientTokens.size === 0) {
+  if (mentionRecipientTokens.size === 0 && previousMentionTokens.size === 0) {
     return { toText: String(toText || ""), mentionRecipientTokens: new Set() };
   }
 
-  const explicitTokens = parseComposerRecipientTokens(toText, validRecipientSet)
-    .filter((token) => !mentionRecipientTokens.has(token));
-  const nextTokens = explicitTokens.concat(
-    Array.from(mentionRecipientTokens).filter((token) => !explicitTokens.includes(token)),
-  );
+  const nextTokens = parseComposerRecipientTokens(toText, validRecipientSet)
+    .filter((token) => !previousMentionTokens.has(token) || mentionRecipientTokens.has(token));
+  for (const token of mentionRecipientTokens) {
+    if (!nextTokens.includes(token)) {
+      nextTokens.push(token);
+    }
+  }
   return {
     toText: nextTokens.join(", "),
     mentionRecipientTokens,
@@ -840,6 +862,7 @@ export function useChatTab({
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
   const [forceStickToBottomToken, setForceStickToBottomToken] = useState(0);
+  const [federationTrusts, setFederationTrusts] = useState<FederationTrust[]>([]);
   // ============ Stores ============
   const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
     useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
@@ -999,6 +1022,34 @@ export function useChatTab({
     });
   }, [crossGroupValidRecipientSet, sendGroupId, selectedGroupId, toText, validRecipientSet]);
 
+  const refreshFederationTrusts = useCallback(() => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid) {
+      setFederationTrusts([]);
+      return;
+    }
+    let cancelled = false;
+    void api.fetchFederationTrusts(buildComposerTrustFetchGroupId(gid)).then((resp) => {
+      if (cancelled) return;
+      setFederationTrusts(resp.ok ? (resp.result.trusts || []) : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGroupId]);
+
+  useEffect(() => refreshFederationTrusts(), [refreshFederationTrusts]);
+
+  useEffect(() => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid) return;
+    return subscribeFederationPairingChanged(gid, refreshFederationTrusts);
+  }, [refreshFederationTrusts, selectedGroupId]);
+
+  const composerRouteGroups: GroupMeta[] = useMemo(() => (
+    mergeComposerRouteGroups(groups, buildFederationRouteGroups(federationTrusts))
+  ), [federationTrusts, groups]);
+
   // Message-body mentions: @ selects current-route recipients; # selects the destination group.
   const mentionSuggestions = useMemo(() => {
     const mentionActors = mentionKind === "agent" && mentionActorScope === "selected" ? actors : recipientActors;
@@ -1006,9 +1057,9 @@ export function useChatTab({
       kind: mentionKind,
       filter: mentionFilter,
       recipientActors: mentionActors,
-      groups,
+      groups: composerRouteGroups,
     });
-  }, [actors, groups, mentionActorScope, mentionFilter, mentionKind, recipientActors]);
+  }, [actors, composerRouteGroups, mentionActorScope, mentionFilter, mentionKind, recipientActors]);
 
   // Project root
   const projectRoot = useMemo(() => {
@@ -1304,6 +1355,7 @@ export function useChatTab({
       }
       const result = pruneMissingMentionRecipientTokens({
         toText,
+        mentionRecipientTokens: mentionRecipientTokensRef.current,
         liveAgentMentionTokens,
         validRecipientSet,
       });
@@ -1361,7 +1413,14 @@ export function useChatTab({
 
     const replyTargetSnapshot = composerStateSnapshot.replyTarget;
     const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
-    const refsSnapshot: MessageRef[] = quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : [];
+    const refsSnapshot: MessageRef[] = [
+      ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
+      ...buildComposerFederationRouteRefs({
+        text: composerStateSnapshot.composerText,
+        tokens: composerGroupMentionTokens,
+        groups: composerRouteGroups,
+      }),
+    ];
     const prioritySnapshot = composerStateSnapshot.priority;
     const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
     const toTextSnapshot = composerStateSnapshot.toText;
@@ -1653,6 +1712,7 @@ export function useChatTab({
     t,
     composerGroupMentionTokens,
     composerAgentMentionTokens,
+    composerRouteGroups,
   ]);
 
   const copyMessageLink = useCallback(
@@ -1858,6 +1918,7 @@ export function useChatTab({
     destGroupId: sendGroupId,
     setDestGroupId,
     composerGroupSettled,
+    composerRouteGroups,
     mentionSuggestions,
 
     // Agent state

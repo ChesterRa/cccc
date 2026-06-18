@@ -1,7 +1,7 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Actor, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
+import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, PetIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
@@ -16,7 +16,7 @@ import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerA
 import { ComposerFilePreview } from "./ComposerFilePreview";
 import { getMentionMenuLeft, getMentionTriggerX } from "./mentionMenuPosition";
 import { ChatMentionMenu } from "./ChatMentionMenu";
-import { resolveComposerHashRouting, type ComposerMentionKind, type ComposerMentionSuggestion } from "./chatMentionSuggestions";
+import { getComposerGroupMentionInsertToken, resolveComposerHashRouting, type ComposerMentionKind, type ComposerMentionSuggestion } from "./chatMentionSuggestions";
 import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "../../hooks/composerGroupMentions";
 import {
   createComposerAgentMentionToken,
@@ -64,6 +64,7 @@ export interface ChatComposerProps {
   destGroupId: string;
   setDestGroupId: (groupId: string) => void;
   composerGroupSettled: boolean;
+  composerRouteGroups?: GroupMeta[];
   selectedGroupActorsHydrating?: boolean;
   destGroupScopeLabel?: string;
   busy: string;
@@ -124,6 +125,7 @@ export function ChatComposer({
   destGroupId,
   setDestGroupId,
   composerGroupSettled,
+  composerRouteGroups = [],
   selectedGroupActorsHydrating,
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
@@ -176,6 +178,7 @@ export function ChatComposer({
   const { t } = useTranslation('chat');
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const groups = useGroupStore((state) => state.groups);
+  const routeGroups = composerRouteGroups.length > 0 ? composerRouteGroups : groups;
   const refreshSettings = useGroupStore((state) => state.refreshSettings);
   const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
   const requestAssistantOpen = useBuiltInAssistantStore((state) => state.requestOpen);
@@ -392,8 +395,8 @@ export function ChatComposer({
       if (token.start < cursor) continue;
       parts.push(escapeHtml(composerText.slice(cursor, token.start)));
       const className = token.kind === "group"
-        ? "rounded-[5px] bg-sky-500/10 px-0.5 text-transparent ring-1 ring-sky-400/25"
-        : "rounded-[5px] bg-violet-500/10 px-0.5 text-transparent ring-1 ring-violet-400/25";
+        ? "rounded-md bg-sky-400/25 px-1 text-transparent ring-1 ring-inset ring-sky-300/60"
+        : "rounded-md bg-violet-400/25 px-1 text-transparent ring-1 ring-inset ring-violet-300/60";
       parts.push(`<mark class="${className}">${escapeHtml(composerText.slice(token.start, token.end))}</mark>`);
       cursor = token.end;
     }
@@ -464,7 +467,7 @@ export function ChatComposer({
     const hashRouting = resolveComposerHashRouting({
       text: val,
       selectedGroupId,
-      groups,
+      groups: routeGroups,
     });
     if (hashRouting.destGroupId !== destGroupId) {
       setDestGroupId(hashRouting.destGroupId);
@@ -649,7 +652,7 @@ export function ChatComposer({
     const lastHash = composerText.lastIndexOf("#");
     if (lastHash >= 0) {
       const before = composerText.slice(0, lastHash);
-      const tokenText = `#${selected.label}`;
+      const tokenText = getComposerGroupMentionInsertToken(selected);
       setComposerText(before + tokenText + " ");
       const token = createComposerGroupMentionToken({
         groupId: selected.value,

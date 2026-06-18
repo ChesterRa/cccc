@@ -25,6 +25,7 @@ const { localStorageMock } = vi.hoisted(() => {
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
+  buildComposerTrustFetchGroupId,
   buildComposerSendRoutingSnapshot,
   buildComposerSendRecipientTokens,
   buildReplyAnchorTsMap,
@@ -240,6 +241,13 @@ describe("buildComposerSendRoutingSnapshot", () => {
   });
 });
 
+describe("buildComposerTrustFetchGroupId", () => {
+  it("fetches only the selected group's trusts for # routing suggestions", () => {
+    expect(buildComposerTrustFetchGroupId("g_current")).toBe("g_current");
+    expect(buildComposerTrustFetchGroupId("")).toBeUndefined();
+  });
+});
+
 describe("buildComposerSendRecipientTokens", () => {
   it("keeps current-group actor tokens for same-group sends", () => {
     expect(buildComposerSendRecipientTokens({
@@ -340,9 +348,9 @@ describe("parseComposerRecipientTokens", () => {
 describe("pruneMissingMentionRecipientTokens", () => {
   it("keeps mention-added recipients while the matching @ token remains in the composer", () => {
     expect(pruneMissingMentionRecipientTokens({
-      composerText: "请 @peer-reviewer 看一下",
       toText: "peer-reviewer, @foreman",
       mentionRecipientTokens: new Set(["peer-reviewer"]),
+      liveAgentMentionTokens: [{ actorId: "peer-reviewer", token: "@peer-reviewer", start: 2, end: 16, scope: "selected" }],
       validRecipientSet: new Set(["peer-reviewer", "@foreman"]),
     })).toEqual({
       toText: "peer-reviewer, @foreman",
@@ -352,10 +360,9 @@ describe("pruneMissingMentionRecipientTokens", () => {
 
   it("keeps mention-added recipients when the composer shows the actor display name", () => {
     expect(pruneMissingMentionRecipientTokens({
-      composerText: "请 @Code Reviewer 看一下",
       toText: "peer-reviewer",
       mentionRecipientTokens: new Set(["peer-reviewer"]),
-      mentionTokenLabels: new Map([["peer-reviewer", "Code Reviewer"]]),
+      liveAgentMentionTokens: [{ actorId: "peer-reviewer", token: "@Code Reviewer", start: 2, end: 16, scope: "selected" }],
       validRecipientSet: new Set(["peer-reviewer"]),
     })).toEqual({
       toText: "peer-reviewer",
@@ -365,9 +372,9 @@ describe("pruneMissingMentionRecipientTokens", () => {
 
   it("keeps built-in @ recipients while their composer token remains", () => {
     expect(pruneMissingMentionRecipientTokens({
-      composerText: "请 @foreman 看一下",
       toText: "@foreman",
       mentionRecipientTokens: new Set(["@foreman"]),
+      liveAgentMentionTokens: [{ actorId: "@foreman", token: "@foreman", start: 2, end: 10, scope: "selected" }],
       validRecipientSet: new Set(["@foreman"]),
     })).toEqual({
       toText: "@foreman",
@@ -377,9 +384,9 @@ describe("pruneMissingMentionRecipientTokens", () => {
 
   it("removes only mention-added recipients when their @ token is deleted from the composer", () => {
     expect(pruneMissingMentionRecipientTokens({
-      composerText: "peer-reviewer",
       toText: "peer-reviewer, @foreman",
       mentionRecipientTokens: new Set(["peer-reviewer"]),
+      liveAgentMentionTokens: [],
       validRecipientSet: new Set(["peer-reviewer", "@foreman"]),
     })).toEqual({
       toText: "@foreman",

@@ -150,6 +150,52 @@ class TestFederationRegistration(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_libp2p_requires_peer_and_remote_group(self) -> None:
+        from cccc.kernel.federation.pairing import _upsert_approved_libp2p_registration
+        from cccc.kernel.federation.registration import list_registrations
+
+        _, cleanup = self._with_home()
+        try:
+            with self.assertRaises(ValueError) as missing_peer:
+                _upsert_approved_libp2p_registration(
+                    "g1",
+                    "libp2p://peer-remote",
+                    remote_group_id="g_remote",
+                    remote_peer_id="",
+                )
+            self.assertIn("remote_peer_id", str(missing_peer.exception))
+
+            with self.assertRaises(ValueError) as missing_group:
+                _upsert_approved_libp2p_registration(
+                    "g1",
+                    "libp2p://peer-remote",
+                    remote_group_id="",
+                    remote_peer_id="peer-remote",
+                )
+            self.assertIn("remote_group_id", str(missing_group.exception))
+            self.assertEqual(len(list_registrations()), 0)
+        finally:
+            cleanup()
+
+    def test_direct_libp2p_registration_is_rejected(self) -> None:
+        from cccc.kernel.federation.registration import list_registrations, upsert_registration
+
+        _, cleanup = self._with_home()
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                upsert_registration(
+                    "g1",
+                    "libp2p://peer-remote",
+                    transport="libp2p_cccc",
+                    remote_group_id="g_remote",
+                    remote_peer_id="peer-remote",
+                    multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-remote"],
+                )
+            self.assertIn("pairing", str(ctx.exception))
+            self.assertEqual(len(list_registrations()), 0)
+        finally:
+            cleanup()
+
     def test_no_raw_token_persisted(self) -> None:
         from cccc.kernel.federation.registration import upsert_registration
 

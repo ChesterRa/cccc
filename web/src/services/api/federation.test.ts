@@ -3,6 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildFederationTargetBody,
   fetchFederationDeliveryStatus,
+  fetchFederationIdentity,
+  fetchFederationPairingRequests,
+  fetchFederationPairingOutbounds,
+  syncFederationPairingOutbound,
+  deleteFederationPairingOutbound,
+  fetchFederationTrusts,
+  approveFederationPairingRequest,
+  createFederationPairingInvite,
+  createFederationPairingRequest,
+  createFederationRemotePairingRequest,
+  rejectFederationPairingRequest,
+  revokeFederationTrust,
   fetchFederationStatus,
   registerFederation,
   unregisterFederation,
@@ -90,5 +102,66 @@ describe("federation API client", () => {
     await verifyFederation({ groupId: "g1", url: "https://hub/", credentialRef });
 
     expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("pairing APIs use the libp2p pairing routes", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => okResponse({}));
+
+    await fetchFederationIdentity();
+    await createFederationPairingInvite({
+      groupId: "g1",
+      ttlSeconds: 600,
+    });
+    await createFederationPairingRequest({
+      pairingCode: "ABCD-1234",
+      requesterGroupId: "g_remote",
+      requesterPeerId: "peer_remote",
+      requesterMultiaddrs: ["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
+    });
+    await createFederationRemotePairingRequest({
+      localGroupId: "g_remote",
+      payload: { issuer_endpoint: "https://issuer.example", issuer_group_id: "g1", code: "WXYZ-9876" },
+    });
+    await fetchFederationPairingRequests("g1");
+    await approveFederationPairingRequest("preq_1", "user-a");
+    await rejectFederationPairingRequest("preq_2", "user-a", "no");
+    await fetchFederationTrusts("g1");
+    await fetchFederationPairingOutbounds("g_remote");
+    await syncFederationPairingOutbound("pout_1");
+    await deleteFederationPairingOutbound("pout_1");
+    await revokeFederationTrust("ptrust_1", "user-a");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/federation/pairing/identity");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/federation/pairing/invites");
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit)?.body))).toEqual({
+      group_id: "g1",
+      multiaddrs: [],
+      ttl_seconds: 600,
+    });
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe("/api/federation/pairing/requests");
+    expect(JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit)?.body))).toEqual({
+      pairing_code: "ABCD-1234",
+      requester_group_id: "g_remote",
+      requester_peer_id: "peer_remote",
+      requester_multiaddrs: ["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
+    });
+    expect(String(fetchMock.mock.calls[3]?.[0])).toBe("/api/federation/pairing/remote-requests");
+    expect(JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit)?.body))).toEqual({
+      local_group_id: "g_remote",
+      local_group_title: "",
+      payload: { issuer_endpoint: "https://issuer.example", issuer_group_id: "g1", code: "WXYZ-9876" },
+    });
+    expect(String(fetchMock.mock.calls[4]?.[0])).toBe("/api/federation/pairing/requests?group_id=g1");
+    expect(String(fetchMock.mock.calls[5]?.[0])).toBe("/api/federation/pairing/requests/preq_1/approve");
+    expect(String(fetchMock.mock.calls[6]?.[0])).toBe("/api/federation/pairing/requests/preq_2/reject");
+    expect(String(fetchMock.mock.calls[7]?.[0])).toBe("/api/federation/pairing/trusts?group_id=g1");
+    expect(String(fetchMock.mock.calls[8]?.[0])).toBe("/api/federation/pairing/outbounds?group_id=g_remote");
+    expect(String(fetchMock.mock.calls[9]?.[0])).toBe("/api/federation/pairing/outbounds/pout_1/sync");
+    expect(String((fetchMock.mock.calls[9]?.[1] as RequestInit)?.method)).toBe("POST");
+    expect(String(fetchMock.mock.calls[10]?.[0])).toBe("/api/federation/pairing/outbounds/pout_1/delete");
+    expect(String((fetchMock.mock.calls[10]?.[1] as RequestInit)?.method)).toBe("POST");
+    expect(String(fetchMock.mock.calls[11]?.[0])).toBe("/api/federation/pairing/trusts/ptrust_1/revoke");
+    expect(JSON.parse(String((fetchMock.mock.calls[11]?.[1] as RequestInit)?.body))).toEqual({ revoked_by: "user-a" });
   });
 });

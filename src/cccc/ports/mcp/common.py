@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -270,6 +271,32 @@ def _proc_environ_windows(pid: int) -> Dict[str, str]:
         kernel32.CloseHandle(handle)
 
 
+_PS_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID", "HOME")
+
+
+def _proc_environ_from_ps(pid: int) -> Dict[str, str]:
+    if pid <= 0:
+        return {}
+    try:
+        result = subprocess.run(
+            ["ps", "eww", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except Exception:
+        return {}
+    if result.returncode != 0:
+        return {}
+    text = str(result.stdout or "")
+    out: Dict[str, str] = {}
+    for key in _PS_ENV_KEYS:
+        match = re.search(rf"(?:^|\s){re.escape(key)}=([^\s]+)", text)
+        if match:
+            out[key] = match.group(1).strip()
+    return out
+
+
 def _proc_environ(pid: int) -> Dict[str, str]:
     if pid <= 0:
         return {}
@@ -280,7 +307,7 @@ def _proc_environ(pid: int) -> Dict[str, str]:
     try:
         raw = (Path("/proc") / str(pid) / "environ").read_bytes()
     except Exception:
-        return {}
+        return _proc_environ_from_ps(pid)
     out: Dict[str, str] = {}
     for item in raw.split(b"\x00"):
         if not item or b"=" not in item:

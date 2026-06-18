@@ -78,6 +78,13 @@ from .handlers.cccc_messaging import (  # noqa: F401
     tracked_send,
 )
 from .handlers.cccc_federation import (  # noqa: F401
+    federation_identity,
+    pairing_approve,
+    pairing_invite_create,
+    pairing_reject,
+    pairing_request_create,
+    pairing_request_list,
+    pairing_trust_list,
     remote_delivery_status,
     remote_send,
 )
@@ -214,6 +221,12 @@ def _normalize_to_arg(raw: Any) -> Optional[List[str]]:
                 pass
         return [s]
     return None
+
+
+def _optional_group_id(arguments: Dict[str, Any]) -> str:
+    env_gid = _runtime_context().group_id
+    arg_gid = str(arguments.get("group_id") or "").strip()
+    return env_gid or arg_gid
 
 
 _BUILTIN_MCP_TOOL_NAMES = frozenset(str(spec.get("name") or "") for spec in MCP_TOOLS if isinstance(spec, dict))
@@ -488,6 +501,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             to=to_val,
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+            idempotency_key=str(arguments.get("idempotency_key") or ""),
             refs=refs_val,
         )
 
@@ -512,6 +526,50 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             registration_id=str(arguments.get("registration_id") or ""),
             idempotency_key=str(arguments.get("idempotency_key") or ""),
         )
+
+    if name == "cccc_federation_identity":
+        return federation_identity()
+
+    if name == "cccc_pairing_invite_create":
+        gid = _resolve_group_id(arguments)
+        return pairing_invite_create(
+            group_id=gid,
+            remote_group_id=str(arguments.get("remote_group_id") or ""),
+            remote_peer_id=str(arguments.get("remote_peer_id") or ""),
+            multiaddrs=[str(x or "").strip() for x in arguments.get("multiaddrs", []) if str(x or "").strip()]
+            if isinstance(arguments.get("multiaddrs"), list)
+            else [],
+            ttl_seconds=int(arguments.get("ttl_seconds") or 600),
+        )
+
+    if name == "cccc_pairing_request_create":
+        return pairing_request_create(
+            pairing_code=str(arguments.get("pairing_code") or ""),
+            requester_group_id=str(arguments.get("requester_group_id") or ""),
+            requester_peer_id=str(arguments.get("requester_peer_id") or ""),
+            requester_multiaddrs=[str(x or "").strip() for x in arguments.get("requester_multiaddrs", []) if str(x or "").strip()]
+            if isinstance(arguments.get("requester_multiaddrs"), list)
+            else [],
+        )
+
+    if name == "cccc_pairing_request_list":
+        return pairing_request_list(group_id=str(arguments.get("group_id") or ""))
+
+    if name == "cccc_pairing_approve":
+        return pairing_approve(
+            request_id=str(arguments.get("request_id") or ""),
+            approver_user_id=str(arguments.get("approver_user_id") or ""),
+        )
+
+    if name == "cccc_pairing_reject":
+        return pairing_reject(
+            request_id=str(arguments.get("request_id") or ""),
+            rejected_by=str(arguments.get("rejected_by") or ""),
+            reason=str(arguments.get("reason") or ""),
+        )
+
+    if name == "cccc_pairing_trust_list":
+        return pairing_trust_list(group_id=str(arguments.get("group_id") or ""))
 
     if name == "cccc_tracked_send":
         gid = _resolve_group_id(arguments)
@@ -899,7 +957,8 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         if action == "list":
             return group_list()
         if action == "resolve":
-            return group_resolve(token=str(arguments.get("token") or ""))
+            gid = _optional_group_id(arguments)
+            return group_resolve(group_id=gid, token=str(arguments.get("token") or ""))
         if action == "info":
             gid = _resolve_group_id(arguments)
             return group_info(group_id=gid)

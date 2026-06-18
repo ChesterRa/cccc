@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import mimetypes
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ....daemon.federation.route_lookup import resolve_remote_group_route
 from ....kernel.actors import find_actor
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
@@ -66,6 +68,11 @@ def _normalize_runtime_escaped_text(*, group_id: str, actor_id: str, text: str) 
     return normalized
 
 
+def _remote_message_idempotency_key(value: str = "") -> str:
+    explicit = str(value or "").strip()
+    return explicit or f"mcpmsg_{uuid.uuid4().hex}"
+
+
 def message_send(
     *,
     group_id: str,
@@ -75,6 +82,7 @@ def message_send(
     to: Optional[List[str]] = None,
     priority: str = "normal",
     reply_required: bool = False,
+    idempotency_key: str = "",
     refs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Send a message to the group (or cross-group)."""
@@ -88,6 +96,26 @@ def message_send(
     if dst_gid and dst_gid != str(group_id or "").strip():
         if has_hash_recipient_token(normalize_recipient_tokens(to)):
             raise MCPError(code="invalid_recipient_syntax", message=CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
+        federation_route = resolve_remote_group_route(group_id=group_id, remote_group_id=dst_gid)
+        if federation_route is not None:
+            return _call_daemon_or_raise(
+                {
+                    "op": "remote_send",
+                    "args": {
+                        "group_id": group_id,
+                        "by": actor_id,
+                        "registration_id": federation_route.registration_id,
+                        "idempotency_key": _remote_message_idempotency_key(idempotency_key),
+                        "payload": {
+                            "text": text,
+                            "to": to if to is not None else [],
+                            "priority": prio,
+                            "reply_required": reply_required_flag,
+                            "refs": refs if refs is not None else [],
+                        },
+                    },
+                }
+            )
         return _call_daemon_or_raise(
             {
                 "op": "send_cross_group",

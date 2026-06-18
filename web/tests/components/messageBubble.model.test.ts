@@ -39,6 +39,16 @@ describe("messageBubble model", () => {
     } as any)).toBe("架构设计专家");
   });
 
+  it("uses federation source name instead of peer id for remote messages", () => {
+    expect(getSenderDisplayName({
+      senderId: "federation:12D3KooWAXEk8Zw3BMLku6AGNrctVsC9beZsAAEttE798N5HYf1a",
+      senderActor: null,
+      senderTitle: "",
+      federationSourceName: "CCCC Cross Test",
+      displayNameMap: new Map(),
+    })).toBe("CCCC Cross Test");
+  });
+
   it("keeps only actors present in read status", () => {
     expect(buildVisibleReadStatusEntries(
       [{ id: "a-1" }, { id: "a-2" }, { id: "a-3" }] as any,

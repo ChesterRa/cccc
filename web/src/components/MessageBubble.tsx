@@ -649,6 +649,7 @@ export const MessageBubble = memo(function MessageBubble({
     const quoteText = msgData?.quote_text;
     const replyToEventId = typeof msgData?.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
     const senderSnapshotTitle = typeof msgData?.sender_title === "string" ? String(msgData.sender_title || "").trim() : "";
+    const federationSourceName = typeof msgData?.source_user_name === "string" ? String(msgData.source_user_name || "").trim() : "";
     const senderSnapshotRuntime = typeof msgData?.sender_runtime === "string" ? String(msgData.sender_runtime || "").trim() : "";
     const senderSnapshotAvatarPath = typeof msgData?.sender_avatar_path === "string" ? String(msgData.sender_avatar_path || "").trim() : "";
     const isAttention = String(msgData?.priority || "normal") === "attention";
@@ -804,9 +805,10 @@ export const MessageBubble = memo(function MessageBubble({
             senderId: String(ev.by || ""),
             senderActor,
             senderTitle: senderSnapshotTitle,
+            federationSourceName,
             displayNameMap,
         });
-    }, [displayNameMap, ev.by, senderActor, senderSnapshotTitle]);
+    }, [displayNameMap, ev.by, federationSourceName, senderActor, senderSnapshotTitle]);
     const senderAvatarUrl = useMemo(() => {
         return buildSenderAvatarUrl(blobGroupId, senderSnapshotAvatarPath) || String(senderActor?.avatar_url || "").trim();
     }, [blobGroupId, senderActor?.avatar_url, senderSnapshotAvatarPath]);

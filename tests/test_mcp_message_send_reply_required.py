@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 # Env vars that _resolve_group_id / _resolve_self_actor_id read at runtime.
@@ -107,6 +108,59 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("group_id"), "g_runtime")
         self.assertEqual(args.get("dst_group_id"), "g_selected")
         self.assertEqual(args.get("to"), ["@foreman"])
+
+    def test_message_send_routes_federation_remote_destination_to_remote_send(self) -> None:
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        captured = {}
+
+        def _fake_call_daemon(req):
+            captured["req"] = req
+            return {"ok": True, "result": {"queued": False, "receipt": {"status": "sent", "remote_event_id": "ev_remote"}}}
+
+        with tempfile.TemporaryDirectory() as td, \
+             _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            request = pairing_kernel.create_pairing_request(
+                pairing_kernel.create_pairing_invite(group_id="g_runtime")["pairing_code"],
+                requester_group_id="g_remote",
+                requester_group_title="Remote Group",
+                requester_peer_id="peer_remote",
+            )
+            approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            out = mcp_server.handle_tool_call(
+                "cccc_message_send",
+                {
+                    "group_id": "g_runtime",
+                    "dst_group_id": "g_remote",
+                    "actor_id": "peer1",
+                    "text": "hello remote",
+                    "to": ["@foreman"],
+                    "priority": "attention",
+                    "reply_required": "true",
+                    "idempotency_key": "caller-key-1",
+                    "refs": [{"kind": "note", "id": "ref-1"}],
+                },
+            )
+
+        self.assertEqual((out.get("receipt") or {}).get("remote_event_id"), "ev_remote")
+        req = captured.get("req") or {}
+        self.assertEqual(req.get("op"), "remote_send")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_runtime")
+        self.assertEqual(args.get("registration_id"), approved["registration"]["registration_id"])
+        self.assertEqual(args.get("idempotency_key"), "caller-key-1")
+        payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
+        self.assertEqual(payload.get("text"), "hello remote")
+        self.assertEqual(payload.get("to"), ["@foreman"])
+        self.assertEqual(payload.get("priority"), "attention")
+        self.assertEqual(payload.get("reply_required"), True)
+        self.assertEqual(payload.get("refs"), [{"kind": "note", "id": "ref-1"}])
 
     def test_message_send_rejects_hash_recipient_for_cross_group_string_to(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -264,7 +318,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             )
             self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
 
-            with patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            with _isolated_runtime_context(), patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
                 out = mcp_server.handle_tool_call(
                     "cccc_message_send",
                     {

@@ -107,7 +107,12 @@ def _web_mode() -> Literal["normal", "exhibit"]:
     return "normal"
 
 
-_PUBLIC_API_PATHS = frozenset({"/api/v1/health", "/api/v1/branding"})
+_PUBLIC_API_PATHS = frozenset({
+    "/api/v1/health",
+    "/api/v1/branding",
+    "/api/federation/pairing/requests/remote",
+    "/api/federation/pairing/requests/remote/status",
+})
 
 
 def _is_public_ui_path(request: Request) -> bool:
@@ -208,6 +213,7 @@ def create_app() -> FastAPI:
         runtime_launch_source = str(os.environ.get("CCCC_WEB_LAUNCH_SOURCE") or "").strip() or "unknown"
         supervisor_watchdog_stop = threading.Event()
         supervisor_watchdog_thread: Optional[threading.Thread] = None
+        remote_outbox_worker: Optional[Any] = None
 
         if runtime_binding_known:
             write_web_runtime_state(
@@ -260,9 +266,23 @@ def create_app() -> FastAPI:
             )
             supervisor_watchdog_thread.start()
 
+        if not _is_truthy_env(str(os.environ.get("CCCC_FEDERATION_OUTBOX_WORKER_DISABLED") or "")):
+            try:
+                from ...daemon.federation.remote_outbox_worker import RemoteOutboxWorker
+
+                remote_outbox_worker = RemoteOutboxWorker(home=home)
+                remote_outbox_worker.start()
+            except Exception:
+                logger.exception("failed to start federation remote outbox worker")
+
         try:
             yield
         finally:
+            if remote_outbox_worker is not None:
+                try:
+                    remote_outbox_worker.stop(timeout=1.0)
+                except Exception:
+                    pass
             supervisor_watchdog_stop.set()
             if supervisor_watchdog_thread is not None:
                 try:

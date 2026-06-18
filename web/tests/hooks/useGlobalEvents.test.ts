@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   getGlobalEventGroupId,
   shouldRefreshCapabilitiesAfterGlobalEvent,
+  shouldRefreshFederationPairingAfterGlobalEvent,
+  shouldRefreshFederationPairingAfterGlobalEventsOpen,
   shouldKeepGlobalEventsConnected,
   shouldRefreshActorsAfterGlobalEvent,
   shouldRefreshGroupsAfterGlobalEventsOpen,
@@ -14,6 +16,11 @@ describe("useGlobalEvents open refresh policy", () => {
 
   it("requires catch-up refresh on reconnects too", () => {
     expect(shouldRefreshGroupsAfterGlobalEventsOpen(true)).toBe(true);
+  });
+
+  it("requires federation pairing catch-up refresh on global event stream open", () => {
+    expect(shouldRefreshFederationPairingAfterGlobalEventsOpen(false)).toBe(true);
+    expect(shouldRefreshFederationPairingAfterGlobalEventsOpen(true)).toBe(true);
   });
 
   it("releases the global SSE connection while the tab is hidden", () => {
@@ -78,6 +85,36 @@ describe("useGlobalEvents open refresh policy", () => {
     expect(
       shouldRefreshCapabilitiesAfterGlobalEvent(
         { kind: "capability.changed", data: { group_id: "g-other", capability_id: "skill:demo" } },
+        "g-demo",
+      ),
+    ).toBe(false);
+  });
+
+  it("refreshes selected federation pairing state after pairing changes", () => {
+    expect(
+      shouldRefreshFederationPairingAfterGlobalEvent(
+        { kind: "federation.pairing.request_created", data: { group_id: "g-demo", request_id: "preq_1" } },
+        "g-demo",
+      ),
+    ).toBe(true);
+  });
+
+  it("refreshes selected federation pairing state after outbound approval creates a local active route", () => {
+    expect(
+      shouldRefreshFederationPairingAfterGlobalEvent(
+        {
+          kind: "federation.pairing.outbound_approved",
+          data: { group_id: "g-demo", trust_id: "ptrust_1", registration_id: "reg_1" },
+        },
+        "g-demo",
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores federation pairing changes for other groups", () => {
+    expect(
+      shouldRefreshFederationPairingAfterGlobalEvent(
+        { kind: "federation.pairing.request_created", data: { group_id: "g-other", request_id: "preq_1" } },
         "g-demo",
       ),
     ).toBe(false);

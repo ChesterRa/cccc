@@ -16,7 +16,7 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 RegistrationStatus = Literal["active", "unauthorized", "revoked", "error"]
-RemoteSendStatus = Literal["queued", "sent", "failed"]
+RemoteSendStatus = Literal["queued", "sending", "retrying", "sent", "failed"]
 
 
 class RemoteSendPayload(BaseModel):
@@ -70,6 +70,10 @@ class RemoteSendReceipt(BaseModel):
     transport: str = ""
     remote_event_id: Optional[str] = None
     attempt: int = 0
+    max_attempts: int = 5
+    first_queued_at: str = ""
+    last_attempt_at: str = ""
+    next_attempt_at: str = ""
     accepted_at: str = ""
     error: Optional[RemoteSendError] = None
 
@@ -87,6 +91,8 @@ class RegistrationRecord(BaseModel):
     url: str
     transport: str = "registry_hub"
     remote_group_id: str = ""
+    remote_peer_id: str = ""
+    multiaddrs: List[str] = Field(default_factory=list)
     credential_ref: str = ""
     user_id: str = ""
     status: RegistrationStatus = "active"

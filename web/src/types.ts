@@ -15,6 +15,11 @@ export type GroupMeta = {
   group_id: string;
   title?: string;
   topic?: string;
+  federation_remote?: boolean;
+  federation_local_group_id?: string;
+  federation_remote_endpoint?: string;
+  federation_remote_peer_id?: string;
+  federation_trust_id?: string;
   updated_at?: string;
   created_at?: string;
   running?: boolean;
@@ -97,6 +102,17 @@ export type TaskMessageRef = MessageRef & {
   handoff_to?: string | null;
 };
 
+export type FederationRouteMessageRef = MessageRef & {
+  kind: "federation_route";
+  local_group_id?: string;
+  remote_group_id: string;
+  remote_group_title?: string;
+  remote_endpoint?: string;
+  remote_peer_id?: string;
+  trust_id?: string;
+  token?: string;
+};
+
 export type StreamingActivity = {
   id: string;
   kind: "queued" | "thinking" | "plan" | "search" | "command" | "patch" | "tool" | "reply" | string;
@@ -145,6 +161,8 @@ export type ChatMessageData = {
   sender_runtime?: string;
   sender_avatar_path?: string;
   source_platform?: string;
+  source_user_id?: string;
+  source_user_name?: string;
   reply_to?: string;
   stream_id?: string;
   stream_phase?: string;

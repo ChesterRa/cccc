@@ -26,14 +26,18 @@ export function getSenderDisplayName({
     senderId,
     senderActor,
     senderTitle,
+    federationSourceName,
     displayNameMap,
 }: {
     senderId: string;
     senderActor: Actor | null;
     senderTitle?: string;
+    federationSourceName?: string;
     displayNameMap: Map<string, string>;
 }): string {
     if (!senderId || senderId === "user") return senderId;
+    const sourceName = String(federationSourceName || "").trim();
+    if (senderId.startsWith("federation:") && sourceName) return sourceName;
     return String(senderTitle || "").trim() || String(senderActor?.title || "").trim() || displayNameMap.get(senderId) || senderId;
 }
 

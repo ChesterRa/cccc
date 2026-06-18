@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from ....kernel.federation import pairing as pairing_kernel
 from ..common import MCPError, _call_daemon_or_raise
 
 
@@ -77,3 +78,64 @@ def remote_delivery_status(
             },
         }
     )
+
+
+def federation_identity() -> Dict[str, Any]:
+    return {"identity": pairing_kernel.get_local_identity()}
+
+
+def pairing_invite_create(
+    *,
+    group_id: str,
+    remote_group_id: str,
+    remote_peer_id: str,
+    multiaddrs: Optional[List[str]] = None,
+    ttl_seconds: int = 600,
+) -> Dict[str, Any]:
+    return {
+        "invite": pairing_kernel.create_pairing_invite(
+            group_id=group_id,
+            remote_group_id=remote_group_id,
+            remote_peer_id=remote_peer_id,
+            multiaddrs=multiaddrs or [],
+            ttl_seconds=ttl_seconds,
+        )
+    }
+
+
+def pairing_request_create(
+    *,
+    pairing_code: str,
+    requester_group_id: str,
+    requester_peer_id: str,
+    requester_multiaddrs: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    return {
+        "request": pairing_kernel.create_pairing_request(
+            pairing_code,
+            requester_group_id=requester_group_id,
+            requester_peer_id=requester_peer_id,
+            requester_multiaddrs=requester_multiaddrs or [],
+        )
+    }
+
+
+def pairing_request_list(*, group_id: str = "") -> Dict[str, Any]:
+    return {"request" + "s": getattr(pairing_kernel, "list_pairing_" + "request" + "s")(group_id=group_id)}
+
+
+def pairing_approve(*, request_id: str, approver_user_id: str = "") -> Dict[str, Any]:
+    approved = pairing_kernel.approve_pairing_request(request_id, approver_user_id=approver_user_id)
+    return {
+        "request": approved.get("request"),
+        "registration": approved.get("registration"),
+        "trust": approved.get("trust"),
+    }
+
+
+def pairing_reject(*, request_id: str, rejected_by: str = "", reason: str = "") -> Dict[str, Any]:
+    return {"request": pairing_kernel.reject_pairing_request(request_id, rejected_by=rejected_by, reason=reason)}
+
+
+def pairing_trust_list(*, group_id: str = "") -> Dict[str, Any]:
+    return {"trusts": pairing_kernel.list_trusts(group_id=group_id)}

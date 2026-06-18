@@ -12,6 +12,8 @@ export interface FederationRegistration {
   url: string;
   transport: string;
   remote_group_id: string;
+  remote_peer_id?: string;
+  multiaddrs?: string[];
   credential_ref: string;
   user_id: string;
   status: string;
@@ -55,6 +57,89 @@ export interface FederationTargetInput {
   remoteGroupId?: string;
 }
 
+export interface FederationIdentity {
+  node_id: string;
+  peer_id: string;
+}
+
+export interface FederationPairingInvite {
+  invite_id: string;
+  group_id: string;
+  remote_group_id: string;
+  remote_peer_id: string;
+  multiaddrs: string[];
+  transport: string;
+  status: string;
+  expires_at: string;
+  pairing_code?: string;
+  request_id?: string;
+}
+
+export interface FederationPairingRequest {
+  request_id: string;
+  invite_id: string;
+  group_id: string;
+  remote_group_id: string;
+  remote_peer_id: string;
+  multiaddrs: string[];
+  status: string;
+  registration_id?: string;
+  approved_by?: string;
+  rejected_by?: string;
+  rejection_reason?: string;
+}
+
+export interface FederationTrust {
+  trust_id: string;
+  request_id: string;
+  registration_id: string;
+  group_id: string;
+  remote_group_id: string;
+  remote_group_title?: string;
+  remote_endpoint?: string;
+  remote_peer_id: string;
+  multiaddrs: string[];
+  transport: string;
+  status: string;
+}
+
+export interface FederationPairingOutbound {
+  outbound_id: string;
+  local_group_id: string;
+  issuer_endpoint: string;
+  issuer_group_id: string;
+  issuer_group_title?: string;
+  issuer_peer_id: string;
+  invite_id: string;
+  status: string;
+  remote_request?: Record<string, unknown>;
+  last_error?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PairingInviteInput {
+  groupId: string;
+  remoteGroupId?: string;
+  remotePeerId?: string;
+  multiaddrs?: string[];
+  ttlSeconds?: number;
+}
+
+export interface PairingRequestInput {
+  pairingCode: string;
+  requesterGroupId: string;
+  requesterPeerId: string;
+  requesterMultiaddrs?: string[];
+  inviteId?: string;
+}
+
+export interface RemotePairingRequestInput {
+  localGroupId: string;
+  localGroupTitle?: string;
+  payload: Record<string, unknown>;
+}
+
 export function buildFederationTargetBody(input: FederationTargetInput): Record<string, unknown> {
   return {
     group_id: input.groupId,
@@ -94,5 +179,108 @@ export async function unregisterFederation(registrationId: string) {
 export async function fetchFederationDeliveryStatus(registrationId: string, idempotencyKey: string) {
   return apiJson<{ receipt: FederationDeliveryReceipt | null }>(
     `/api/federation/registrations/${encodeURIComponent(registrationId)}/deliveries/${encodeURIComponent(idempotencyKey)}`,
+  );
+}
+
+export async function fetchFederationIdentity() {
+  return apiJson<{ identity: FederationIdentity }>("/api/federation/pairing/identity");
+}
+
+export async function createFederationPairingInvite(input: PairingInviteInput) {
+  return apiJson<{ invite: FederationPairingInvite }>("/api/federation/pairing/invites", {
+    method: "POST",
+    body: JSON.stringify({
+      group_id: input.groupId,
+      remote_group_id: input.remoteGroupId,
+      remote_peer_id: input.remotePeerId,
+      multiaddrs: input.multiaddrs ?? [],
+      ttl_seconds: input.ttlSeconds ?? 600,
+    }),
+  });
+}
+
+export async function createFederationPairingRequest(input: PairingRequestInput) {
+  const body: Record<string, unknown> = {
+    pairing_code: input.pairingCode,
+    requester_group_id: input.requesterGroupId,
+    requester_peer_id: input.requesterPeerId,
+    requester_multiaddrs: input.requesterMultiaddrs ?? [],
+  };
+  if (input.inviteId) {
+    body.invite_id = input.inviteId;
+  }
+  return apiJson<{ request: FederationPairingRequest }>("/api/federation/pairing/requests", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function createFederationRemotePairingRequest(input: RemotePairingRequestInput) {
+  return apiJson<{ outbound: Record<string, unknown> }>("/api/federation/pairing/remote-requests", {
+    method: "POST",
+    body: JSON.stringify({
+      local_group_id: input.localGroupId,
+      local_group_title: input.localGroupTitle ?? "",
+      payload: input.payload,
+    }),
+  });
+}
+
+export async function fetchFederationPairingRequests(groupId?: string) {
+  const suffix = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
+  return apiJson<{ requests: FederationPairingRequest[] }>(`/api/federation/pairing/requests${suffix}`);
+}
+
+export async function approveFederationPairingRequest(requestId: string, approverUserId = "") {
+  return apiJson<{ request: FederationPairingRequest; registration: FederationRegistration; trust: FederationTrust | null }>(
+    `/api/federation/pairing/requests/${encodeURIComponent(requestId)}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify({ approver_user_id: approverUserId }),
+    },
+  );
+}
+
+export async function rejectFederationPairingRequest(requestId: string, rejectedBy = "", reason = "") {
+  return apiJson<{ request: FederationPairingRequest }>(
+    `/api/federation/pairing/requests/${encodeURIComponent(requestId)}/reject`,
+    {
+      method: "POST",
+      body: JSON.stringify({ rejected_by: rejectedBy, reason }),
+    },
+  );
+}
+
+export async function fetchFederationTrusts(groupId?: string) {
+  const suffix = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
+  return apiJson<{ trusts: FederationTrust[] }>(`/api/federation/pairing/trusts${suffix}`);
+}
+
+export async function revokeFederationTrust(trustId: string, revokedBy = "") {
+  return apiJson<{ trust: FederationTrust }>(
+    `/api/federation/pairing/trusts/${encodeURIComponent(trustId)}/revoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({ revoked_by: revokedBy }),
+    },
+  );
+}
+
+export async function fetchFederationPairingOutbounds(groupId?: string) {
+  const suffix = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
+  return apiJson<{ outbounds: FederationPairingOutbound[] }>(`/api/federation/pairing/outbounds${suffix}`);
+}
+
+export async function syncFederationPairingOutbound(outboundId: string) {
+  return apiJson<{ outbound: FederationPairingOutbound }>(
+    `/api/federation/pairing/outbounds/${encodeURIComponent(outboundId)}/sync`,
+    { method: "POST" },
+  );
+}
+
+export async function deleteFederationPairingOutbound(outboundId: string) {
+  return apiJson<{ deleted: boolean }>(
+    `/api/federation/pairing/outbounds/${encodeURIComponent(outboundId)}/delete`,
+    { method: "POST" },
   );
 }

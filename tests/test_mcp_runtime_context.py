@@ -76,6 +76,32 @@ class TestMcpRuntimeContext(unittest.TestCase):
         self.assertEqual(ctx.group_id, "g_ancestor")
         self.assertEqual(ctx.actor_id, "foreman-ancestor")
 
+    def test_proc_environ_recovers_context_from_macos_ps_output(self) -> None:
+        from cccc.ports.mcp.common import _proc_environ
+
+        ps_output = (
+            "/usr/bin/codex app-server --listen ws://127.0.0.1:50599 "
+            "HOME=/Users/waterbang CCCC_HOME=/Users/waterbang/.cccc-cross-test "
+            "CCCC_GROUP_ID=g_0fb5f39478cc CCCC_ACTOR_ID=codex-1\n"
+        )
+
+        def _fake_run(argv: list[str], **_kwargs: object) -> object:
+            self.assertEqual(argv, ["ps", "eww", "-p", "45508", "-o", "command="])
+            return SimpleNamespace(returncode=0, stdout=ps_output)
+
+        with patch("cccc.ports.mcp.common.os.name", "posix"), patch(
+            "cccc.ports.mcp.common.Path.read_bytes",
+            side_effect=FileNotFoundError("/proc unavailable"),
+        ), patch(
+            "cccc.ports.mcp.common.subprocess.run",
+            side_effect=_fake_run,
+        ):
+            env = _proc_environ(45508)
+
+        self.assertEqual(env.get("CCCC_HOME"), "/Users/waterbang/.cccc-cross-test")
+        self.assertEqual(env.get("CCCC_GROUP_ID"), "g_0fb5f39478cc")
+        self.assertEqual(env.get("CCCC_ACTOR_ID"), "codex-1")
+
     @unittest.skipUnless(os.name == "nt", "Windows-only process environment recovery")
     def test_windows_runtime_context_recovers_from_parent_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

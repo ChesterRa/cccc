@@ -21,14 +21,22 @@ from ....contracts.v1.federation import RemoteSendPayload
 class RemoteTarget:
     url: str
     remote_group_id: str = ""
+    remote_peer_id: str = ""
+    multiaddrs: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
 class RemoteMessageEnvelope:
     transport: str
+    src_group_id: str
+    source_peer_id: str
     target: RemoteTarget
     payload: RemoteSendPayload
     idempotency_key: str
+    source_multiaddrs: tuple[str, ...] = field(default_factory=tuple)
+    source_event_id: str = ""
+    reply_to_remote_event_id: str = ""
+    federation_thread: str = ""
     # Opaque credential resolved at dispatch time. Never log this field.
     credential: str = ""
 

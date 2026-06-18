@@ -4,12 +4,14 @@ import type { GroupMeta } from "../types";
 import {
   createComposerAgentMentionToken,
   createComposerGroupMentionToken,
+  buildComposerFederationRouteRefs,
   extractControlledGroupMentionTargetActor,
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
   resolveControlledComposerMentionContext,
   resolveSelectedComposerGroupMention,
 } from "./composerGroupMentions";
+import { isFederationRouteMessageRef } from "../utils/federationRouteRefs";
 
 const groups = [
   { group_id: "g_local", title: "Local" },
@@ -76,5 +78,40 @@ describe("composer group mention tokens", () => {
     expect(extractControlledGroupMentionTargetActor({ text, token: selected, agentTokens: [target] })).toBe("right");
     expect(extractControlledGroupMentionTargetActor({ text, token: selected, agentTokens: [] })).toBe("");
     expect(extractControlledGroupMentionTargetActor({ text, token: null })).toBe("");
+  });
+
+  it("builds structured route refs for selected remote group labels", () => {
+    const text = "ask #Remote Product @foreman";
+    const token = createComposerGroupMentionToken({ groupId: "g_remote", token: "#Remote Product", start: 4 })!;
+    const refs = buildComposerFederationRouteRefs({
+      text,
+      tokens: [token],
+      groups: [
+        ...groups,
+        {
+          group_id: "g_remote",
+          title: "Remote Product",
+          federation_remote: true,
+          federation_local_group_id: "g_owner",
+          federation_remote_endpoint: "https://remote.example",
+          federation_remote_peer_id: "peer_remote",
+          federation_trust_id: "ptrust_1",
+        },
+      ] as GroupMeta[],
+    });
+
+    expect(refs).toEqual([
+      {
+        kind: "federation_route",
+        local_group_id: "g_owner",
+        remote_group_id: "g_remote",
+        remote_group_title: "Remote Product",
+        remote_endpoint: "https://remote.example",
+        remote_peer_id: "peer_remote",
+        trust_id: "ptrust_1",
+        token: "#Remote Product",
+      },
+    ]);
+    expect(refs.every(isFederationRouteMessageRef)).toBe(true);
   });
 });

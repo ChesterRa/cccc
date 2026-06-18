@@ -1,4 +1,4 @@
-import type { GroupMeta } from "../types";
+import type { FederationRouteMessageRef, GroupMeta } from "../types";
 
 export interface ComposerGroupMentionToken {
   groupId: string;
@@ -125,6 +125,40 @@ export function resolveSelectedComposerGroupMention({
     if (!best || token.start >= best.start) best = token;
   }
   return best;
+}
+
+export function buildComposerFederationRouteRefs({
+  text,
+  tokens,
+  groups,
+}: {
+  text: string;
+  tokens: ComposerGroupMentionToken[];
+  groups: GroupMeta[];
+}): FederationRouteMessageRef[] {
+  const liveTokens = pruneComposerGroupMentionTokens({ text, tokens });
+  const refs: FederationRouteMessageRef[] = [];
+  const seen = new Set<string>();
+
+  for (const token of liveTokens) {
+    const groupId = String(token.groupId || "").trim();
+    if (!groupId || seen.has(groupId)) continue;
+    const group = (groups || []).find((item) => String(item.group_id || "").trim() === groupId);
+    if (!group?.federation_remote) continue;
+    seen.add(groupId);
+    refs.push({
+      kind: "federation_route",
+      local_group_id: String(group.federation_local_group_id || "").trim() || undefined,
+      remote_group_id: groupId,
+      remote_group_title: String(group.title || "").trim(),
+      remote_endpoint: String(group.federation_remote_endpoint || "").trim(),
+      remote_peer_id: String(group.federation_remote_peer_id || "").trim(),
+      trust_id: String(group.federation_trust_id || "").trim(),
+      token: token.token,
+    });
+  }
+
+  return refs;
 }
 
 export function resolveControlledComposerMentionContext({

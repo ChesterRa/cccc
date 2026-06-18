@@ -1,3 +1,4 @@
+import re
 import os
 import tempfile
 import unittest
@@ -69,6 +70,16 @@ class TestWebManifestStatic(unittest.TestCase):
             self.assertIsInstance(cm.exception.code, int)
         finally:
             cleanup()
+
+    def test_packaged_ui_dist_contains_remote_pairing_flow(self) -> None:
+        dist = Path(__file__).resolve().parents[1] / "src" / "cccc" / "ports" / "web" / "dist"
+        bundles = list((dist / "assets").glob("*.js"))
+        self.assertTrue(bundles, "JavaScript chunks are missing from packaged web dist")
+        text = "\n".join(bundle.read_text(encoding="utf-8") for bundle in bundles)
+
+        self.assertIn("issuer_endpoint", text)
+        self.assertIn("/api/federation/pairing/remote-requests", text)
+        self.assertRegex(text, re.compile(r"type:\s*[\"']cccc\.libp2p\.connection_info[\"'][\s\S]{0,400}?version:\s*2[,}]"))
 
 
 if __name__ == "__main__":

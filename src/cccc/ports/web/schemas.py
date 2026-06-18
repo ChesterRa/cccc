@@ -38,8 +38,12 @@ class SendRequest(BaseModel):
     quote_text: str = Field(default="")
     priority: Literal["normal", "attention"] = "normal"
     reply_required: bool = False
+    source_platform: str = Field(default="")
+    source_user_name: str = Field(default="")
+    source_user_id: str = Field(default="")
     src_group_id: str = Field(default="")
     src_event_id: str = Field(default="")
+    source_multiaddrs: list[str] = Field(default_factory=list)
     client_id: str = Field(default="")
     refs: list[dict[str, Any]] = Field(default_factory=list)
 

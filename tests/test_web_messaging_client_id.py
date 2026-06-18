@@ -99,6 +99,42 @@ class TestWebMessagingClientId(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_preserves_federation_provenance_fields(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="federation-provenance", topic="")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send",
+                    json={
+                        "text": "hello from peer",
+                        "by": "federation:peer_a",
+                        "to": ["user"],
+                        "source_platform": "peer_cccc_http",
+                        "source_user_id": "peer_a",
+                        "source_user_name": "Remote Group",
+                        "src_group_id": "g_remote",
+                        "src_event_id": "remote-event-1",
+                    },
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool(body.get("ok")))
+            data = (((body.get("result") or {}).get("event") or {}).get("data")) or {}
+            self.assertEqual(data.get("source_platform"), "peer_cccc_http")
+            self.assertEqual(data.get("source_user_id"), "peer_a")
+            self.assertEqual(data.get("source_user_name"), "Remote Group")
+            self.assertEqual(data.get("src_group_id"), "g_remote")
+            self.assertEqual(data.get("src_event_id"), "remote-event-1")
+        finally:
+            cleanup()
+
     def test_send_replays_existing_event_for_duplicate_client_id(self) -> None:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry

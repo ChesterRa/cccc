@@ -183,6 +183,7 @@ export function ChatTab({
     destGroupId,
     setDestGroupId,
     composerGroupSettled,
+    composerRouteGroups,
     mentionSuggestions,
     slashCommands,
 
@@ -886,6 +887,7 @@ export function ChatTab({
             destGroupId={destGroupId}
             setDestGroupId={setDestGroupId}
             composerGroupSettled={composerGroupSettled}
+            composerRouteGroups={composerRouteGroups}
             destGroupScopeLabel={destGroupScopeLabel}
             busy={busy}
             recentMessages={chatMessages}

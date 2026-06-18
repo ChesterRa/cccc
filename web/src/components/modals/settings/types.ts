@@ -8,6 +8,7 @@ export type GroupTabId =
   | "assistants"
   | "space"
   | "messaging"
+  | "connections"
   | "im"
   | "transcript"
   | "copyGroups";

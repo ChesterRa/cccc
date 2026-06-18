@@ -1,7 +1,7 @@
 """Daemon ops for outbound remote send (Stage 2).
 
 - ``remote_send``: validate, enqueue idempotently, then perform one synchronous
-  delivery attempt. There is still no retry worker in this stage.
+  delivery attempt. The background outbox worker reuses the same dispatch seam.
 - ``remote_delivery_status``: read back a receipt by (registration_id, key).
 """
 
@@ -13,6 +13,7 @@ from ...contracts.v1.federation import RemoteSendPayload
 from ...contracts.v1.ipc import DaemonError, DaemonResponse
 from ...kernel.federation.registration import get_registration
 from ...kernel.federation.receipts import get_receipt
+from ...kernel.federation.credentials import resolve_federation_credential
 from .remote_dispatch import deliver_enqueued, enqueue_remote_send
 from .transports.base import RemoteSendTransport, get_transport
 
@@ -24,8 +25,7 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
 
 
 def _default_credential_resolver(credential_ref: str) -> Optional[str]:
-    _ = credential_ref
-    return None
+    return resolve_federation_credential(credential_ref)
 
 
 def handle_remote_send(
@@ -37,6 +37,9 @@ def handle_remote_send(
     src_group_id = str(args.get("group_id") or "").strip()
     registration_id = str(args.get("registration_id") or "").strip()
     idempotency_key = str(args.get("idempotency_key") or "").strip()
+    source_event_id = str(args.get("source_event_id") or "").strip()
+    reply_to_remote_event_id = str(args.get("reply_to_remote_event_id") or "").strip()
+    federation_thread = str(args.get("federation_thread") or "").strip()
     payload_raw = args.get("payload") if isinstance(args.get("payload"), dict) else {}
 
     if not registration_id:
@@ -71,6 +74,9 @@ def handle_remote_send(
         registration_id=registration_id,
         idempotency_key=idempotency_key,
         payload=payload.model_dump(),
+        source_event_id=source_event_id,
+        reply_to_remote_event_id=reply_to_remote_event_id,
+        federation_thread=federation_thread,
     )
     credential_ref = str(reg.get("credential_ref") or "").strip()
     credential = ""

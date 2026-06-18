@@ -76,6 +76,9 @@ def _codex_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> b
         return False
     if not _mcp_transport_matches(entry):
         return False
+    persisted_env = str(entry.get("env") or entry.get("environment") or "")
+    if any(key in persisted_env for key in _CODEX_CONTEXT_ENV_KEYS):
+        return False
     return _entry_command_matches_expected(
         entry.get("command", ""),
         entry.get("args", ""),
@@ -189,6 +192,7 @@ def _kimi_share_dir(env: Dict[str, str] | None) -> Path:
 
 
 _OPENCODE_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
+_CODEX_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
 
 
 def _opencode_context_environment(env: Dict[str, str] | None) -> Dict[str, str]:
@@ -336,6 +340,7 @@ def _run_cli(
     timeout: int,
     text: bool = True,
     env: Dict[str, str] | None = None,
+    drop_env_keys: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[Any]:
     kwargs: dict[str, object] = {
         "capture_output": True,
@@ -344,9 +349,13 @@ def _run_cli(
     }
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
-    if env is not None:
+    if env is not None or drop_env_keys:
         merged_env = dict(os.environ)
-        merged_env.update({str(k): str(v) for k, v in env.items() if isinstance(k, str)})
+        for key in drop_env_keys:
+            merged_env.pop(key, None)
+        merged_env.update({str(k): str(v) for k, v in (env or {}).items() if isinstance(k, str)})
+        for key in drop_env_keys:
+            merged_env.pop(key, None)
         kwargs["env"] = merged_env
     return subprocess.run(resolve_subprocess_argv(argv), **kwargs)
 
@@ -378,7 +387,7 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         return "ready" if _claude_mcp_entry_matches_expected(output, expected_cmd) else "stale"
 
     if runtime == "codex":
-        result = _run_cli(["codex", "mcp", "get", "cccc"], timeout=10, env=env)
+        result = _run_cli(["codex", "mcp", "get", "cccc"], timeout=10, env=env, drop_env_keys=_CODEX_CONTEXT_ENV_KEYS)
         if result.returncode != 0:
             return "missing"
         return "ready" if _codex_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
@@ -530,7 +539,8 @@ def ensure_mcp_installed(
                 if remove_result.returncode != 0:
                     return False
 
-        result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env)
+        drop_env_keys = _CODEX_CONTEXT_ENV_KEYS if runtime == "codex" else ()
+        result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env, drop_env_keys=drop_env_keys)
         return result.returncode == 0 and is_mcp_installed(runtime, env=env)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass

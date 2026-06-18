@@ -382,10 +382,16 @@ class TestMcpInstall(unittest.TestCase):
                         ],
                     )
 
-    def test_ensure_mcp_installed_codex_passes_explicit_env(self) -> None:
+    def test_ensure_mcp_installed_codex_does_not_persist_actor_context_env(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             cwd = Path(td)
-            env = {"CODEX_HOME": "/tmp/cccc-isolated-codex-home", "OPENAI_API_KEY": "sk-test"}
+            env = {
+                "CODEX_HOME": "/tmp/cccc-isolated-codex-home",
+                "OPENAI_API_KEY": "sk-test",
+                "CCCC_HOME": "/tmp/cccc-actor-home",
+                "CCCC_GROUP_ID": "g_actor",
+                "CCCC_ACTOR_ID": "peer1",
+            }
             with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["missing", "ready"]), patch(
                 "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
                 return_value=["/abs/cccc", "mcp"],
@@ -394,14 +400,57 @@ class TestMcpInstall(unittest.TestCase):
                     mock_run.return_value.returncode = 0
                     ok = ensure_mcp_installed("codex", cwd, auto_mcp_runtimes=("codex",), env=env)
                     self.assertTrue(ok)
-                    mock_run.assert_called_once_with(
-                        ["codex", "mcp", "add", "cccc", "--", "/abs/cccc", "mcp"],
-                        capture_output=True,
-                        text=True,
-                        cwd=str(cwd),
-                        timeout=30,
-                        env={**os.environ, **env},
-                    )
+                    mock_run.assert_called_once()
+                    args, kwargs = mock_run.call_args
+                    self.assertEqual(args[0], ["codex", "mcp", "add", "cccc", "--", "/abs/cccc", "mcp"])
+                    self.assertEqual(kwargs["cwd"], str(cwd))
+                    run_env = kwargs.get("env")
+                    self.assertIsInstance(run_env, dict)
+                    self.assertEqual((run_env or {}).get("CODEX_HOME"), env["CODEX_HOME"])
+                    self.assertEqual((run_env or {}).get("OPENAI_API_KEY"), env["OPENAI_API_KEY"])
+                    self.assertNotIn("CCCC_HOME", run_env or {})
+                    self.assertNotIn("CCCC_GROUP_ID", run_env or {})
+                    self.assertNotIn("CCCC_ACTOR_ID", run_env or {})
+
+    def test_is_mcp_installed_codex_rejects_persisted_actor_context_env(self) -> None:
+        with patch("cccc.daemon.mcp_install.sys.platform", "linux"), patch(
+            "cccc.daemon.mcp_install.resolve_subprocess_argv",
+            side_effect=lambda argv: list(argv),
+        ), patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = (
+                "cccc\n"
+                "  enabled: true\n"
+                "  transport: stdio\n"
+                "  command: /abs/cccc\n"
+                "  args: mcp\n"
+                "  env: CCCC_ACTOR_ID=*****, CCCC_GROUP_ID=*****, CCCC_HOME=*****\n"
+            )
+            mock_run.return_value.stderr = ""
+
+            self.assertFalse(is_mcp_installed("codex"))
+
+    def test_is_mcp_installed_codex_strips_actor_context_env_from_probe(self) -> None:
+        with patch.dict(os.environ, {"CCCC_HOME": "/tmp/bad", "CCCC_GROUP_ID": "g_bad", "CCCC_ACTOR_ID": "peer1"}, clear=False), patch(
+            "cccc.daemon.mcp_install.sys.platform", "linux"
+        ), patch(
+            "cccc.daemon.mcp_install.resolve_subprocess_argv",
+            side_effect=lambda argv: list(argv),
+        ), patch(
+            "cccc.daemon.mcp_install.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "cccc\n  enabled: true\n  transport: stdio\n  command: /abs/cccc\n  args: mcp\n"
+            mock_run.return_value.stderr = ""
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertTrue(is_mcp_installed("codex"))
+
+            run_env = mock_run.call_args.kwargs.get("env")
+            self.assertIsInstance(run_env, dict)
+            self.assertNotIn("CCCC_HOME", run_env or {})
+            self.assertNotIn("CCCC_GROUP_ID", run_env or {})
+            self.assertNotIn("CCCC_ACTOR_ID", run_env or {})
 
     def test_ensure_mcp_installed_hermes_prepares_default_profile(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -478,12 +527,16 @@ class TestMcpInstall(unittest.TestCase):
 
             self.assertTrue(is_mcp_installed("codex"))
 
-        mock_run.assert_called_once_with(
-            [r"C:\Tools\codex.cmd", "mcp", "get", "cccc"],
-            capture_output=True,
-            timeout=10,
-            text=True,
-        )
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        self.assertEqual(args[0], [r"C:\Tools\codex.cmd", "mcp", "get", "cccc"])
+        self.assertEqual(kwargs["timeout"], 10)
+        self.assertTrue(kwargs["text"])
+        run_env = kwargs.get("env")
+        self.assertIsInstance(run_env, dict)
+        self.assertNotIn("CCCC_HOME", run_env or {})
+        self.assertNotIn("CCCC_GROUP_ID", run_env or {})
+        self.assertNotIn("CCCC_ACTOR_ID", run_env or {})
 
     def test_ensure_mcp_installed_codex_uses_resolved_windows_cli_path(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -500,13 +553,17 @@ class TestMcpInstall(unittest.TestCase):
                 ok = ensure_mcp_installed("codex", cwd, auto_mcp_runtimes=("codex",))
 
             self.assertTrue(ok)
-            mock_run.assert_called_once_with(
-                [r"C:\Tools\codex.cmd", "mcp", "add", "cccc", "--", "C:\\CCCC\\cccc.exe", "mcp"],
-                capture_output=True,
-                text=True,
-                cwd=str(cwd),
-                timeout=30,
-            )
+            mock_run.assert_called_once()
+            args, kwargs = mock_run.call_args
+            self.assertEqual(args[0], [r"C:\Tools\codex.cmd", "mcp", "add", "cccc", "--", "C:\\CCCC\\cccc.exe", "mcp"])
+            self.assertEqual(kwargs["cwd"], str(cwd))
+            self.assertEqual(kwargs["timeout"], 30)
+            self.assertTrue(kwargs["text"])
+            run_env = kwargs.get("env")
+            self.assertIsInstance(run_env, dict)
+            self.assertNotIn("CCCC_HOME", run_env or {})
+            self.assertNotIn("CCCC_GROUP_ID", run_env or {})
+            self.assertNotIn("CCCC_ACTOR_ID", run_env or {})
 
     def test_ensure_mcp_installed_codex_windows_repairs_stale_config(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -552,6 +609,7 @@ class TestMcpInstall(unittest.TestCase):
                                 capture_output=True,
                                 text=True,
                                 timeout=10,
+                                env=mock_run.call_args_list[0].kwargs.get("env"),
                             ),
                             call(
                                 ["codex", "mcp", "add", "cccc", "--", "C:\\CCCC\\cccc.exe", "mcp"],
@@ -559,15 +617,23 @@ class TestMcpInstall(unittest.TestCase):
                                 text=True,
                                 cwd=str(cwd),
                                 timeout=30,
+                                env=mock_run.call_args_list[1].kwargs.get("env"),
                             ),
                             call(
                                 ["codex", "mcp", "get", "cccc"],
                                 capture_output=True,
                                 text=True,
                                 timeout=10,
+                                env=mock_run.call_args_list[2].kwargs.get("env"),
                             ),
                         ],
                     )
+                    for item in mock_run.call_args_list:
+                        run_env = item.kwargs.get("env")
+                        self.assertIsInstance(run_env, dict)
+                        self.assertNotIn("CCCC_HOME", run_env or {})
+                        self.assertNotIn("CCCC_GROUP_ID", run_env or {})
+                        self.assertNotIn("CCCC_ACTOR_ID", run_env or {})
 
     def test_get_cccc_mcp_stdio_command_prefers_sibling_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as td:

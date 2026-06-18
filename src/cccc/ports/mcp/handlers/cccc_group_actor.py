@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from ....daemon.federation.route_lookup import resolve_remote_group_route_token
 from ....util.conv import coerce_bool
 from ..common import MCPError, _call_daemon_or_raise
 
@@ -157,7 +158,25 @@ def _group_matches_token(group: Dict[str, Any], token: str) -> str:
     return ""
 
 
-def group_resolve(*, token: str) -> Dict[str, Any]:
+def _federation_route_resolution(*, group_id: str, token: str) -> Dict[str, Any]:
+    route = resolve_remote_group_route_token(group_id=group_id, token=token)
+    if route is None:
+        return {}
+    return {
+        "group_id": route.remote_group_id,
+        "title": route.remote_group_title or route.remote_group_id,
+        "topic": "",
+        "running": True,
+        "state": "active",
+        "matched_by": "federation_remote_group_title",
+        "token": str(token or "").strip(),
+        "federation": True,
+        "registration_id": route.registration_id,
+        "trust_id": route.trust_id,
+    }
+
+
+def group_resolve(*, token: str, group_id: str = "") -> Dict[str, Any]:
     """Resolve a natural #group/title token to one real group_id."""
     raw = str(token or "").strip()
     normalized = _normalize_group_token(raw)
@@ -177,6 +196,9 @@ def group_resolve(*, token: str) -> Dict[str, Any]:
             matches.append((item, matched_by))
 
     if not matches:
+        remote_match = _federation_route_resolution(group_id=group_id, token=raw)
+        if remote_match:
+            return remote_match
         raise MCPError(
             code="not_found",
             message=f'no group matches token: {raw}. Do not guess dst_group_id; inspect cccc_group(action="list") or ask the user.',
