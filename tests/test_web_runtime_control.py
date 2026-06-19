@@ -53,6 +53,18 @@ class TestWebRuntimeControl(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 2)
         mock_sleep.assert_called_once_with(0.1)
 
+    def test_wait_for_web_ready_uses_web_ready_endpoint_for_wildcard_host(self) -> None:
+        from cccc.ports.web.runtime_control import wait_for_web_ready
+
+        with patch(
+            "cccc.ports.web.runtime_control.urllib.request.urlopen",
+            return_value=_UrlopenResponse(200),
+        ) as mock_urlopen:
+            ready = wait_for_web_ready(host="0.0.0.0", port=8848, timeout_s=0.2)
+
+        self.assertTrue(ready)
+        self.assertEqual(mock_urlopen.call_args.args[0], "http://127.0.0.1:8848/api/v1/ready")
+
     def test_wait_for_child_exit_interruptibly_returns_exit_code(self) -> None:
         from cccc.ports.web.runtime_control import wait_for_child_exit_interruptibly
 

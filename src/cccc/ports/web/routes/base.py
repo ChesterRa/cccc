@@ -199,6 +199,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         return {"ok": daemon_ok, "result": result}
 
+    @global_router.get("/api/v1/ready")
+    async def ready() -> Dict[str, Any]:
+        """Readiness endpoint for the supervisor's Web child startup probe."""
+        return {"ok": True, "result": {"web": "ready"}}
+
     def _mcp_jsonrpc_error(req_id: Any, code: int, message: str) -> Dict[str, Any]:
         return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 

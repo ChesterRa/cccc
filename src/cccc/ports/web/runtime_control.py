@@ -244,7 +244,7 @@ def wait_for_child_exit_interruptibly(
 
 
 def wait_for_web_ready(*, host: str, port: int, timeout_s: float = 6.0) -> bool:
-    target = http_url(local_connect_host(host), int(port), path="/api/v1/health")
+    target = http_url(local_connect_host(host), int(port), path="/api/v1/ready")
     deadline = time.time() + max(float(timeout_s or 0.0), 0.1)
     while time.time() < deadline:
         try:

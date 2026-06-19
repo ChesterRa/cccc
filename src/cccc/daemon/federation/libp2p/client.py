@@ -3,27 +3,31 @@
 from __future__ import annotations
 
 import threading
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ....paths import ensure_home
+from .advertise import default_advertise_host, default_listen_multiaddr
 from .sidecar import Libp2pNode
 
 _LOCK = threading.RLock()
 _NODES: dict[Path, Libp2pNode] = {}
 
 
+def _node_home(home: Optional[Path]) -> Path:
+    return (Path(home).expanduser().resolve() if home is not None else ensure_home())
+
+
 def _default_listen_multiaddr() -> str:
-    return str(os.environ.get("CCCC_LIBP2P_LISTEN_MULTIADDR") or "").strip() or "/ip4/127.0.0.1/tcp/0"
+    return default_listen_multiaddr()
 
 
 def _default_advertise_host() -> str:
-    return str(os.environ.get("CCCC_LIBP2P_ADVERTISE_HOST") or "").strip()
+    return default_advertise_host()
 
 
 def get_default_node(*, home: Optional[Path] = None) -> Libp2pNode:
-    base = Path(home) if home is not None else ensure_home()
+    base = _node_home(home)
     with _LOCK:
         node = _NODES.get(base)
         if node is None:
@@ -38,20 +42,20 @@ def get_default_node(*, home: Optional[Path] = None) -> Libp2pNode:
 
 
 def register_node(node: Libp2pNode) -> None:
-    base = Path(node.home) if node.home is not None else ensure_home()
+    base = _node_home(node.home)
     with _LOCK:
         _NODES[base] = node
 
 
 def unregister_node(node: Libp2pNode) -> None:
-    base = Path(node.home) if node.home is not None else ensure_home()
+    base = _node_home(node.home)
     with _LOCK:
         if _NODES.get(base) is node:
             _NODES.pop(base, None)
 
 
 def stop_default_node(*, home: Optional[Path] = None) -> None:
-    base = Path(home) if home is not None else ensure_home()
+    base = _node_home(home)
     with _LOCK:
         node = _NODES.pop(base, None)
     if node is not None:

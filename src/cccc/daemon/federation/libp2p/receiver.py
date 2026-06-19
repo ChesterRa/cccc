@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any, Dict, Optional
 
 from ....contracts.v1.federation import RemoteSendPayload
@@ -21,6 +22,7 @@ def receive_address_announce(
     remote_peer_id: str,
     multiaddrs: list[str],
     home: Optional[Path] = None,
+    retry_pending: bool = True,
 ) -> Dict[str, Any]:
     target_gid = str(target_group_id or "").strip()
     src_gid = str(src_group_id or "").strip()
@@ -45,11 +47,15 @@ def receive_address_announce(
         multiaddrs=addrs,
         home=home,
     )
-    retry = retry_remote_send_for_peer(
-        group_id=target_gid,
-        remote_group_id=src_gid,
-        remote_peer_id=peer_id,
-        home=home,
+    retry = (
+        retry_remote_send_for_peer(
+            group_id=target_gid,
+            remote_group_id=src_gid,
+            remote_peer_id=peer_id,
+            home=home,
+        )
+        if retry_pending
+        else {}
     )
     return {
         "ok": True,
@@ -58,6 +64,30 @@ def receive_address_announce(
         "registration_updates": int(updated.get("registration_updates") or 0),
         "retried": int(retry.get("sent") or 0),
     }
+
+
+def defer_pending_retry_for_peer(
+    *,
+    target_group_id: str,
+    src_group_id: str,
+    remote_peer_id: str,
+    home: Optional[Path] = None,
+) -> None:
+    target_gid = str(target_group_id or "").strip()
+    src_gid = str(src_group_id or "").strip()
+    peer_id = str(remote_peer_id or "").strip()
+    if not target_gid or not src_gid or not peer_id:
+        return
+
+    def run() -> None:
+        retry_remote_send_for_peer(
+            group_id=target_gid,
+            remote_group_id=src_gid,
+            remote_peer_id=peer_id,
+            home=home,
+        )
+
+    threading.Thread(target=run, name="cccc-libp2p-address-announce-retry", daemon=True).start()
 
 
 def receive_remote_send(

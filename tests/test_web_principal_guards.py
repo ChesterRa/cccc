@@ -352,6 +352,17 @@ class TestWebPrincipalGuards(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_ready_anonymous_returns_200_without_daemon_ping(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with patch("cccc.ports.web.app.call_daemon", side_effect=AssertionError("ready must not ping daemon")):
+                client = self._create_client()
+                resp = client.get("/api/v1/ready")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json(), {"ok": True, "result": {"web": "ready"}})
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

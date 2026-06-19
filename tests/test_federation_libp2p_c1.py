@@ -174,14 +174,26 @@ class TestFederationLibp2pC1(unittest.TestCase):
             finally:
                 node.stop()
 
-    def test_sidecar_supervisor_uses_env_listen_and_advertise_address(self) -> None:
+    def test_sidecar_supervisor_uses_enabled_remote_access_advertise_address(self) -> None:
         from cccc.daemon.federation.libp2p.supervisor import read_sidecar_status, start_sidecar
 
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
+            (home / "settings.yaml").write_text(
+                "\n".join(
+                    [
+                        "remote_access:",
+                        "  provider: manual",
+                        "  enabled: true",
+                        "  web_host: 172.30.79.171",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
             with _EnvVars(
+                CCCC_HOME=str(home),
                 CCCC_LIBP2P_LISTEN_MULTIADDR="/ip4/0.0.0.0/tcp/0",
-                CCCC_LIBP2P_ADVERTISE_HOST="172.30.79.171",
             ):
                 node = start_sidecar(home=home)
             try:
@@ -221,7 +233,7 @@ class TestFederationLibp2pC1(unittest.TestCase):
 
         self.assertEqual(rewrite_advertised_multiaddrs(addrs, advertise_host=""), tuple(addrs))
 
-    def test_default_libp2p_binding_uses_web_host_when_concrete_ipv4(self) -> None:
+    def test_default_libp2p_binding_stays_loopback_until_remote_access_enabled(self) -> None:
         from cccc.daemon.federation.libp2p.advertise import default_advertise_host, default_listen_multiaddr
 
         with tempfile.TemporaryDirectory() as td:
@@ -229,8 +241,40 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 CCCC_HOME=td,
                 CCCC_WEB_HOST="172.30.79.171",
                 CCCC_LIBP2P_LISTEN_MULTIADDR="",
-                CCCC_LIBP2P_ADVERTISE_HOST="",
             ):
+                self.assertEqual(default_advertise_host(), "")
+                self.assertEqual(default_listen_multiaddr(), "/ip4/127.0.0.1/tcp/0")
+
+    def test_default_libp2p_binding_uses_explicit_advertise_host_first(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import default_advertise_host, default_listen_multiaddr
+
+        with tempfile.TemporaryDirectory() as td:
+            with _EnvVars(
+                CCCC_HOME=td,
+                CCCC_LIBP2P_ADVERTISE_HOST="172.30.79.171",
+                CCCC_LIBP2P_LISTEN_MULTIADDR="",
+            ):
+                self.assertEqual(default_advertise_host(), "172.30.79.171")
+                self.assertEqual(default_listen_multiaddr(), "/ip4/0.0.0.0/tcp/0")
+
+    def test_default_libp2p_binding_uses_enabled_remote_access_web_host(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import default_advertise_host, default_listen_multiaddr
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / "settings.yaml").write_text(
+                "\n".join(
+                    [
+                        "remote_access:",
+                        "  provider: manual",
+                        "  enabled: true",
+                        "  web_host: 172.30.79.171",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with _EnvVars(CCCC_HOME=str(home), CCCC_LIBP2P_LISTEN_MULTIADDR=""):
                 self.assertEqual(default_advertise_host(), "172.30.79.171")
                 self.assertEqual(default_listen_multiaddr(), "/ip4/0.0.0.0/tcp/0")
 
@@ -243,6 +287,8 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 "\n".join(
                     [
                         "remote_access:",
+                        "  provider: manual",
+                        "  enabled: true",
                         "  web_host: 172.30.79.171",
                         "  web_port: 8848",
                         "",
@@ -254,7 +300,6 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 CCCC_HOME=str(home),
                 CCCC_WEB_HOST="172.30.99.99",
                 CCCC_LIBP2P_LISTEN_MULTIADDR="",
-                CCCC_LIBP2P_ADVERTISE_HOST="",
             ):
                 self.assertEqual(default_advertise_host(), "172.30.79.171")
 
@@ -269,6 +314,8 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 "\n".join(
                     [
                         "remote_access:",
+                        "  provider: manual",
+                        "  enabled: true",
                         "  web_host: 0.0.0.0",
                         "  web_public_url: https://cccc.0xlinux.cn",
                         "",
@@ -279,7 +326,6 @@ class TestFederationLibp2pC1(unittest.TestCase):
             with _EnvVars(
                 CCCC_HOME=str(home),
                 CCCC_LIBP2P_LISTEN_MULTIADDR="",
-                CCCC_LIBP2P_ADVERTISE_HOST="",
             ), patch("cccc.daemon.federation.libp2p.advertise._auto_detect_advertise_host", return_value="172.30.79.171"):
                 self.assertEqual(default_advertise_host(), "172.30.79.171")
                 self.assertEqual(default_listen_multiaddr(), "/ip4/0.0.0.0/tcp/0")
@@ -572,7 +618,7 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 node_b.stop()
 
     def test_session_reads_coalesced_frames_without_dropping_later_frames(self) -> None:
-        from cccc.daemon.federation.libp2p.session import Libp2pSession
+        from cccc.daemon.federation.libp2p.session import FRAME_KIND_REQUEST, FRAME_KIND_RESPONSE, Libp2pSession
         from cccc.daemon.federation.libp2p.sidecar import PROTOCOL_ID, _error, _write_frame
 
         left, right = socket.socketpair()
@@ -599,7 +645,12 @@ class TestFederationLibp2pC1(unittest.TestCase):
         try:
             session.start_reader()
             first = {"response_to": "already-gone", "ok": True}
-            second = {"protocol": PROTOCOL_ID, "request_id": "coalesced-request", "op": "remote_send"}
+            second = {
+                "frame_kind": FRAME_KIND_REQUEST,
+                "protocol": PROTOCOL_ID,
+                "request_id": "coalesced-request",
+                "op": "remote_send",
+            }
             right.settimeout(3.0)
             right.sendall(
                 (json.dumps(first, separators=(",", ":")) + "\n" + json.dumps(second, separators=(",", ":")) + "\n").encode("utf-8")
@@ -608,6 +659,7 @@ class TestFederationLibp2pC1(unittest.TestCase):
 
             self.assertEqual([frame.get("request_id") for frame in handled], ["coalesced-request"])
             self.assertEqual(response.get("response_to"), "coalesced-request")
+            self.assertEqual(response.get("frame_kind"), FRAME_KIND_RESPONSE)
             self.assertTrue(response.get("ok"))
         finally:
             stop.set()

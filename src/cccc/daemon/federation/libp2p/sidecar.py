@@ -19,9 +19,8 @@ from typing import Any, Dict, Optional, Tuple
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .identity import Libp2pIdentity, canonical_payload_bytes, get_libp2p_identity, peer_id_from_public_key_b64
-from .receiver import receive_address_announce, receive_remote_send
+from .receiver import defer_pending_retry_for_peer, receive_address_announce, receive_remote_send
 from .session import Libp2pSession
-from ..remote_dispatch import retry_remote_send_for_peer
 
 PROTOCOL_ID = "/cccc/federation/remote-send/1.0.0"
 OP_ADDRESS_ANNOUNCE = "address_announce"
@@ -264,7 +263,7 @@ class Libp2pNode:
                 self._register_session(session)
                 result = self._handle_authenticated_request(req=req, auth=auth, defer_address_retry=True)
                 session.write_response(req, result)
-                self._run_deferred_address_retry(req=req, auth=auth, result=result)
+                self._defer_address_retry(req=req, auth=auth, result=result)
                 session.read_loop()
             else:
                 result = self._handle_authenticated_request(req=req, auth=auth, defer_address_retry=False)
@@ -312,21 +311,17 @@ class Libp2pNode:
             home=self.home,
         )
 
-    def _run_deferred_address_retry(self, *, req: Dict[str, Any], auth: str, result: Dict[str, Any]) -> None:
+    def _defer_address_retry(self, *, req: Dict[str, Any], auth: str, result: Dict[str, Any]) -> None:
         if str(req.get("op") or OP_REMOTE_SEND).strip() != OP_ADDRESS_ANNOUNCE:
             return
         if not result.get("ok"):
             return
-
-        def run() -> None:
-            retry_remote_send_for_peer(
-                group_id=str(req.get("target_group_id") or ""),
-                remote_group_id=str(req.get("src_group_id") or ""),
-                remote_peer_id=auth,
-                home=self.home,
-            )
-
-        threading.Thread(target=run, name="cccc-libp2p-address-announce-retry", daemon=True).start()
+        defer_pending_retry_for_peer(
+            target_group_id=str(req.get("target_group_id") or ""),
+            src_group_id=str(req.get("src_group_id") or ""),
+            remote_peer_id=auth,
+            home=self.home,
+        )
 
 
 def _parse_listen_addr(value: str) -> tuple[str, int]:

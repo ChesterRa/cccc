@@ -14,6 +14,10 @@ RequestHandler = Callable[[Dict[str, Any], str, str], Dict[str, Any]]
 Signer = Callable[[str, Dict[str, Any]], str]
 ErrorFactory = Callable[[str, str], Dict[str, Any]]
 
+FRAME_KIND_REQUEST = "request"
+FRAME_KIND_RESPONSE = "response"
+_FRAME_KIND_KEY = "frame_kind"
+
 
 class Libp2pSession:
     def __init__(
@@ -92,6 +96,7 @@ class Libp2pSession:
                 auth_body = {
                     **body,
                     **(extra or {}),
+                    _FRAME_KIND_KEY: FRAME_KIND_REQUEST,
                     "request_id": req_id,
                     "public_key": self._public_key_b64,
                     "signature": self._sign(self.outbound_nonce, body),
@@ -114,6 +119,7 @@ class Libp2pSession:
     def write_response(self, req: Dict[str, Any], result: Dict[str, Any]) -> None:
         req_id = str(req.get("request_id") or "").strip()
         response = dict(result or {})
+        response[_FRAME_KIND_KEY] = FRAME_KIND_RESPONSE
         if req_id:
             response["response_to"] = req_id
         with self._write_lock:
@@ -157,6 +163,15 @@ class Libp2pSession:
                 if not frame:
                     break
                 response_to = str(frame.get("response_to") or "").strip()
+                kind = _frame_kind(frame)
+                if kind == FRAME_KIND_REQUEST:
+                    self._handle_frame(frame)
+                    continue
+                if kind == FRAME_KIND_RESPONSE:
+                    if response_to and response_to != req_id:
+                        self._handle_frame(frame)
+                        continue
+                    return frame
                 if not response_to or response_to == req_id:
                     if not response_to and _looks_like_request(frame) and not _looks_like_response_for_op(frame, op):
                         self._handle_frame(frame)
@@ -191,7 +206,8 @@ class Libp2pSession:
 
     def _handle_frame(self, frame: Dict[str, Any]) -> None:
         response_to = str(frame.get("response_to") or "").strip()
-        if response_to:
+        kind = _frame_kind(frame)
+        if kind == FRAME_KIND_RESPONSE or response_to:
             self._resolve_response(response_to, frame)
             return
         result = self._handle_request(frame, self.inbound_nonce, self.remote_peer_id)
@@ -205,6 +221,10 @@ class Libp2pSession:
         ready, holder = pending
         holder["response"] = dict(response)
         ready.set()
+
+
+def _frame_kind(frame: Dict[str, Any]) -> str:
+    return str(frame.get(_FRAME_KIND_KEY) or frame.get("type") or "").strip()
 
 
 def _looks_like_request(frame: Dict[str, Any]) -> bool:

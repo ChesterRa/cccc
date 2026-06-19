@@ -28,6 +28,7 @@ class TestFederationRemotePayloads(unittest.TestCase):
 
         self.assertEqual(body["text"], "hello")
         self.assertEqual(body["to"], ["@foreman"])
+        self.assertEqual(body["by"], "federation:peer_source")
         self.assertEqual(body["priority"], "attention")
         self.assertEqual(body["reply_required"], True)
         self.assertEqual(body["idempotency_key"], "delivery:abc")

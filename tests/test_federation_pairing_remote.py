@@ -244,6 +244,8 @@ class TestFederationPairingRemote(unittest.TestCase):
             cleanup()
 
     def test_submit_remote_pairing_request_sends_local_sidecar_multiaddrs(self) -> None:
+        from unittest.mock import patch
+
         from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
         from cccc.kernel.federation.pairing import create_pairing_invite
         from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request
@@ -279,6 +281,72 @@ class TestFederationPairingRemote(unittest.TestCase):
                     }
                 }
 
+            with patch("cccc.daemon.federation.libp2p.advertise._auto_detect_advertise_host", return_value=""):
+                submit_remote_pairing_request(
+                    payload,
+                    local_group_id="g_joiner",
+                    client=fake_client,
+                    allow_localhost=True,
+                    home=joiner_home,
+                )
+
+            self.assertEqual(calls[0][1]["requester_multiaddrs"], [])
+        finally:
+            issuer_cleanup()
+            joiner_cleanup()
+
+    def test_submit_remote_pairing_request_advertises_routable_web_host_instead_of_loopback(self) -> None:
+        from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
+        from cccc.kernel.federation.pairing import create_pairing_invite
+        from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request
+        from cccc.util.fs import atomic_write_json
+
+        issuer_home, issuer_cleanup = self._home()
+        joiner_home, joiner_cleanup = self._home()
+        calls = []
+        old_home = os.environ.get("CCCC_HOME")
+        old_host = os.environ.get("CCCC_WEB_HOST")
+        try:
+            os.environ["CCCC_HOME"] = str(joiner_home)
+            os.environ.pop("CCCC_WEB_HOST", None)
+            (joiner_home / "settings.yaml").write_text(
+                "\n".join(
+                    [
+                        "remote_access:",
+                        "  provider: manual",
+                        "  enabled: true",
+                        "  web_host: 172.30.79.171",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=issuer_home)
+            payload = build_connection_payload(invite, issuer_endpoint="http://127.0.0.1:5555", home=issuer_home)
+            atomic_write_json(
+                sidecar_status_path(home=joiner_home),
+                {
+                    "status": "running",
+                    "pid": 123,
+                    "peer_id": "peer_joiner",
+                    "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_joiner"],
+                    "updated_at": "2026-06-17T00:00:00Z",
+                },
+            )
+
+            def fake_client(endpoint: str, body: dict, *, timeout_seconds: float = 3.0) -> dict:
+                calls.append((endpoint, body, timeout_seconds))
+                return {
+                    "request": {
+                        "request_id": "preq_remote",
+                        "group_id": "g_issuer",
+                        "remote_group_id": body["requester_group_id"],
+                        "remote_peer_id": body["requester_peer_id"],
+                        "multiaddrs": body["requester_multiaddrs"],
+                        "status": "pending",
+                    }
+                }
+
             submit_remote_pairing_request(
                 payload,
                 local_group_id="g_joiner",
@@ -287,8 +355,86 @@ class TestFederationPairingRemote(unittest.TestCase):
                 home=joiner_home,
             )
 
-            self.assertEqual(calls[0][1]["requester_multiaddrs"], ["/ip4/127.0.0.1/tcp/4001/p2p/peer_joiner"])
+            self.assertEqual(calls[0][1]["requester_multiaddrs"], ["/ip4/172.30.79.171/tcp/4001/p2p/peer_joiner"])
         finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            if old_host is None:
+                os.environ.pop("CCCC_WEB_HOST", None)
+            else:
+                os.environ["CCCC_WEB_HOST"] = old_host
+            issuer_cleanup()
+            joiner_cleanup()
+
+    def test_submit_remote_pairing_request_does_not_advertise_loopback_without_routable_host(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
+        from cccc.kernel.federation.pairing import create_pairing_invite
+        from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request
+        from cccc.util.fs import atomic_write_json
+
+        issuer_home, issuer_cleanup = self._home()
+        joiner_home, joiner_cleanup = self._home()
+        calls = []
+        old_home = os.environ.get("CCCC_HOME")
+        old_advertise = os.environ.get("CCCC_LIBP2P_ADVERTISE_HOST")
+        old_public_url = os.environ.get("CCCC_WEB_PUBLIC_URL")
+        old_host = os.environ.get("CCCC_WEB_HOST")
+        try:
+            os.environ["CCCC_HOME"] = str(joiner_home)
+            os.environ.pop("CCCC_LIBP2P_ADVERTISE_HOST", None)
+            os.environ.pop("CCCC_WEB_PUBLIC_URL", None)
+            os.environ.pop("CCCC_WEB_HOST", None)
+            invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=issuer_home)
+            payload = build_connection_payload(invite, issuer_endpoint="http://127.0.0.1:5555", home=issuer_home)
+            atomic_write_json(
+                sidecar_status_path(home=joiner_home),
+                {
+                    "status": "running",
+                    "pid": 123,
+                    "peer_id": "peer_joiner",
+                    "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_joiner"],
+                    "updated_at": "2026-06-17T00:00:00Z",
+                },
+            )
+
+            def fake_client(endpoint: str, body: dict, *, timeout_seconds: float = 3.0) -> dict:
+                calls.append((endpoint, body, timeout_seconds))
+                return {
+                    "request": {
+                        "request_id": "preq_remote",
+                        "group_id": "g_issuer",
+                        "remote_group_id": body["requester_group_id"],
+                        "remote_peer_id": body["requester_peer_id"],
+                        "multiaddrs": body["requester_multiaddrs"],
+                        "status": "pending",
+                    }
+                }
+
+            with patch("cccc.daemon.federation.libp2p.advertise._auto_detect_advertise_host", return_value=""):
+                submit_remote_pairing_request(
+                    payload,
+                    local_group_id="g_joiner",
+                    client=fake_client,
+                    allow_localhost=True,
+                    home=joiner_home,
+                )
+
+            self.assertEqual(calls[0][1]["requester_multiaddrs"], [])
+        finally:
+            for key, value in {
+                "CCCC_HOME": old_home,
+                "CCCC_LIBP2P_ADVERTISE_HOST": old_advertise,
+                "CCCC_WEB_PUBLIC_URL": old_public_url,
+                "CCCC_WEB_HOST": old_host,
+            }.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
             issuer_cleanup()
             joiner_cleanup()
 

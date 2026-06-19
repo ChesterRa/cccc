@@ -248,14 +248,11 @@ def _local_peer_id(*, home: Optional[Path]) -> str:
 
 def _local_multiaddrs(*, home: Optional[Path]) -> tuple[str, ...]:
     try:
-        from .libp2p.supervisor import read_sidecar_status
+        from .libp2p.advertise import local_advertised_multiaddrs
 
-        status = read_sidecar_status(home=home)
+        return local_advertised_multiaddrs(home=home)
     except Exception:
         return ()
-    if str(status.get("status") or "").strip() != "running":
-        return ()
-    return tuple(str(addr or "").strip() for addr in (status.get("multiaddrs") or []) if str(addr or "").strip())
 
 
 def payload_from_receipt(receipt: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

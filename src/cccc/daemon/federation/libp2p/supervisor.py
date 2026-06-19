@@ -13,6 +13,7 @@ from ....kernel.federation.pairing import list_trusts
 from ....util.fs import atomic_write_json, read_json
 from ....util.time import utc_now_iso
 from ....kernel.federation.peer_addresses import record_peer_addresses, resolve_peer_multiaddrs
+from .advertise import default_advertise_host, default_listen_multiaddr
 from .sidecar import Libp2pNode
 
 
@@ -27,11 +28,11 @@ def read_sidecar_status(*, home: Optional[Path] = None) -> Dict[str, Any]:
 
 
 def _default_listen_multiaddr() -> str:
-    return str(os.environ.get("CCCC_LIBP2P_LISTEN_MULTIADDR") or "").strip() or "/ip4/127.0.0.1/tcp/0"
+    return default_listen_multiaddr()
 
 
 def _default_advertise_host() -> str:
-    return str(os.environ.get("CCCC_LIBP2P_ADVERTISE_HOST") or "").strip()
+    return default_advertise_host()
 
 
 def start_sidecar(
@@ -70,7 +71,12 @@ def run_forever(
     old_term = signal.signal(signal.SIGTERM, _stop)
     try:
         while not stopping:
+            try:
+                node.update_advertise_host(_default_advertise_host())
+            except Exception:
+                pass
             _write_status(node)
+            announce_sidecar_addresses(node)
             time.sleep(5)
     finally:
         signal.signal(signal.SIGINT, old_int)

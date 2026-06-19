@@ -1,4 +1,28 @@
 import unittest
+import os
+import tempfile
+from pathlib import Path
+
+
+class _EnvPatch:
+    def __init__(self, **values: str | None) -> None:
+        self.values = values
+        self.previous: dict[str, str | None] = {}
+
+    def __enter__(self) -> None:
+        for key, value in self.values.items():
+            self.previous[key] = os.environ.get(key)
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        for key, value in self.previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 class TestFederationTransport(unittest.TestCase):
@@ -68,6 +92,147 @@ class TestFederationTransport(unittest.TestCase):
 
         self.assertTrue(res.ok)
         self.assertEqual(captured["body"].get("source_multiaddrs"), ["/ip4/127.0.0.1/tcp/4001/p2p/peer-local"])
+
+    def test_remote_dispatch_advertises_routable_web_host_instead_of_loopback_source_multiaddr(self) -> None:
+        from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
+        from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
+        from cccc.daemon.federation.transports.base import RemoteSendResult
+        from cccc.kernel.federation.registration import upsert_registration
+        from cccc.util.fs import atomic_write_json
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            old_home = os.environ.get("CCCC_HOME")
+            old_host = os.environ.get("CCCC_WEB_HOST")
+            try:
+                os.environ["CCCC_HOME"] = str(home)
+                os.environ.pop("CCCC_WEB_HOST", None)
+                (home / "settings.yaml").write_text(
+                    "\n".join(
+                        [
+                            "remote_access:",
+                            "  provider: manual",
+                            "  enabled: true",
+                            "  web_host: 172.30.79.171",
+                            "",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                registration = upsert_registration(
+                    "g_local",
+                    "https://peer.example",
+                    remote_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    transport="peer_cccc_http",
+                    status="active",
+                    home=home,
+                )
+                atomic_write_json(
+                    sidecar_status_path(home=home),
+                    {
+                        "status": "running",
+                        "pid": 123,
+                        "peer_id": "peer_local",
+                        "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_local"],
+                        "updated_at": "2026-06-17T00:00:00Z",
+                    },
+                )
+                enqueue_remote_send(
+                    src_group_id="g_local",
+                    registration_id=registration["registration_id"],
+                    idempotency_key="k-advertise",
+                    payload={"text": "hi", "to": ["@foreman"]},
+                    home=home,
+                )
+                captured = {}
+
+                class CaptureTransport:
+                    transport = "peer_cccc_http"
+
+                    def deliver(self, envelope):
+                        captured["source_multiaddrs"] = envelope.source_multiaddrs
+                        return RemoteSendResult(ok=True, status="sent", transport=self.transport, remote_event_id="remote-1")
+
+                deliver_enqueued(
+                    registration_id=registration["registration_id"],
+                    idempotency_key="k-advertise",
+                    home=home,
+                    transport_factory=lambda _name: CaptureTransport(),
+                )
+
+                self.assertEqual(captured["source_multiaddrs"], ("/ip4/172.30.79.171/tcp/4001/p2p/peer_local",))
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+                if old_host is None:
+                    os.environ.pop("CCCC_WEB_HOST", None)
+                else:
+                    os.environ["CCCC_WEB_HOST"] = old_host
+
+    def test_remote_dispatch_does_not_advertise_loopback_without_routable_host(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
+        from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
+        from cccc.daemon.federation.transports.base import RemoteSendResult
+        from cccc.kernel.federation.registration import upsert_registration
+        from cccc.util.fs import atomic_write_json
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            with _EnvPatch(
+                CCCC_HOME=str(home),
+                CCCC_LIBP2P_ADVERTISE_HOST=None,
+                CCCC_WEB_PUBLIC_URL=None,
+                CCCC_WEB_HOST=None,
+            ):
+                registration = upsert_registration(
+                    "g_local",
+                    "https://peer.example",
+                    remote_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    transport="peer_cccc_http",
+                    status="active",
+                    home=home,
+                )
+                atomic_write_json(
+                    sidecar_status_path(home=home),
+                    {
+                        "status": "running",
+                        "pid": 123,
+                        "peer_id": "peer_local",
+                        "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_local"],
+                        "updated_at": "2026-06-17T00:00:00Z",
+                    },
+                )
+                enqueue_remote_send(
+                    src_group_id="g_local",
+                    registration_id=registration["registration_id"],
+                    idempotency_key="k-no-loopback",
+                    payload={"text": "hi", "to": ["@foreman"]},
+                    home=home,
+                )
+                captured = {}
+
+                class CaptureTransport:
+                    transport = "peer_cccc_http"
+
+                    def deliver(self, envelope):
+                        captured["source_multiaddrs"] = envelope.source_multiaddrs
+                        return RemoteSendResult(ok=True, status="sent", transport=self.transport, remote_event_id="remote-1")
+
+                with patch("cccc.daemon.federation.libp2p.advertise._auto_detect_advertise_host", return_value=""):
+                    deliver_enqueued(
+                        registration_id=registration["registration_id"],
+                        idempotency_key="k-no-loopback",
+                        home=home,
+                        transport_factory=lambda _name: CaptureTransport(),
+                    )
+
+                self.assertEqual(captured["source_multiaddrs"], ())
 
     def test_unsupported_attachments_and_refs_are_permanent(self) -> None:
         from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport

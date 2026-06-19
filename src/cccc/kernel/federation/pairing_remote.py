@@ -174,14 +174,11 @@ def submit_remote_pairing_request(
 
 def _local_sidecar_multiaddrs(*, home: Optional[Path] = None) -> list[str]:
     try:
-        from ...daemon.federation.libp2p.supervisor import read_sidecar_status
+        from ...daemon.federation.libp2p.advertise import local_advertised_multiaddrs
 
-        status = read_sidecar_status(home=home)
+        return list(local_advertised_multiaddrs(home=home))
     except Exception:
         return []
-    if str(status.get("status") or "").strip() != "running":
-        return []
-    return [str(addr or "").strip() for addr in (status.get("multiaddrs") or []) if str(addr or "").strip()]
 
 
 def sync_remote_pairing_outbound(
