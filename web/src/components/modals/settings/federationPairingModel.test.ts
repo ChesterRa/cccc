@@ -11,11 +11,12 @@ import {
   canCreateInvite,
   canSubmitPairingRequest,
   parseConnectionInfoInput,
-  filterLibp2pRegistrations,
+  filterFederationSessionRegistrations,
   formatPeerLabel,
   formatRemoteInstanceLabel,
   isLocalIssuerEndpoint,
   isSameInstancePairingInput,
+  isSessionConnectionInfoInput,
   normalizeIssuerEndpoint,
   projectIncomingRequests,
   projectRecentOutbounds,
@@ -35,12 +36,13 @@ describe("federationPairingModel", () => {
     expect(canCreateInvite({ groupId: "g1", busy: false, issuerEndpoint: "https://issuer.example" })).toBe(true);
   });
 
-  it("gates pairing request submission on local identity peer id", () => {
-    expect(canSubmitPairingRequest({ pairingCode: "", requesterGroupId: "g1", requesterPeerId: "peer1", busy: false })).toBe(false);
-    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "", requesterPeerId: "peer1", busy: false })).toBe(false);
-    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "", busy: false })).toBe(false);
-    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "peer1", busy: true })).toBe(false);
-    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "peer1", busy: false })).toBe(true);
+  it("gates pairing request submission on session connection info and local identity peer id", () => {
+    expect(canSubmitPairingRequest({ pairingCode: "", requesterGroupId: "g1", requesterPeerId: "peer1", isRemote: true, busy: false })).toBe(false);
+    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "", requesterPeerId: "peer1", isRemote: true, busy: false })).toBe(false);
+    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "", isRemote: true, busy: false })).toBe(false);
+    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "peer1", isRemote: true, busy: true })).toBe(false);
+    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "peer1", isRemote: false, busy: false })).toBe(false);
+    expect(canSubmitPairingRequest({ pairingCode: "ABCD-1234", requesterGroupId: "g1", requesterPeerId: "peer1", isRemote: true, busy: false })).toBe(true);
   });
 
   it("accepts either a raw pairing code or a JSON connection info payload", () => {
@@ -55,7 +57,7 @@ describe("federationPairingModel", () => {
 
   it("detects remote issuer endpoint payloads for Stage B submission", () => {
     const payload = {
-      type: "cccc.libp2p.connection_info",
+      type: "cccc.federation_session.connection_info",
       version: 2,
       issuer_endpoint: "https://issuer.example",
       issuer_group_id: "g_issuer",
@@ -84,6 +86,13 @@ describe("federationPairingModel", () => {
       nonce: "pinv_1",
       integrity: "sha256:test",
     })))).toBe(false);
+    expect(isSessionConnectionInfoInput(parseConnectionInfoInput(JSON.stringify({
+      issuer_endpoint: "https://issuer.example",
+      code: "ABCD-1234",
+      nonce: "pinv_1",
+      integrity: "sha256:test",
+    })))).toBe(true);
+    expect(isSessionConnectionInfoInput(parseConnectionInfoInput("ABCD-1234"))).toBe(false);
     expect(isLocalIssuerEndpoint("http://127.0.0.1:5555")).toBe(true);
     expect(isLocalIssuerEndpoint("https://cccc.example.com")).toBe(false);
   });
@@ -123,7 +132,7 @@ describe("federationPairingModel", () => {
       remoteGroupId: "g_local",
       isRemote: false,
     });
-    expect(parseConnectionInfoInput("{\n  \"type\": \"cccc.libp2p.connection_info\",\n  \"pairing_code\": \" lmno-4567 \"\n}")).toMatchObject({
+    expect(parseConnectionInfoInput("{\n  \"type\": \"cccc.federation_session.connection_info\",\n  \"pairing_code\": \" lmno-4567 \"\n}")).toMatchObject({
       pairingCode: "LMNO-4567",
       isRemote: false,
     });
@@ -139,12 +148,12 @@ describe("federationPairingModel", () => {
     expect(formatRemoteInstanceLabel({}, "未知 CCCC")).toBe("未知 CCCC");
   });
 
-  it("filters libp2p registrations from mixed status data", () => {
+  it("filters federation session registrations from mixed status data", () => {
     const regs = [
       { registration_id: "r1", transport: "peer_cccc_http" },
-      { registration_id: "r2", transport: "libp2p_cccc" },
+      { registration_id: "r2", transport: "federation_session" },
     ] as FederationRegistration[];
-    expect(filterLibp2pRegistrations(regs).map((r) => r.registration_id)).toEqual(["r2"]);
+    expect(filterFederationSessionRegistrations(regs).map((r) => r.registration_id)).toEqual(["r2"]);
   });
 
   it("projects pending incoming requests and trusted peers", () => {

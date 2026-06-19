@@ -46,7 +46,7 @@ export function FederationRegistrationSection({ isDark, isActive }: FederationRe
           </div>
         </div>
         <div className="px-4 pt-4 sm:px-5">
-          <div className={settingsWorkspaceSoftPanelClass(isDark)}>{t("federation.libp2pManagedPerGroup")}</div>
+          <div className={settingsWorkspaceSoftPanelClass(isDark)}>{t("federation.sessionManagedPerGroup")}</div>
         </div>
         <FederationHttpRegistrationSection
           isDark={isDark}

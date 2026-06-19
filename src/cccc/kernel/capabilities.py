@@ -120,7 +120,7 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
     },
     "pack:federation": {
         "title": "Federation Remote Send + Pairing",
-        "description": "Outbound federated remote send, delivery status lookup, and libp2p CCCC pairing operations.",
+        "description": "Outbound federated remote send, delivery status lookup, and federation session pairing operations.",
         "tool_names": (
             "cccc_federation_identity",
             "cccc_pairing_invite_create",
@@ -132,7 +132,7 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
             "cccc_remote_send",
             "cccc_remote_delivery_status",
         ),
-        "tags": ("federation", "remote", "send", "pairing", "libp2p"),
+        "tags": ("federation", "remote", "send", "pairing", "session"),
     },
     "pack:space": {
         "title": "Group Space",

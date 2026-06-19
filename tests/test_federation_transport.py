@@ -1,6 +1,7 @@
 import unittest
 import os
 import tempfile
+import asyncio
 from pathlib import Path
 
 
@@ -36,13 +37,481 @@ class TestFederationTransport(unittest.TestCase):
             get_transport("does-not-exist")
 
     def test_registry_returns_registered_transport(self) -> None:
-        from cccc.daemon.federation.transports.base import get_transport
+        from cccc.daemon.federation.transports.base import UnknownTransportError, get_transport
 
         t = get_transport("peer_cccc_http")
         self.assertEqual(t.transport, "peer_cccc_http")
 
-        libp2p = get_transport("libp2p_cccc")
-        self.assertEqual(libp2p.transport, "libp2p_cccc")
+        session = get_transport("federation_session")
+        self.assertEqual(session.transport, "federation_session")
+
+        with self.assertRaises(UnknownTransportError):
+            get_transport("libp2p_cccc")
+
+    def test_federation_session_transport_uses_active_websocket_session(self) -> None:
+        from cccc.contracts.v1.federation import RemoteSendPayload
+        from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
+        from cccc.daemon.federation.ws_session import FederationWsSession, clear_sessions, register_session
+
+        captured = {}
+
+        async def send_request(request, timeout):
+            captured["request"] = dict(request)
+            captured["timeout"] = timeout
+            return {"ok": True, "event_id": "remote-via-ws"}
+
+        clear_sessions()
+        asyncio.run(
+            register_session(
+                FederationWsSession(
+                    target_group_id="g_local",
+                    src_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    send_request=send_request,
+                )
+            )
+        )
+        try:
+            result = FederationSessionTransport().deliver(
+                RemoteMessageEnvelope(
+                    transport="federation_session",
+                    src_group_id="g_local",
+                    source_peer_id="peer_local",
+                    target=RemoteTarget(
+                        url="session://peer_remote",
+                        remote_group_id="g_remote",
+                        remote_peer_id="peer_remote",
+                        multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
+                    ),
+                    payload=RemoteSendPayload(text="hi", to=["@foreman"]),
+                    idempotency_key="k-ws",
+                )
+            )
+        finally:
+            clear_sessions()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.remote_event_id, "remote-via-ws")
+        self.assertEqual(captured["request"]["op"], "remote_send")
+        self.assertEqual(captured["request"]["payload"]["text"], "hi")
+
+    def test_federation_session_transport_uses_inbound_session_for_reverse_send(self) -> None:
+        from cccc.contracts.v1.federation import RemoteSendPayload
+        from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
+        from cccc.daemon.federation.ws_session import FederationWsSession, clear_sessions, register_session
+
+        captured = {}
+
+        async def send_request(request, timeout):
+            captured["request"] = dict(request)
+            return {"ok": True, "event_id": "remote-reverse"}
+
+        clear_sessions()
+        asyncio.run(
+            register_session(
+                FederationWsSession(
+                    # Peer A connected to local B, so B stores the session under
+                    # target=B/local and src=A/remote. B can later send back to A
+                    # without dialing A.
+                    target_group_id="g_b",
+                    src_group_id="g_a",
+                    remote_peer_id="peer_a",
+                    send_request=send_request,
+                )
+            )
+        )
+        try:
+            result = FederationSessionTransport().deliver(
+                RemoteMessageEnvelope(
+                    transport="federation_session",
+                    src_group_id="g_b",
+                    source_peer_id="peer_b",
+                    target=RemoteTarget(
+                        url="session://peer_a",
+                        remote_group_id="g_a",
+                        remote_peer_id="peer_a",
+                        multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_a",),
+                    ),
+                    payload=RemoteSendPayload(text="reply", to=["@foreman"]),
+                    idempotency_key="k-reverse",
+                )
+            )
+        finally:
+            clear_sessions()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.remote_event_id, "remote-reverse")
+        self.assertEqual(captured["request"]["src_group_id"], "g_b")
+        self.assertEqual(captured["request"]["target_group_id"], "g_a")
+
+    def test_federation_session_transport_uses_websocket_session_without_multiaddr(self) -> None:
+        from cccc.contracts.v1.federation import RemoteSendPayload
+        from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
+        from cccc.daemon.federation.ws_session import FederationWsSession, clear_sessions, register_session
+
+        async def send_request(request, timeout):
+            return {"ok": True, "event_id": "remote-private"}
+
+        clear_sessions()
+        asyncio.run(
+            register_session(
+                FederationWsSession(
+                    target_group_id="g_b",
+                    src_group_id="g_a",
+                    remote_peer_id="peer_a",
+                    send_request=send_request,
+                )
+            )
+        )
+        try:
+            result = FederationSessionTransport().deliver(
+                RemoteMessageEnvelope(
+                    transport="federation_session",
+                    src_group_id="g_b",
+                    source_peer_id="peer_b",
+                    target=RemoteTarget(
+                        url="session://peer_a",
+                        remote_group_id="g_a",
+                        remote_peer_id="peer_a",
+                        multiaddrs=(),
+                    ),
+                    payload=RemoteSendPayload(text="reply", to=["@foreman"]),
+                    idempotency_key="k-private",
+                )
+            )
+        finally:
+            clear_sessions()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.remote_event_id, "remote-private")
+
+    def test_federation_session_transport_does_not_fallback_to_direct_multiaddr(self) -> None:
+        from cccc.contracts.v1.federation import RemoteSendPayload
+        from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
+
+        result = FederationSessionTransport().deliver(
+            RemoteMessageEnvelope(
+                transport="federation_session",
+                src_group_id="g_local",
+                source_peer_id="peer_local",
+                target=RemoteTarget(
+                    url="session://peer_remote",
+                    remote_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
+                ),
+                payload=RemoteSendPayload(text="hi", to=["@foreman"]),
+                idempotency_key="k-session-only",
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.retriable)
+        self.assertEqual(result.error_code, "peer_session_unavailable")
+
+    def test_websocket_session_sync_send_uses_session_event_loop(self) -> None:
+        import threading
+
+        from cccc.daemon.federation.ws_session import FederationWsSession, clear_sessions, register_session, send_via_session_sync
+
+        loop_ready = threading.Event()
+        stop = threading.Event()
+        holder = {}
+
+        def loop_thread() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            async def send_request(request, timeout):
+                holder["request"] = dict(request)
+                holder["thread"] = threading.current_thread().name
+                return {"ok": True, "event_id": "remote-loop"}
+
+            async def setup() -> None:
+                await register_session(
+                    FederationWsSession(
+                        target_group_id="g_local",
+                        src_group_id="g_remote",
+                        remote_peer_id="peer_remote",
+                        send_request=send_request,
+                        loop=loop,
+                    )
+                )
+                loop_ready.set()
+                while not stop.is_set():
+                    await asyncio.sleep(0.01)
+
+            loop.run_until_complete(setup())
+            loop.close()
+
+        clear_sessions()
+        thread = threading.Thread(target=loop_thread, name="ws-session-loop", daemon=True)
+        thread.start()
+        self.assertTrue(loop_ready.wait(2.0))
+        try:
+            result = send_via_session_sync(
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                request={"op": "remote_send"},
+                timeout=1.0,
+            )
+        finally:
+            stop.set()
+            thread.join(timeout=2.0)
+            clear_sessions()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["event_id"], "remote-loop")
+        self.assertEqual(holder["thread"], "ws-session-loop")
+
+    def test_federation_session_client_uses_remote_ws_url_and_handles_requests(self) -> None:
+        import threading
+
+        from cccc.daemon.federation.ws_client import connect_federation_session_once, federation_session_ws_url
+        from cccc.daemon.federation.ws_session import clear_sessions, send_via_session_sync
+
+        class FakeWs:
+            def __init__(self) -> None:
+                self.sent = []
+                self.frames = [
+                    {"ok": True, "type": "ready"},
+                    {"type": "request", "request_id": "req-1", "op": "remote_send", "payload": {"text": "hi"}},
+                ]
+                self.outbound_request_sent = threading.Event()
+                self.outbound_response_sent = False
+
+            def send(self, raw):
+                import json
+
+                payload = json.loads(raw)
+                self.sent.append(payload)
+                if payload.get("type") == "request" and (payload.get("payload") or {}).get("text") == "outbound":
+                    self.outbound_request_sent.set()
+
+            def recv(self):
+                import json
+
+                if not self.frames:
+                    self.outbound_request_sent.wait(1.0)
+                if not self.frames and not self.outbound_response_sent:
+                    for sent in self.sent:
+                        if sent.get("type") == "request" and (sent.get("payload") or {}).get("text") == "outbound":
+                            self.outbound_response_sent = True
+                            self.frames.append(
+                                {
+                                    "type": "response",
+                                    "response_to": sent.get("request_id"),
+                                    "result": {"ok": True, "event_id": "remote-over-outbound"},
+                                }
+                            )
+                            break
+                if not self.frames:
+                    raise RuntimeError("closed")
+                return json.dumps(self.frames.pop(0))
+
+            def close(self):
+                self.closed = True
+
+        fake_ws = FakeWs()
+        captured = {}
+
+        def connect(url, timeout):
+            captured["url"] = url
+            captured["timeout"] = timeout
+            return fake_ws
+
+        outbound_result = {}
+        outbound_done = threading.Event()
+
+        def send_outbound() -> None:
+            try:
+                outbound_result.update(
+                    send_via_session_sync(
+                        target_group_id="g_local",
+                        src_group_id="g_remote",
+                        remote_peer_id="peer_remote",
+                        request={"op": "remote_send", "payload": {"text": "outbound"}},
+                        timeout=2.0,
+                    )
+                )
+            finally:
+                outbound_done.set()
+
+        self.assertEqual(federation_session_ws_url("https://peer.example/base"), "wss://peer.example/api/federation/session/ws")
+        clear_sessions()
+        try:
+            result = connect_federation_session_once(
+                remote_base_url="http://peer.example:8848",
+                local_group_id="g_local",
+                remote_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                connect=connect,
+                handle_request=lambda frame: {"ok": True, "event_id": "handled"},
+                on_ready=lambda: threading.Thread(target=send_outbound, daemon=True).start(),
+                timeout=2.0,
+            )
+        finally:
+            outbound_done.wait(2.0)
+            clear_sessions()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "session_closed")
+        self.assertEqual(captured["url"], "ws://peer.example:8848/api/federation/session/ws")
+        self.assertEqual(fake_ws.sent[0]["target_group_id"], "g_remote")
+        self.assertEqual(fake_ws.sent[0]["src_group_id"], "g_local")
+        self.assertTrue(fake_ws.sent[0]["remote_peer_id"].startswith("12D3Koo"))
+        self.assertTrue(fake_ws.sent[0]["public_key"])
+        self.assertTrue(fake_ws.sent[0]["signature"])
+        self.assertEqual(fake_ws.sent[1]["type"], "response")
+        self.assertEqual(fake_ws.sent[1]["response_to"], "req-1")
+        self.assertEqual(fake_ws.sent[1]["result"]["event_id"], "handled")
+        self.assertEqual(fake_ws.sent[2]["type"], "request")
+        self.assertEqual(fake_ws.sent[2]["payload"]["text"], "outbound")
+        self.assertEqual(outbound_result["event_id"], "remote-over-outbound")
+
+    def test_federation_session_client_default_handler_uses_connected_remote_peer_id(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.daemon.federation.ws_client import connect_federation_session_once
+
+        class FakeWs:
+            def __init__(self) -> None:
+                self.sent = []
+                self.frames = [
+                    {"ok": True, "type": "ready"},
+                    {
+                        "type": "request",
+                        "request_id": "req-1",
+                        "op": "remote_send",
+                        "target_group_id": "g_local",
+                        "src_group_id": "g_remote",
+                        "remote_peer_id": "peer_local",
+                        "payload": {"text": "hi"},
+                    },
+                ]
+
+            def send(self, raw):
+                import json
+
+                self.sent.append(json.loads(raw))
+
+            def recv(self):
+                import json
+
+                if not self.frames:
+                    raise RuntimeError("closed")
+                return json.dumps(self.frames.pop(0))
+
+            def close(self):
+                self.closed = True
+
+        captured = {}
+
+        def handle(frame, **kwargs):
+            captured["kwargs"] = dict(kwargs)
+            return {"ok": True, "event_id": "handled"}
+
+        with (
+            patch("cccc.daemon.federation.ws_client.get_local_identity", return_value={"peer_id": "peer_local"}),
+            patch("cccc.daemon.federation.ws_endpoint.handle_federation_session_request", side_effect=handle),
+        ):
+            result = connect_federation_session_once(
+                remote_base_url="http://peer.example:8848",
+                local_group_id="g_local",
+                remote_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                connect=lambda url, timeout: FakeWs(),
+                timeout=2.0,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "session_closed")
+        self.assertEqual(captured["kwargs"]["remote_peer_id"], "peer_remote")
+        self.assertEqual(captured["kwargs"]["target_group_id"], "g_local")
+        self.assertEqual(captured["kwargs"]["src_group_id"], "g_remote")
+
+    def test_federation_session_manager_starts_one_client_per_active_trust_with_endpoint(self) -> None:
+        import threading
+        from pathlib import Path
+
+        from cccc.daemon.federation.ws_manager import tick_federation_session_clients
+
+        started = []
+
+        class AliveThread:
+            def is_alive(self) -> bool:
+                return True
+
+        def start_client(**kwargs):
+            started.append(kwargs)
+            return AliveThread()
+
+        trusts = [
+            {
+                "trust_id": "t1",
+                "status": "active",
+                "transport": "peer_cccc_http",
+                "group_id": "g_local",
+                "remote_group_id": "g_remote",
+                "remote_peer_id": "peer_remote",
+                "remote_endpoint": "http://peer.example:8848",
+            },
+            {
+                "trust_id": "t2",
+                "status": "active",
+                "transport": "federation_session",
+                "group_id": "g_local",
+                "remote_group_id": "g_session",
+                "remote_peer_id": "peer_session",
+                "remote_endpoint": "http://session.example:8848",
+            },
+            {
+                "trust_id": "t3",
+                "status": "active",
+                "transport": "federation_session",
+                "group_id": "g_local",
+                "remote_group_id": "g_no_endpoint",
+                "remote_peer_id": "peer_no_endpoint",
+            },
+            {
+                "trust_id": "t4",
+                "status": "revoked",
+                "transport": "federation_session",
+                "group_id": "g_local",
+                "remote_group_id": "g_revoked",
+                "remote_peer_id": "peer_revoked",
+                "remote_endpoint": "http://revoked.example",
+            },
+        ]
+
+        state = {}
+        result = tick_federation_session_clients(
+            home=Path("/tmp/cccc-test-home"),
+            stop_event=threading.Event(),
+            state=state,
+            list_trusts_fn=lambda home=None: trusts,
+            start_client=start_client,
+        )
+        again = tick_federation_session_clients(
+            home=Path("/tmp/cccc-test-home"),
+            stop_event=threading.Event(),
+            state=state,
+            list_trusts_fn=lambda home=None: trusts,
+            start_client=start_client,
+        )
+
+        self.assertEqual(result, {"started": 1, "active": 1})
+        self.assertEqual(again, {"started": 0, "active": 1})
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0]["remote_base_url"], "http://session.example:8848")
+        self.assertEqual(started[0]["local_group_id"], "g_local")
+        self.assertEqual(started[0]["remote_group_id"], "g_session")
+        self.assertEqual(started[0]["remote_peer_id"], "peer_session")
 
     def _envelope(self, *, attachments=None, refs=None):
         from cccc.contracts.v1.federation import RemoteSendPayload
@@ -62,7 +531,7 @@ class TestFederationTransport(unittest.TestCase):
             credential="secret-token",
         )
 
-    def test_peer_http_includes_source_libp2p_multiaddrs_when_available(self) -> None:
+    def test_peer_http_includes_explicit_source_multiaddrs_when_available(self) -> None:
         from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
         from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
 
@@ -93,32 +562,16 @@ class TestFederationTransport(unittest.TestCase):
         self.assertTrue(res.ok)
         self.assertEqual(captured["body"].get("source_multiaddrs"), ["/ip4/127.0.0.1/tcp/4001/p2p/peer-local"])
 
-    def test_remote_dispatch_advertises_routable_web_host_instead_of_loopback_source_multiaddr(self) -> None:
+    def test_remote_dispatch_does_not_advertise_local_multiaddr(self) -> None:
         from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
-        from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
         from cccc.daemon.federation.transports.base import RemoteSendResult
         from cccc.kernel.federation.registration import upsert_registration
-        from cccc.util.fs import atomic_write_json
 
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
             old_home = os.environ.get("CCCC_HOME")
-            old_host = os.environ.get("CCCC_WEB_HOST")
             try:
                 os.environ["CCCC_HOME"] = str(home)
-                os.environ.pop("CCCC_WEB_HOST", None)
-                (home / "settings.yaml").write_text(
-                    "\n".join(
-                        [
-                            "remote_access:",
-                            "  provider: manual",
-                            "  enabled: true",
-                            "  web_host: 172.30.79.171",
-                            "",
-                        ]
-                    ),
-                    encoding="utf-8",
-                )
                 registration = upsert_registration(
                     "g_local",
                     "https://peer.example",
@@ -127,16 +580,6 @@ class TestFederationTransport(unittest.TestCase):
                     transport="peer_cccc_http",
                     status="active",
                     home=home,
-                )
-                atomic_write_json(
-                    sidecar_status_path(home=home),
-                    {
-                        "status": "running",
-                        "pid": 123,
-                        "peer_id": "peer_local",
-                        "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_local"],
-                        "updated_at": "2026-06-17T00:00:00Z",
-                    },
                 )
                 enqueue_remote_send(
                     src_group_id="g_local",
@@ -161,34 +604,21 @@ class TestFederationTransport(unittest.TestCase):
                     transport_factory=lambda _name: CaptureTransport(),
                 )
 
-                self.assertEqual(captured["source_multiaddrs"], ("/ip4/172.30.79.171/tcp/4001/p2p/peer_local",))
+                self.assertEqual(captured["source_multiaddrs"], ())
             finally:
                 if old_home is None:
                     os.environ.pop("CCCC_HOME", None)
                 else:
                     os.environ["CCCC_HOME"] = old_home
-                if old_host is None:
-                    os.environ.pop("CCCC_WEB_HOST", None)
-                else:
-                    os.environ["CCCC_WEB_HOST"] = old_host
 
     def test_remote_dispatch_does_not_advertise_loopback_without_routable_host(self) -> None:
-        from unittest.mock import patch
-
         from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
-        from cccc.daemon.federation.libp2p.supervisor import sidecar_status_path
         from cccc.daemon.federation.transports.base import RemoteSendResult
         from cccc.kernel.federation.registration import upsert_registration
-        from cccc.util.fs import atomic_write_json
 
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
-            with _EnvPatch(
-                CCCC_HOME=str(home),
-                CCCC_LIBP2P_ADVERTISE_HOST=None,
-                CCCC_WEB_PUBLIC_URL=None,
-                CCCC_WEB_HOST=None,
-            ):
+            with _EnvPatch(CCCC_HOME=str(home)):
                 registration = upsert_registration(
                     "g_local",
                     "https://peer.example",
@@ -197,16 +627,6 @@ class TestFederationTransport(unittest.TestCase):
                     transport="peer_cccc_http",
                     status="active",
                     home=home,
-                )
-                atomic_write_json(
-                    sidecar_status_path(home=home),
-                    {
-                        "status": "running",
-                        "pid": 123,
-                        "peer_id": "peer_local",
-                        "multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_local"],
-                        "updated_at": "2026-06-17T00:00:00Z",
-                    },
                 )
                 enqueue_remote_send(
                     src_group_id="g_local",
@@ -224,13 +644,12 @@ class TestFederationTransport(unittest.TestCase):
                         captured["source_multiaddrs"] = envelope.source_multiaddrs
                         return RemoteSendResult(ok=True, status="sent", transport=self.transport, remote_event_id="remote-1")
 
-                with patch("cccc.daemon.federation.libp2p.advertise._auto_detect_advertise_host", return_value=""):
-                    deliver_enqueued(
-                        registration_id=registration["registration_id"],
-                        idempotency_key="k-no-loopback",
-                        home=home,
-                        transport_factory=lambda _name: CaptureTransport(),
-                    )
+                deliver_enqueued(
+                    registration_id=registration["registration_id"],
+                    idempotency_key="k-no-loopback",
+                    home=home,
+                    transport_factory=lambda _name: CaptureTransport(),
+                )
 
                 self.assertEqual(captured["source_multiaddrs"], ())
 
@@ -359,19 +778,19 @@ class TestFederationTransport(unittest.TestCase):
         self.assertFalse(res.ok)
         self.assertTrue(res.retriable)
 
-    def _libp2p_envelope(self, *, attachments=None, refs=None):
+    def _session_envelope(self, *, attachments=None, refs=None):
         from cccc.contracts.v1.federation import RemoteSendPayload
         from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
 
         return RemoteMessageEnvelope(
-            transport="libp2p_cccc",
+            transport="federation_session",
             src_group_id="g_local",
             source_peer_id="peer-local",
             target=RemoteTarget(
-                url="libp2p://peer-remote",
+                url="session://peer-remote",
                 remote_group_id="g_remote",
                 remote_peer_id="peer-remote",
-                multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer-remote",),
+                multiaddrs=(),
             ),
             payload=RemoteSendPayload(
                 text="hi",
@@ -383,143 +802,26 @@ class TestFederationTransport(unittest.TestCase):
             credential="secret-token",
         )
 
-    def test_libp2p_fake_client_receives_target_and_payload(self) -> None:
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
+    def test_federation_session_transport_without_session_is_transient(self) -> None:
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
 
-        captured = {}
-
-        def fake_send(request):
-            captured["request"] = request
-            return {"ok": True, "event_id": "remote-123"}
-
-        res = Libp2pCcccTransport(client=fake_send).deliver(self._libp2p_envelope())
-        self.assertTrue(res.ok)
-        self.assertEqual(res.status, "sent")
-        self.assertEqual(res.remote_event_id, "remote-123")
-        req = captured["request"]
-        self.assertEqual(req.remote_peer_id, "peer-remote")
-        self.assertEqual(req.src_group_id, "g_local")
-        self.assertEqual(req.multiaddrs, ("/ip4/127.0.0.1/tcp/4001/p2p/peer-remote",))
-        self.assertEqual(req.remote_group_id, "g_remote")
-        self.assertEqual(req.payload["text"], "hi")
-        self.assertEqual(req.payload["source_platform"], "libp2p_cccc")
-        self.assertEqual(req.payload["src_group_id"], "g_local")
-        self.assertEqual(req.idempotency_key, "k1")
-        self.assertEqual(req.credential, "secret-token")
-
-    def test_libp2p_resolves_missing_multiaddr_from_address_book(self) -> None:
-        import tempfile
-        from pathlib import Path
-
-        from cccc.daemon.federation.peer_address_book import record_peer_addresses
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
-
-        captured = {}
-        resolved_addr = "/ip4/127.0.0.1/tcp/4101/p2p/peer-remote"
-
-        def fake_send(request):
-            captured["request"] = request
-            return {"ok": True, "event_id": "remote-123"}
-
-        with tempfile.TemporaryDirectory() as td:
-            home = Path(td)
-            record_peer_addresses(
-                "peer-remote",
-                [resolved_addr],
-                remote_group_id="g_remote",
-                home=home,
-            )
-            envelope = self._libp2p_envelope()
-            envelope = type(envelope)(
-                transport=envelope.transport,
-                src_group_id=envelope.src_group_id,
-                source_peer_id=envelope.source_peer_id,
-                target=type(envelope.target)(
-                    url=envelope.target.url,
-                    remote_group_id=envelope.target.remote_group_id,
-                    remote_peer_id=envelope.target.remote_peer_id,
-                    multiaddrs=(),
-                ),
-                payload=envelope.payload,
-                idempotency_key=envelope.idempotency_key,
-                credential=envelope.credential,
-            )
-            res = Libp2pCcccTransport(client=fake_send, address_book_home=home).deliver(envelope)
-
-        self.assertTrue(res.ok)
-        self.assertEqual(res.remote_event_id, "remote-123")
-        self.assertEqual(captured["request"].multiaddrs, (resolved_addr,))
-
-    def test_libp2p_missing_multiaddr_is_transient_address_unresolved(self) -> None:
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
-
-        envelope = self._libp2p_envelope()
-        envelope = type(envelope)(
-            transport=envelope.transport,
-            src_group_id=envelope.src_group_id,
-            source_peer_id=envelope.source_peer_id,
-            target=type(envelope.target)(
-                url=envelope.target.url,
-                remote_group_id=envelope.target.remote_group_id,
-                remote_peer_id=envelope.target.remote_peer_id,
-                multiaddrs=(),
-            ),
-            payload=envelope.payload,
-            idempotency_key=envelope.idempotency_key,
-            credential=envelope.credential,
-        )
-        res = Libp2pCcccTransport(client=lambda request: {"ok": True, "event_id": "remote-123"}).deliver(envelope)
+        res = FederationSessionTransport().deliver(self._session_envelope())
 
         self.assertFalse(res.ok)
         self.assertTrue(res.retriable)
-        self.assertEqual(res.error_code, "address_unresolved")
+        self.assertEqual(res.error_code, "peer_session_unavailable")
 
-    def test_libp2p_default_client_without_reachable_node_is_transient(self) -> None:
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
+    def test_federation_session_unsupported_attachments_and_refs_are_permanent(self) -> None:
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
 
-        res = Libp2pCcccTransport().deliver(self._libp2p_envelope())
-        self.assertFalse(res.ok)
-        self.assertEqual(res.status, "failed")
-        self.assertTrue(res.retriable)
-        self.assertIn(res.error_code, {"libp2p_delivery_failed", "libp2p_dial_failed"})
+        t = FederationSessionTransport()
 
-    def test_libp2p_error_envelope_is_permanent_failure(self) -> None:
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
-
-        t = Libp2pCcccTransport(
-            client=lambda request: {
-                "ok": False,
-                "error": {"code": "invalid_recipient", "message": "unknown recipient"},
-            }
-        )
-        res = t.deliver(self._libp2p_envelope())
-        self.assertFalse(res.ok)
-        self.assertFalse(res.retriable)
-        self.assertEqual(res.error_code, "invalid_recipient")
-        self.assertEqual(res.error_message, "unknown recipient")
-
-    def test_libp2p_connection_exception_is_transient(self) -> None:
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
-
-        def boom(request):
-            raise ConnectionError("peer offline")
-
-        res = Libp2pCcccTransport(client=boom).deliver(self._libp2p_envelope())
-        self.assertFalse(res.ok)
-        self.assertTrue(res.retriable)
-        self.assertEqual(res.error_code, "libp2p_delivery_failed")
-
-    def test_libp2p_unsupported_attachments_and_refs_are_permanent(self) -> None:
-        from cccc.daemon.federation.transports.libp2p_cccc import Libp2pCcccTransport
-
-        t = Libp2pCcccTransport(client=lambda request: {"ok": True, "event_id": "remote-123"})
-
-        res_att = t.deliver(self._libp2p_envelope(attachments=[{"path": "x"}]))
+        res_att = t.deliver(self._session_envelope(attachments=[{"path": "x"}]))
         self.assertFalse(res_att.ok)
         self.assertFalse(res_att.retriable)
         self.assertEqual(res_att.error_code, "unsupported_attachments")
 
-        res_refs = t.deliver(self._libp2p_envelope(refs=[{"kind": "url"}]))
+        res_refs = t.deliver(self._session_envelope(refs=[{"kind": "url"}]))
         self.assertFalse(res_refs.ok)
         self.assertFalse(res_refs.retriable)
         self.assertEqual(res_refs.error_code, "unsupported_refs")

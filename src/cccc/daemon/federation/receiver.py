@@ -1,4 +1,4 @@
-"""Inbound Stage C1 remote-send authorization and ledger append."""
+"""Inbound federation session remote-send authorization and ledger append."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ from pathlib import Path
 import threading
 from typing import Any, Dict, Optional
 
-from ....contracts.v1.federation import RemoteSendPayload
-from ....contracts.v1.message import ChatMessageData
-from ....kernel.federation.pairing import list_trusts
-from ....kernel.group import load_group
-from ....kernel.ledger import append_event, read_last_lines
-from ..peer_address_sync import sync_federation_peer_multiaddrs
-from ..remote_dispatch import retry_remote_send_for_peer
+from ...contracts.v1.federation import RemoteSendPayload
+from ...contracts.v1.message import ChatMessageData
+from ...kernel.federation.pairing import list_trusts
+from ...kernel.group import load_group
+from ...kernel.ledger import append_event, read_last_lines
+from .peer_address_sync import sync_federation_peer_multiaddrs
+from .remote_dispatch import retry_remote_send_for_peer
 
 
 def receive_address_announce(
@@ -87,7 +87,7 @@ def defer_pending_retry_for_peer(
             home=home,
         )
 
-    threading.Thread(target=run, name="cccc-libp2p-address-announce-retry", daemon=True).start()
+    threading.Thread(target=run, name="cccc-federation-address-announce-retry", daemon=True).start()
 
 
 def receive_remote_send(
@@ -132,9 +132,9 @@ def receive_remote_send(
     except Exception:
         return _error("invalid_payload", "remote payload is invalid")
     if msg.attachments:
-        return _error("unsupported_attachments", "attachments are not supported by libp2p C1")
+        return _error("unsupported_attachments", "attachments are not supported by federation sessions")
     if msg.refs:
-        return _error("unsupported_refs", "refs are not supported by libp2p C1")
+        return _error("unsupported_refs", "refs are not supported by federation sessions")
     if not msg.text.strip():
         return _error("empty_message", "message text cannot be empty")
 
@@ -156,7 +156,7 @@ def receive_remote_send(
             to=msg.to,
             refs=[],
             attachments=[],
-            source_platform="libp2p_cccc",
+            source_platform="federation_session",
             source_user_name=str(trust.get("remote_group_title") or src_gid),
             source_user_id=peer_id,
             src_group_id=src_gid,
@@ -195,7 +195,7 @@ def _find_active_trust(*, target_group_id: str, src_group_id: str, remote_peer_i
     return None
 
 
-def _find_existing_event(ledger_path, *, client_id: str) -> Optional[Dict[str, Any]]:  # type: ignore[no-untyped-def]
+def _find_existing_event(ledger_path: Any, *, client_id: str) -> Optional[Dict[str, Any]]:
     for line in reversed(read_last_lines(ledger_path, 1000)):
         try:
             import json

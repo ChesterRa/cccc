@@ -5,9 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from ...kernel.federation.pairing import update_trust_multiaddrs_for_peer
 from ...kernel.federation.peer_addresses import record_peer_addresses
-from ...kernel.federation.registration import update_registration_multiaddrs_for_peer
 
 
 def sync_federation_peer_multiaddrs(
@@ -27,23 +25,8 @@ def sync_federation_peer_multiaddrs(
         return {"updated": False, "trust_updates": 0, "registration_updates": 0}
 
     record_peer_addresses(peer_id, addrs, remote_group_id=remote_gid, home=home)
-    trust_updates = update_trust_multiaddrs_for_peer(
-        group_id=gid,
-        remote_group_id=remote_gid,
-        remote_peer_id=peer_id,
-        multiaddrs=addrs,
-        home=home,
-    )
-    registration_updates = update_registration_multiaddrs_for_peer(
-        group_id=gid,
-        remote_group_id=remote_gid,
-        remote_peer_id=peer_id,
-        transport="libp2p_cccc",
-        multiaddrs=addrs,
-        home=home,
-    )
     return {
         "updated": True,
-        "trust_updates": trust_updates,
-        "registration_updates": registration_updates,
+        "trust_updates": 0,
+        "registration_updates": 0,
     }

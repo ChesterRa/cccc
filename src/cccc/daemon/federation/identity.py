@@ -1,10 +1,4 @@
-"""Stable Stage C1 libp2p-style identity.
-
-Py-libp2p is not a project dependency yet. C1 still needs a real asymmetric
-identity rather than the earlier ``peer_...`` placeholder, so we persist an
-Ed25519 private key and derive a libp2p-compatible identity multihash PeerID
-from the public key.
-"""
+"""Stable federation signing identity."""
 
 from __future__ import annotations
 
@@ -18,14 +12,14 @@ import yaml
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
-from ....paths import ensure_home
-from ....util.fs import atomic_write_text
+from ...paths import ensure_home
+from ...util.fs import atomic_write_text
 
 _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 @dataclass(frozen=True)
-class Libp2pIdentity:
+class FederationIdentity:
     peer_id: str
     public_key_b64: str
     private_key_b64: str
@@ -41,7 +35,7 @@ class Libp2pIdentity:
 
 def _identity_path(home: Optional[Path] = None) -> Path:
     base = Path(home) if home is not None else ensure_home()
-    return base / "federation_libp2p_identity.yaml"
+    return base / "federation_identity_key.yaml"
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -74,10 +68,6 @@ def _b58encode(raw: bytes) -> str:
 
 
 def _peer_id_for_public_key(public_key: bytes) -> str:
-    # Ed25519 libp2p public key protobuf:
-    #   message PublicKey { enum Type { RSA=0; Ed25519=1; ... }; Type Type = 1; bytes Data = 2; }
-    # PeerID for Ed25519 commonly uses an identity multihash of that protobuf,
-    # base58btc encoded, producing the familiar 12D3Koo... form.
     protobuf = bytes([0x08, 0x01, 0x12, len(public_key)]) + public_key
     return _b58encode(bytes([0x00, len(protobuf)]) + protobuf)
 
@@ -97,7 +87,7 @@ def _new_private_key_b64() -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
-def get_libp2p_identity(*, home: Optional[Path] = None) -> Libp2pIdentity:
+def get_federation_identity(*, home: Optional[Path] = None) -> FederationIdentity:
     path = _identity_path(home)
     raw = _load_yaml(path)
     private_b64 = str(raw.get("private_key") or "").strip()
@@ -112,6 +102,6 @@ def get_libp2p_identity(*, home: Optional[Path] = None) -> Libp2pIdentity:
     public_raw = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     public_b64 = base64.b64encode(public_raw).decode("ascii")
     peer_id = _peer_id_for_public_key(public_raw)
-    if raw.get("private_key") != private_b64 or raw.get("peer_id") != peer_id:
+    if raw.get("private_key") != private_b64 or raw.get("peer_id") != peer_id or not path.exists():
         _save_yaml(path, {"private_key": private_b64, "public_key": public_b64, "peer_id": peer_id})
-    return Libp2pIdentity(peer_id=peer_id, public_key_b64=public_b64, private_key_b64=private_b64)
+    return FederationIdentity(peer_id=peer_id, public_key_b64=public_b64, private_key_b64=private_b64)

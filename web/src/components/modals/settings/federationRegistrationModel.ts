@@ -51,7 +51,7 @@ export function isPeerHttpRemoteGroupMissing(transport: string, remoteGroupId: s
 
 export function shouldShowRemoteUrlFields(transport: string): boolean {
   const t = String(transport || "peer_cccc_http").trim() || "peer_cccc_http";
-  return t !== "libp2p_cccc";
+  return t !== "federation_session";
 }
 
 export function canVerify(opts: { url: string; transport: string; remoteGroupId: string; busy: boolean }): boolean {

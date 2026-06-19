@@ -105,7 +105,7 @@ describe("federation API client", () => {
     expect(setItem).not.toHaveBeenCalled();
   });
 
-  it("pairing APIs use the libp2p pairing routes", async () => {
+  it("pairing APIs use the federation session pairing routes", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => okResponse({}));
 
@@ -124,7 +124,6 @@ describe("federation API client", () => {
       pairingCode: "ABCD-1234",
       requesterGroupId: "g_remote",
       requesterPeerId: "peer_remote",
-      requesterMultiaddrs: ["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
     });
     await createFederationRemotePairingRequest({
       localGroupId: "g_remote",
@@ -143,7 +142,6 @@ describe("federation API client", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/federation/pairing/invites");
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit)?.body))).toEqual({
       group_id: "g1",
-      multiaddrs: [],
       ttl_seconds: 600,
     });
     expect(String(fetchMock.mock.calls[2]?.[0])).toBe("/api/federation/pairing/connection-info");
@@ -158,7 +156,6 @@ describe("federation API client", () => {
       pairing_code: "ABCD-1234",
       requester_group_id: "g_remote",
       requester_peer_id: "peer_remote",
-      requester_multiaddrs: ["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
     });
     expect(String(fetchMock.mock.calls[4]?.[0])).toBe("/api/federation/pairing/remote-requests");
     expect(JSON.parse(String((fetchMock.mock.calls[4]?.[1] as RequestInit)?.body))).toEqual({

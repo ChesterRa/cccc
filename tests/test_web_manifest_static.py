@@ -1,4 +1,3 @@
-import re
 import os
 import tempfile
 import unittest
@@ -78,8 +77,10 @@ class TestWebManifestStatic(unittest.TestCase):
         text = "\n".join(bundle.read_text(encoding="utf-8") for bundle in bundles)
 
         self.assertIn("issuer_endpoint", text)
+        self.assertIn("federation_session", text)
         self.assertIn("/api/federation/pairing/remote-requests", text)
-        self.assertRegex(text, re.compile(r"type:\s*[\"']cccc\.libp2p\.connection_info[\"'][\s\S]{0,400}?version:\s*2[,}]"))
+        self.assertNotIn("cccc.libp2p.connection_info", text)
+        self.assertNotIn("libp2p_cccc", text)
 
 
 if __name__ == "__main__":

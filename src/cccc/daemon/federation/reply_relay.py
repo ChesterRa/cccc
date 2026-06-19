@@ -11,13 +11,12 @@ import logging
 from typing import Any, Dict, Optional
 
 from ...contracts.v1.ipc import DaemonError, DaemonResponse
-from ...kernel.federation.peer_addresses import resolve_peer_multiaddrs
 from ...kernel.federation.pairing import list_trusts
 from .ops import handle_remote_send
 
 logger = logging.getLogger("cccc.daemon.server")
 
-_RELAY_SOURCE_PLATFORMS = frozenset({"libp2p_cccc", "peer_cccc_http"})
+_RELAY_SOURCE_PLATFORMS = frozenset({"federation_session", "peer_cccc_http"})
 
 
 def relay_federation_reply(
@@ -120,7 +119,7 @@ def _registration_for_remote_peer(*, group_id: str, remote_group_id: str, remote
     if not gid or not remote_gid or not peer_id:
         return ""
     fallback_registration_id = ""
-    libp2p_fallback_registration_id = ""
+    session_fallback_registration_id = ""
     for trust in list_trusts(group_id=gid):
         if str(trust.get("status") or "") != "active":
             continue
@@ -136,23 +135,19 @@ def _registration_for_remote_peer(*, group_id: str, remote_group_id: str, remote
             return registration_id
         if not _trust_route_is_sendable(trust):
             continue
-        if trust_transport == "libp2p_cccc":
-            if not libp2p_fallback_registration_id:
-                libp2p_fallback_registration_id = registration_id
+        if trust_transport == "federation_session":
+            if not session_fallback_registration_id:
+                session_fallback_registration_id = registration_id
             continue
         if not fallback_registration_id:
             fallback_registration_id = registration_id
-    return fallback_registration_id or libp2p_fallback_registration_id
+    return fallback_registration_id or session_fallback_registration_id
 
 
 def _trust_route_is_sendable(trust: Dict[str, Any]) -> bool:
     transport = str(trust.get("transport") or "").strip()
     if transport == "peer_cccc_http":
         return True
-    if transport == "libp2p_cccc":
-        if any(str(addr or "").strip() for addr in (trust.get("multiaddrs") or [])):
-            return True
-        remote_peer_id = str(trust.get("remote_peer_id") or "").strip()
-        remote_group_id = str(trust.get("remote_group_id") or "").strip()
-        return bool(resolve_peer_multiaddrs(remote_peer_id, remote_group_id=remote_group_id))
+    if transport == "federation_session":
+        return True
     return True

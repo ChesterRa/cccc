@@ -1305,7 +1305,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_pairing_invite_create",
-        "description": "Create a short-lived libp2p federation pairing invite. The plaintext pairing_code is returned once; only a hash is persisted.",
+        "description": "Create a short-lived federation session pairing invite. The plaintext pairing_code is returned once; only a hash is persisted.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -1332,13 +1332,13 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_pairing_request_list",
-        "description": "List libp2p federation pairing requests, optionally scoped to group_id.",
+        "description": "List federation session pairing requests, optionally scoped to group_id.",
         "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({**_COMMON_GROUP}),
     },
     {
         "name": "cccc_pairing_approve",
-        "description": "Approve a pending pairing request and create/replay the active libp2p registration and trust record.",
+        "description": "Approve a pending pairing request and create/replay the active federation session registration and trust record.",
         "inputSchema": _obj(
             {
                 "request_id": {"type": "string"},
@@ -1361,7 +1361,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_pairing_trust_list",
-        "description": "List approved libp2p federation trust records, optionally scoped to group_id.",
+        "description": "List approved federation session trust records, optionally scoped to group_id.",
         "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({**_COMMON_GROUP}),
     },

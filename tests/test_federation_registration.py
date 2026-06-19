@@ -150,25 +150,25 @@ class TestFederationRegistration(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_libp2p_requires_peer_and_remote_group(self) -> None:
-        from cccc.kernel.federation.pairing import _upsert_approved_libp2p_registration
+    def test_federation_session_requires_peer_and_remote_group(self) -> None:
+        from cccc.kernel.federation.pairing import _upsert_approved_session_registration
         from cccc.kernel.federation.registration import list_registrations
 
         _, cleanup = self._with_home()
         try:
             with self.assertRaises(ValueError) as missing_peer:
-                _upsert_approved_libp2p_registration(
+                _upsert_approved_session_registration(
                     "g1",
-                    "libp2p://peer-remote",
+                    "session://peer-remote",
                     remote_group_id="g_remote",
                     remote_peer_id="",
                 )
             self.assertIn("remote_peer_id", str(missing_peer.exception))
 
             with self.assertRaises(ValueError) as missing_group:
-                _upsert_approved_libp2p_registration(
+                _upsert_approved_session_registration(
                     "g1",
-                    "libp2p://peer-remote",
+                    "session://peer-remote",
                     remote_group_id="",
                     remote_peer_id="peer-remote",
                 )
@@ -177,7 +177,7 @@ class TestFederationRegistration(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_direct_libp2p_registration_is_rejected(self) -> None:
+    def test_direct_federation_session_registration_is_rejected(self) -> None:
         from cccc.kernel.federation.registration import list_registrations, upsert_registration
 
         _, cleanup = self._with_home()
@@ -185,11 +185,10 @@ class TestFederationRegistration(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 upsert_registration(
                     "g1",
-                    "libp2p://peer-remote",
-                    transport="libp2p_cccc",
+                    "session://peer-remote",
+                    transport="federation_session",
                     remote_group_id="g_remote",
                     remote_peer_id="peer-remote",
-                    multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-remote"],
                 )
             self.assertIn("pairing", str(ctx.exception))
             self.assertEqual(len(list_registrations()), 0)

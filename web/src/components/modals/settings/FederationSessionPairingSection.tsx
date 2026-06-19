@@ -7,11 +7,12 @@ import type { FederationIdentity, FederationPairingOutbound, FederationPairingRe
 import {
   canCreateInvite,
   canSubmitPairingRequest,
-  filterLibp2pRegistrations,
+  filterFederationSessionRegistrations,
   formatPeerLabel,
   formatRemoteInstanceLabel,
   isLocalIssuerEndpoint,
   isSameInstancePairingInput,
+  isSessionConnectionInfoInput,
   normalizeIssuerEndpoint,
   parseConnectionInfoInput,
   projectIncomingRequests,
@@ -49,7 +50,7 @@ function defaultIssuerEndpoint(): string {
   return typeof window !== "undefined" ? window.location.origin : "";
 }
 
-export function FederationLibp2pPairingSection({
+export function FederationSessionPairingSection({
   isDark,
   currentGroupId,
   currentGroupTitle,
@@ -77,18 +78,20 @@ export function FederationLibp2pPairingSection({
   const incomingRequests = useMemo(() => projectIncomingRequests(requests), [requests]);
   const trustedPeers = useMemo(() => projectTrustedPeers(trusts), [trusts]);
   const overview = useMemo(() => projectPairingOverview({ identity, requests, trusts }), [identity, requests, trusts]);
-  const libp2pRegistrations = useMemo(() => filterLibp2pRegistrations(registrations), [registrations]);
+  const sessionRegistrations = useMemo(() => filterFederationSessionRegistrations(registrations), [registrations]);
   const recentOutbounds = useMemo(() => projectRecentOutbounds(outbounds), [outbounds]);
   const parsed = useMemo(() => parseConnectionInfoInput(connectionInput), [connectionInput]);
   const localPeerId = identity?.peer_id || "";
   const localNodeId = identity?.node_id || "";
   const inviteReady = canCreateInvite({ groupId: currentGroupId, busy, issuerEndpoint });
   const sameInstanceInput = isSameInstancePairingInput(parsed);
+  const sessionConnectionInfoInput = isSessionConnectionInfoInput(parsed);
   const localEndpoint = isLocalIssuerEndpoint(issuerEndpoint);
   const requestReady = canSubmitPairingRequest({
     pairingCode: parsed.pairingCode,
     requesterGroupId: currentGroupId,
     requesterPeerId: localPeerId,
+    isRemote: parsed.isRemote,
     busy,
   });
 
@@ -278,7 +281,7 @@ export function FederationLibp2pPairingSection({
               <div className="mt-1">{t("federation.remotePayloadTarget", { endpoint: parsed.issuerEndpoint, group: parsed.remoteGroupId || t("federation.unknownPeer") })}</div>
             </div>
           )}
-          {sameInstanceInput && (
+          {sameInstanceInput && !sessionConnectionInfoInput && (
             <div className="mt-3 rounded-2xl border border-amber-300/40 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">
               <div className="font-semibold">{t("federation.sameInstanceFallbackDetected")}</div>
               <div className="mt-1">{t("federation.sameInstanceFallbackHelp")}</div>
@@ -287,10 +290,6 @@ export function FederationLibp2pPairingSection({
           {requestError && <p className="mt-3 text-xs font-medium text-rose-600 dark:text-rose-400">{requestError}</p>}
           {requestNotice && <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">{requestNotice}</p>}
           <button type="button" className={`mt-4 ${secondaryButtonClass("md")}`} disabled={!requestReady} onClick={onCreateRequest}>{t("federation.submitRequest")}</button>
-          <details className="mt-4 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
-            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.sameInstanceFallback")}</summary>
-            <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.sameInstanceFallbackAdvancedHelp")}</p>
-          </details>
         </section>
       </div>
 
@@ -352,7 +351,8 @@ export function FederationLibp2pPairingSection({
 
       <section className={settingsWorkspacePanelClass(isDark)}>
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.trustedRemoteGroups")}</div>
-        {trustedPeers.length === 0 && libp2pRegistrations.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("federation.noneYet")}</p> : (
+        <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.trustedRemoteGroupsHelp")}</p>
+        {trustedPeers.length === 0 && sessionRegistrations.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("federation.noneYet")}</p> : (
           <div className="mt-3 space-y-2">{trustedPeers.map((trust) => (
             <div key={trust.trust_id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
               <div className="min-w-0">
@@ -382,11 +382,11 @@ export function FederationLibp2pPairingSection({
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className={settingsWorkspaceSoftPanelClass(isDark)}><div className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">{t("federation.nodeId")}</div><div className="mt-1 break-all text-sm text-[var(--color-text-primary)]">{localNodeId || t("federation.notLoaded")}</div></div>
           <div className={settingsWorkspaceSoftPanelClass(isDark)}><div className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">{t("federation.peerId")}</div><div className="mt-1 break-all text-sm text-[var(--color-text-primary)]">{localPeerId || t("federation.notLoaded")}</div></div>
-          <div className={`${settingsWorkspaceSoftPanelClass(isDark)} sm:col-span-2`}><div className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">{t("federation.multiaddrs")}</div><div className="mt-1 break-all text-sm text-[var(--color-text-primary)]">{t("federation.localMultiaddrsUnavailable")}</div></div>
+          <div className={`${settingsWorkspaceSoftPanelClass(isDark)} sm:col-span-2`}><div className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">{t("federation.sessionTransport")}</div><div className="mt-1 break-all text-sm text-[var(--color-text-primary)]">{t("federation.sessionTransportManaged")}</div></div>
         </div>
       </details>
     </div>
   );
 }
 
-export default FederationLibp2pPairingSection;
+export default FederationSessionPairingSection;

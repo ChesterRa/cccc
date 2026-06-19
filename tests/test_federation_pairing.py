@@ -38,7 +38,7 @@ class TestFederationPairing(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_invite_request_approve_creates_libp2p_registration(self) -> None:
+    def test_invite_request_approve_creates_federation_session_registration(self) -> None:
         from cccc.kernel.federation.pairing import (
             approve_pairing_request,
             create_pairing_invite,
@@ -47,7 +47,6 @@ class TestFederationPairing(unittest.TestCase):
             list_trusts,
             revoke_trust,
         )
-        from cccc.kernel.federation.peer_addresses import resolve_peer_multiaddrs
         from cccc.kernel.federation.registration import get_registration
 
         _, cleanup = self._with_home()
@@ -56,14 +55,13 @@ class TestFederationPairing(unittest.TestCase):
                 group_id="g_local",
                 remote_group_id="g_remote",
                 remote_peer_id="peer_remote",
-                multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
                 ttl_seconds=600,
             )
 
             self.assertTrue(invite["invite_id"].startswith("pinv_"))
             self.assertRegex(invite["pairing_code"], r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
             self.assertEqual(invite["status"], "pending")
-            self.assertEqual(invite["transport"], "libp2p_cccc")
+            self.assertEqual(invite["transport"], "federation_session")
             pairing_store = Path(os.environ["CCCC_HOME"]) / "federation_pairing.yaml"
             persisted = pairing_store.read_text(encoding="utf-8")
             self.assertNotIn(invite["pairing_code"], persisted)
@@ -78,6 +76,7 @@ class TestFederationPairing(unittest.TestCase):
             )
             self.assertEqual(request["status"], "pending")
             self.assertEqual(request["invite_id"], invite["invite_id"])
+            self.assertEqual(request["multiaddrs"], [])
 
             stored_request = get_pairing_request(request["request_id"])
             self.assertIsNotNone(stored_request)
@@ -87,18 +86,15 @@ class TestFederationPairing(unittest.TestCase):
             approved = approve_pairing_request(request["request_id"], approver_user_id="user-a")
             self.assertEqual(approved["status"], "approved")
             registration = approved["registration"]
-            self.assertEqual(registration["transport"], "libp2p_cccc")
+            self.assertEqual(registration["transport"], "federation_session")
             self.assertEqual(registration["group_id"], "g_local")
             self.assertEqual(registration["remote_group_id"], "g_remote")
             self.assertEqual(registration["remote_peer_id"], "peer_remote")
-            self.assertEqual(registration["multiaddrs"], ["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"])
+            self.assertEqual(registration["multiaddrs"], [])
             self.assertEqual(registration["status"], "active")
+            self.assertEqual(approved["trust"]["transport"], "federation_session")
+            self.assertEqual(approved["trust"]["multiaddrs"], [])
             self.assertEqual(approved["trust"]["remote_group_title"], "Remote Group")
-            self.assertEqual(
-                resolve_peer_multiaddrs("peer_remote", remote_group_id="g_remote"),
-                ("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
-            )
-
             stored_registration = get_registration(registration["registration_id"])
             self.assertIsNotNone(stored_registration)
             assert stored_registration is not None
@@ -121,6 +117,26 @@ class TestFederationPairing(unittest.TestCase):
             self.assertEqual(revoked["status"], "revoked")
             self.assertIsNone(get_registration(registration["registration_id"]))
             self.assertEqual(list_trusts(group_id="g_local")[0]["status"], "revoked")
+        finally:
+            cleanup()
+
+    def test_can_create_approved_federation_session_registration(self) -> None:
+        from cccc.kernel.federation.pairing import _upsert_approved_session_registration  # type: ignore[attr-defined]
+
+        _, cleanup = self._with_home()
+        try:
+            registration = _upsert_approved_session_registration(
+                "g_local",
+                "session://peer_remote",
+                remote_group_id="g_remote",
+                remote_peer_id="peer_remote",
+            )
+
+            self.assertEqual(registration["transport"], "federation_session")
+            self.assertEqual(registration["group_id"], "g_local")
+            self.assertEqual(registration["remote_group_id"], "g_remote")
+            self.assertEqual(registration["remote_peer_id"], "peer_remote")
+            self.assertEqual(registration["multiaddrs"], [])
         finally:
             cleanup()
 
@@ -204,7 +220,7 @@ class TestFederationPairing(unittest.TestCase):
                 "remote_group_id": "g_issuer",
                 "remote_peer_id": "peer_issuer",
                 "multiaddrs": [],
-                "transport": "libp2p_cccc",
+                "transport": "federation_session",
                 "status": "active",
                 "created_at": "2026-06-15T00:00:00Z",
                 "updated_at": "2026-06-15T00:00:00Z",

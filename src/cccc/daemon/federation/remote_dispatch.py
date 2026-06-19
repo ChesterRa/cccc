@@ -157,7 +157,7 @@ def retry_remote_send_for_peer(
     group_id: str,
     remote_group_id: str,
     remote_peer_id: str,
-    transport: str = "libp2p_cccc",
+    transport: str = "federation_session",
     home: Optional[Path] = None,
     transport_factory: Callable[[str], RemoteSendTransport] = get_transport,
     credential: str = "",
@@ -232,10 +232,6 @@ def _resolve_transport(
     home: Optional[Path],
     transport_factory: Callable[[str], RemoteSendTransport],
 ) -> RemoteSendTransport:
-    if home is not None and transport_factory is get_transport and str(transport_name or "").strip() == "libp2p_cccc":
-        from .transports.libp2p_cccc import Libp2pCcccTransport
-
-        return Libp2pCcccTransport(address_book_home=home)
     return transport_factory(transport_name)
 
 
@@ -247,12 +243,8 @@ def _local_peer_id(*, home: Optional[Path]) -> str:
 
 
 def _local_multiaddrs(*, home: Optional[Path]) -> tuple[str, ...]:
-    try:
-        from .libp2p.advertise import local_advertised_multiaddrs
-
-        return local_advertised_multiaddrs(home=home)
-    except Exception:
-        return ()
+    _ = home
+    return ()
 
 
 def payload_from_receipt(receipt: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

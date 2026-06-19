@@ -13,7 +13,6 @@ export interface FederationRegistration {
   transport: string;
   remote_group_id: string;
   remote_peer_id?: string;
-  multiaddrs?: string[];
   credential_ref: string;
   user_id: string;
   status: string;
@@ -67,7 +66,6 @@ export interface FederationPairingInvite {
   group_id: string;
   remote_group_id: string;
   remote_peer_id: string;
-  multiaddrs: string[];
   transport: string;
   status: string;
   expires_at: string;
@@ -81,7 +79,6 @@ export interface FederationPairingRequest {
   group_id: string;
   remote_group_id: string;
   remote_peer_id: string;
-  multiaddrs: string[];
   status: string;
   registration_id?: string;
   approved_by?: string;
@@ -98,7 +95,6 @@ export interface FederationTrust {
   remote_group_title?: string;
   remote_endpoint?: string;
   remote_peer_id: string;
-  multiaddrs: string[];
   transport: string;
   status: string;
 }
@@ -122,7 +118,6 @@ export interface PairingInviteInput {
   groupId: string;
   remoteGroupId?: string;
   remotePeerId?: string;
-  multiaddrs?: string[];
   ttlSeconds?: number;
 }
 
@@ -130,7 +125,6 @@ export interface PairingRequestInput {
   pairingCode: string;
   requesterGroupId: string;
   requesterPeerId: string;
-  requesterMultiaddrs?: string[];
   inviteId?: string;
 }
 
@@ -200,7 +194,6 @@ export async function createFederationPairingInvite(input: PairingInviteInput) {
       group_id: input.groupId,
       remote_group_id: input.remoteGroupId,
       remote_peer_id: input.remotePeerId,
-      multiaddrs: input.multiaddrs ?? [],
       ttl_seconds: input.ttlSeconds ?? 600,
     }),
   });
@@ -223,7 +216,6 @@ export async function createFederationPairingRequest(input: PairingRequestInput)
     pairing_code: input.pairingCode,
     requester_group_id: input.requesterGroupId,
     requester_peer_id: input.requesterPeerId,
-    requester_multiaddrs: input.requesterMultiaddrs ?? [],
   };
   if (input.inviteId) {
     body.invite_id = input.inviteId;

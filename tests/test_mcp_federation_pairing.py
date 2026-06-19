@@ -42,7 +42,6 @@ class TestMcpFederationPairing(unittest.TestCase):
                 group_id="g_local",
                 remote_group_id="g_remote",
                 remote_peer_id="peer_remote",
-                multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
                 ttl_seconds=600,
             )
             self.assertRegex(invite["invite"]["pairing_code"], r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
@@ -63,7 +62,7 @@ class TestMcpFederationPairing(unittest.TestCase):
                 approver_user_id="user-a",
             )
             self.assertEqual(approved["request"]["status"], "approved")
-            self.assertEqual(approved["registration"]["transport"], "libp2p_cccc")
+            self.assertEqual(approved["registration"]["transport"], "federation_session")
 
             trusts = cccc_federation.pairing_trust_list(group_id="g_local")
             self.assertEqual(trusts["trusts"][0]["registration_id"], approved["registration"]["registration_id"])

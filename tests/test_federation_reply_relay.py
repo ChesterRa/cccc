@@ -86,7 +86,7 @@ class TestFederationReplyRelay(unittest.TestCase):
 
         self.assertEqual(registration_id, http_registration["registration_id"])
 
-    def test_fallback_skips_libp2p_route_without_known_addresses(self) -> None:
+    def test_fallback_skips_session_route_without_endpoint(self) -> None:
         from cccc.daemon.federation.reply_relay import federation_reply_registration_id
         from cccc.kernel.federation import pairing as pairing_kernel
         from cccc.kernel.federation.registration import upsert_registration
@@ -133,7 +133,7 @@ class TestFederationReplyRelay(unittest.TestCase):
 
         self.assertEqual(registration_id, http_registration["registration_id"])
 
-    def test_fallback_prefers_http_route_over_libp2p_route_for_same_peer(self) -> None:
+    def test_fallback_prefers_http_route_over_session_route_for_same_peer(self) -> None:
         from cccc.daemon.federation.reply_relay import federation_reply_registration_id
         from cccc.kernel.federation import pairing as pairing_kernel
         from cccc.kernel.federation.registration import upsert_registration
@@ -181,19 +181,10 @@ class TestFederationReplyRelay(unittest.TestCase):
 
         self.assertEqual(registration_id, http_registration["registration_id"])
 
-    def test_only_unaddressable_libp2p_fallback_returns_diagnostic_error(self) -> None:
+    def test_missing_federation_reply_route_returns_diagnostic_error(self) -> None:
         from cccc.daemon.federation.reply_relay import relay_federation_reply
-        from cccc.kernel.federation import pairing as pairing_kernel
 
         with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
-            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
-            request = pairing_kernel.create_pairing_request(
-                invite["pairing_code"],
-                requester_group_id="g_main",
-                requester_peer_id="peer-main",
-            )
-            pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
-
             resp = relay_federation_reply(
                 group_id="g_cross",
                 original_data={
@@ -247,11 +238,12 @@ class TestFederationReplyRelay(unittest.TestCase):
         self.assertEqual(resp.error.details["remote_group_id"], "g_main")
         self.assertEqual(resp.error.details["source_platform"], "peer_cccc_http")
 
-    def test_http_inbound_source_multiaddrs_refreshes_libp2p_reply_route(self) -> None:
+    def test_http_inbound_source_multiaddrs_updates_address_book_only(self) -> None:
         import os
 
         from cccc.daemon.messaging.chat_ops import handle_send
         from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.kernel.federation.peer_addresses import resolve_peer_multiaddrs
         from cccc.kernel.federation.registration import list_registrations
         import yaml
 
@@ -286,7 +278,7 @@ class TestFederationReplyRelay(unittest.TestCase):
                     requester_peer_id="peer-main",
                     requester_multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-main"],
                 )
-                pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+                approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
 
                 resp = handle_send(
                     {
@@ -311,10 +303,16 @@ class TestFederationReplyRelay(unittest.TestCase):
 
                 self.assertTrue(resp.ok)
                 registrations = list_registrations(home=Path(td))
-                libp2p = [reg for reg in registrations if str(reg.get("transport") or "") == "libp2p_cccc"]
-                self.assertEqual(libp2p[0]["multiaddrs"], ["/ip4/127.0.0.1/tcp/5001/p2p/peer-main"])
+                self.assertEqual(registrations[0]["registration_id"], approved["registration"]["registration_id"])
+                self.assertEqual(registrations[0]["transport"], "federation_session")
+                self.assertEqual(registrations[0]["multiaddrs"], [])
                 trust = pairing_kernel.list_trusts(group_id="g_cross", home=Path(td))[0]
-                self.assertEqual(trust["multiaddrs"], ["/ip4/127.0.0.1/tcp/5001/p2p/peer-main"])
+                self.assertEqual(trust["transport"], "federation_session")
+                self.assertEqual(trust["multiaddrs"], [])
+                self.assertEqual(
+                    resolve_peer_multiaddrs("peer-main", remote_group_id="g_main", home=Path(td)),
+                    ("/ip4/127.0.0.1/tcp/5001/p2p/peer-main",),
+                )
             finally:
                 if old_home is None:
                     os.environ.pop("CCCC_HOME", None)

@@ -32,21 +32,21 @@ describe("peer_cccc_http requires remote group id", () => {
   });
 });
 
-describe("libp2p pairing mode", () => {
+describe("federation session pairing mode", () => {
   it("does not show direct Remote URL fields", () => {
     expect(shouldShowRemoteUrlFields("peer_cccc_http")).toBe(true);
-    expect(shouldShowRemoteUrlFields("libp2p_cccc")).toBe(false);
+    expect(shouldShowRemoteUrlFields("federation_session")).toBe(false);
   });
 
   it("does not require URL or remote group id for verify/register gating", () => {
-    expect(canVerify({ url: "", transport: "libp2p_cccc", remoteGroupId: "", busy: false })).toBe(true);
+    expect(canVerify({ url: "", transport: "federation_session", remoteGroupId: "", busy: false })).toBe(true);
     expect(
       canSubmitRegister({
         verified: true,
         url: "",
         selectedCount: 1,
         busy: false,
-        transport: "libp2p_cccc",
+        transport: "federation_session",
         remoteGroupId: "",
       }),
     ).toBe(true);

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -89,7 +90,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
             )
             self.assertEqual(approved.status_code, 200, approved.text)
             registration = approved.json()["result"]["registration"]
-            self.assertEqual(registration["transport"], "libp2p_cccc")
+            self.assertEqual(registration["transport"], "federation_session")
             self.assertEqual(registration["remote_peer_id"], "peer_remote")
             self.assertNotIn("credential_ref", registration)
             self.assertNotIn(invite_body["pairing_code"], approved.text)
@@ -112,6 +113,127 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
             self.assertEqual(active_trusts.json()["result"]["trusts"][0]["status"], "revoked")
             status = client.get("/api/federation/status?group_id=g_local", headers=headers)
             self.assertEqual(status.json()["result"]["registrations"], [])
+        finally:
+            cleanup()
+
+    def test_federation_websocket_session_accepts_trusted_remote_send(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.federation.ws_auth import sign_session_hello
+            from cccc.kernel.federation.pairing import get_local_identity
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+            from cccc.kernel.ledger_segments import ensure_ledger_layout
+            from cccc.util.fs import atomic_write_text
+
+            group_dir = Path(os.environ["CCCC_HOME"]) / "groups" / "g_local"
+            group_dir.mkdir(parents=True)
+            ensure_ledger_layout(group_dir)
+            atomic_write_text(
+                group_dir / "group.yaml",
+                "v: 1\ngroup_id: g_local\ntitle: Local\nactive_scope_key: ''\nscopes: []\nactors: []\n",
+            )
+            client = self._client()
+            headers = self._admin_header()
+            peer_id = get_local_identity()["peer_id"]
+
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={
+                    "group_id": "g_local",
+                    "remote_group_id": "g_remote",
+                    "remote_peer_id": peer_id,
+                    "ttl_seconds": 600,
+                },
+                headers=headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+            request = client.post(
+                "/api/federation/pairing/requests",
+                json={
+                    "pairing_code": invite_body["pairing_code"],
+                    "requester_group_id": "g_remote",
+                    "requester_peer_id": peer_id,
+                },
+                headers=headers,
+            )
+            self.assertEqual(request.status_code, 200, request.text)
+            request_body = request.json()["result"]["request"]
+            approved = client.post(
+                f"/api/federation/pairing/requests/{request_body['request_id']}/approve",
+                json={"approver_user_id": "user-a"},
+                headers=headers,
+            )
+            self.assertEqual(approved.status_code, 200, approved.text)
+
+            with client.websocket_connect("/api/federation/session/ws") as ws:
+                hello = sign_session_hello({
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": peer_id,
+                })
+                ws.send_json(hello)
+                ready = ws.receive_json()
+                self.assertTrue(ready["ok"])
+                ws.send_json({
+                    "type": "request",
+                    "request_id": "req-1",
+                    "op": "remote_send",
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "idempotency_key": "ws-message-1",
+                    "payload": {"text": "hello over ws", "to": ["@foreman"]},
+                })
+                response = ws.receive_json()
+
+            self.assertEqual(response["type"], "response")
+            self.assertTrue(response["result"]["ok"])
+            group = load_group("g_local")
+            events = [event for event in iter_events(group.ledger_path) if event.get("kind") == "chat.message"]
+            self.assertEqual([event["data"]["text"] for event in events], ["hello over ws"])
+        finally:
+            cleanup()
+
+    def test_federation_websocket_session_rejects_unsigned_hello(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            client = self._client()
+            headers = self._admin_header()
+            invite = client.post(
+                "/api/federation/pairing/invites",
+                json={"group_id": "g_local", "remote_group_id": "g_remote", "remote_peer_id": "peer_remote"},
+                headers=headers,
+            )
+            self.assertEqual(invite.status_code, 200, invite.text)
+            invite_body = invite.json()["result"]["invite"]
+            request = client.post(
+                "/api/federation/pairing/requests",
+                json={
+                    "pairing_code": invite_body["pairing_code"],
+                    "requester_group_id": "g_remote",
+                    "requester_peer_id": "peer_remote",
+                },
+                headers=headers,
+            )
+            self.assertEqual(request.status_code, 200, request.text)
+            request_body = request.json()["result"]["request"]
+            approved = client.post(
+                f"/api/federation/pairing/requests/{request_body['request_id']}/approve",
+                json={"approver_user_id": "user-a"},
+                headers=headers,
+            )
+            self.assertEqual(approved.status_code, 200, approved.text)
+
+            with client.websocket_connect("/api/federation/session/ws") as ws:
+                ws.send_json({
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                })
+                rejected = ws.receive_json()
+            self.assertFalse(rejected["ok"])
+            self.assertEqual(rejected["error"]["code"], "unauthorized_peer")
         finally:
             cleanup()
 

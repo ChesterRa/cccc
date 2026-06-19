@@ -1,4 +1,4 @@
-"""libp2p federation pairing/approval store.
+"""Federation pairing/approval store.
 
 This module owns only local state transitions for pairing:
 
@@ -8,7 +8,7 @@ This module owns only local state transitions for pairing:
 - approve/reject request
 - approved trust records backed by the existing registration store
 
-It deliberately does not import or run a libp2p client.
+It deliberately does not import or run transport clients.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ _OUTBOUND_PREFIX = "pout_"
 _CODE_ALPHABET = string.ascii_uppercase + string.digits
 _DEFAULT_TTL_SECONDS = 600
 _INVITE_CODE_CACHE: Dict[str, str] = {}
+_PAIRING_TRANSPORTS = frozenset({"federation_session"})
 
 
 def _identity_path(home: Optional[Path] = None) -> Path:
@@ -126,11 +127,11 @@ def _publish_pairing_event(kind: str, data: Dict[str, Any]) -> None:
 def get_local_identity(*, home: Optional[Path] = None) -> Dict[str, Any]:
     """Return stable local public identity. No secret fields are persisted."""
     try:
-        from ...daemon.federation.libp2p.identity import get_libp2p_identity
+        from ...daemon.federation.identity import get_federation_identity
 
-        libp2p_identity = get_libp2p_identity(home=home)
-        node_id = f"node_{hashlib.sha256(libp2p_identity.peer_id.encode('utf-8')).hexdigest()[:24]}"
-        identity = {"node_id": node_id, "peer_id": libp2p_identity.peer_id}
+        federation_identity = get_federation_identity(home=home)
+        node_id = f"node_{hashlib.sha256(federation_identity.peer_id.encode('utf-8')).hexdigest()[:24]}"
+        identity = {"node_id": node_id, "peer_id": federation_identity.peer_id}
         _save_yaml(_identity_path(home), identity)
         return dict(identity)
     except Exception:
@@ -155,6 +156,7 @@ def create_pairing_invite(
     remote_group_id: str = "",
     remote_peer_id: str = "",
     multiaddrs: Optional[List[str]] = None,
+    transport: str = "federation_session",
     ttl_seconds: int = _DEFAULT_TTL_SECONDS,
     home: Optional[Path] = None,
 ) -> Dict[str, Any]:
@@ -163,6 +165,9 @@ def create_pairing_invite(
     remote_pid = str(remote_peer_id or "").strip()
     if not gid:
         raise ValueError("group_id is required")
+    transport_name = str(transport or "federation_session").strip() or "federation_session"
+    if transport_name not in _PAIRING_TRANSPORTS:
+        raise ValueError(f"unsupported pairing transport: {transport_name}")
 
     store = _load_store(home)
     code = _new_code()
@@ -176,7 +181,7 @@ def create_pairing_invite(
         "remote_group_id": remote_gid,
         "remote_peer_id": remote_pid,
         "multiaddrs": _clean_addrs(multiaddrs),
-        "transport": "libp2p_cccc",
+        "transport": transport_name,
         "pairing_code_hash": _hash_code(code),
         "status": "pending",
         "created_at": now,
@@ -304,7 +309,8 @@ def create_pairing_request(
         "remote_group_id": requester_gid,
         "remote_group_title": requester_title,
         "remote_peer_id": requester_pid,
-        "multiaddrs": _clean_addrs(requester_multiaddrs) or _clean_addrs(invite.get("multiaddrs")),  # type: ignore[arg-type]
+        "multiaddrs": [],
+        "transport": str(invite.get("transport") or "federation_session").strip() or "federation_session",
         "status": "pending",
         "created_at": now,
         "updated_at": now,
@@ -410,7 +416,7 @@ def approve_pairing_request(
         "remote_group_title": str(request.get("remote_group_title") or ""),
         "remote_peer_id": registration["remote_peer_id"],
         "multiaddrs": registration.get("multiaddrs") or [],
-        "transport": "libp2p_cccc",
+        "transport": registration.get("transport") or "",
         "status": "active",
         "created_at": now,
         "updated_at": now,
@@ -465,42 +471,6 @@ def list_trusts(*, group_id: str = "", home: Optional[Path] = None) -> List[Dict
         trusts = [t for t in trusts if str(t.get("group_id") or "") == gid]
     trusts.sort(key=lambda t: (str(t.get("created_at") or ""), str(t.get("trust_id") or "")))
     return [_project_trust(t) for t in trusts]
-
-
-def update_trust_multiaddrs_for_peer(
-    *,
-    group_id: str,
-    remote_group_id: str,
-    remote_peer_id: str,
-    multiaddrs: Optional[List[str]] = None,
-    home: Optional[Path] = None,
-) -> int:
-    gid = str(group_id or "").strip()
-    remote_gid = str(remote_group_id or "").strip()
-    remote_pid = str(remote_peer_id or "").strip()
-    addrs = _clean_addrs(multiaddrs)
-    if not gid or not remote_gid or not remote_pid or not addrs:
-        return 0
-    store = _load_store(home)
-    updated = 0
-    now = utc_now_iso()
-    for trust in store["trusts"].values():
-        if str(trust.get("status") or "") != "active":
-            continue
-        if str(trust.get("group_id") or "").strip() != gid:
-            continue
-        if str(trust.get("remote_group_id") or "").strip() != remote_gid:
-            continue
-        if str(trust.get("remote_peer_id") or "").strip() != remote_pid:
-            continue
-        if _clean_addrs(trust.get("multiaddrs")) == addrs:  # type: ignore[arg-type]
-            continue
-        trust["multiaddrs"] = list(addrs)
-        trust["updated_at"] = now
-        updated += 1
-    if updated:
-        _save_store(store, home)
-    return updated
 
 
 def _enrich_trust_display_fields(
@@ -629,12 +599,14 @@ def delete_pairing_outbound(outbound_id: str, *, home: Optional[Path] = None) ->
 
 def _registration_from_request(request: Dict[str, Any], *, home: Optional[Path]) -> Dict[str, Any]:
     remote_peer_id = str(request.get("remote_peer_id") or "").strip()
-    return _upsert_approved_libp2p_registration(
+    transport = str(request.get("transport") or "federation_session").strip() or "federation_session"
+    if transport not in _PAIRING_TRANSPORTS:
+        raise ValueError(f"unsupported pairing transport: {transport}")
+    return _upsert_approved_session_registration(
         str(request.get("group_id") or ""),
-        f"libp2p://{remote_peer_id}",
+        f"session://{remote_peer_id}",
         remote_group_id=str(request.get("remote_group_id") or ""),
         remote_peer_id=remote_peer_id,
-        multiaddrs=_clean_addrs(request.get("multiaddrs")),  # type: ignore[arg-type]
         home=home,
     )
 
@@ -654,22 +626,21 @@ def _record_request_peer_addresses(request: Dict[str, Any], *, home: Optional[Pa
     )
 
 
-def _upsert_approved_libp2p_registration(
+def _upsert_approved_session_registration(
     group_id: str,
     url: str,
     *,
     remote_group_id: str,
     remote_peer_id: str,
-    multiaddrs: Optional[List[str]] = None,
     home: Optional[Path] = None,
 ) -> Dict[str, Any]:
     return upsert_registration(
         group_id,
         url,
-        transport="libp2p_cccc",
+        transport="federation_session",
         remote_group_id=remote_group_id,
         remote_peer_id=remote_peer_id,
-        multiaddrs=_clean_addrs(multiaddrs),
+        multiaddrs=[],
         status="active",
         home=home,
         _approved_by_pairing=True,

@@ -8,7 +8,7 @@ import type {
   FederationRegistration,
   FederationTrust,
 } from "../../../services/api/federation";
-import { FederationLibp2pPairingSection } from "./FederationLibp2pPairingSection";
+import { FederationSessionPairingSection } from "./FederationSessionPairingSection";
 import { projectSyncableOutbounds } from "./federationPairingModel";
 import { subscribeFederationPairingChanged } from "../../../utils/federationPairingEvents";
 
@@ -97,7 +97,7 @@ export function FederationConnectionsSection({
   }, [groupId, isActive, refreshPairing]);
 
   return (
-    <FederationLibp2pPairingSection
+    <FederationSessionPairingSection
       isDark={isDark}
       currentGroupId={groupId}
       currentGroupTitle={groupTitle}

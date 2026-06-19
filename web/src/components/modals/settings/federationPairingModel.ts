@@ -32,12 +32,14 @@ export function canSubmitPairingRequest(opts: {
   pairingCode: string;
   requesterGroupId: string;
   requesterPeerId: string;
+  isRemote?: boolean;
   busy: boolean;
 }): boolean {
   return (
     String(opts.pairingCode || "").trim().length > 0 &&
     String(opts.requesterGroupId || "").trim().length > 0 &&
     String(opts.requesterPeerId || "").trim().length > 0 &&
+    opts.isRemote === true &&
     !opts.busy
   );
 }
@@ -110,8 +112,8 @@ function projectConnectionInfoPayload(parsed: Record<string, unknown>): {
   };
 }
 
-export function filterLibp2pRegistrations(registrations: FederationRegistration[] | undefined | null): FederationRegistration[] {
-  return (registrations || []).filter((registration) => String(registration.transport || "") === "libp2p_cccc");
+export function filterFederationSessionRegistrations(registrations: FederationRegistration[] | undefined | null): FederationRegistration[] {
+  return (registrations || []).filter((registration) => String(registration.transport || "") === "federation_session");
 }
 
 export function projectIncomingRequests(
@@ -186,6 +188,16 @@ export function isSameInstancePairingInput(parsed: { pairingCode: string; isRemo
   return Boolean(String(parsed.pairingCode || "").trim() && !parsed.isRemote);
 }
 
+export function isSessionConnectionInfoInput(parsed: { pairingCode: string; isRemote?: boolean; issuerEndpoint?: string; nonce?: string; integrity?: string }): boolean {
+  return Boolean(
+    String(parsed.pairingCode || "").trim() &&
+    parsed.isRemote === true &&
+    String(parsed.issuerEndpoint || "").trim() &&
+    String(parsed.nonce || "").trim() &&
+    String(parsed.integrity || "").trim(),
+  );
+}
+
 export function isLocalIssuerEndpoint(endpoint: string): boolean {
   try {
     const parsed = new URL(normalizeIssuerEndpoint(endpoint));
@@ -236,7 +248,7 @@ export async function buildConnectionInfoPayload(opts: {
     opts.inviteId,
   ].join("|");
   return {
-    type: "cccc.libp2p.connection_info",
+    type: "cccc.federation_session.connection_info",
     version: 2,
     issuer_endpoint: normalizedEndpoint,
     issuer_group_id: opts.groupId,

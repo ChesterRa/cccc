@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from pydantic import BaseModel, ConfigDict, Field
 
 from ....daemon.federation.ops import try_handle_remote_send_op
+from ....daemon.federation.ws_endpoint import handle_federation_session_websocket
 from ....kernel.federation.receipts import safe_error_projection
 from ....kernel.federation.pairing import (
     approve_pairing_request,
@@ -459,5 +460,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not pairing_request:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": "pairing request not found", "details": {}})
         return {"ok": True, "result": {"request": pairing_request}}
+
+    @public_router.websocket("/session/ws")
+    async def federation_session_ws(websocket: WebSocket) -> None:
+        await handle_federation_session_websocket(websocket)
 
     return [public_router, router]

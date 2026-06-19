@@ -220,7 +220,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_libp2p_federation_message_relays_over_remote_send(self) -> None:
+    def test_reply_to_federation_session_message_relays_over_remote_send(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.kernel.federation.pairing import _save_store
@@ -242,7 +242,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_old",
                             "registration_id": "reg_old",
-                            "transport": "libp2p_cccc",
+                            "transport": "federation_session",
                             "status": "active",
                             "created_at": "2025-01-01T00:00:00Z",
                             "updated_at": "2025-01-01T00:00:00Z",
@@ -253,7 +253,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "libp2p_cccc",
+                            "transport": "federation_session",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",
@@ -277,7 +277,7 @@ class TestChatOps(unittest.TestCase):
                 data=ChatMessageData(
                     text="hello from remote",
                     to=["@foreman"],
-                    source_platform="libp2p_cccc",
+                    source_platform="federation_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                 ).model_dump(),
@@ -322,7 +322,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_libp2p_federation_message_relays_before_local_self_recipient_rejection(self) -> None:
+    def test_reply_to_federation_session_message_relays_before_local_self_recipient_rejection(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
@@ -361,7 +361,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "libp2p_cccc",
+                            "transport": "federation_session",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",
@@ -381,7 +381,7 @@ class TestChatOps(unittest.TestCase):
                 data=ChatMessageData(
                     text="hello from remote foreman",
                     to=["codex-1"],
-                    source_platform="libp2p_cccc",
+                    source_platform="federation_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                 ).model_dump(),
@@ -522,7 +522,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "libp2p_cccc",
+                            "transport": "federation_session",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",
@@ -542,7 +542,7 @@ class TestChatOps(unittest.TestCase):
                 data=ChatMessageData(
                     text="hello from remote",
                     to=["@foreman"],
-                    source_platform="libp2p_cccc",
+                    source_platform="federation_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                 ).model_dump(),

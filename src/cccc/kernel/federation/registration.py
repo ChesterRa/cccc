@@ -132,47 +132,6 @@ def get_registration_by_target(url: str, group_id: str, home: Optional[Path] = N
     return None
 
 
-def update_registration_multiaddrs_for_peer(
-    *,
-    group_id: str,
-    remote_group_id: str,
-    remote_peer_id: str,
-    transport: str,
-    multiaddrs: Optional[List[str]] = None,
-    home: Optional[Path] = None,
-) -> int:
-    gid = str(group_id or "").strip()
-    remote_gid = str(remote_group_id or "").strip()
-    remote_pid = str(remote_peer_id or "").strip()
-    transport_name = str(transport or "").strip()
-    addrs = [str(addr or "").strip() for addr in (multiaddrs or []) if str(addr or "").strip()]
-    if not gid or not remote_gid or not remote_pid or not transport_name or not addrs:
-        return 0
-    records = load_registrations(home)
-    updated = 0
-    now = utc_now_iso()
-    for entry in records.values():
-        if str(entry.get("status") or "") != "active":
-            continue
-        if str(entry.get("group_id") or "").strip() != gid:
-            continue
-        if str(entry.get("remote_group_id") or "").strip() != remote_gid:
-            continue
-        if str(entry.get("remote_peer_id") or "").strip() != remote_pid:
-            continue
-        if str(entry.get("transport") or "").strip() != transport_name:
-            continue
-        existing = [str(addr or "").strip() for addr in (entry.get("multiaddrs") or []) if str(addr or "").strip()]
-        if existing == addrs:
-            continue
-        entry["multiaddrs"] = list(addrs)
-        entry["updated_at"] = now
-        updated += 1
-    if updated:
-        _save_registrations(records, home)
-    return updated
-
-
 def _new_registration_id(existing: Dict[str, Dict[str, Any]]) -> str:
     while True:
         candidate = f"{_REG_PREFIX}{secrets.token_hex(8)}"
@@ -211,13 +170,13 @@ def upsert_registration(
     # an empty remote group id produces a broken target URL, so require it.
     if transport_name == "peer_cccc_http" and not remote_gid:
         raise ValueError("remote_group_id is required for the peer_cccc_http transport")
-    if transport_name == "libp2p_cccc":
+    if transport_name == "federation_session":
         if str(status or "active").strip() == "active" and not _approved_by_pairing:
-            raise ValueError("active libp2p_cccc registrations must be created by pairing approval")
+            raise ValueError(f"active {transport_name} registrations must be created by pairing approval")
         if not remote_gid:
-            raise ValueError("remote_group_id is required for the libp2p_cccc transport")
+            raise ValueError(f"remote_group_id is required for the {transport_name} transport")
         if not remote_pid:
-            raise ValueError("remote_peer_id is required for the libp2p_cccc transport")
+            raise ValueError(f"remote_peer_id is required for the {transport_name} transport")
 
     records = load_registrations(home)
     now = utc_now_iso()

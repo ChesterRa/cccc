@@ -44,7 +44,7 @@ def build_connection_payload(
     identity = get_local_identity(home=home)
     endpoint = normalize_issuer_endpoint(issuer_endpoint, allow_localhost=True, allow_private=True) if issuer_endpoint else ""
     payload = {
-        "type": "cccc.libp2p.connection_info",
+        "type": "cccc.federation_session.connection_info",
         "version": 2,
         "issuer_endpoint": endpoint,
         "issuer_group_id": str(invite.get("group_id") or "").strip(),
@@ -136,7 +136,6 @@ def submit_remote_pairing_request(
     _validate_integrity(parsed)
     endpoint = issuer_remote_request_url(parsed.issuer_endpoint, allow_localhost=allow_localhost)
     identity = get_local_identity(home=home)
-    requester_multiaddrs = _local_sidecar_multiaddrs(home=home)
     body = {
         "pairing_code": parsed.pairing_code,
         "invite_id": parsed.nonce,
@@ -144,7 +143,7 @@ def submit_remote_pairing_request(
         "requester_group_title": str(local_group_title or "").strip(),
         "requester_peer_id": str(identity.get("peer_id") or ""),
         "requester_node_id": str(identity.get("node_id") or ""),
-        "requester_multiaddrs": requester_multiaddrs,
+        "requester_multiaddrs": [],
     }
     caller = client or _default_remote_client
     try:
@@ -170,15 +169,6 @@ def submit_remote_pairing_request(
         "updated_at": utc_now_iso(),
     }
     return upsert_pairing_outbound(outbound, home=home)
-
-
-def _local_sidecar_multiaddrs(*, home: Optional[Path] = None) -> list[str]:
-    try:
-        from ...daemon.federation.libp2p.advertise import local_advertised_multiaddrs
-
-        return list(local_advertised_multiaddrs(home=home))
-    except Exception:
-        return []
 
 
 def sync_remote_pairing_outbound(

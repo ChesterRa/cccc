@@ -163,7 +163,7 @@ describe("buildComposerMentionSuggestions", () => {
     ]);
   });
 
-  it("builds group suggestions for active HTTP federation routes with empty multiaddrs", () => {
+  it("builds group suggestions for active HTTP federation routes", () => {
     const remoteGroups = buildFederationRouteGroups([
       {
         trust_id: "ptrust_9263feebd4920ad3",
@@ -176,7 +176,6 @@ describe("buildComposerMentionSuggestions", () => {
         remote_group_title: "CCCC Cross Test",
         remote_peer_id: "peer_00e780d5eb7bad9dea41bba479a9c292",
         remote_endpoint: "http://127.0.0.1:8858",
-        multiaddrs: [],
       },
     ]);
 

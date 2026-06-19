@@ -182,19 +182,18 @@ class TestFederationDispatch(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_deliver_passes_libp2p_registration_metadata_to_target(self) -> None:
+    def test_deliver_passes_session_registration_metadata_to_target(self) -> None:
         from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
         from cccc.daemon.federation.transports.base import RemoteSendResult
-        from cccc.kernel.federation.pairing import _upsert_approved_libp2p_registration
+        from cccc.kernel.federation.pairing import _upsert_approved_session_registration
 
         _, cleanup = self._with_home()
         try:
-            reg = _upsert_approved_libp2p_registration(
+            reg = _upsert_approved_session_registration(
                 "g_local",
-                "libp2p://peer-remote",
+                "session://peer-remote",
                 remote_group_id="g_remote",
                 remote_peer_id="peer-remote",
-                multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer-remote"],
             )
             rid = reg["registration_id"]
             enqueue_remote_send(src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"})
@@ -202,21 +201,21 @@ class TestFederationDispatch(unittest.TestCase):
             captured = {}
 
             class Capturing:
-                transport = "libp2p_cccc"
+                transport = "federation_session"
                 capabilities = frozenset()
 
                 def deliver(self, envelope):
                     captured["target"] = envelope.target
-                    return RemoteSendResult(ok=True, status="sent", remote_event_id="e1", transport="libp2p_cccc")
+                    return RemoteSendResult(ok=True, status="sent", remote_event_id="e1", transport="federation_session")
 
             deliver_enqueued(
                 registration_id=rid, idempotency_key="k1", transport_factory=lambda name: Capturing(), credential="s"
             )
             target = captured["target"]
-            self.assertEqual(target.url, "libp2p://peer-remote")
+            self.assertEqual(target.url, "session://peer-remote")
             self.assertEqual(target.remote_group_id, "g_remote")
             self.assertEqual(target.remote_peer_id, "peer-remote")
-            self.assertEqual(target.multiaddrs, ("/ip4/127.0.0.1/tcp/4001/p2p/peer-remote",))
+            self.assertEqual(target.multiaddrs, ())
         finally:
             cleanup()
 
@@ -272,7 +271,7 @@ class TestFederationDispatch(unittest.TestCase):
                         return RemoteSendResult(
                             ok=False,
                             status="failed",
-                            error_code="libp2p_dial_failed",
+                            error_code="peer_session_unavailable",
                             error_message="offline",
                             retriable=True,
                             transport="fake",
@@ -284,7 +283,7 @@ class TestFederationDispatch(unittest.TestCase):
                 registration_id=rid, idempotency_key="k1", transport_factory=lambda name: fake, credential="s"
             )
             self.assertEqual(out1["status"], "retrying")
-            self.assertEqual(out1["error"]["code"], "libp2p_dial_failed")
+            self.assertEqual(out1["error"]["code"], "peer_session_unavailable")
             self.assertEqual(out1["attempt"], 1)
             self.assertTrue(out1["first_queued_at"])
             self.assertTrue(out1["last_attempt_at"])

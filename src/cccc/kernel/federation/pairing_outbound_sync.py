@@ -54,12 +54,11 @@ def approve_outbound_from_remote_request(
             home=home,
         )
     else:
-        registration = pairing._upsert_approved_libp2p_registration(  # type: ignore[attr-defined]
+        registration = pairing._upsert_approved_session_registration(  # type: ignore[attr-defined]
             local_gid,
-            f"libp2p://{issuer_pid}",
+            f"session://{issuer_pid}",
             remote_group_id=issuer_gid,
             remote_peer_id=issuer_pid,
-            multiaddrs=pairing._clean_addrs(request.get("multiaddrs")),  # type: ignore[attr-defined,arg-type]
             home=home,
         )
     now = utc_now_iso()
