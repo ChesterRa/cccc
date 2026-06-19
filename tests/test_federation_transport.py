@@ -520,6 +520,46 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(captured["kwargs"]["target_group_id"], "g_local")
         self.assertEqual(captured["kwargs"]["src_group_id"], "g_remote")
 
+    def test_federation_session_endpoint_routes_remote_send_to_daemon_when_web_supervised(self) -> None:
+        from cccc.daemon.federation.ws_endpoint import handle_federation_session_request
+
+        with (
+            _EnvPatch(CCCC_WEB_SUPERVISED="1"),
+            patch(
+                "cccc.daemon.server.call_daemon",
+                return_value={"ok": True, "result": {"ok": True, "event_id": "evt-daemon", "duplicate": False}},
+            ) as call_daemon,
+            patch("cccc.daemon.federation.ws_endpoint.receive_remote_send") as local_receive,
+        ):
+            result = handle_federation_session_request(
+                {
+                    "op": "remote_send",
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "idempotency_key": "remote-1",
+                },
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["event_id"], "evt-daemon")
+        local_receive.assert_not_called()
+        call_daemon.assert_called_once_with(
+            {
+                "op": "federation_receive_remote_send",
+                "args": {
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "idempotency_key": "remote-1",
+                },
+            }
+        )
+
     def test_federation_session_client_reports_connect_failure_without_escaping(self) -> None:
         from cccc.daemon.federation.ws_client import connect_federation_session_once
 

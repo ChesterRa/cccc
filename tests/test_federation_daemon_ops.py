@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class _CountingTransport:
@@ -50,6 +51,36 @@ class TestFederationDaemonOps(unittest.TestCase):
         from cccc.daemon.federation.ops import try_handle_remote_send_op
 
         self.assertIsNone(try_handle_remote_send_op("some_other_op", {}))
+
+    def test_receive_remote_send_op_delegates_to_receiver(self) -> None:
+        from cccc.daemon.federation.ops import try_handle_remote_send_op
+
+        with patch(
+            "cccc.daemon.federation.ops.receive_remote_send",
+            return_value={"ok": True, "event_id": "evt-local", "duplicate": False},
+        ) as receive:
+            resp = try_handle_remote_send_op(
+                "federation_receive_remote_send",
+                {
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "payload": {"text": "hi"},
+                    "idempotency_key": "remote-1",
+                },
+            )
+
+        self.assertIsNotNone(resp)
+        assert resp is not None
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["event_id"], "evt-local")
+        receive.assert_called_once_with(
+            target_group_id="g_local",
+            src_group_id="g_remote",
+            remote_peer_id="peer_remote",
+            payload={"text": "hi"},
+            idempotency_key="remote-1",
+        )
 
     def test_remote_send_delivers_once_and_replays_terminal_receipt(self) -> None:
         from cccc.daemon.federation.ops import handle_remote_send, handle_remote_delivery_status

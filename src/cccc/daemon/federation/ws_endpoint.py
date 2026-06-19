@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -159,10 +160,36 @@ def handle_federation_session_request(
     op = str((frame or {}).get("op") or "").strip()
     if op != "remote_send":
         return {"ok": False, "error": {"code": "unsupported_op", "message": f"unsupported federation session op: {op or '(empty)'}"}}
+    args = {
+        "target_group_id": str((frame or {}).get("target_group_id") or target_group_id),
+        "src_group_id": str((frame or {}).get("src_group_id") or src_group_id),
+        "remote_peer_id": remote_peer_id,
+        "payload": dict((frame or {}).get("payload") or {}) if isinstance((frame or {}).get("payload"), dict) else {},
+        "idempotency_key": str((frame or {}).get("idempotency_key") or ""),
+    }
+    if os.environ.get("CCCC_WEB_SUPERVISED"):
+        try:
+            from ..server import call_daemon
+
+            resp = call_daemon({"op": "federation_receive_remote_send", "args": args})
+        except Exception as exc:
+            logger.exception("federation session daemon receive failed")
+            return {"ok": False, "error": {"code": "daemon_receive_failed", "message": str(exc)}}
+        if resp.get("ok"):
+            result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+            return result if result else {"ok": True}
+        error = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+        return {
+            "ok": False,
+            "error": {
+                "code": str(error.get("code") or "daemon_receive_failed"),
+                "message": str(error.get("message") or "daemon receive failed"),
+            },
+        }
     return receive_remote_send(
-        target_group_id=str((frame or {}).get("target_group_id") or target_group_id),
-        src_group_id=str((frame or {}).get("src_group_id") or src_group_id),
-        remote_peer_id=remote_peer_id,
-        payload=dict((frame or {}).get("payload") or {}) if isinstance((frame or {}).get("payload"), dict) else {},
-        idempotency_key=str((frame or {}).get("idempotency_key") or ""),
+        target_group_id=str(args.get("target_group_id") or ""),
+        src_group_id=str(args.get("src_group_id") or ""),
+        remote_peer_id=str(args.get("remote_peer_id") or ""),
+        payload=dict(args.get("payload") or {}) if isinstance(args.get("payload"), dict) else {},
+        idempotency_key=str(args.get("idempotency_key") or ""),
     )

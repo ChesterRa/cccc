@@ -14,6 +14,7 @@ from ...contracts.v1.ipc import DaemonError, DaemonResponse
 from ...kernel.federation.registration import get_registration
 from ...kernel.federation.receipts import get_receipt
 from ...kernel.federation.credentials import resolve_federation_credential
+from .receiver import receive_remote_send
 from .remote_dispatch import deliver_enqueued, enqueue_remote_send
 from .transports.base import RemoteSendTransport, get_transport
 
@@ -135,9 +136,32 @@ def handle_remote_delivery_status(args: Dict[str, Any]) -> DaemonResponse:
     return DaemonResponse(ok=True, result={"receipt": receipt})
 
 
+def handle_receive_remote_send(args: Dict[str, Any]) -> DaemonResponse:
+    result = receive_remote_send(
+        target_group_id=str(args.get("target_group_id") or ""),
+        src_group_id=str(args.get("src_group_id") or ""),
+        remote_peer_id=str(args.get("remote_peer_id") or ""),
+        payload=dict(args.get("payload") or {}) if isinstance(args.get("payload"), dict) else {},
+        idempotency_key=str(args.get("idempotency_key") or ""),
+    )
+    if result.get("ok"):
+        return DaemonResponse(ok=True, result=result)
+    error = result.get("error") if isinstance(result.get("error"), dict) else {}
+    return DaemonResponse(
+        ok=False,
+        error=DaemonError(
+            code=str(error.get("code") or "remote_receive_failed"),
+            message=str(error.get("message") or "remote receive failed"),
+            details={},
+        ),
+    )
+
+
 def try_handle_remote_send_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
     if op == "remote_send":
         return handle_remote_send(args)
     if op == "remote_delivery_status":
         return handle_remote_delivery_status(args)
+    if op == "federation_receive_remote_send":
+        return handle_receive_remote_send(args)
     return None
