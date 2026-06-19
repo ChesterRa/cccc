@@ -115,7 +115,7 @@ class TestWebMessagingClientId(unittest.TestCase):
                         "text": "hello from peer",
                         "by": "federation:peer_a",
                         "to": ["user"],
-                        "source_platform": "peer_cccc_http",
+                        "source_platform": "federation_session",
                         "source_user_id": "peer_a",
                         "source_user_name": "Remote Group",
                         "src_group_id": "g_remote",
@@ -127,7 +127,7 @@ class TestWebMessagingClientId(unittest.TestCase):
             body = resp.json()
             self.assertTrue(bool(body.get("ok")))
             data = (((body.get("result") or {}).get("event") or {}).get("data")) or {}
-            self.assertEqual(data.get("source_platform"), "peer_cccc_http")
+            self.assertEqual(data.get("source_platform"), "federation_session")
             self.assertEqual(data.get("source_user_id"), "peer_a")
             self.assertEqual(data.get("source_user_name"), "Remote Group")
             self.assertEqual(data.get("src_group_id"), "g_remote")

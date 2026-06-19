@@ -1,10 +1,6 @@
 import { apiJson } from "./base";
 
 // Federation remote-send client.
-//
-// Security: the remote credential is only ever sent in a request body for
-// verify/register. It is never written to localStorage/sessionStorage by this
-// module (the session access token is handled separately by base.getAuthHeaders).
 
 export interface FederationRegistration {
   registration_id: string;
@@ -20,13 +16,6 @@ export interface FederationRegistration {
   updated_at: string;
   last_sync_at?: string | null;
   last_error?: string | null;
-}
-
-export interface FederationVerifyResult {
-  verified: boolean;
-  group_id: string;
-  normalized_url: string;
-  transport: string;
 }
 
 export interface FederationDeliveryError {
@@ -45,15 +34,6 @@ export interface FederationDeliveryReceipt {
   remote_event_id?: string | null;
   transport?: string;
   error?: FederationDeliveryError | null;
-}
-
-export interface FederationTargetInput {
-  groupId: string;
-  url: string;
-  /** Sent only in the request body; never persisted client-side. */
-  credentialRef?: string;
-  transport?: string;
-  remoteGroupId?: string;
 }
 
 export interface FederationIdentity {
@@ -139,30 +119,6 @@ export interface PairingConnectionInfoInput {
   inviteId: string;
   issuerEndpoint: string;
   issuerGroupTitle?: string;
-}
-
-export function buildFederationTargetBody(input: FederationTargetInput): Record<string, unknown> {
-  return {
-    group_id: input.groupId,
-    url: input.url,
-    transport: input.transport ?? "peer_cccc_http",
-    remote_group_id: input.remoteGroupId ?? "",
-    credential_ref: input.credentialRef ?? "",
-  };
-}
-
-export async function verifyFederation(input: FederationTargetInput) {
-  return apiJson<FederationVerifyResult>("/api/federation/verify", {
-    method: "POST",
-    body: JSON.stringify(buildFederationTargetBody(input)),
-  });
-}
-
-export async function registerFederation(input: FederationTargetInput) {
-  return apiJson<{ registration: FederationRegistration }>("/api/federation/register", {
-    method: "POST",
-    body: JSON.stringify(buildFederationTargetBody(input)),
-  });
 }
 
 export async function fetchFederationStatus(groupId?: string) {

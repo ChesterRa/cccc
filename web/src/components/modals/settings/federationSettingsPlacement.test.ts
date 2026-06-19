@@ -35,23 +35,20 @@ describe("federation settings placement", () => {
     expect(src).not.toContain("FederationRegistrationSection");
   });
 
-  it("FederationRegistrationSection asks for a credential reference, not a token", () => {
+  it("FederationRegistrationSection does not expose direct registration fields", () => {
     const src = readSource("./FederationRegistrationSection.tsx");
-    expect(readSource("../../../i18n/locales/en/settings.json")).toContain("Credential reference");
+    expect(src).not.toContain("Credential reference");
     expect(src).not.toContain("Credential / token");
+    expect(src).not.toContain("Remote URL");
+    expect(src).not.toContain("registerFederation");
   });
 
-  it("Global Federation keeps HTTP URL target and does not mount the federation session pairing workbench", () => {
+  it("Global Federation only explains that session pairing is managed per group", () => {
     const src = readSource("./FederationRegistrationSection.tsx");
-    expect(src).toContain("FederationHttpRegistrationSection");
     expect(src).toContain('useTranslation("settings")');
     expect(src).toContain('t("federation.sessionManagedPerGroup")');
+    expect(src).not.toContain("FederationHttpRegistrationSection");
     expect(src).not.toContain("FederationSessionPairingSection");
-    expect(src).not.toContain('useState<FederationMode>');
-    expect(src).not.toContain("HTTP URL target");
-    expect(src).not.toContain("federation session pairing");
-    expect(src).not.toContain("Remote URL");
-    expect(src).not.toContain("Credential reference");
     expect(src).not.toContain("registerFederation");
   });
 
@@ -69,15 +66,6 @@ describe("federation settings placement", () => {
     expect(src).toContain("projectSyncableOutbounds");
     expect(src).toContain("syncFederationPairingOutbound(outbound.outbound_id)");
     expect(src).not.toContain('String(outbound.status || "") === "submitted"');
-  });
-
-  it("HTTP registration section is explicitly legacy URL-target mode", () => {
-    const src = readSource("./FederationHttpRegistrationSection.tsx");
-    expect(src).toContain('useTranslation("settings")');
-    expect(src).not.toContain("Legacy HTTP URL target");
-    expect(src).not.toContain("Credential reference");
-    expect(src).not.toContain("Remote URL");
-    expect(src).toContain("peer_cccc_http");
   });
 
   it("federation session pairing section does not expose direct registration fields or call direct register", () => {
@@ -241,7 +229,7 @@ describe("federation settings placement", () => {
       expect(locale.federation?.localDiagnosticsHelp).toBeTruthy();
       expect(locale.federation?.sessionTransport).toBeTruthy();
       expect(locale.federation?.sessionTransportManaged).toBeTruthy();
-      expect(locale.federation?.legacyHttpTitle).toBeTruthy();
+      expect(locale.federation?.legacyHttpTitle).toBeUndefined();
       expect(locale.federation?.sessionManagedPerGroup).toBeTruthy();
       expect(locale.tabs?.connections).toBeTruthy();
     }

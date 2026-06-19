@@ -547,6 +547,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             pairing_code=str(arguments.get("pairing_code") or ""),
             requester_group_id=str(arguments.get("requester_group_id") or ""),
             requester_peer_id=str(arguments.get("requester_peer_id") or ""),
+            requester_endpoint=str(arguments.get("requester_endpoint") or ""),
             requester_multiaddrs=[str(x or "").strip() for x in arguments.get("requester_multiaddrs", []) if str(x or "").strip()]
             if isinstance(arguments.get("requester_multiaddrs"), list)
             else [],

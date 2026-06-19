@@ -50,6 +50,7 @@ class TestMcpFederationPairing(unittest.TestCase):
                 pairing_code=invite["invite"]["pairing_code"],
                 requester_group_id="g_remote",
                 requester_peer_id="peer_remote",
+                requester_endpoint="http://remote.example:8848",
                 requester_multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
             )
             self.assertEqual(req["request"]["status"], "pending")
@@ -63,6 +64,7 @@ class TestMcpFederationPairing(unittest.TestCase):
             )
             self.assertEqual(approved["request"]["status"], "approved")
             self.assertEqual(approved["registration"]["transport"], "federation_session")
+            self.assertEqual(approved["registration"]["url"], "http://remote.example:8848")
 
             trusts = cccc_federation.pairing_trust_list(group_id="g_local")
             self.assertEqual(trusts["trusts"][0]["registration_id"], approved["registration"]["registration_id"])

@@ -92,6 +92,7 @@ class TestMcpGroupResolve(unittest.TestCase):
                 requester_group_id="g_remote",
                 requester_group_title="CCCC Cross Test",
                 requester_peer_id="peer_remote",
+                requester_endpoint="http://remote.example:8848",
             )
             approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
 
@@ -122,6 +123,7 @@ class TestMcpGroupResolve(unittest.TestCase):
                 requester_group_id="g_0fb5f39478cc",
                 requester_group_title="CCCC Cross Test",
                 requester_peer_id="peer_00e780d5eb7bad9dea41bba479a9c292",
+                requester_endpoint="http://remote.example:8848",
             )
             approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
             pairing_kernel.revoke_trust(approved["trust"]["trust_id"], revoked_by="user-a")

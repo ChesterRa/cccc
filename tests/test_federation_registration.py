@@ -136,17 +136,15 @@ class TestFederationRegistration(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_peer_http_requires_remote_group_id(self) -> None:
+    def test_peer_http_transport_is_rejected(self) -> None:
         from cccc.kernel.federation.registration import list_registrations, upsert_registration
 
         _, cleanup = self._with_home()
         try:
-            with self.assertRaises(ValueError):
-                upsert_registration("g1", "https://hub.example/", transport="peer_cccc_http", remote_group_id="")
+            with self.assertRaises(ValueError) as ctx:
+                upsert_registration("g1", "https://hub.example/", transport="peer_cccc_http", remote_group_id="g_remote")
+            self.assertIn("unsupported federation transport", str(ctx.exception))
             self.assertEqual(len(list_registrations()), 0)
-            # With a remote group id it succeeds.
-            rec = upsert_registration("g1", "https://hub.example/", transport="peer_cccc_http", remote_group_id="g_remote")
-            self.assertEqual(rec["remote_group_id"], "g_remote")
         finally:
             cleanup()
 
@@ -159,7 +157,7 @@ class TestFederationRegistration(unittest.TestCase):
             with self.assertRaises(ValueError) as missing_peer:
                 _upsert_approved_session_registration(
                     "g1",
-                    "session://peer-remote",
+                    "http://remote.example:8848",
                     remote_group_id="g_remote",
                     remote_peer_id="",
                 )
@@ -168,11 +166,20 @@ class TestFederationRegistration(unittest.TestCase):
             with self.assertRaises(ValueError) as missing_group:
                 _upsert_approved_session_registration(
                     "g1",
-                    "session://peer-remote",
+                    "http://remote.example:8848",
                     remote_group_id="",
                     remote_peer_id="peer-remote",
                 )
             self.assertIn("remote_group_id", str(missing_group.exception))
+
+            with self.assertRaises(ValueError) as placeholder:
+                _upsert_approved_session_registration(
+                    "g1",
+                    "session://peer-remote",
+                    remote_group_id="g_remote",
+                    remote_peer_id="peer-remote",
+                )
+            self.assertIn("concrete remote endpoint", str(placeholder.exception))
             self.assertEqual(len(list_registrations()), 0)
         finally:
             cleanup()

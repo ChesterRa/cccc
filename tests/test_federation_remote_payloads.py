@@ -8,7 +8,7 @@ class TestFederationRemotePayloads(unittest.TestCase):
         from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
 
         envelope = RemoteMessageEnvelope(
-            transport="peer_cccc_http",
+            transport="federation_session",
             src_group_id="g_local",
             source_peer_id="peer_source",
             target=RemoteTarget(
@@ -32,7 +32,7 @@ class TestFederationRemotePayloads(unittest.TestCase):
         self.assertEqual(body["priority"], "attention")
         self.assertEqual(body["reply_required"], True)
         self.assertEqual(body["idempotency_key"], "delivery:abc")
-        self.assertEqual(body["source_platform"], "peer_cccc_http")
+        self.assertEqual(body["source_platform"], "federation_session")
         self.assertEqual(body["source_user_id"], "peer_source")
         self.assertEqual(body["src_group_id"], "g_local")
         self.assertEqual(body["src_event_id"], "local-event-1")

@@ -16,7 +16,7 @@ from .ops import handle_remote_send
 
 logger = logging.getLogger("cccc.daemon.server")
 
-_RELAY_SOURCE_PLATFORMS = frozenset({"federation_session", "peer_cccc_http"})
+_RELAY_SOURCE_PLATFORMS = frozenset({"federation_session"})
 
 
 def relay_federation_reply(
@@ -118,7 +118,6 @@ def _registration_for_remote_peer(*, group_id: str, remote_group_id: str, remote
     transport_name = str(transport or "").strip()
     if not gid or not remote_gid or not peer_id:
         return ""
-    fallback_registration_id = ""
     session_fallback_registration_id = ""
     for trust in list_trusts(group_id=gid):
         if str(trust.get("status") or "") != "active":
@@ -131,7 +130,7 @@ def _registration_for_remote_peer(*, group_id: str, remote_group_id: str, remote
         if not registration_id:
             continue
         trust_transport = str(trust.get("transport") or "").strip()
-        if trust_transport == transport_name:
+        if trust_transport == transport_name and _trust_route_is_sendable(trust):
             return registration_id
         if not _trust_route_is_sendable(trust):
             continue
@@ -139,15 +138,28 @@ def _registration_for_remote_peer(*, group_id: str, remote_group_id: str, remote
             if not session_fallback_registration_id:
                 session_fallback_registration_id = registration_id
             continue
-        if not fallback_registration_id:
-            fallback_registration_id = registration_id
-    return fallback_registration_id or session_fallback_registration_id
+    return session_fallback_registration_id
 
 
 def _trust_route_is_sendable(trust: Dict[str, Any]) -> bool:
     transport = str(trust.get("transport") or "").strip()
-    if transport == "peer_cccc_http":
-        return True
     if transport == "federation_session":
-        return True
-    return True
+        if str(trust.get("remote_endpoint") or "").strip():
+            return True
+        return _has_active_session(trust)
+    return False
+
+
+def _has_active_session(trust: Dict[str, Any]) -> bool:
+    try:
+        from .ws_session import get_session
+    except Exception:
+        return False
+    return (
+        get_session(
+            target_group_id=str(trust.get("group_id") or "").strip(),
+            src_group_id=str(trust.get("remote_group_id") or "").strip(),
+            remote_peer_id=str(trust.get("remote_peer_id") or "").strip(),
+        )
+        is not None
+    )

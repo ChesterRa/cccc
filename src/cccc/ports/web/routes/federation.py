@@ -34,13 +34,7 @@ from ....kernel.federation.pairing import (
     upsert_pairing_outbound,
 )
 from ....kernel.federation.pairing_remote import build_connection_payload, sync_remote_pairing_outbound, submit_remote_pairing_request
-from ....kernel.federation.registration import (
-    delete_registration,
-    get_registration,
-    list_registrations,
-    normalize_url,
-    upsert_registration,
-)
+from ....kernel.federation.registration import delete_registration, get_registration, list_registrations
 from ..schemas import RouteContext, check_group, get_principal, require_user
 
 # Registration records may carry a credential reference. Public projections must
@@ -60,26 +54,6 @@ _REGISTRATION_PUBLIC_FIELDS = (
     "last_sync_at",
     "last_error",
 )
-
-
-class FederationVerifyRequest(BaseModel):
-    group_id: str
-    url: str
-    transport: str = "peer_cccc_http"
-    remote_group_id: str = ""
-    remote_peer_id: str = ""
-    multiaddrs: List[str] = Field(default_factory=list)
-    credential_ref: str = ""
-
-
-class FederationRegisterRequest(BaseModel):
-    group_id: str
-    url: str
-    transport: str = "peer_cccc_http"
-    remote_group_id: str = ""
-    remote_peer_id: str = ""
-    multiaddrs: List[str] = Field(default_factory=list)
-    credential_ref: str = ""
 
 
 class FederationUnregisterRequest(BaseModel):
@@ -105,6 +79,7 @@ class PairingRequestCreateRequest(BaseModel):
     pairing_code: str
     requester_group_id: str
     requester_peer_id: str
+    requester_endpoint: str = ""
     requester_multiaddrs: List[str] = Field(default_factory=list)
     invite_id: str = ""
 
@@ -116,6 +91,7 @@ class RemotePairingRequestCreateRequest(BaseModel):
     invite_id: str = Field(min_length=1, max_length=128)
     requester_group_id: str = Field(min_length=1, max_length=256)
     requester_group_title: str = Field(default="", max_length=256)
+    requester_endpoint: str = Field(default="", max_length=2048)
     requester_peer_id: str = Field(min_length=1, max_length=512)
     requester_node_id: str = Field(default="", max_length=512)
     requester_multiaddrs: List[str] = Field(default_factory=list, max_length=32)
@@ -181,39 +157,6 @@ def _filter_local_group_scoped_items(request: Request, items: List[Dict[str, Any
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     _ = ctx
     router = APIRouter(prefix="/api/federation", dependencies=[Depends(require_user)])
-
-    @router.post("/verify")
-    async def federation_verify(request: Request, req: FederationVerifyRequest) -> Dict[str, Any]:
-        _require_group_or_403(request, req.group_id)
-        norm = normalize_url(req.url)
-        if not norm:
-            raise HTTPException(status_code=400, detail={"code": "invalid_url", "message": "url is required", "details": {}})
-        return {
-            "ok": True,
-            "result": {
-                "verified": True,
-                "group_id": str(req.group_id or "").strip(),
-                "normalized_url": norm,
-                "transport": str(req.transport or "peer_cccc_http").strip() or "peer_cccc_http",
-            },
-        }
-
-    @router.post("/register")
-    async def federation_register(request: Request, req: FederationRegisterRequest) -> Dict[str, Any]:
-        _require_group_or_403(request, req.group_id)
-        try:
-            record = upsert_registration(
-                req.group_id,
-                req.url,
-                transport=req.transport,
-                remote_group_id=req.remote_group_id,
-                remote_peer_id=req.remote_peer_id,
-                multiaddrs=req.multiaddrs,
-                credential_ref=req.credential_ref,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
-        return {"ok": True, "result": {"registration": _project_registration(record)}}
 
     @router.get("/status")
     async def federation_status(request: Request, group_id: str = "") -> Dict[str, Any]:
@@ -316,6 +259,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 requester_group_id=req.requester_group_id,
                 requester_group_title="",
                 requester_peer_id=req.requester_peer_id,
+                requester_endpoint=req.requester_endpoint,
                 requester_multiaddrs=req.requester_multiaddrs,
                 invite_id=req.invite_id,
             )
@@ -447,6 +391,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 requester_group_id=req.requester_group_id,
                 requester_group_title=req.requester_group_title,
                 requester_peer_id=req.requester_peer_id,
+                requester_endpoint=req.requester_endpoint,
                 requester_multiaddrs=req.requester_multiaddrs,
                 invite_id=req.invite_id,
             )

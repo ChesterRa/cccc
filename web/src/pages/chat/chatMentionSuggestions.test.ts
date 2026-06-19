@@ -163,14 +163,14 @@ describe("buildComposerMentionSuggestions", () => {
     ]);
   });
 
-  it("builds group suggestions for active HTTP federation routes", () => {
+  it("builds group suggestions for active federation session routes", () => {
     const remoteGroups = buildFederationRouteGroups([
       {
         trust_id: "ptrust_9263feebd4920ad3",
         request_id: "preq_1",
         registration_id: "reg_81761c7e6e309356",
         status: "active",
-        transport: "peer_cccc_http",
+        transport: "federation_session",
         group_id: "g_owner",
         remote_group_id: "g_0fb5f39478cc",
         remote_group_title: "CCCC Cross Test",

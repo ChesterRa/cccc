@@ -130,6 +130,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                 requester_group_id="g_remote",
                 requester_group_title="Remote Group",
                 requester_peer_id="peer_remote",
+                requester_endpoint="http://remote.example:8848",
             )
             approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
 

@@ -243,6 +243,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_peer_id": "peer_old",
                             "registration_id": "reg_old",
                             "transport": "federation_session",
+                            "remote_endpoint": "http://old.example:8848",
                             "status": "active",
                             "created_at": "2025-01-01T00:00:00Z",
                             "updated_at": "2025-01-01T00:00:00Z",
@@ -254,6 +255,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
                             "transport": "federation_session",
+                            "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",
@@ -362,6 +364,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
                             "transport": "federation_session",
+                            "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",
@@ -414,7 +417,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_peer_http_federation_message_relays_over_remote_send(self) -> None:
+    def test_reply_to_federation_session_message_relays_over_remote_send_route(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
@@ -422,7 +425,7 @@ class TestChatOps(unittest.TestCase):
             from cccc.kernel.group import load_group
             from cccc.kernel.ledger import append_event
 
-            create, _ = self._call("group_create", {"title": "chat-peer-http-reply", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-federation-session-reply", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -433,13 +436,14 @@ class TestChatOps(unittest.TestCase):
                     "requests": {},
                     "outbounds": {},
                     "trusts": {
-                        "ptrust_http": {
-                            "trust_id": "ptrust_http",
+                        "ptrust_session": {
+                            "trust_id": "ptrust_session",
                             "group_id": group_id,
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
-                            "registration_id": "reg_http",
-                            "transport": "peer_cccc_http",
+                            "registration_id": "reg_session",
+                            "transport": "federation_session",
+                            "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",
@@ -457,9 +461,9 @@ class TestChatOps(unittest.TestCase):
                 scope_key="",
                 by="federation:peer_remote",
                 data=ChatMessageData(
-                    text="hello via http",
+                    text="hello via federation session",
                     to=["@foreman"],
-                    source_platform="peer_cccc_http",
+                    source_platform="federation_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                     src_event_id="remote-event-1",
@@ -481,19 +485,19 @@ class TestChatOps(unittest.TestCase):
                         "group_id": group_id,
                         "by": "user",
                         "reply_to": str(inbound_event.get("id") or ""),
-                        "text": "reply via http relay",
+                        "text": "reply via federation session",
                         "to": ["@foreman"],
                     },
                 )
 
             self.assertTrue(reply.ok, getattr(reply, "error", None))
             self.assertEqual(len(captured), 1)
-            self.assertEqual(captured[0]["registration_id"], "reg_http")
+            self.assertEqual(captured[0]["registration_id"], "reg_session")
             self.assertTrue(str(captured[0]["idempotency_key"]).startswith("reply:"))
             self.assertNotEqual(captured[0]["idempotency_key"], captured[0].get("source_event_id"))
             self.assertTrue(str(captured[0].get("source_event_id") or "").strip())
             self.assertEqual(captured[0].get("reply_to_remote_event_id"), "remote-event-1")
-            self.assertEqual(captured[0]["payload"]["text"], "reply via http relay")
+            self.assertEqual(captured[0]["payload"]["text"], "reply via federation session")
         finally:
             cleanup()
 
@@ -523,6 +527,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
                             "transport": "federation_session",
+                            "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
                             "updated_at": "2026-01-01T00:00:00Z",

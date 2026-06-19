@@ -1325,6 +1325,7 @@ MCP_TOOLS = [
                 "pairing_code": {"type": "string"},
                 "requester_group_id": {"type": "string"},
                 "requester_peer_id": {"type": "string"},
+                "requester_endpoint": {"type": "string"},
                 "requester_multiaddrs": {"type": "array", "items": {"type": "string"}},
             },
             required=["pairing_code", "requester_group_id", "requester_peer_id"],

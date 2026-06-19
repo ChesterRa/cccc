@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -19,7 +20,7 @@ class TestWebFederationRoutes(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-        return td, cleanup
+        return Path(td), cleanup
 
     def _client(self) -> TestClient:
         from cccc.ports.web.app import create_app
@@ -37,182 +38,83 @@ class TestWebFederationRoutes(unittest.TestCase):
     def _hdr(token: str) -> dict:
         return {"Authorization": f"Bearer {token}"}
 
-    def test_register_status_unregister_happy_path(self) -> None:
+    def test_direct_verify_and_register_routes_are_not_exposed(self) -> None:
         _, cleanup = self._with_home()
         try:
             admin, _ = self._tokens()
             client = self._client()
 
-            r = client.post(
-                "/api/federation/register",
-                json={"group_id": "g_local", "url": "HTTPS://hub.example:443/", "remote_group_id": "g_remote", "credential_ref": "sec_remote_peer"},
-                headers=self._hdr(admin),
-            )
-            self.assertEqual(r.status_code, 200, r.text)
-            rec = r.json()["result"]["registration"]
-            self.assertEqual(rec["url"], "https://hub.example")
-            self.assertEqual(rec["group_id"], "g_local")
-            self.assertNotIn("token", rec)
-            self.assertNotIn("credential_ref", rec)
-            rid = rec["registration_id"]
-
-            s = client.get("/api/federation/status", headers=self._hdr(admin))
-            self.assertEqual(s.status_code, 200)
-            regs = s.json()["result"]["registrations"]
-            self.assertEqual([x["registration_id"] for x in regs], [rid])
-            self.assertNotIn("credential_ref", regs[0])
-            self.assertNotIn("sec_remote_peer", s.text)
-
-            u = client.post("/api/federation/unregister", json={"registration_id": rid}, headers=self._hdr(admin))
-            self.assertEqual(u.status_code, 200)
-            self.assertTrue(u.json()["result"]["deleted"])
-        finally:
-            cleanup()
-
-    def test_verify_rejects_unauthorized_group(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            _, scoped = self._tokens()  # scoped only to g_local
-            client = self._client()
-            ok = client.post(
+            verify = client.post(
                 "/api/federation/verify",
                 json={"group_id": "g_local", "url": "https://hub.example/"},
-                headers=self._hdr(scoped),
-            )
-            self.assertEqual(ok.status_code, 200, ok.text)
-
-            denied = client.post(
-                "/api/federation/verify",
-                json={"group_id": "g_forbidden", "url": "https://hub.example/"},
-                headers=self._hdr(scoped),
-            )
-            self.assertEqual(denied.status_code, 403)
-        finally:
-            cleanup()
-
-    def test_register_rejects_unauthorized_group(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            _, scoped = self._tokens()
-            client = self._client()
-            r = client.post(
-                "/api/federation/register",
-                json={"group_id": "g_forbidden", "url": "https://hub.example/"},
-                headers=self._hdr(scoped),
-            )
-            self.assertEqual(r.status_code, 403)
-        finally:
-            cleanup()
-
-    def test_register_rejects_token_shaped_credential_ref(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            admin, _ = self._tokens()
-            client = self._client()
-            r = client.post(
-                "/api/federation/register",
-                json={"group_id": "g_local", "url": "https://hub.example/", "credential_ref": "acc_deadbeefdeadbeef"},
                 headers=self._hdr(admin),
             )
-            self.assertEqual(r.status_code, 400)
-            self.assertNotIn("acc_deadbeefdeadbeef", r.text)
-        finally:
-            cleanup()
-
-    def test_register_rejects_raw_credential_ref_without_echoing_secret(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            admin, _ = self._tokens()
-            client = self._client()
-            raw = "ghp_1234567890abcdef1234567890abcdef123456"
-            r = client.post(
+            register = client.post(
                 "/api/federation/register",
-                json={"group_id": "g_local", "url": "https://hub.example/", "remote_group_id": "g_remote", "credential_ref": raw},
+                json={"group_id": "g_local", "url": "https://hub.example/", "remote_group_id": "g_remote"},
                 headers=self._hdr(admin),
             )
-            self.assertEqual(r.status_code, 400)
-            self.assertNotIn(raw, r.text)
+
+            self.assertEqual(verify.status_code, 404)
+            self.assertEqual(register.status_code, 404)
         finally:
             cleanup()
 
-    def test_register_accepts_credential_reference(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            admin, _ = self._tokens()
-            client = self._client()
-            r = client.post(
-                "/api/federation/register",
-                json={"group_id": "g_local", "url": "https://hub.example/", "remote_group_id": "g_remote", "credential_ref": "fsec_remote_peer"},
-                headers=self._hdr(admin),
-            )
-            self.assertEqual(r.status_code, 200, r.text)
-            self.assertNotIn("fsec_remote_peer", r.text)
-        finally:
-            cleanup()
+    def test_status_filters_pairing_created_registrations_to_allowed_groups(self) -> None:
+        from cccc.kernel.federation.pairing import _upsert_approved_session_registration
 
-    def test_register_rejects_direct_federation_session_registration(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            admin, _ = self._tokens()
-            client = self._client()
-            r = client.post(
-                "/api/federation/register",
-                json={
-                    "group_id": "g_local",
-                    "url": "session://peer-remote",
-                    "transport": "federation_session",
-                    "remote_group_id": "g_remote",
-                    "remote_peer_id": "peer-remote",
-                    "credential_ref": "fsec_remote_peer",
-                },
-                headers=self._hdr(admin),
-            )
-            self.assertEqual(r.status_code, 400)
-            self.assertIn("pairing", r.text)
-            self.assertNotIn("fsec_remote_peer", r.text)
-        finally:
-            cleanup()
-
-    def test_status_filters_to_allowed_groups(self) -> None:
-        _, cleanup = self._with_home()
+        home, cleanup = self._with_home()
         try:
             admin, scoped = self._tokens()
             client = self._client()
-            client.post("/api/federation/register", json={"group_id": "g_local", "url": "https://a/", "remote_group_id": "g_ra"}, headers=self._hdr(admin))
-            client.post("/api/federation/register", json={"group_id": "g_other", "url": "https://b/", "remote_group_id": "g_rb"}, headers=self._hdr(admin))
+            _upsert_approved_session_registration(
+                "g_local",
+                "https://a.example",
+                remote_group_id="g_ra",
+                remote_peer_id="peer-a",
+                home=home,
+            )
+            _upsert_approved_session_registration(
+                "g_other",
+                "https://b.example",
+                remote_group_id="g_rb",
+                remote_peer_id="peer-b",
+                home=home,
+            )
 
-            # admin sees both; scoped sees only g_local
             admin_regs = client.get("/api/federation/status", headers=self._hdr(admin)).json()["result"]["registrations"]
             self.assertEqual({x["group_id"] for x in admin_regs}, {"g_local", "g_other"})
+            self.assertTrue(all("credential_ref" not in x for x in admin_regs))
 
             scoped_regs = client.get("/api/federation/status", headers=self._hdr(scoped)).json()["result"]["registrations"]
             self.assertEqual({x["group_id"] for x in scoped_regs}, {"g_local"})
         finally:
             cleanup()
 
-    def test_delivery_status_group_scope_and_no_token_leak(self) -> None:
+    def test_delivery_status_group_scope_and_no_secret_leak(self) -> None:
         from cccc.daemon.federation.remote_dispatch import enqueue_remote_send
+        from cccc.kernel.federation.pairing import _upsert_approved_session_registration
 
-        _, cleanup = self._with_home()
+        home, cleanup = self._with_home()
         try:
             admin, scoped = self._tokens()
             client = self._client()
-            rec = client.post(
-                "/api/federation/register",
-                json={"group_id": "g_other", "url": "https://hub/", "remote_group_id": "g_r"},
-                headers=self._hdr(admin),
-            ).json()["result"]["registration"]
+            rec = _upsert_approved_session_registration(
+                "g_other",
+                "https://remote.example",
+                remote_group_id="g_r",
+                remote_peer_id="peer-r",
+                home=home,
+            )
             rid = rec["registration_id"]
-            enqueue_remote_send(src_group_id="g_other", registration_id=rid, idempotency_key="k1", payload={"text": "hi"})
+            enqueue_remote_send(src_group_id="g_other", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}, home=home)
 
-            # admin (authorized for g_other) reads the receipt
             ok = client.get(f"/api/federation/registrations/{rid}/deliveries/k1", headers=self._hdr(admin))
             self.assertEqual(ok.status_code, 200, ok.text)
             receipt = ok.json()["result"]["receipt"]
             self.assertEqual(receipt["status"], "queued")
             self.assertNotIn("acc_", ok.text)
 
-            # scoped user (only g_local) must be denied this g_other registration
             denied = client.get(f"/api/federation/registrations/{rid}/deliveries/k1", headers=self._hdr(scoped))
             self.assertEqual(denied.status_code, 403)
         finally:

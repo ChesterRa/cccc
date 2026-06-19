@@ -71,6 +71,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                     "pairing_code": invite_body["pairing_code"],
                     "requester_group_id": "g_remote",
                     "requester_peer_id": "peer_remote",
+                    "requester_endpoint": "http://remote.example:8848",
                     "requester_multiaddrs": ["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
                 },
                 headers=headers,
@@ -91,6 +92,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
             self.assertEqual(approved.status_code, 200, approved.text)
             registration = approved.json()["result"]["registration"]
             self.assertEqual(registration["transport"], "federation_session")
+            self.assertEqual(registration["url"], "http://remote.example:8848")
             self.assertEqual(registration["remote_peer_id"], "peer_remote")
             self.assertNotIn("credential_ref", registration)
             self.assertNotIn(invite_body["pairing_code"], approved.text)
@@ -155,6 +157,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                     "pairing_code": invite_body["pairing_code"],
                     "requester_group_id": "g_remote",
                     "requester_peer_id": peer_id,
+                    "requester_endpoint": "http://remote.example:8848",
                 },
                 headers=headers,
             )
@@ -213,6 +216,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                     "pairing_code": invite_body["pairing_code"],
                     "requester_group_id": "g_remote",
                     "requester_peer_id": "peer_remote",
+                    "requester_endpoint": "http://remote.example:8848",
                 },
                 headers=headers,
             )
@@ -811,6 +815,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                     payload_arg["code"],
                     requester_group_id=local_group_id,
                     requester_peer_id="peer_joiner",
+                    requester_endpoint="http://joiner.example:8848",
                     invite_id=payload_arg["nonce"],
                 )
                 return {
@@ -864,6 +869,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                     payload_arg["code"],
                     requester_group_id=local_group_id,
                     requester_peer_id="peer_joiner",
+                    requester_endpoint="http://joiner.example:8848",
                     invite_id=payload_arg["nonce"],
                 )
                 return {
@@ -913,12 +919,12 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
             self.assertEqual(trust["remote_group_id"], "g_issuer")
             self.assertEqual(trust["remote_peer_id"], payload["issuer_peer_id"])
             self.assertEqual(trust["remote_endpoint"], "http://127.0.0.1:5555")
-            self.assertEqual(trust["transport"], "peer_cccc_http")
+            self.assertEqual(trust["transport"], "federation_session")
 
             status = client.get("/api/federation/status?group_id=g_joiner", headers=headers)
             self.assertEqual(status.status_code, 200, status.text)
             registration = status.json()["result"]["registrations"][0]
-            self.assertEqual(registration["transport"], "peer_cccc_http")
+            self.assertEqual(registration["transport"], "federation_session")
             self.assertEqual(registration["url"], "http://127.0.0.1:5555")
             self.assertEqual(registration["remote_group_id"], "g_issuer")
             self.assertEqual(registration["remote_peer_id"], payload["issuer_peer_id"])
@@ -946,6 +952,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                         "pairing_code": invite_body["pairing_code"],
                         "requester_group_id": remote_group_id,
                         "requester_peer_id": f"peer_{remote_group_id}",
+                        "requester_endpoint": f"http://{remote_group_id}.example:8848",
                     },
                     headers=admin_headers,
                 )
@@ -984,6 +991,7 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                         "pairing_code": invite_body["pairing_code"],
                         "requester_group_id": remote_group_id,
                         "requester_peer_id": f"peer_{remote_group_id}",
+                        "requester_endpoint": f"http://{remote_group_id}.example:8848",
                     },
                     headers=admin_headers,
                 )

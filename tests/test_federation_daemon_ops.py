@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class _CountingTransport:
-    transport = "peer_cccc_http"
+    transport = "registry_hub"
     capabilities = frozenset()
 
     def __init__(self, result):
@@ -41,7 +41,7 @@ class TestFederationDaemonOps(unittest.TestCase):
         return upsert_registration(
             "g_local",
             "https://peer.example/",
-            transport="peer_cccc_http",
+            transport="registry_hub",
             remote_group_id="g_remote",
             credential_ref=credential_ref,
         )
@@ -59,7 +59,7 @@ class TestFederationDaemonOps(unittest.TestCase):
         try:
             reg = self._registration()
             fake = _CountingTransport(
-                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="peer_cccc_http")
+                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub")
             )
             resp = handle_remote_send(
                 {
@@ -108,7 +108,7 @@ class TestFederationDaemonOps(unittest.TestCase):
         try:
             reg = self._registration(credential_ref="sec_remote_peer")
             fake = _CountingTransport(
-                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="peer_cccc_http")
+                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub")
             )
             resp = handle_remote_send(
                 {
@@ -137,7 +137,7 @@ class TestFederationDaemonOps(unittest.TestCase):
         try:
             reg = self._registration(credential_ref="sec_remote_peer")
             fake = _CountingTransport(
-                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="peer_cccc_http")
+                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub")
             )
             resp = handle_remote_send(
                 {

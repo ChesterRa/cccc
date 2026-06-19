@@ -18,10 +18,8 @@ from .base import (
     register_transport,
 )
 from .federation_session import FederationSessionTransport
-from .peer_cccc_http import PeerCcccHttpTransport
 
 register_transport(FederationSessionTransport())
-register_transport(PeerCcccHttpTransport())
 
 __all__ = [
     "RemoteMessageEnvelope",
@@ -33,5 +31,4 @@ __all__ = [
     "get_transport",
     "register_transport",
     "FederationSessionTransport",
-    "PeerCcccHttpTransport",
 ]

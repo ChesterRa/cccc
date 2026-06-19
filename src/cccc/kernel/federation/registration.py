@@ -36,6 +36,7 @@ _RAW_SECRET_PATTERNS = (
     re.compile(r"^(?:ghp|github_pat|glpat|xox[baprs]|sk|pat|bearer)[A-Za-z0-9_-]*", re.IGNORECASE),
     _JWT_SHAPED_REF,
 )
+_SUPPORTED_TRANSPORTS = frozenset({"registry_hub", "federation_session"})
 
 
 def is_valid_credential_ref(credential_ref: str) -> bool:
@@ -163,13 +164,11 @@ def upsert_registration(
     cred_ref = str(credential_ref or "").strip()
     _reject_raw_credential_ref(cred_ref)
     transport_name = str(transport or "registry_hub").strip() or "registry_hub"
+    if transport_name not in _SUPPORTED_TRANSPORTS:
+        raise ValueError(f"unsupported federation transport: {transport_name}")
     remote_gid = str(remote_group_id or "").strip()
     remote_pid = str(remote_peer_id or "").strip()
     addrs = [str(addr or "").strip() for addr in (multiaddrs or []) if str(addr or "").strip()]
-    # The peer_cccc_http transport posts to /api/v1/groups/<remote_group_id>/send;
-    # an empty remote group id produces a broken target URL, so require it.
-    if transport_name == "peer_cccc_http" and not remote_gid:
-        raise ValueError("remote_group_id is required for the peer_cccc_http transport")
     if transport_name == "federation_session":
         if str(status or "active").strip() == "active" and not _approved_by_pairing:
             raise ValueError(f"active {transport_name} registrations must be created by pairing approval")

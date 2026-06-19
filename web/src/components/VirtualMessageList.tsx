@@ -24,6 +24,7 @@ import {
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
+import { buildFederationDisplayNameMap } from "./virtualMessageListFederation";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
   if (!previousMessage || !message) return false;
@@ -294,7 +295,14 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [actors]);
 
   // Create display name map once at the list level (not per-message)
-  const displayNameMap = useActorDisplayNameMap(actors);
+  const actorDisplayNameMap = useActorDisplayNameMap(actors);
+  const displayNameMap = useMemo(() => {
+    const map = new Map(actorDisplayNameMap);
+    for (const [id, name] of buildFederationDisplayNameMap(displayMessages)) {
+      map.set(id, name);
+    }
+    return map;
+  }, [actorDisplayNameMap, displayMessages]);
 
   // Stable ref for messages — used by getEstimatedSize to avoid rebuilding
   // the callback (and thus the virtualizer) on every messages change.

@@ -270,6 +270,7 @@ def create_pairing_request(
     requester_group_id: str,
     requester_group_title: str = "",
     requester_peer_id: str,
+    requester_endpoint: str = "",
     requester_multiaddrs: Optional[List[str]] = None,
     invite_id: str = "",
     home: Optional[Path] = None,
@@ -280,6 +281,7 @@ def create_pairing_request(
     requester_gid = str(requester_group_id or "").strip()
     requester_title = str(requester_group_title or "").strip()
     requester_pid = str(requester_peer_id or "").strip()
+    endpoint = str(requester_endpoint or "").strip()
     if not requester_gid:
         raise ValueError("requester_group_id is required")
     if not requester_pid:
@@ -308,6 +310,7 @@ def create_pairing_request(
         "group_id": str(invite.get("group_id") or ""),
         "remote_group_id": requester_gid,
         "remote_group_title": requester_title,
+        "remote_endpoint": endpoint,
         "remote_peer_id": requester_pid,
         "multiaddrs": [],
         "transport": str(invite.get("transport") or "federation_session").strip() or "federation_session",
@@ -414,6 +417,7 @@ def approve_pairing_request(
         "group_id": registration["group_id"],
         "remote_group_id": registration["remote_group_id"],
         "remote_group_title": str(request.get("remote_group_title") or ""),
+        "remote_endpoint": str(request.get("remote_endpoint") or ""),
         "remote_peer_id": registration["remote_peer_id"],
         "multiaddrs": registration.get("multiaddrs") or [],
         "transport": registration.get("transport") or "",
@@ -599,12 +603,13 @@ def delete_pairing_outbound(outbound_id: str, *, home: Optional[Path] = None) ->
 
 def _registration_from_request(request: Dict[str, Any], *, home: Optional[Path]) -> Dict[str, Any]:
     remote_peer_id = str(request.get("remote_peer_id") or "").strip()
+    remote_endpoint = str(request.get("remote_endpoint") or "").strip()
     transport = str(request.get("transport") or "federation_session").strip() or "federation_session"
     if transport not in _PAIRING_TRANSPORTS:
         raise ValueError(f"unsupported pairing transport: {transport}")
     return _upsert_approved_session_registration(
         str(request.get("group_id") or ""),
-        f"session://{remote_peer_id}",
+        remote_endpoint or _session_only_registration_url(remote_peer_id),
         remote_group_id=str(request.get("remote_group_id") or ""),
         remote_peer_id=remote_peer_id,
         home=home,
@@ -634,6 +639,8 @@ def _upsert_approved_session_registration(
     remote_peer_id: str,
     home: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    if str(url or "").strip().startswith("session://"):
+        raise ValueError("federation_session registration requires a concrete remote endpoint")
     return upsert_registration(
         group_id,
         url,
@@ -647,25 +654,11 @@ def _upsert_approved_session_registration(
     )
 
 
-def _upsert_approved_http_registration(
-    group_id: str,
-    issuer_endpoint: str,
-    *,
-    remote_group_id: str,
-    remote_peer_id: str,
-    credential_ref: str = "",
-    home: Optional[Path] = None,
-) -> Dict[str, Any]:
-    return upsert_registration(
-        group_id,
-        issuer_endpoint,
-        transport="peer_cccc_http",
-        remote_group_id=remote_group_id,
-        remote_peer_id=remote_peer_id,
-        credential_ref=credential_ref,
-        status="active",
-        home=home,
-    )
+def _session_only_registration_url(remote_peer_id: str) -> str:
+    peer_id = str(remote_peer_id or "").strip()
+    if not peer_id:
+        return "federation-session://unknown"
+    return f"federation-session://{peer_id}"
 
 
 def _trust_for_registration(registration_id: str, store: Dict[str, Dict[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:

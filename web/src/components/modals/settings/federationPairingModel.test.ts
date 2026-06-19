@@ -150,7 +150,7 @@ describe("federationPairingModel", () => {
 
   it("filters federation session registrations from mixed status data", () => {
     const regs = [
-      { registration_id: "r1", transport: "peer_cccc_http" },
+      { registration_id: "r1", transport: "registry_hub" },
       { registration_id: "r2", transport: "federation_session" },
     ] as FederationRegistration[];
     expect(filterFederationSessionRegistrations(regs).map((r) => r.registration_id)).toEqual(["r2"]);

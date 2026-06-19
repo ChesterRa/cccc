@@ -41,10 +41,12 @@ class TestFederationDispatch(unittest.TestCase):
 
         return upsert_registration(
             "g_local",
-            "https://peer.example/",
-            transport="fake",
+            "federation-session://peer-remote",
+            transport="federation_session",
             remote_group_id="g_remote",
+            remote_peer_id="peer-remote",
             credential_ref="cred-1",
+            _approved_by_pairing=True,
         )
 
     def test_enqueue_records_queued_idempotently(self) -> None:
@@ -191,7 +193,7 @@ class TestFederationDispatch(unittest.TestCase):
         try:
             reg = _upsert_approved_session_registration(
                 "g_local",
-                "session://peer-remote",
+                "http://remote.example:8848",
                 remote_group_id="g_remote",
                 remote_peer_id="peer-remote",
             )
@@ -212,7 +214,7 @@ class TestFederationDispatch(unittest.TestCase):
                 registration_id=rid, idempotency_key="k1", transport_factory=lambda name: Capturing(), credential="s"
             )
             target = captured["target"]
-            self.assertEqual(target.url, "session://peer-remote")
+            self.assertEqual(target.url, "http://remote.example:8848")
             self.assertEqual(target.remote_group_id, "g_remote")
             self.assertEqual(target.remote_peer_id, "peer-remote")
             self.assertEqual(target.multiaddrs, ())

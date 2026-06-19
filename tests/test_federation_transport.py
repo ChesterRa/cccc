@@ -39,14 +39,11 @@ class TestFederationTransport(unittest.TestCase):
     def test_registry_returns_registered_transport(self) -> None:
         from cccc.daemon.federation.transports.base import UnknownTransportError, get_transport
 
-        t = get_transport("peer_cccc_http")
-        self.assertEqual(t.transport, "peer_cccc_http")
-
         session = get_transport("federation_session")
         self.assertEqual(session.transport, "federation_session")
 
         with self.assertRaises(UnknownTransportError):
-            get_transport("libp2p_cccc")
+            get_transport("peer_cccc_http")
 
     def test_federation_session_transport_uses_active_websocket_session(self) -> None:
         from cccc.contracts.v1.federation import RemoteSendPayload
@@ -79,7 +76,7 @@ class TestFederationTransport(unittest.TestCase):
                     src_group_id="g_local",
                     source_peer_id="peer_local",
                     target=RemoteTarget(
-                        url="session://peer_remote",
+                        url="federation-session://peer_remote",
                         remote_group_id="g_remote",
                         remote_peer_id="peer_remote",
                         multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
@@ -129,7 +126,7 @@ class TestFederationTransport(unittest.TestCase):
                     src_group_id="g_b",
                     source_peer_id="peer_b",
                     target=RemoteTarget(
-                        url="session://peer_a",
+                        url="federation-session://peer_a",
                         remote_group_id="g_a",
                         remote_peer_id="peer_a",
                         multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_a",),
@@ -173,7 +170,7 @@ class TestFederationTransport(unittest.TestCase):
                     src_group_id="g_b",
                     source_peer_id="peer_b",
                     target=RemoteTarget(
-                        url="session://peer_a",
+                        url="federation-session://peer_a",
                         remote_group_id="g_a",
                         remote_peer_id="peer_a",
                         multiaddrs=(),
@@ -199,7 +196,7 @@ class TestFederationTransport(unittest.TestCase):
                 src_group_id="g_local",
                 source_peer_id="peer_local",
                 target=RemoteTarget(
-                    url="session://peer_remote",
+                    url="federation-session://peer_remote",
                     remote_group_id="g_remote",
                     remote_peer_id="peer_remote",
                     multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
@@ -455,7 +452,7 @@ class TestFederationTransport(unittest.TestCase):
             {
                 "trust_id": "t1",
                 "status": "active",
-                "transport": "peer_cccc_http",
+                "transport": "registry_hub",
                 "group_id": "g_local",
                 "remote_group_id": "g_remote",
                 "remote_peer_id": "peer_remote",
@@ -513,271 +510,6 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(started[0]["remote_group_id"], "g_session")
         self.assertEqual(started[0]["remote_peer_id"], "peer_session")
 
-    def _envelope(self, *, attachments=None, refs=None):
-        from cccc.contracts.v1.federation import RemoteSendPayload
-        from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
-
-        return RemoteMessageEnvelope(
-            transport="peer_cccc_http",
-            src_group_id="g_local",
-            source_peer_id="peer-local",
-            target=RemoteTarget(url="https://peer.example", remote_group_id="g_remote"),
-            payload=RemoteSendPayload(
-                text="hi",
-                attachments=attachments or [],
-                refs=refs or [],
-            ),
-            idempotency_key="k1",
-            credential="secret-token",
-        )
-
-    def test_peer_http_includes_explicit_source_multiaddrs_when_available(self) -> None:
-        from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        captured = {}
-
-        def fake_post(url, body, credential):
-            captured["body"] = dict(body)
-            return (200, {"event_id": "remote-123"})
-
-        envelope = self._envelope()
-        envelope = RemoteMessageEnvelope(
-            transport=envelope.transport,
-            src_group_id=envelope.src_group_id,
-            source_peer_id=envelope.source_peer_id,
-            source_multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer-local",),
-            target=RemoteTarget(
-                url=envelope.target.url,
-                remote_group_id=envelope.target.remote_group_id,
-                remote_peer_id="peer-remote",
-            ),
-            payload=envelope.payload,
-            idempotency_key=envelope.idempotency_key,
-            credential=envelope.credential,
-        )
-
-        res = PeerCcccHttpTransport(http_post=fake_post).deliver(envelope)
-
-        self.assertTrue(res.ok)
-        self.assertEqual(captured["body"].get("source_multiaddrs"), ["/ip4/127.0.0.1/tcp/4001/p2p/peer-local"])
-
-    def test_remote_dispatch_does_not_advertise_local_multiaddr(self) -> None:
-        from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
-        from cccc.daemon.federation.transports.base import RemoteSendResult
-        from cccc.kernel.federation.registration import upsert_registration
-
-        with tempfile.TemporaryDirectory() as td:
-            home = Path(td)
-            old_home = os.environ.get("CCCC_HOME")
-            try:
-                os.environ["CCCC_HOME"] = str(home)
-                registration = upsert_registration(
-                    "g_local",
-                    "https://peer.example",
-                    remote_group_id="g_remote",
-                    remote_peer_id="peer_remote",
-                    transport="peer_cccc_http",
-                    status="active",
-                    home=home,
-                )
-                enqueue_remote_send(
-                    src_group_id="g_local",
-                    registration_id=registration["registration_id"],
-                    idempotency_key="k-advertise",
-                    payload={"text": "hi", "to": ["@foreman"]},
-                    home=home,
-                )
-                captured = {}
-
-                class CaptureTransport:
-                    transport = "peer_cccc_http"
-
-                    def deliver(self, envelope):
-                        captured["source_multiaddrs"] = envelope.source_multiaddrs
-                        return RemoteSendResult(ok=True, status="sent", transport=self.transport, remote_event_id="remote-1")
-
-                deliver_enqueued(
-                    registration_id=registration["registration_id"],
-                    idempotency_key="k-advertise",
-                    home=home,
-                    transport_factory=lambda _name: CaptureTransport(),
-                )
-
-                self.assertEqual(captured["source_multiaddrs"], ())
-            finally:
-                if old_home is None:
-                    os.environ.pop("CCCC_HOME", None)
-                else:
-                    os.environ["CCCC_HOME"] = old_home
-
-    def test_remote_dispatch_does_not_advertise_loopback_without_routable_host(self) -> None:
-        from cccc.daemon.federation.remote_dispatch import deliver_enqueued, enqueue_remote_send
-        from cccc.daemon.federation.transports.base import RemoteSendResult
-        from cccc.kernel.federation.registration import upsert_registration
-
-        with tempfile.TemporaryDirectory() as td:
-            home = Path(td)
-            with _EnvPatch(CCCC_HOME=str(home)):
-                registration = upsert_registration(
-                    "g_local",
-                    "https://peer.example",
-                    remote_group_id="g_remote",
-                    remote_peer_id="peer_remote",
-                    transport="peer_cccc_http",
-                    status="active",
-                    home=home,
-                )
-                enqueue_remote_send(
-                    src_group_id="g_local",
-                    registration_id=registration["registration_id"],
-                    idempotency_key="k-no-loopback",
-                    payload={"text": "hi", "to": ["@foreman"]},
-                    home=home,
-                )
-                captured = {}
-
-                class CaptureTransport:
-                    transport = "peer_cccc_http"
-
-                    def deliver(self, envelope):
-                        captured["source_multiaddrs"] = envelope.source_multiaddrs
-                        return RemoteSendResult(ok=True, status="sent", transport=self.transport, remote_event_id="remote-1")
-
-                deliver_enqueued(
-                    registration_id=registration["registration_id"],
-                    idempotency_key="k-no-loopback",
-                    home=home,
-                    transport_factory=lambda _name: CaptureTransport(),
-                )
-
-                self.assertEqual(captured["source_multiaddrs"], ())
-
-    def test_unsupported_attachments_and_refs_are_permanent(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        t = PeerCcccHttpTransport(http_post=lambda *a, **k: (200, {"event_id": "e1"}))
-
-        res_att = t.deliver(self._envelope(attachments=[{"path": "x"}]))
-        self.assertFalse(res_att.ok)
-        self.assertEqual(res_att.status, "failed")
-        self.assertFalse(res_att.retriable)
-        self.assertEqual(res_att.error_code, "unsupported_attachments")
-
-        res_refs = t.deliver(self._envelope(refs=[{"kind": "url"}]))
-        self.assertFalse(res_refs.ok)
-        self.assertFalse(res_refs.retriable)
-        self.assertEqual(res_refs.error_code, "unsupported_refs")
-
-    def test_success_maps_remote_event_id(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        captured = {}
-
-        def fake_post(url, body, credential):
-            captured["url"] = url
-            captured["credential"] = credential
-            return (200, {"event_id": "remote-123"})
-
-        t = PeerCcccHttpTransport(http_post=fake_post)
-        res = t.deliver(self._envelope())
-        self.assertTrue(res.ok)
-        self.assertEqual(res.status, "sent")
-        self.assertEqual(res.remote_event_id, "remote-123")
-        self.assertEqual(captured["url"], "https://peer.example/api/v1/groups/g_remote/send")
-        self.assertEqual(captured["credential"], "secret-token")
-
-    def test_peer_http_sends_provenance_for_remote_reply_relay(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        captured = {}
-
-        def fake_post(url, body, credential):
-            captured["body"] = dict(body)
-            return (200, {"event_id": "remote-123"})
-
-        envelope = self._envelope()
-        envelope = type(envelope)(
-            transport=envelope.transport,
-            src_group_id=envelope.src_group_id,
-            source_peer_id=envelope.source_peer_id,
-            target=type(envelope.target)(
-                url=envelope.target.url,
-                remote_group_id=envelope.target.remote_group_id,
-                remote_peer_id="peer-remote",
-                multiaddrs=envelope.target.multiaddrs,
-            ),
-            payload=envelope.payload,
-            idempotency_key=envelope.idempotency_key,
-            credential=envelope.credential,
-        )
-
-        res = PeerCcccHttpTransport(http_post=fake_post).deliver(envelope)
-
-        self.assertTrue(res.ok)
-        self.assertEqual(captured["body"].get("source_platform"), "peer_cccc_http")
-        self.assertEqual(captured["body"].get("src_group_id"), "g_local")
-        self.assertEqual(captured["body"].get("src_event_id"), "k1")
-        self.assertEqual(captured["body"].get("source_user_id"), "peer-local")
-
-    def test_success_reads_event_id_from_result_envelope(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        # CCCC Web /send returns an envelope {ok, result: {event: {id}}}.
-        t = PeerCcccHttpTransport(http_post=lambda *a, **k: (200, {"ok": True, "result": {"event": {"id": "remote-123"}}}))
-        res = t.deliver(self._envelope())
-        self.assertTrue(res.ok)
-        self.assertEqual(res.remote_event_id, "remote-123")
-
-    def test_success_reads_event_id_from_legacy_result_envelope(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        t = PeerCcccHttpTransport(http_post=lambda *a, **k: (200, {"ok": True, "result": {"event_id": "legacy-123"}}))
-        res = t.deliver(self._envelope())
-        self.assertTrue(res.ok)
-        self.assertEqual(res.remote_event_id, "legacy-123")
-
-    def test_2xx_error_envelope_is_permanent_failure(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        t = PeerCcccHttpTransport(
-            http_post=lambda *a, **k: (
-                200,
-                {"ok": False, "error": {"code": "invalid_recipient", "message": "unknown recipient"}},
-            )
-        )
-        res = t.deliver(self._envelope())
-        self.assertFalse(res.ok)
-        self.assertEqual(res.status, "failed")
-        self.assertFalse(res.retriable)
-        self.assertEqual(res.remote_event_id or "", "")
-        self.assertEqual(res.error_code, "invalid_recipient")
-        self.assertEqual(res.error_message, "unknown recipient")
-
-    def test_4xx_is_permanent_5xx_is_transient(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        perm = PeerCcccHttpTransport(http_post=lambda *a, **k: (403, {"error": "forbidden"}))
-        rperm = perm.deliver(self._envelope())
-        self.assertFalse(rperm.ok)
-        self.assertFalse(rperm.retriable)
-
-        trans = PeerCcccHttpTransport(http_post=lambda *a, **k: (503, {"error": "unavailable"}))
-        rtrans = trans.deliver(self._envelope())
-        self.assertFalse(rtrans.ok)
-        self.assertTrue(rtrans.retriable)
-
-    def test_connection_exception_is_transient(self) -> None:
-        from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
-        def boom(*a, **k):
-            raise ConnectionError("refused")
-
-        t = PeerCcccHttpTransport(http_post=boom)
-        res = t.deliver(self._envelope())
-        self.assertFalse(res.ok)
-        self.assertTrue(res.retriable)
-
     def _session_envelope(self, *, attachments=None, refs=None):
         from cccc.contracts.v1.federation import RemoteSendPayload
         from cccc.daemon.federation.transports.base import RemoteMessageEnvelope, RemoteTarget
@@ -787,7 +519,7 @@ class TestFederationTransport(unittest.TestCase):
             src_group_id="g_local",
             source_peer_id="peer-local",
             target=RemoteTarget(
-                url="session://peer-remote",
+                url="federation-session://peer-remote",
                 remote_group_id="g_remote",
                 remote_peer_id="peer-remote",
                 multiaddrs=(),

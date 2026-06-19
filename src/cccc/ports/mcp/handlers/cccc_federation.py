@@ -108,6 +108,7 @@ def pairing_request_create(
     pairing_code: str,
     requester_group_id: str,
     requester_peer_id: str,
+    requester_endpoint: str = "",
     requester_multiaddrs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     return {
@@ -115,6 +116,7 @@ def pairing_request_create(
             pairing_code,
             requester_group_id=requester_group_id,
             requester_peer_id=requester_peer_id,
+            requester_endpoint=requester_endpoint,
             requester_multiaddrs=requester_multiaddrs or [],
         )
     }

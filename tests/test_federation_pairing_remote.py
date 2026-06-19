@@ -233,6 +233,7 @@ class TestFederationPairingRemote(unittest.TestCase):
             self.assertEqual(calls[0][0], "http://127.0.0.1:5555/api/federation/pairing/requests/remote")
             self.assertEqual(calls[0][1]["pairing_code"], payload["code"])
             self.assertEqual(calls[0][1]["invite_id"], payload["nonce"])
+            self.assertIn("requester_endpoint", calls[0][1])
             self.assertEqual(calls[0][1]["requester_group_id"], "g_joiner")
             self.assertEqual(result["status"], "submitted")
             self.assertEqual(result["issuer_group_id"], "g_issuer")
@@ -418,19 +419,21 @@ class TestFederationPairingRemote(unittest.TestCase):
                     body["pairing_code"],
                     requester_group_id=body["requester_group_id"],
                     requester_peer_id=body["requester_peer_id"],
+                    requester_endpoint=body["requester_endpoint"],
                     invite_id=body["invite_id"],
                     home=issuer_home,
                 )
                 approve_pairing_request(request["request_id"], approver_user_id="issuer-admin", home=issuer_home)
                 return {"request": request}
 
-            outbound = submit_remote_pairing_request(
-                payload,
-                local_group_id="g_joiner",
-                client=submit_client,
-                allow_localhost=True,
-                home=joiner_home,
-            )
+            with patch("cccc.kernel.federation.pairing_remote._requester_endpoint", return_value="http://joiner.example:8848"):
+                outbound = submit_remote_pairing_request(
+                    payload,
+                    local_group_id="g_joiner",
+                    client=submit_client,
+                    allow_localhost=True,
+                    home=joiner_home,
+                )
 
             def status_client(endpoint: str, *, timeout_seconds: float = 3.0) -> dict:
                 self.assertIn(f"request_id={outbound['remote_request']['request_id']}", endpoint)
@@ -455,15 +458,14 @@ class TestFederationPairingRemote(unittest.TestCase):
             self.assertEqual(trusts[0]["remote_peer_id"], payload["issuer_peer_id"])
             self.assertEqual(trusts[0]["remote_endpoint"], "http://127.0.0.1:5555")
             self.assertEqual(trusts[0]["remote_group_title"], "Issuer Group")
-            self.assertEqual(trusts[0]["transport"], "peer_cccc_http")
+            self.assertEqual(trusts[0]["transport"], "federation_session")
             registrations = list_registrations(home=joiner_home)
             self.assertEqual(len(registrations), 1)
-            self.assertEqual(registrations[0]["transport"], "peer_cccc_http")
+            self.assertEqual(registrations[0]["transport"], "federation_session")
             self.assertEqual(registrations[0]["url"], "http://127.0.0.1:5555")
             self.assertEqual(registrations[0]["remote_group_id"], "g_issuer")
             self.assertEqual(registrations[0]["remote_peer_id"], payload["issuer_peer_id"])
-            self.assertTrue(str(registrations[0]["credential_ref"]).startswith("fsec_pairing_"))
-            self.assertNotIn("acc_", str(registrations[0]))
+            self.assertEqual(registrations[0]["credential_ref"], "")
 
             enqueue_remote_send(
                 src_group_id="g_joiner",
@@ -474,8 +476,8 @@ class TestFederationPairingRemote(unittest.TestCase):
             )
             captured = {}
 
-            class CapturingHttpTransport:
-                transport = "peer_cccc_http"
+            class CapturingSessionTransport:
+                transport = "federation_session"
                 capabilities = frozenset()
 
                 def deliver(self, envelope):
@@ -483,24 +485,20 @@ class TestFederationPairingRemote(unittest.TestCase):
                     captured["target"] = envelope.target
                     captured["payload"] = envelope.payload
                     captured["credential"] = envelope.credential
-                    return RemoteSendResult(ok=True, status="sent", remote_event_id="evt_remote", transport="peer_cccc_http")
+                    return RemoteSendResult(ok=True, status="sent", remote_event_id="evt_remote", transport="federation_session")
 
             receipt = deliver_enqueued(
                 registration_id=registrations[0]["registration_id"],
                 idempotency_key="send-1",
                 home=joiner_home,
-                transport_factory=lambda name: CapturingHttpTransport(),
-                credential=__import__(
-                    "cccc.kernel.federation.credentials",
-                    fromlist=["resolve_federation_credential"],
-                ).resolve_federation_credential(registrations[0]["credential_ref"], home=joiner_home),
+                transport_factory=lambda name: CapturingSessionTransport(),
             )
             self.assertEqual(receipt["status"], "sent")
-            self.assertEqual(captured["transport_name"], "peer_cccc_http")
+            self.assertEqual(captured["transport_name"], "federation_session")
             self.assertEqual(captured["target"].url, "http://127.0.0.1:5555")
             self.assertEqual(captured["target"].remote_group_id, "g_issuer")
             self.assertEqual(captured["payload"].text, "hello cross instance")
-            self.assertTrue(str(captured["credential"]).startswith("acc_"))
+            self.assertEqual(captured["credential"], "")
         finally:
             issuer_cleanup()
             joiner_cleanup()
@@ -525,13 +523,14 @@ class TestFederationPairingRemote(unittest.TestCase):
                     "status": "pending",
                 }}
 
-            outbound = submit_remote_pairing_request(
-                payload,
-                local_group_id="g_joiner",
-                client=submit_client,
-                allow_localhost=True,
-                home=joiner_home,
-            )
+            with patch("cccc.kernel.federation.pairing_remote._requester_endpoint", return_value="http://joiner.example:8848"):
+                outbound = submit_remote_pairing_request(
+                    payload,
+                    local_group_id="g_joiner",
+                    client=submit_client,
+                    allow_localhost=True,
+                    home=joiner_home,
+                )
 
             def unauthorized_status_client(_endpoint: str, *, timeout_seconds: float = 3.0) -> dict:
                 raise ValueError("remote pairing status failed")
@@ -549,11 +548,11 @@ class TestFederationPairingRemote(unittest.TestCase):
             issuer_cleanup()
             joiner_cleanup()
 
-    def test_sync_remote_pairing_repairs_existing_session_trust_to_http_route(self) -> None:
+    def test_sync_remote_pairing_keeps_session_route_with_issuer_endpoint(self) -> None:
         from cccc.kernel.federation import pairing
         from cccc.kernel.federation.pairing import create_pairing_invite, list_trusts
         from cccc.kernel.federation.pairing_remote import build_connection_payload, submit_remote_pairing_request, sync_remote_pairing_outbound
-        from cccc.kernel.federation.registration import get_registration, list_registrations
+        from cccc.kernel.federation.registration import get_registration
 
         issuer_home, issuer_cleanup = self._home()
         joiner_home, joiner_cleanup = self._home()
@@ -571,46 +570,28 @@ class TestFederationPairingRemote(unittest.TestCase):
                     body["pairing_code"],
                     requester_group_id=body["requester_group_id"],
                     requester_peer_id=body["requester_peer_id"],
+                    requester_endpoint=body["requester_endpoint"],
                     invite_id=body["invite_id"],
                     home=issuer_home,
                 )
                 pairing.approve_pairing_request(request["request_id"], approver_user_id="issuer-admin", home=issuer_home)
                 return {"request": request}
 
-            outbound = submit_remote_pairing_request(
-                payload,
-                local_group_id="g_joiner",
-                client=submit_client,
-                allow_localhost=True,
-                home=joiner_home,
-            )
-            legacy_registration = pairing._upsert_approved_session_registration(  # type: ignore[attr-defined]
-                "g_joiner",
-                f"session://{payload['issuer_peer_id']}",
-                remote_group_id="g_issuer",
-                remote_peer_id=payload["issuer_peer_id"],
-                home=joiner_home,
-            )
-            store = pairing._load_store(joiner_home)  # type: ignore[attr-defined]
-            store["trusts"]["ptrust_legacy"] = {
-                "trust_id": "ptrust_legacy",
-                "request_id": outbound["remote_request"]["request_id"],
-                "registration_id": legacy_registration["registration_id"],
-                "group_id": "g_joiner",
-                "remote_group_id": "g_issuer",
-                "remote_group_title": "Issuer Group",
-                "remote_endpoint": "http://127.0.0.1:5555",
-                "remote_peer_id": payload["issuer_peer_id"],
-                "multiaddrs": [],
-                "transport": "federation_session",
-                "status": "active",
-                "created_at": "2026-06-15T00:00:00Z",
-                "updated_at": "2026-06-15T00:00:00Z",
-            }
-            pairing._save_store(store, joiner_home)  # type: ignore[attr-defined]
+            with patch("cccc.kernel.federation.pairing_remote._requester_endpoint", return_value="http://joiner.example:8848"):
+                outbound = submit_remote_pairing_request(
+                    payload,
+                    local_group_id="g_joiner",
+                    client=submit_client,
+                    allow_localhost=True,
+                    home=joiner_home,
+                )
 
             def status_client(_endpoint: str, *, timeout_seconds: float = 3.0) -> dict:
-                return {"request": pairing.get_pairing_request_public_status(outbound["remote_request"]["request_id"], invite_id=outbound["invite_id"], home=issuer_home)}
+                return {"request": pairing.get_pairing_request_public_status(
+                    outbound["remote_request"]["request_id"],
+                    invite_id=outbound["invite_id"],
+                    home=issuer_home,
+                )}
 
             sync_remote_pairing_outbound(
                 outbound["outbound_id"],
@@ -621,22 +602,58 @@ class TestFederationPairingRemote(unittest.TestCase):
 
             trusts = list_trusts(group_id="g_joiner", home=joiner_home)
             self.assertEqual(len(trusts), 1)
-            self.assertEqual(trusts[0]["trust_id"], "ptrust_legacy")
-            self.assertEqual(trusts[0]["transport"], "peer_cccc_http")
+            self.assertEqual(trusts[0]["transport"], "federation_session")
             self.assertEqual(trusts[0]["remote_endpoint"], "http://127.0.0.1:5555")
-            repaired_registration = get_registration(trusts[0]["registration_id"], home=joiner_home)
-            self.assertEqual(repaired_registration["transport"], "peer_cccc_http")
-            self.assertEqual(repaired_registration["url"], "http://127.0.0.1:5555")
-            self.assertTrue(str(repaired_registration["credential_ref"]).startswith("fsec_pairing_"))
-            self.assertIsNone(get_registration(legacy_registration["registration_id"], home=joiner_home))
-            self.assertEqual(len(list_registrations(home=joiner_home)), 1)
+            registration = get_registration(trusts[0]["registration_id"], home=joiner_home)
+            self.assertIsNotNone(registration)
+            assert registration is not None
+            self.assertEqual(registration["transport"], "federation_session")
+            self.assertEqual(registration["url"], "http://127.0.0.1:5555")
         finally:
             issuer_cleanup()
             joiner_cleanup()
 
-    def test_approved_remote_pairing_http_registration_sends_with_stored_credential(self) -> None:
-        from unittest.mock import patch
+    def test_sync_remote_pairing_without_issuer_endpoint_keeps_session_only_route(self) -> None:
+        from cccc.kernel.federation.pairing import list_trusts, upsert_pairing_outbound
+        from cccc.kernel.federation.pairing_outbound_sync import approve_outbound_from_remote_request
+        from cccc.kernel.federation.registration import get_registration
 
+        joiner_home, cleanup = self._home()
+        try:
+            outbound = upsert_pairing_outbound(
+                {
+                    "local_group_id": "g_joiner",
+                    "issuer_group_id": "g_issuer",
+                    "issuer_group_title": "Issuer Group",
+                    "issuer_endpoint": "",
+                    "issuer_peer_id": "peer_issuer",
+                    "invite_id": "pinv_1",
+                    "remote_request": {"request_id": "preq_1"},
+                    "status": "submitted",
+                },
+                home=joiner_home,
+            )
+
+            approved = approve_outbound_from_remote_request(
+                outbound["outbound_id"],
+                {"request_id": "preq_1", "status": "approved"},
+                home=joiner_home,
+            )
+
+            self.assertEqual(approved["outbound"]["status"], "approved")
+            self.assertEqual(approved["trust"]["remote_endpoint"], "")
+            self.assertEqual(approved["registration"]["url"], "federation-session://peer_issuer")
+            trusts = list_trusts(group_id="g_joiner", home=joiner_home)
+            self.assertEqual(len(trusts), 1)
+            self.assertEqual(trusts[0]["remote_endpoint"], "")
+            registration = get_registration(trusts[0]["registration_id"], home=joiner_home)
+            self.assertIsNotNone(registration)
+            assert registration is not None
+            self.assertEqual(registration["url"], "federation-session://peer_issuer")
+        finally:
+            cleanup()
+
+    def test_approved_remote_pairing_session_registration_requires_active_session(self) -> None:
         from cccc.daemon.federation.ops import handle_remote_send
         from cccc.kernel.federation import pairing
         from cccc.kernel.federation.pairing import create_pairing_invite
@@ -654,6 +671,7 @@ class TestFederationPairingRemote(unittest.TestCase):
                     body["pairing_code"],
                     requester_group_id=body["requester_group_id"],
                     requester_peer_id=body["requester_peer_id"],
+                    requester_endpoint=body["requester_endpoint"],
                     invite_id=body["invite_id"],
                     home=issuer_home,
                 )
@@ -682,27 +700,16 @@ class TestFederationPairingRemote(unittest.TestCase):
                 home=joiner_home,
             )
             registration = list_registrations(home=joiner_home)[0]
-            captured = {}
-
-            def fake_post(url, body, credential):
-                captured["url"] = url
-                captured["body"] = body
-                captured["credential"] = credential
-                return 200, {"ok": True, "result": {"event": {"id": "evt_remote"}}}
-
             old_home = os.environ.get("CCCC_HOME")
             os.environ["CCCC_HOME"] = str(joiner_home)
             try:
-                from cccc.daemon.federation.transports.peer_cccc_http import PeerCcccHttpTransport
-
                 result = handle_remote_send(
                     {
                         "group_id": "g_joiner",
                         "registration_id": registration["registration_id"],
                         "idempotency_key": "send-credential",
                         "payload": {"text": "hello"},
-                    },
-                    transport_factory=lambda _name: PeerCcccHttpTransport(http_post=fake_post),
+                    }
                 )
             finally:
                 if old_home is None:
@@ -711,10 +718,8 @@ class TestFederationPairingRemote(unittest.TestCase):
                     os.environ["CCCC_HOME"] = old_home
 
             self.assertTrue(result.ok)
-            self.assertEqual(result.result["receipt"]["status"], "sent")
-            self.assertEqual(captured["url"], "http://127.0.0.1:5555/api/v1/groups/g_issuer/send")
-            self.assertTrue(str(captured["credential"]).startswith("acc_"))
-            self.assertEqual(captured["body"]["text"], "hello")
+            self.assertEqual(result.result["receipt"]["status"], "retrying")
+            self.assertEqual(result.result["receipt"]["error"]["code"], "peer_session_unavailable")
         finally:
             issuer_cleanup()
             joiner_cleanup()

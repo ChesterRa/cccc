@@ -15,6 +15,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from ...util.time import utc_now_iso
 from .pairing import get_local_identity, get_pairing_outbound, upsert_pairing_outbound
 from .pairing_outbound_sync import approve_outbound_from_remote_request
+from ..settings import resolve_remote_access_web_binding
 
 _REMOTE_REQUEST_PATH = "/api/federation/pairing/requests/remote"
 _REMOTE_REQUEST_STATUS_PATH = "/api/federation/pairing/requests/remote/status"
@@ -141,6 +142,7 @@ def submit_remote_pairing_request(
         "invite_id": parsed.nonce,
         "requester_group_id": local_gid,
         "requester_group_title": str(local_group_title or "").strip(),
+        "requester_endpoint": _requester_endpoint(),
         "requester_peer_id": str(identity.get("peer_id") or ""),
         "requester_node_id": str(identity.get("node_id") or ""),
         "requester_multiaddrs": [],
@@ -169,6 +171,10 @@ def submit_remote_pairing_request(
         "updated_at": utc_now_iso(),
     }
     return upsert_pairing_outbound(outbound, home=home)
+
+
+def _requester_endpoint() -> str:
+    return str(resolve_remote_access_web_binding().get("web_public_url") or "").strip()
 
 
 def sync_remote_pairing_outbound(

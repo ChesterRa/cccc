@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ...util.time import utc_now_iso
-from .credentials import save_pairing_bearer_token
 from . import pairing
 
 
@@ -33,34 +32,16 @@ def approve_outbound_from_remote_request(
     issuer_group_title = str(outbound.get("issuer_group_title") or "").strip()
     issuer_endpoint = str(outbound.get("issuer_endpoint") or "").strip()
     issuer_pid = str(outbound.get("issuer_peer_id") or "").strip()
-    remote_send_token = str(request.get("remote_send_token") or "").strip()
     if not local_gid or not issuer_gid or not issuer_pid:
         raise ValueError("pairing outbound is missing issuer identity")
 
-    if issuer_endpoint:
-        credential_ref = save_pairing_bearer_token(
-            local_group_id=local_gid,
-            remote_group_id=issuer_gid,
-            remote_endpoint=issuer_endpoint,
-            token=remote_send_token,
-            home=home,
-        )
-        registration = pairing._upsert_approved_http_registration(  # type: ignore[attr-defined]
-            local_gid,
-            issuer_endpoint,
-            remote_group_id=issuer_gid,
-            remote_peer_id=issuer_pid,
-            credential_ref=credential_ref,
-            home=home,
-        )
-    else:
-        registration = pairing._upsert_approved_session_registration(  # type: ignore[attr-defined]
-            local_gid,
-            f"session://{issuer_pid}",
-            remote_group_id=issuer_gid,
-            remote_peer_id=issuer_pid,
-            home=home,
-        )
+    registration = pairing._upsert_approved_session_registration(  # type: ignore[attr-defined]
+        local_gid,
+        issuer_endpoint or pairing._session_only_registration_url(issuer_pid),  # type: ignore[attr-defined]
+        remote_group_id=issuer_gid,
+        remote_peer_id=issuer_pid,
+        home=home,
+    )
     now = utc_now_iso()
     raw_trust = _find_trust_for_remote(store, group_id=local_gid, remote_group_id=issuer_gid, remote_peer_id=issuer_pid)
     if raw_trust is not None:

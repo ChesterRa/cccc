@@ -72,6 +72,7 @@ class TestFederationPairing(unittest.TestCase):
                 requester_group_id="g_remote",
                 requester_group_title="Remote Group",
                 requester_peer_id="peer_remote",
+                requester_endpoint="http://remote.example:8848",
                 requester_multiaddrs=["/ip4/127.0.0.1/tcp/4001/p2p/peer_remote"],
             )
             self.assertEqual(request["status"], "pending")
@@ -88,6 +89,7 @@ class TestFederationPairing(unittest.TestCase):
             registration = approved["registration"]
             self.assertEqual(registration["transport"], "federation_session")
             self.assertEqual(registration["group_id"], "g_local")
+            self.assertEqual(registration["url"], "http://remote.example:8848")
             self.assertEqual(registration["remote_group_id"], "g_remote")
             self.assertEqual(registration["remote_peer_id"], "peer_remote")
             self.assertEqual(registration["multiaddrs"], [])
@@ -95,6 +97,7 @@ class TestFederationPairing(unittest.TestCase):
             self.assertEqual(approved["trust"]["transport"], "federation_session")
             self.assertEqual(approved["trust"]["multiaddrs"], [])
             self.assertEqual(approved["trust"]["remote_group_title"], "Remote Group")
+            self.assertEqual(approved["trust"]["remote_endpoint"], "http://remote.example:8848")
             stored_registration = get_registration(registration["registration_id"])
             self.assertIsNotNone(stored_registration)
             assert stored_registration is not None
@@ -120,23 +123,46 @@ class TestFederationPairing(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_can_create_approved_federation_session_registration(self) -> None:
+    def test_can_create_approved_federation_session_registration_with_endpoint(self) -> None:
         from cccc.kernel.federation.pairing import _upsert_approved_session_registration  # type: ignore[attr-defined]
 
         _, cleanup = self._with_home()
         try:
             registration = _upsert_approved_session_registration(
                 "g_local",
-                "session://peer_remote",
+                "http://remote.example:8848",
                 remote_group_id="g_remote",
                 remote_peer_id="peer_remote",
             )
 
             self.assertEqual(registration["transport"], "federation_session")
+            self.assertEqual(registration["url"], "http://remote.example:8848")
             self.assertEqual(registration["group_id"], "g_local")
             self.assertEqual(registration["remote_group_id"], "g_remote")
             self.assertEqual(registration["remote_peer_id"], "peer_remote")
             self.assertEqual(registration["multiaddrs"], [])
+        finally:
+            cleanup()
+
+    def test_approve_pairing_request_without_remote_endpoint_creates_session_only_registration(self) -> None:
+        from cccc.kernel.federation.pairing import approve_pairing_request, create_pairing_invite, create_pairing_request
+        from cccc.kernel.federation.registration import list_registrations
+
+        _, cleanup = self._with_home()
+        try:
+            invite = create_pairing_invite(group_id="g_local", ttl_seconds=600)
+            request = create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_remote",
+                requester_peer_id="peer_remote",
+            )
+
+            approved = approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            self.assertEqual(approved["registration"]["transport"], "federation_session")
+            self.assertEqual(approved["registration"]["url"], "federation-session://peer_remote")
+            self.assertEqual(approved["trust"]["remote_endpoint"], "")
+            self.assertEqual(list_registrations()[0]["url"], "federation-session://peer_remote")
         finally:
             cleanup()
 
@@ -156,6 +182,7 @@ class TestFederationPairing(unittest.TestCase):
                 invite["pairing_code"],
                 requester_group_id="g_remote",
                 requester_peer_id="peer_remote",
+                requester_endpoint="http://remote.example:8848",
             )
             approve_pairing_request(request["request_id"], approver_user_id="user-a")
 
