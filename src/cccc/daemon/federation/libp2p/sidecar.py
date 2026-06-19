@@ -20,6 +20,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .identity import Libp2pIdentity, canonical_payload_bytes, get_libp2p_identity, peer_id_from_public_key_b64
 from .receiver import receive_address_announce, receive_remote_send
+from .session import Libp2pSession
+from ..remote_dispatch import retry_remote_send_for_peer
 
 PROTOCOL_ID = "/cccc/federation/remote-send/1.0.0"
 OP_ADDRESS_ANNOUNCE = "address_announce"
@@ -76,6 +78,8 @@ class Libp2pNode:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._bound: Optional[Tuple[str, int]] = None
+        self._sessions: dict[str, Libp2pSession] = {}
+        self._sessions_lock = threading.RLock()
 
     def start(self) -> None:
         if self._sock is not None:
@@ -110,6 +114,11 @@ class Libp2pNode:
         self._thread = None
         if thread is not None:
             thread.join(timeout=1.0)
+        with self._sessions_lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            session.close()
         try:
             from .client import unregister_node
 
@@ -124,6 +133,14 @@ class Libp2pNode:
         advertised_host = _advertise_host_for_bound(host, self._advertise_host)
         return [f"/ip4/{advertised_host}/tcp/{port}/p2p/{self.identity.peer_id}"]
 
+    def update_advertise_host(self, advertise_host: str) -> bool:
+        next_host = str(advertise_host or "").strip()
+        if next_host == str(self._advertise_host or "").strip():
+            return False
+        _advertise_host_for_bound("0.0.0.0", next_host)
+        self._advertise_host = next_host
+        return True
+
     def send_remote(self, *, multiaddr: str, request: Dict[str, Any], timeout: float = _DEFAULT_TIMEOUT) -> Dict[str, Any]:
         return self._send_authenticated(multiaddr=multiaddr, body=_remote_send_body(request), timeout=timeout)
 
@@ -134,22 +151,70 @@ class Libp2pNode:
         parsed = parse_direct_multiaddr(multiaddr)
         if str(body.get("remote_peer_id") or "").strip() and str(body.get("remote_peer_id") or "").strip() != parsed.peer_id:
             return _error("peer_mismatch", "multiaddr peer id does not match registration remote_peer_id")
+        session = self._session_for_peer(parsed.peer_id)
+        if session is not None:
+            result = session.send_request(body, timeout=timeout)
+            if not _is_session_transport_error(result):
+                return result
         try:
-            with socket.create_connection((parsed.host, parsed.port), timeout=timeout) as sock:
-                sock.settimeout(timeout)
-                challenge = _read_frame(sock)
-                nonce = str(challenge.get("nonce") or "").strip()
-                if str(challenge.get("protocol") or "") != PROTOCOL_ID or not nonce:
-                    return _error("libp2p_auth_failed", "remote did not provide a valid challenge")
-                auth_body = {
-                    **body,
-                    "public_key": self.identity.public_key_b64,
-                    "signature": self.identity.sign(_auth_material(nonce=nonce, body=body)),
-                }
-                _write_frame(sock, auth_body)
-                return _read_frame(sock)
+            sock = socket.create_connection((parsed.host, parsed.port), timeout=timeout)
+            sock.settimeout(timeout)
+            challenge = _read_frame(sock)
+            nonce = str(challenge.get("nonce") or "").strip()
+            if str(challenge.get("protocol") or "") != PROTOCOL_ID or not nonce:
+                sock.close()
+                return _error("libp2p_auth_failed", "remote did not provide a valid challenge")
+            client_nonce = secrets.token_urlsafe(24)
+            sock.settimeout(None)
+            session = Libp2pSession(
+                sock=sock,
+                remote_peer_id=parsed.peer_id,
+                inbound_nonce=client_nonce,
+                outbound_nonce=nonce,
+                public_key_b64=self.identity.public_key_b64,
+                sign=self._sign_session_request,
+                handle_request=self._handle_session_request,
+                unregister=self._unregister_session,
+                stop_event=self._stop,
+                write_frame=_write_frame,
+                error=_error,
+            )
+            self._register_session(session)
+            result = session.send_request(body, timeout=timeout, extra={"session_nonce": client_nonce}, inline_response=True)
+            if result.get("ok") is False and str(result.get("error", {}).get("code") or "") in {
+                "libp2p_auth_failed",
+                "unauthorized_peer",
+                "unsupported_protocol",
+            }:
+                session.close()
+            elif not session.closed:
+                session.start_reader()
+            return result
         except Exception:
             return _error("libp2p_dial_failed", "direct libp2p dial failed")
+
+    def _session_for_peer(self, peer_id: str) -> Optional[Libp2pSession]:
+        pid = str(peer_id or "").strip()
+        if not pid:
+            return None
+        with self._sessions_lock:
+            session = self._sessions.get(pid)
+            if session is None or session.closed:
+                self._sessions.pop(pid, None)
+                return None
+            return session
+
+    def _register_session(self, session: Libp2pSession) -> None:
+        with self._sessions_lock:
+            old = self._sessions.get(session.remote_peer_id)
+            self._sessions[session.remote_peer_id] = session
+        if old is not None and old is not session:
+            old.close()
+
+    def _unregister_session(self, session: Libp2pSession) -> None:
+        with self._sessions_lock:
+            if self._sessions.get(session.remote_peer_id) is session:
+                self._sessions.pop(session.remote_peer_id, None)
 
     def _serve(self) -> None:
         sock = self._sock
@@ -165,43 +230,103 @@ class Libp2pNode:
             threading.Thread(target=self._handle_conn, args=(conn,), daemon=True).start()
 
     def _handle_conn(self, conn: socket.socket) -> None:
-        with conn:
-            conn.settimeout(_DEFAULT_TIMEOUT)
-            try:
-                nonce = secrets.token_urlsafe(24)
-                _write_frame(conn, {"protocol": PROTOCOL_ID, "nonce": nonce})
-                req = _read_frame(conn)
-                if str(req.get("protocol") or "") != PROTOCOL_ID:
-                    _write_frame(conn, _error("unsupported_protocol", "unsupported libp2p protocol"))
-                    return
-                auth = _authenticated_peer_id(nonce=nonce, req=req)
-                if auth is None:
-                    _write_frame(conn, _error("unauthorized_peer", "remote peer authentication failed"))
-                    return
-                op = str(req.get("op") or OP_REMOTE_SEND).strip() or OP_REMOTE_SEND
-                if op == OP_ADDRESS_ANNOUNCE:
-                    result = receive_address_announce(
-                        target_group_id=str(req.get("target_group_id") or ""),
-                        src_group_id=str(req.get("src_group_id") or ""),
-                        remote_peer_id=auth,
-                        multiaddrs=list(req.get("multiaddrs") or []) if isinstance(req.get("multiaddrs"), list) else [],
-                        home=self.home,
-                    )
-                else:
-                    result = receive_remote_send(
-                        target_group_id=str(req.get("target_group_id") or ""),
-                        src_group_id=str(req.get("src_group_id") or ""),
-                        remote_peer_id=auth,
-                        payload=dict(req.get("payload") or {}) if isinstance(req.get("payload"), dict) else {},
-                        idempotency_key=str(req.get("idempotency_key") or ""),
-                        home=self.home,
-                    )
+        conn.settimeout(_DEFAULT_TIMEOUT)
+        session: Optional[Libp2pSession] = None
+        try:
+            nonce = secrets.token_urlsafe(24)
+            _write_frame(conn, {"protocol": PROTOCOL_ID, "nonce": nonce})
+            req = _read_frame(conn)
+            if str(req.get("protocol") or "") != PROTOCOL_ID:
+                _write_frame(conn, _error("unsupported_protocol", "unsupported libp2p protocol"))
+                conn.close()
+                return
+            auth = _authenticated_peer_id(nonce=nonce, req=req)
+            if auth is None:
+                _write_frame(conn, _error("unauthorized_peer", "remote peer authentication failed"))
+                conn.close()
+                return
+            client_nonce = str(req.get("session_nonce") or "").strip()
+            if client_nonce:
+                conn.settimeout(None)
+                session = Libp2pSession(
+                    sock=conn,
+                    remote_peer_id=auth,
+                    inbound_nonce=nonce,
+                    outbound_nonce=client_nonce,
+                    public_key_b64=self.identity.public_key_b64,
+                    sign=self._sign_session_request,
+                    handle_request=self._handle_session_request,
+                    unregister=self._unregister_session,
+                    stop_event=self._stop,
+                    write_frame=_write_frame,
+                    error=_error,
+                )
+                self._register_session(session)
+                result = self._handle_authenticated_request(req=req, auth=auth, defer_address_retry=True)
+                session.write_response(req, result)
+                self._run_deferred_address_retry(req=req, auth=auth, result=result)
+                session.read_loop()
+            else:
+                result = self._handle_authenticated_request(req=req, auth=auth, defer_address_retry=False)
                 _write_frame(conn, result)
+                conn.close()
+        except Exception:
+            try:
+                _write_frame(conn, _error("remote_stream_error", "remote libp2p stream failed"))
             except Exception:
+                pass
+            if session is None:
                 try:
-                    _write_frame(conn, _error("remote_stream_error", "remote libp2p stream failed"))
+                    conn.close()
                 except Exception:
                     pass
+
+    def _handle_session_request(self, req: Dict[str, Any], nonce: str, expected_peer_id: str) -> Dict[str, Any]:
+        if str(req.get("protocol") or "") != PROTOCOL_ID:
+            return _error("unsupported_protocol", "unsupported libp2p protocol")
+        auth = _authenticated_peer_id(nonce=nonce, req=req)
+        if auth is None or auth != expected_peer_id:
+            return _error("unauthorized_peer", "remote peer authentication failed")
+        return self._handle_authenticated_request(req=req, auth=auth, defer_address_retry=False)
+
+    def _sign_session_request(self, nonce: str, body: Dict[str, Any]) -> str:
+        return self.identity.sign(_auth_material(nonce=nonce, body=body))
+
+    def _handle_authenticated_request(self, *, req: Dict[str, Any], auth: str, defer_address_retry: bool) -> Dict[str, Any]:
+        op = str(req.get("op") or OP_REMOTE_SEND).strip() or OP_REMOTE_SEND
+        if op == OP_ADDRESS_ANNOUNCE:
+            return receive_address_announce(
+                target_group_id=str(req.get("target_group_id") or ""),
+                src_group_id=str(req.get("src_group_id") or ""),
+                remote_peer_id=auth,
+                multiaddrs=list(req.get("multiaddrs") or []) if isinstance(req.get("multiaddrs"), list) else [],
+                home=self.home,
+                retry_pending=not defer_address_retry,
+            )
+        return receive_remote_send(
+            target_group_id=str(req.get("target_group_id") or ""),
+            src_group_id=str(req.get("src_group_id") or ""),
+            remote_peer_id=auth,
+            payload=dict(req.get("payload") or {}) if isinstance(req.get("payload"), dict) else {},
+            idempotency_key=str(req.get("idempotency_key") or ""),
+            home=self.home,
+        )
+
+    def _run_deferred_address_retry(self, *, req: Dict[str, Any], auth: str, result: Dict[str, Any]) -> None:
+        if str(req.get("op") or OP_REMOTE_SEND).strip() != OP_ADDRESS_ANNOUNCE:
+            return
+        if not result.get("ok"):
+            return
+
+        def run() -> None:
+            retry_remote_send_for_peer(
+                group_id=str(req.get("target_group_id") or ""),
+                remote_group_id=str(req.get("src_group_id") or ""),
+                remote_peer_id=auth,
+                home=self.home,
+            )
+
+        threading.Thread(target=run, name="cccc-libp2p-address-announce-retry", daemon=True).start()
 
 
 def _parse_listen_addr(value: str) -> tuple[str, int]:
@@ -265,6 +390,17 @@ def _read_frame(sock: socket.socket) -> Dict[str, Any]:
 
 def _error(code: str, message: str) -> Dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def _is_session_transport_error(result: Dict[str, Any]) -> bool:
+    if not isinstance(result, dict):
+        return True
+    err = result.get("error") if isinstance(result.get("error"), dict) else {}
+    return str(err.get("code") or "") in {
+        "libp2p_session_closed",
+        "libp2p_response_timeout",
+        "libp2p_dial_failed",
+    }
 
 
 def _remote_send_body(request: Dict[str, Any]) -> Dict[str, Any]:

@@ -2,6 +2,8 @@ import json
 import os
 import socket
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -125,6 +127,30 @@ class TestFederationLibp2pC1(unittest.TestCase):
             finally:
                 node.stop()
 
+    def test_sidecar_can_update_advertise_host_after_network_change(self) -> None:
+        from cccc.daemon.federation.libp2p.identity import get_libp2p_identity
+        from cccc.daemon.federation.libp2p.sidecar import Libp2pNode
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            identity = get_libp2p_identity(home=home)
+            node = Libp2pNode(
+                home=home,
+                listen_multiaddr="/ip4/0.0.0.0/tcp/0",
+                advertise_host="172.30.79.171",
+            )
+            node.start()
+            try:
+                old_addr = node.multiaddrs()[0]
+                node.update_advertise_host("172.30.99.191")
+                new_addr = node.multiaddrs()[0]
+
+                self.assertRegex(old_addr, rf"^/ip4/172\.30\.79\.171/tcp/[0-9]+/p2p/{identity.peer_id}$")
+                self.assertRegex(new_addr, rf"^/ip4/172\.30\.99\.191/tcp/[0-9]+/p2p/{identity.peer_id}$")
+                self.assertEqual(old_addr.rsplit("/p2p/", 1)[0].split("/tcp/", 1)[1], new_addr.rsplit("/p2p/", 1)[0].split("/tcp/", 1)[1])
+            finally:
+                node.stop()
+
     def test_sidecar_rejects_unspecified_dial_multiaddr(self) -> None:
         from cccc.daemon.federation.libp2p.sidecar import parse_direct_multiaddr
 
@@ -168,6 +194,95 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 )
             finally:
                 node.stop()
+
+    def test_advertised_multiaddrs_rewrite_loopback_from_web_host(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import rewrite_advertised_multiaddrs
+
+        rewritten = rewrite_advertised_multiaddrs(
+            ["/ip4/127.0.0.1/tcp/4001/p2p/peer_local"],
+            advertise_host="172.30.79.171",
+        )
+
+        self.assertEqual(rewritten, ("/ip4/172.30.79.171/tcp/4001/p2p/peer_local",))
+
+    def test_advertised_multiaddrs_ignore_non_concrete_advertise_hosts(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import rewrite_advertised_multiaddrs
+
+        loopback = ["/ip4/127.0.0.1/tcp/4001/p2p/peer_local"]
+
+        self.assertEqual(rewrite_advertised_multiaddrs(loopback, advertise_host="0.0.0.0"), ())
+        self.assertEqual(rewrite_advertised_multiaddrs(loopback, advertise_host="peer.example"), ())
+        self.assertEqual(rewrite_advertised_multiaddrs(loopback, advertise_host="169.254.1.20"), ())
+
+    def test_advertised_multiaddrs_keep_existing_routable_multiaddr(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import rewrite_advertised_multiaddrs
+
+        addrs = ["/ip4/172.30.79.171/tcp/4001/p2p/peer_local"]
+
+        self.assertEqual(rewrite_advertised_multiaddrs(addrs, advertise_host=""), tuple(addrs))
+
+    def test_default_libp2p_binding_uses_web_host_when_concrete_ipv4(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import default_advertise_host, default_listen_multiaddr
+
+        with tempfile.TemporaryDirectory() as td:
+            with _EnvVars(
+                CCCC_HOME=td,
+                CCCC_WEB_HOST="172.30.79.171",
+                CCCC_LIBP2P_LISTEN_MULTIADDR="",
+                CCCC_LIBP2P_ADVERTISE_HOST="",
+            ):
+                self.assertEqual(default_advertise_host(), "172.30.79.171")
+                self.assertEqual(default_listen_multiaddr(), "/ip4/0.0.0.0/tcp/0")
+
+    def test_default_advertise_host_respects_persisted_web_binding_before_env_fallback(self) -> None:
+        from cccc.daemon.federation.libp2p.advertise import default_advertise_host
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / "settings.yaml").write_text(
+                "\n".join(
+                    [
+                        "remote_access:",
+                        "  web_host: 172.30.79.171",
+                        "  web_port: 8848",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with _EnvVars(
+                CCCC_HOME=str(home),
+                CCCC_WEB_HOST="172.30.99.99",
+                CCCC_LIBP2P_LISTEN_MULTIADDR="",
+                CCCC_LIBP2P_ADVERTISE_HOST="",
+            ):
+                self.assertEqual(default_advertise_host(), "172.30.79.171")
+
+    def test_default_libp2p_binding_auto_detects_local_lan_ip_when_web_binding_is_not_ip(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.daemon.federation.libp2p.advertise import default_advertise_host, default_listen_multiaddr
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / "settings.yaml").write_text(
+                "\n".join(
+                    [
+                        "remote_access:",
+                        "  web_host: 0.0.0.0",
+                        "  web_public_url: https://cccc.0xlinux.cn",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with _EnvVars(
+                CCCC_HOME=str(home),
+                CCCC_LIBP2P_LISTEN_MULTIADDR="",
+                CCCC_LIBP2P_ADVERTISE_HOST="",
+            ), patch("cccc.daemon.federation.libp2p.advertise._auto_detect_advertise_host", return_value="172.30.79.171"):
+                self.assertEqual(default_advertise_host(), "172.30.79.171")
+                self.assertEqual(default_listen_multiaddr(), "/ip4/0.0.0.0/tcp/0")
 
     def test_direct_multiaddr_remote_send_writes_ledger_and_replays_duplicate(self) -> None:
         from cccc.daemon.federation.libp2p.sidecar import Libp2pNode
@@ -378,6 +493,127 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 route["local_node"].stop()
                 route["remote_node"].stop()
 
+    def test_reverse_remote_send_reuses_existing_outbound_session_when_peer_cannot_dial_back(self) -> None:
+        from cccc.daemon.federation.ops import handle_remote_send
+        from cccc.daemon.federation.libp2p.sidecar import Libp2pNode
+        from cccc.kernel.federation.pairing import approve_pairing_request, create_pairing_invite, create_pairing_request
+
+        with tempfile.TemporaryDirectory() as a_td, tempfile.TemporaryDirectory() as b_td:
+            a_home = Path(a_td)
+            b_home = Path(b_td)
+            self._make_group(a_home, "g_a", "Group A")
+            self._make_group(b_home, "g_b", "Group B")
+
+            node_a = Libp2pNode(home=a_home, listen_multiaddr="/ip4/127.0.0.1/tcp/0")
+            node_b = Libp2pNode(home=b_home, listen_multiaddr="/ip4/127.0.0.1/tcp/0")
+            node_a.start()
+            node_b.start()
+            try:
+                unreachable_a = f"/ip4/127.0.0.1/tcp/9/p2p/{node_a.identity.peer_id}"
+                with _HomeEnv(a_home):
+                    invite_a = create_pairing_invite(
+                        group_id="g_a",
+                        remote_group_id="g_b",
+                        remote_peer_id=node_b.identity.peer_id,
+                        multiaddrs=node_b.multiaddrs(),
+                    )
+                    request_a = create_pairing_request(
+                        invite_a["pairing_code"],
+                        requester_group_id="g_b",
+                        requester_peer_id=node_b.identity.peer_id,
+                        requester_multiaddrs=node_b.multiaddrs(),
+                    )
+                    reg_a_to_b = approve_pairing_request(request_a["request_id"], approver_user_id="test")["registration"]
+                with _HomeEnv(b_home):
+                    invite_b = create_pairing_invite(
+                        group_id="g_b",
+                        remote_group_id="g_a",
+                        remote_peer_id=node_a.identity.peer_id,
+                        multiaddrs=[unreachable_a],
+                    )
+                    request_b = create_pairing_request(
+                        invite_b["pairing_code"],
+                        requester_group_id="g_a",
+                        requester_peer_id=node_a.identity.peer_id,
+                        requester_multiaddrs=[unreachable_a],
+                    )
+                    reg_b_to_a = approve_pairing_request(request_b["request_id"], approver_user_id="test")["registration"]
+
+                with _HomeEnv(a_home):
+                    outbound = handle_remote_send(
+                        {
+                            "group_id": "g_a",
+                            "registration_id": reg_a_to_b["registration_id"],
+                            "idempotency_key": "session-forward-a-to-b",
+                            "payload": {"text": "A can reach B", "to": ["@foreman"]},
+                        }
+                    )
+                self.assertTrue(outbound.ok)
+                self.assertEqual(outbound.result["receipt"]["status"], "sent")
+
+                with _HomeEnv(b_home):
+                    reverse = handle_remote_send(
+                        {
+                            "group_id": "g_b",
+                            "registration_id": reg_b_to_a["registration_id"],
+                            "idempotency_key": "session-reverse-b-to-a",
+                            "payload": {"text": "B replies on A's existing session", "to": ["@foreman"]},
+                        }
+                    )
+
+                self.assertTrue(reverse.ok)
+                self.assertEqual(reverse.result["receipt"]["status"], "sent")
+                a_events = [event for event in self._ledger_events(a_home, "g_a") if event.get("kind") == "chat.message"]
+                b_events = [event for event in self._ledger_events(b_home, "g_b") if event.get("kind") == "chat.message"]
+                self.assertEqual([event["data"]["text"] for event in b_events], ["A can reach B"])
+                self.assertEqual([event["data"]["text"] for event in a_events], ["B replies on A's existing session"])
+            finally:
+                node_a.stop()
+                node_b.stop()
+
+    def test_session_reads_coalesced_frames_without_dropping_later_frames(self) -> None:
+        from cccc.daemon.federation.libp2p.session import Libp2pSession
+        from cccc.daemon.federation.libp2p.sidecar import PROTOCOL_ID, _error, _write_frame
+
+        left, right = socket.socketpair()
+        stop = threading.Event()
+        handled: list[dict] = []
+
+        def handle_request(frame: dict, nonce: str, peer_id: str) -> dict:
+            handled.append(frame)
+            return {"ok": True}
+
+        session = Libp2pSession(
+            sock=left,
+            remote_peer_id="peer_remote",
+            inbound_nonce="inbound",
+            outbound_nonce="outbound",
+            public_key_b64="public",
+            sign=lambda nonce, body: "signature",
+            handle_request=handle_request,
+            unregister=lambda session: None,
+            stop_event=stop,
+            write_frame=_write_frame,
+            error=_error,
+        )
+        try:
+            session.start_reader()
+            first = {"response_to": "already-gone", "ok": True}
+            second = {"protocol": PROTOCOL_ID, "request_id": "coalesced-request", "op": "remote_send"}
+            right.settimeout(3.0)
+            right.sendall(
+                (json.dumps(first, separators=(",", ":")) + "\n" + json.dumps(second, separators=(",", ":")) + "\n").encode("utf-8")
+            )
+            response = json.loads(right.recv(8192).split(b"\n", 1)[0].decode("utf-8"))
+
+            self.assertEqual([frame.get("request_id") for frame in handled], ["coalesced-request"])
+            self.assertEqual(response.get("response_to"), "coalesced-request")
+            self.assertTrue(response.get("ok"))
+        finally:
+            stop.set()
+            session.close()
+            right.close()
+
     def test_live_route_helper_starts_nodes_persists_real_routes_and_sends(self) -> None:
         from cccc.daemon.federation.libp2p.live_route import ensure_direct_pairing_route
         from cccc.daemon.federation.libp2p.supervisor import announce_sidecar_addresses
@@ -501,7 +737,6 @@ class TestFederationLibp2pC1(unittest.TestCase):
 
                 self.assertEqual(announced["attempted"], 1)
                 self.assertEqual(announced["sent"], 1)
-                self.assertEqual(announced["retried"], 1)
                 self.assertEqual(announced["trust_updates"], 1)
                 self.assertEqual(announced["registration_updates"], 1)
                 self.assertEqual(
@@ -516,10 +751,12 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 ]
                 self.assertEqual(len(refreshed_trusts), 1)
                 self.assertEqual(refreshed_trusts[0]["multiaddrs"], new_a_addrs)
-                self.assertEqual(
-                    get_receipt(refreshed["registration_id"], "restart-offline-auto-retry-k1", home=b_home)["status"],
-                    "sent",
-                )
+                deadline = time.monotonic() + 3.0
+                receipt = get_receipt(refreshed["registration_id"], "restart-offline-auto-retry-k1", home=b_home)
+                while receipt.get("status") != "sent" and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    receipt = get_receipt(refreshed["registration_id"], "restart-offline-auto-retry-k1", home=b_home)
+                self.assertEqual(receipt["status"], "sent")
 
                 with _HomeEnv(b_home):
                     resp = handle_remote_send(
