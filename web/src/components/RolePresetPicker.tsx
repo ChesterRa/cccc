@@ -11,6 +11,8 @@ type RolePresetPickerProps = {
   onChangeDraft: (value: string) => void;
 };
 
+const NO_PRESET_VALUE = "__no_actor_preset__";
+
 export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }: RolePresetPickerProps) {
   const { t } = useTranslation("actors");
   const [selectedPresetId, setSelectedPresetId] = useState("");
@@ -68,17 +70,30 @@ export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <GroupCombobox
-          items={BUILTIN_ROLE_PRESETS.map((preset) => {
-            const localized = localizedPreset(preset.id) || preset;
-            return {
-              value: preset.id,
-              label: localized.name,
-              description: localized.summary,
-              keywords: [localized.name, localized.summary, localized.useWhen],
-            };
-          })}
+          items={[
+            {
+              value: NO_PRESET_VALUE,
+              label: t("rolePresetNone"),
+              description: t("rolePresetNoneDescription"),
+              keywords: [t("rolePresetNone"), t("rolePresetNoneDescription")],
+            },
+            ...BUILTIN_ROLE_PRESETS.map((preset) => {
+              const localized = localizedPreset(preset.id) || preset;
+              return {
+                value: preset.id,
+                label: localized.name,
+                description: localized.summary,
+                keywords: [localized.name, localized.summary, localized.useWhen],
+              };
+            }),
+          ]}
           value={selectedPresetId}
           onChange={(nextValue) => {
+            if (nextValue === NO_PRESET_VALUE) {
+              setSelectedPresetId("");
+              setNotice(null);
+              return;
+            }
             setSelectedPresetId(nextValue);
             setNotice(null);
           }}
