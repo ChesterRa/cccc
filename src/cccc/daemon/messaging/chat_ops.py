@@ -38,6 +38,7 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import flush_pending_messages
 from .chat_delivery_ops import deliver_appended_chat_message
 from .actor_turn_rendering import (
+    build_actor_headless_delivery_text as _build_headless_delivery_text,
     compact_delivery_text as _compact_delivery_text,
 )
 from ..context.context_ops import handle_context_sync

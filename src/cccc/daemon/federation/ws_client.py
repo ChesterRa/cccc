@@ -78,6 +78,11 @@ def connect_federation_session_once(
         _run_coro(register_session(session))
         handler = handle_request or (lambda frame: _default_handle_request(frame, remote_peer_id=remote_peer_id))
         try:
+            _set_ws_timeout(ws, min(0.05, idle_tick_value))
+            initial_frame = _ws_recv_json_or_idle(ws)
+            if initial_frame is not _IDLE:
+                _handle_session_frame(ws, initial_frame, peer=peer, handler=handler, send_lock=send_lock)
+            _set_ws_timeout(ws, idle_tick_value)
             if on_ready is not None:
                 on_ready()
             while True:
@@ -85,17 +90,7 @@ def connect_federation_session_once(
                 if frame is _IDLE:
                     _ws_send_json(ws, {"type": "ping"}, send_lock=send_lock)
                     continue
-                frame_type = str(frame.get("type") or "").strip()
-                if frame_type == "response":
-                    peer.receive_response(frame)
-                    continue
-                if frame_type == "pong":
-                    continue
-                if frame_type != "request":
-                    continue
-                request_id = str(frame.get("request_id") or "").strip()
-                result = handler(frame)
-                _ws_send_json(ws, {"type": "response", "response_to": request_id, "result": result}, send_lock=send_lock)
+                _handle_session_frame(ws, frame, peer=peer, handler=handler, send_lock=send_lock)
         finally:
             _run_coro(unregister_session(session))
     except Exception as exc:
@@ -200,6 +195,27 @@ def _ws_recv_json_or_idle(ws: Any) -> Dict[str, Any] | object:
         if _is_idle_timeout(exc):
             return _IDLE
         raise
+
+
+def _handle_session_frame(
+    ws: Any,
+    frame: Dict[str, Any],
+    *,
+    peer: ThreadFederationWsPeer,
+    handler: RequestHandler,
+    send_lock: threading.Lock,
+) -> None:
+    frame_type = str(frame.get("type") or "").strip()
+    if frame_type == "response":
+        peer.receive_response(frame)
+        return
+    if frame_type == "pong":
+        return
+    if frame_type != "request":
+        return
+    request_id = str(frame.get("request_id") or "").strip()
+    result = handler(frame)
+    _ws_send_json(ws, {"type": "response", "response_to": request_id, "result": result}, send_lock=send_lock)
 
 
 def _is_idle_timeout(exc: BaseException) -> bool:
