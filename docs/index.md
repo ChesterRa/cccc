@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: CCCC
-  text: Multi-Agent Collaboration Kernel
-  tagline: Local-first control plane for reliable, multi-agent engineering collaboration
+  text: Coordinate coding agents like a group chat
+  tagline: Read receipts, delivery tracking, and phone-side ops for Claude Code, Codex, Gemini, and 8 more runtimes — local-first, one pip install
   image:
     src: /logo.svg
     alt: CCCC

@@ -487,7 +487,7 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
         update_headless_state(group_id, actor_id, status="waiting", active_turn_id="", latest_event_id="")
 
     try:
-        from .web_model_tool_confirm_watcher import close_web_model_browser_reload_window
+        from .web_model_browser_recovery_watcher import close_web_model_browser_reload_window
 
         close_web_model_browser_reload_window(
             group_id,

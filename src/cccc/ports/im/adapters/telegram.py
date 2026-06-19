@@ -74,6 +74,22 @@ class TelegramAdapter(IMAdapter):
     """
 
     platform = "telegram"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "partial",
+        "files_out": "yes",
+        "threads": "yes",
+        "reactions": "yes",
+        "typing": "yes",
+        "streaming": "no",
+        "voice_in": "no",
+        "markdown": "partial",
+    }
+    capability_notes = {
+        "files_in": "documents/photos are accepted; voice/audio updates are not parsed yet",
+        "threads": "forum topics are preserved with message_thread_id",
+    }
 
     def __init__(
         self,
@@ -191,7 +207,7 @@ class TelegramAdapter(IMAdapter):
                     if not msg:
                         continue
 
-                    # Extract attachments (document/photo/etc.). Text/caption is still required for routing.
+                    # Extract attachments (document/photo/etc.).
                     attachments: List[Dict[str, Any]] = []
                     try:
                         if isinstance(msg.get("document"), dict):
@@ -224,8 +240,6 @@ class TelegramAdapter(IMAdapter):
 
                     # Extract text
                     text = msg.get("text") or msg.get("caption") or ""
-                    if not text:
-                        continue
 
                     # Extract chat info
                     chat = msg.get("chat", {})
@@ -258,6 +272,11 @@ class TelegramAdapter(IMAdapter):
                                 if entity_text.lower() == f"@{self._bot_username.lower()}":
                                     mentioned = True
                                     break
+
+                    if not text and not attachments:
+                        continue
+                    if not text and chat_type != "private" and not mentioned:
+                        continue
 
                     messages.append({
                         "chat_id": str(chat_id),

@@ -58,6 +58,21 @@ class DiscordAdapter(IMAdapter):
     """
 
     platform = "discord"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "yes",
+        "files_out": "yes",
+        "threads": "no",
+        "reactions": "no",
+        "typing": "no",
+        "streaming": "no",
+        "voice_in": "no",
+        "markdown": "partial",
+    }
+    capability_notes = {
+        "threads": "Discord thread targets are not wired through the adapter yet",
+    }
 
     def __init__(
         self,
@@ -161,8 +176,6 @@ class DiscordAdapter(IMAdapter):
                 return
 
             text = message.content or ""
-            if not text:
-                return
 
             attachments: List[Dict[str, Any]] = []
             try:
@@ -197,6 +210,8 @@ class DiscordAdapter(IMAdapter):
 
             # In non-private channels, require an explicit bot mention to route messages.
             if not directed:
+                return
+            if not text and not attachments:
                 return
 
             # Strip self-mention from beginning

@@ -10,7 +10,7 @@ from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..mcp_install import prepare_runtime_mcp_env
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
-from ...kernel.actors import find_actor, list_actors, update_actor
+from ...kernel.actors import find_actor, is_internal_actor, is_supported_internal_actor, list_actors, update_actor
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
@@ -36,6 +36,22 @@ from .web_model_actor_policy import require_no_other_chatgpt_web_model_actor, re
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _is_unsupported_internal_actor(actor: Any) -> bool:
+    return isinstance(actor, dict) and is_internal_actor(actor) and not is_supported_internal_actor(actor)
+
+
+def _unsupported_internal_actor_error(group_id: str, actor_id: str, actor: Dict[str, Any]) -> DaemonResponse:
+    return _error(
+        "unsupported_internal_actor",
+        "unsupported internal actor cannot be started",
+        details={
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "internal_kind": str(actor.get("internal_kind") or "").strip(),
+        },
+    )
 
 
 def _normalize_capability_id_list(raw: Any) -> list[str]:
@@ -148,6 +164,12 @@ def handle_actor_update(
     try:
         require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
         current_actor = find_actor(group, actor_id) or {}
+        if (
+            enabled_patched
+            and coerce_bool(patch.get("enabled"), default=False)
+            and _is_unsupported_internal_actor(current_actor)
+        ):
+            return _unsupported_internal_actor_error(group.group_id, actor_id, current_actor)
         if str(patch.get("runtime") or "").strip().lower() == "web_model":
             require_standard_chatgpt_web_model_actor(current_actor)
             require_no_other_chatgpt_web_model_actor(group_id=group.group_id, actor_id=actor_id)

@@ -4,7 +4,12 @@ import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession, WeixinLoginStatus } from "../types";
 import * as api from "../services/api";
 import { useModalStore, useObservabilityStore } from "../stores";
-import type { RuntimeVisibilityMode } from "../utils/runtimeVisibility";
+import {
+  DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
+  DEFAULT_PEER_RUNTIME_VISIBILITY,
+  normalizeRuntimeVisibilityMode,
+  type RuntimeVisibilityMode,
+} from "../utils/runtimeVisibility";
 import {
   SettingsScope,
   GroupTabId,
@@ -152,7 +157,7 @@ export function SettingsModal({
   const [terminalBacklogMiB, setTerminalBacklogMiB] = useState(10);
   const [terminalScrollbackLines, setTerminalScrollbackLines] = useState(8000);
   const [peerRuntimeVisibility, setPeerRuntimeVisibility] = useState<RuntimeVisibilityMode>("visible");
-  const [petRuntimeVisibility, setPetRuntimeVisibility] = useState<RuntimeVisibilityMode>("hidden");
+  const [assistantRuntimeVisibility, setAssistantRuntimeVisibility] = useState<RuntimeVisibilityMode>("hidden");
   const [obsBusy, setObsBusy] = useState(false);
 
   // Developer-mode debug views
@@ -423,10 +428,13 @@ export function SettingsModal({
           setTerminalScrollbackLines(Math.max(1000, Math.round(scrollbackLines)));
         }
         setPeerRuntimeVisibility(
-          String(obs.runtime_visibility?.peer_runtime || "").trim().toLowerCase() === "hidden" ? "hidden" : "visible"
+          normalizeRuntimeVisibilityMode(obs.runtime_visibility?.peer_runtime, DEFAULT_PEER_RUNTIME_VISIBILITY)
         );
-        setPetRuntimeVisibility(
-          String(obs.runtime_visibility?.pet_runtime || "").trim().toLowerCase() === "visible" ? "visible" : "hidden"
+        setAssistantRuntimeVisibility(
+          normalizeRuntimeVisibilityMode(
+            obs.runtime_visibility?.assistant_runtime,
+            DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
+          )
         );
       }
     } catch (e) {
@@ -758,7 +766,7 @@ export function SettingsModal({
         terminalTranscriptPerActorBytes: perActorBytes,
         terminalUiScrollbackLines: scrollbackLines,
         peerRuntimeVisibility,
-        petRuntimeVisibility,
+        assistantRuntimeVisibility,
       });
       if (resp.ok && resp.result?.observability) {
         const obs = resp.result.observability;
@@ -775,10 +783,13 @@ export function SettingsModal({
           setTerminalScrollbackLines(Math.max(1000, Math.round(lines)));
         }
         setPeerRuntimeVisibility(
-          String(obs.runtime_visibility?.peer_runtime || "").trim().toLowerCase() === "hidden" ? "hidden" : "visible"
+          normalizeRuntimeVisibilityMode(obs.runtime_visibility?.peer_runtime, DEFAULT_PEER_RUNTIME_VISIBILITY)
         );
-        setPetRuntimeVisibility(
-          String(obs.runtime_visibility?.pet_runtime || "").trim().toLowerCase() === "visible" ? "visible" : "hidden"
+        setAssistantRuntimeVisibility(
+          normalizeRuntimeVisibilityMode(
+            obs.runtime_visibility?.assistant_runtime,
+            DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
+          )
         );
       } else if (resp.ok) {
         await loadObservability();
@@ -1227,9 +1238,7 @@ export function SettingsModal({
                   isDark={isDark}
                   groupId={groupId}
                   isActive={scope === "group" && activeTab === "assistants"}
-                  petEnabled={Boolean(settings?.desktop_pet_enabled)}
                   busy={busy}
-                  onUpdatePetEnabled={(enabled) => onUpdateSettings({ desktop_pet_enabled: enabled })}
                 />
               )}
 
@@ -1324,8 +1333,8 @@ export function SettingsModal({
                   setTerminalScrollbackLines={setTerminalScrollbackLines}
                   peerRuntimeVisibility={peerRuntimeVisibility}
                   setPeerRuntimeVisibility={setPeerRuntimeVisibility}
-                  petRuntimeVisibility={petRuntimeVisibility}
-                  setPetRuntimeVisibility={setPetRuntimeVisibility}
+                  assistantRuntimeVisibility={assistantRuntimeVisibility}
+                  setAssistantRuntimeVisibility={setAssistantRuntimeVisibility}
                   obsBusy={obsBusy}
                   onSaveObservability={handleSaveObservability}
                   debugSnapshot={debugSnapshot}

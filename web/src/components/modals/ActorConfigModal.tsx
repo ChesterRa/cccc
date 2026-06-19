@@ -55,6 +55,7 @@ export interface EditActorConfigProps extends ActorConfigBaseProps {
   mode: "edit";
   groupId: string;
   actorId: string;
+  groupRole?: "foreman" | "peer" | string;
   avatarUrl?: string | null;
   hasCustomAvatar?: boolean;
   isRunning: boolean;
@@ -172,6 +173,19 @@ function modeButtonClass(selected: boolean): string {
     selected
       ? "border-[var(--color-text-primary)] bg-[var(--color-text-primary)] text-[var(--color-bg-primary)] hover:bg-[var(--color-text-primary)] hover:text-[var(--color-bg-primary)] hover:opacity-90"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
+  ].join(" ");
+}
+
+function normalizeGroupRole(role: unknown): "foreman" | "peer" {
+  return String(role || "").trim().toLowerCase() === "foreman" ? "foreman" : "peer";
+}
+
+function groupRoleBadgeClass(role: "foreman" | "peer"): string {
+  return [
+    "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
+    role === "foreman"
+      ? "border-amber-500/25 bg-amber-500/12 text-amber-700 dark:text-amber-300"
+      : "border-slate-400/25 bg-slate-500/10 text-slate-600 dark:border-slate-400/20 dark:bg-slate-400/10 dark:text-slate-300",
   ].join(" ");
 }
 
@@ -691,6 +705,7 @@ function EditActorConfigModal({
   mode: _mode,
   groupId,
   actorId,
+  groupRole,
   avatarUrl,
   hasCustomAvatar = false,
   isRunning,
@@ -1101,6 +1116,10 @@ function EditActorConfigModal({
   const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
   const customRunnerLockedToPty = !supportsStandardWebHeadlessRuntime(runtime);
   const webModelRunnerLockedToHeadless = runtime === "web_model";
+  const normalizedGroupRole = normalizeGroupRole(groupRole);
+  const groupRoleLabel = normalizedGroupRole === "foreman"
+    ? t("groupRoleForeman", { defaultValue: "Foreman" })
+    : t("groupRolePeer", { defaultValue: "Peer" });
 
   return (
     <ModalFrame
@@ -1175,7 +1194,7 @@ function EditActorConfigModal({
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionBasics", "Basics")}</div>
               <div className={sectionHintClass}>
-                {t("sectionBasicsHint", "Edit the actor label, built-in role preset seed, and stable role notes here.")}
+                {t("sectionBasicsHint", "Edit the actor label, group role, actor preset, and actor notes here.")}
               </div>
 
               <div className="mt-4 space-y-4">
@@ -1205,6 +1224,10 @@ function EditActorConfigModal({
                       placeholder={actorId}
                     />
                     <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">{t("leaveEmptyForId")}</div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-medium text-[var(--color-text-muted)]">{t("groupRole", { defaultValue: "Group role" })}</span>
+                      <span className={groupRoleBadgeClass(normalizedGroupRole)}>{groupRoleLabel}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -1232,7 +1255,7 @@ function EditActorConfigModal({
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionRuntime", "Runtime & Profile")}</div>
               <div className={sectionHintClass}>
-                {t("sectionRuntimeHint", "Choose a runtime profile or custom runtime config. Role presets above only affect role notes.")}
+                {t("sectionRuntimeHint", "Choose a runtime profile or custom runtime config.")}
               </div>
 
               <div className="mt-4">

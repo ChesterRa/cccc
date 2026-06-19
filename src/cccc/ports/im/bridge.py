@@ -552,6 +552,7 @@ class IMBridge:
         for msg in messages:
             chat_id = str(msg.get("chat_id") or "").strip()
             text = str(msg.get("text") or "")
+            attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
             chat_title = str(msg.get("chat_title") or "")
             from_user = str(msg.get("from_user") or "user")
             from_user_id = str(msg.get("from_user_id") or "")
@@ -562,8 +563,8 @@ class IMBridge:
                 thread_id = 0
             message_id = str(msg.get("message_id") or "").strip()
 
-            if not text:
-                self._log(f"[inbound] Empty text, raw msg keys: {list(msg.keys())}, text field: {repr(msg.get('text'))}")
+            if not text and not attachments:
+                self._log(f"[inbound] Empty text and no attachments, raw msg keys: {list(msg.keys())}, text field: {repr(msg.get('text'))}")
                 continue
             if self._is_historical_inbound(msg):
                 self._log(
@@ -610,7 +611,6 @@ class IMBridge:
             elif parsed.type == CommandType.HELP:
                 self._handle_help(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.SEND:
-                attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
                 mention_user_ids = msg.get("mention_user_ids") if isinstance(msg.get("mention_user_ids"), list) else []
                 self._handle_message(
                     chat_id,
@@ -634,7 +634,6 @@ class IMBridge:
 
                 # When routed (@bot or DM), treat plain text as implicit /send.
                 if routed or chat_type in ("private",):
-                    attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
                     mention_user_ids = msg.get("mention_user_ids") if isinstance(msg.get("mention_user_ids"), list) else []
                     # Build a SEND-like ParsedCommand so _handle_message can extract @targets from args.
                     implicit_args = parsed.text.split() if parsed.text else []
@@ -1146,7 +1145,23 @@ class IMBridge:
         if actors_resp.get("ok"):
             actors = actors_resp.get("result", {}).get("actors", [])
 
-        status_text = format_status(group_title, group_state, running, actors)
+        self.key_manager._load()
+        self.subscribers._load()
+        capabilities: Dict[str, Any] = {}
+        try:
+            capabilities = self.adapter.get_capabilities()
+        except Exception:
+            capabilities = {}
+        im_status = {
+            "platform": str(getattr(self.adapter, "platform", "") or "unknown"),
+            "authorized": self.key_manager.is_authorized(chat_id, thread_id),
+            "subscribed": self.subscribers.is_subscribed(chat_id, thread_id=thread_id),
+            "verbose": self.subscribers.is_verbose(chat_id, thread_id=thread_id),
+            "thread_id": thread_id,
+            "capabilities": capabilities,
+        }
+
+        status_text = format_status(group_title, group_state, running, actors, im_status=im_status)
         self.adapter.send_message(chat_id, status_text, thread_id=thread_id)
 
     def _handle_context(self, chat_id: str, thread_id: int = 0) -> None:

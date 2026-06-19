@@ -366,7 +366,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print()
     if available_count == 0:
         print("No agent runtimes detected.")
-        print("First-class supported runtimes: claude, codex, droid, amp, auggie, neovate, gemini, grok, hermes, kimi, opencode")
+        print("First-class supported runtimes: claude, codex, droid, amp, auggie, gemini, grok, hermes, kimi, opencode")
         print("Manual fallback: custom (bring your own command and MCP wiring)")
     else:
         print(f"{available_count} runtime(s) available.")
@@ -412,7 +412,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     project_path = Path(args.path or ".").resolve()
 
     # Supported runtimes
-    # - claude/codex/droid/amp/auggie/neovate/gemini/grok/hermes/kimi: MCP setup can be automated via their CLIs
+    # - claude/codex/droid/amp/auggie/gemini/grok/hermes/kimi: MCP setup can be automated via their CLIs
     # - opencode: MCP setup is injected into the actor process through OPENCODE_CONFIG_CONTENT
     # - custom: user-provided runtime; MCP setup is manual (generic guidance only)
     SUPPORTED_RUNTIMES = [
@@ -421,7 +421,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
         "droid",
         "amp",
         "auggie",
-        "neovate",
         "gemini",
         "grok",
         "hermes",

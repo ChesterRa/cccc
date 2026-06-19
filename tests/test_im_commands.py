@@ -29,6 +29,41 @@ class TestImFormatStatus(unittest.TestCase):
         self.assertIn("peer_a (codex)", text)
         self.assertNotIn("(@peer_a)", text)
 
+    def test_format_status_includes_im_capabilities_when_available(self) -> None:
+        text = format_status(
+            group_title="demo",
+            group_state="active",
+            running=True,
+            actors=[],
+            im_status={
+                "platform": "telegram",
+                "authorized": True,
+                "subscribed": True,
+                "verbose": False,
+                "thread_id": 42,
+                "capabilities": {
+                    "features": {
+                        "text_in": "yes",
+                        "text_out": "yes",
+                        "files_in": "partial",
+                        "files_out": "yes",
+                        "threads": "yes",
+                        "reactions": "yes",
+                        "typing": "yes",
+                        "streaming": "no",
+                        "voice_in": "no",
+                        "markdown": "partial",
+                    }
+                },
+            },
+        )
+        self.assertIn("IM:", text)
+        self.assertIn("Platform: telegram", text)
+        self.assertIn("authorized yes | subscribed yes | verbose no | thread 42", text)
+        self.assertIn("Text: in yes / out yes", text)
+        self.assertIn("Files: in partial / out yes", text)
+        self.assertIn("Voice/audio no | Markdown partial", text)
+
 
 if __name__ == "__main__":
     unittest.main()

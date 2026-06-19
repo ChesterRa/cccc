@@ -812,99 +812,6 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-
-    def test_send_pet_review_immediate_follows_reply_required(self) -> None:
-        group_id, cleanup = self._setup_group_with_actors()
-        try:
-            with patch("cccc.daemon.messaging.chat_side_effects.request_pet_review") as review_mock:
-                resp, _ = self._call(
-                    "send",
-                    {
-                        "group_id": group_id,
-                        "by": "user",
-                        "to": ["peer1"],
-                        "text": "normal send",
-                    },
-                )
-                self.assertTrue(resp.ok, getattr(resp, "error", None))
-
-                review_mock.assert_called_once()
-                self.assertEqual(review_mock.call_args.kwargs.get("reason"), "chat_message")
-                self.assertFalse(bool(review_mock.call_args.kwargs.get("immediate")))
-
-                review_mock.reset_mock()
-                resp, _ = self._call(
-                    "send",
-                    {
-                        "group_id": group_id,
-                        "by": "user",
-                        "to": ["peer1"],
-                        "text": "urgent send",
-                        "reply_required": True,
-                    },
-                )
-                self.assertTrue(resp.ok, getattr(resp, "error", None))
-
-                review_mock.assert_called_once()
-                self.assertEqual(review_mock.call_args.kwargs.get("reason"), "chat_message")
-                self.assertTrue(bool(review_mock.call_args.kwargs.get("immediate")))
-        finally:
-            cleanup()
-
-    def test_reply_pet_review_immediate_follows_reply_required(self) -> None:
-        group_id, cleanup = self._setup_group_with_actors()
-        try:
-            send, _ = self._call(
-                "send",
-                {
-                    "group_id": group_id,
-                    "by": "user",
-                    "to": ["peer1"],
-                    "text": "original",
-                },
-            )
-            self.assertTrue(send.ok, getattr(send, "error", None))
-            original_event = (send.result or {}).get("event") if isinstance(send.result, dict) else {}
-            self.assertIsInstance(original_event, dict)
-            assert isinstance(original_event, dict)
-            original_event_id = str(original_event.get("id") or "").strip()
-            self.assertTrue(original_event_id)
-
-            with patch("cccc.daemon.messaging.chat_side_effects.request_pet_review") as review_mock:
-                reply, _ = self._call(
-                    "reply",
-                    {
-                        "group_id": group_id,
-                        "by": "peer1",
-                        "reply_to": original_event_id,
-                        "text": "normal reply",
-                    },
-                )
-                self.assertTrue(reply.ok, getattr(reply, "error", None))
-
-                review_mock.assert_called_once()
-                self.assertEqual(review_mock.call_args.kwargs.get("reason"), "chat_reply")
-                self.assertFalse(bool(review_mock.call_args.kwargs.get("immediate")))
-
-                review_mock.reset_mock()
-                reply, _ = self._call(
-                    "reply",
-                    {
-                        "group_id": group_id,
-                        "by": "peer1",
-                        "reply_to": original_event_id,
-                        "text": "urgent reply",
-                        "reply_required": True,
-                    },
-                )
-                self.assertTrue(reply.ok, getattr(reply, "error", None))
-
-                review_mock.assert_called_once()
-                self.assertEqual(review_mock.call_args.kwargs.get("reason"), "chat_reply")
-                self.assertTrue(bool(review_mock.call_args.kwargs.get("immediate")))
-        finally:
-            cleanup()
-
     def test_user_message_wakes_idle_group_and_clears_pending_auto_idle_notifications(self) -> None:
         from cccc.kernel.group import load_group
 
@@ -1283,6 +1190,41 @@ class TestChatOps(unittest.TestCase):
             self.assertTrue(reply_resp.ok, getattr(reply_resp, "error", None))
             reply_event = (reply_resp.result or {}).get("event", {})
             self.assertEqual(reply_event.get("data", {}).get("refs", []), refs)
+        finally:
+            cleanup()
+
+    def test_send_and_reply_preserve_suggested_user_message(self) -> None:
+        """Suggested next-user text is normalized and stored as chat metadata."""
+        from cccc.contracts.v1 import SUGGESTED_USER_MESSAGE_MAX_CHARS
+
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            long_suggestion = "x" * (SUGGESTED_USER_MESSAGE_MAX_CHARS + 25)
+            send_resp, _ = self._call("send", {
+                "group_id": group_id,
+                "by": "peer1",
+                "to": ["user"],
+                "text": "I finished the review.",
+                "suggested_user_message": f"  {long_suggestion}  ",
+            })
+            self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
+            send_event = (send_resp.result or {}).get("event", {})
+            send_data = send_event.get("data", {})
+            self.assertEqual(send_data.get("to"), ["user"])
+            self.assertEqual(send_data.get("suggested_user_message"), "x" * SUGGESTED_USER_MESSAGE_MAX_CHARS)
+
+            reply_resp, _ = self._call("reply", {
+                "group_id": group_id,
+                "by": "peer1",
+                "reply_to": str(send_event.get("id") or ""),
+                "text": "One more note.",
+                "suggested_user_message": "  Please run the follow-up checks.  ",
+            })
+            self.assertTrue(reply_resp.ok, getattr(reply_resp, "error", None))
+            reply_event = (reply_resp.result or {}).get("event", {})
+            reply_data = reply_event.get("data", {})
+            self.assertEqual(reply_data.get("to"), ["user"])
+            self.assertEqual(reply_data.get("suggested_user_message"), "Please run the follow-up checks.")
         finally:
             cleanup()
 

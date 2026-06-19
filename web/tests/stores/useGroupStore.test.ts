@@ -587,7 +587,7 @@ describe("useGroupStore actors fetch policy", () => {
         actors: [
           { id: "peer-1", running: true },
           { id: "voice-secretary", internal_kind: "voice_secretary", running: true },
-          { id: "pet-peer", internal_kind: "pet", running: false },
+          { id: "legacy-internal", internal_kind: "legacy", running: false },
         ],
       },
     } as Awaited<ReturnType<typeof api.fetchActors>>);
@@ -597,7 +597,6 @@ describe("useGroupStore actors fetch policy", () => {
     expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: true }]);
     expect(useGroupStore.getState().internalRuntimeActorsByGroup["g-demo"]).toEqual([
       { id: "voice-secretary", internal_kind: "voice_secretary", running: true },
-      { id: "pet-peer", internal_kind: "pet", running: false },
     ]);
   });
 

@@ -99,6 +99,28 @@ class TestWebActorRoutesCache(unittest.TestCase):
         ):
             self.assertTrue(_pid_matches_actor_context(43210, group_id="group-1", actor_id="peer-1"))
 
+    def test_read_only_terminal_attach_forces_viewer_without_takeover(self) -> None:
+        from cccc.ports.web.routes.actors import _resolve_terminal_attach_mode
+
+        mode, takeover = _resolve_terminal_attach_mode(
+            {"mode": "control", "takeover": "true"},
+            read_only=True,
+        )
+
+        self.assertEqual(mode, "viewer")
+        self.assertFalse(takeover)
+
+    def test_normal_terminal_attach_preserves_control_takeover(self) -> None:
+        from cccc.ports.web.routes.actors import _resolve_terminal_attach_mode
+
+        mode, takeover = _resolve_terminal_attach_mode(
+            {"mode": "control", "takeover": "true"},
+            read_only=False,
+        )
+
+        self.assertEqual(mode, "control")
+        self.assertTrue(takeover)
+
     def test_normal_mode_readonly_actor_list_uses_inflight_without_ttl(self) -> None:
         _, cleanup = self._with_home()
         try:

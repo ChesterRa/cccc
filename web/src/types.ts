@@ -169,6 +169,7 @@ export type ChatMessageData = {
   pending_event_id?: string;
   pending_placeholder?: boolean;
   client_id?: string;
+  suggested_user_message?: string;
   quote_text?: string;
   src_group_id?: string;
   src_event_id?: string;
@@ -226,7 +227,7 @@ export type LedgerEventStatusPayload = {
 };
 
 export type WebModelDeliveryStatusPayload = {
-  state?: "submitting" | "submitted" | "pending" | "ambiguous" | "failed" | string;
+  state?: "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed" | string;
   actor_id?: string;
   delivery_id?: string;
   updated_at?: string;
@@ -728,8 +729,6 @@ export type GroupSettings = {
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;
   terminal_transcript_notify_lines: number;
-
-  desktop_pet_enabled: boolean;
 };
 
 export type BuiltinAssistantPolicy = {
@@ -739,7 +738,7 @@ export type BuiltinAssistantPolicy = {
 
 export type BuiltinAssistant = {
   assistant_id: string;
-  kind: "pet" | "voice_secretary" | string;
+  kind: "voice_secretary" | string;
   enabled: boolean;
   principal?: string;
   lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed" | string;
@@ -777,7 +776,10 @@ export type AssistantServiceModel = {
   artifact_index?: number;
   artifact_count?: number;
   error?: Record<string, unknown>;
-  artifacts?: Array<{ path?: string; size_bytes?: number }>;
+  last_update_error?: Record<string, unknown>;
+  installed_manifest_sha256?: string;
+  update_available?: boolean;
+  artifacts?: Array<{ path?: string; url?: string; sha256?: string; size_bytes?: number; archive?: string }>;
 };
 
 export type AssistantServiceRuntime = {
@@ -788,6 +790,14 @@ export type AssistantServiceRuntime = {
   install_dir?: string;
   python?: string;
   packages?: string[];
+  primary_package?: string;
+  package_versions?: Record<string, string>;
+  installed_version?: string;
+  latest_version?: string;
+  latest_versions?: Record<string, string>;
+  latest_checked_at?: string;
+  latest_check_error?: Record<string, unknown>;
+  update_available?: boolean;
   modules?: Record<string, boolean>;
   missing_modules?: string[];
   installed_at?: string;
@@ -1067,7 +1077,7 @@ export type WebAccessSession = {
   can_access_global_settings?: boolean;
   runtime_visibility?: {
     peer_runtime?: "hidden" | "visible" | string;
-    pet_runtime?: "hidden" | "visible" | string;
+    assistant_runtime?: "hidden" | "visible" | string;
   };
 };
 
@@ -1400,7 +1410,6 @@ export const SUPPORTED_RUNTIMES = [
   "droid",
   "amp",
   "auggie",
-  "neovate",
   "gemini",
   "grok",
   "hermes",
@@ -1422,7 +1431,6 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
   kimi: { label: "Kimi CLI", desc: "" },
-  neovate: { label: "Neovate Code", desc: "" },
   opencode: { label: "OpenCode", desc: "Uses inline OpenCode MCP config at actor launch" },
   web_model: { label: "ChatGPT Web Model", desc: "ChatGPT browser delivery + remote MCP connector" },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
@@ -1478,10 +1486,6 @@ export const RUNTIME_COLORS: Record<string, {
   kimi: {
     bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
     bgLight: "bg-lime-50", textLight: "text-lime-700", borderLight: "border-lime-300", dotLight: "bg-lime-500"
-  },
-  neovate: {
-    bg: "bg-fuchsia-900/30", text: "text-fuchsia-300", border: "border-fuchsia-600/50", dot: "bg-fuchsia-400",
-    bgLight: "bg-fuchsia-50", textLight: "text-fuchsia-700", borderLight: "border-fuchsia-300", dotLight: "bg-fuchsia-500"
   },
   opencode: {
     bg: "bg-stone-900/40", text: "text-stone-200", border: "border-stone-500/60", dot: "bg-stone-300",

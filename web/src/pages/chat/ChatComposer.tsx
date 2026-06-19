@@ -3,14 +3,13 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, PetIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, SparklesIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
 import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
 import { SlashCommandMenu } from "./SlashCommandMenu";
-import { updateSettings } from "../../services/api";
-import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
+import { useGroupStore } from "../../stores";
 import { filterSlashCommands, getVisibleSlashCommandPage, type SlashCommandItem } from "../../utils/slashCommands";
 import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
 import { ComposerFilePreview } from "./ComposerFilePreview";
@@ -25,6 +24,12 @@ import {
   pruneComposerGroupMentionTokens,
   resolveControlledComposerMentionContext,
 } from "../../hooks/composerGroupMentions";
+import {
+  composerTargetAllowsSuggestedUserMessage,
+  consumeSuggestedUserMessage,
+  latestSuggestedUserMessage,
+  readConsumedSuggestedUserMessageIds,
+} from "../../utils/suggestedUserMessage";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 const MENTION_MENU_DESKTOP_WIDTH = 320;
@@ -69,6 +74,7 @@ export interface ChatComposerProps {
   destGroupScopeLabel?: string;
   busy: string;
   recentMessages?: LedgerEvent[];
+  suggestionSourceMessages?: LedgerEvent[];
 
   // Reply
   replyTarget: ReplyTarget;
@@ -130,6 +136,7 @@ export function ChatComposer({
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
   recentMessages = [],
+  suggestionSourceMessages,
   replyTarget,
   onCancelReply,
   quotedPresentationRef,
@@ -174,18 +181,15 @@ export function ChatComposer({
   const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("prompt");
   const [mentionMenuLeft, setMentionMenuLeft] = useState(8);
   const [composerScrollTop, setComposerScrollTop] = useState(0);
+  const [sessionConsumedSuggestedUserMessageIds, setSessionConsumedSuggestedUserMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const groups = useGroupStore((state) => state.groups);
   const routeGroups = composerRouteGroups.length > 0 ? composerRouteGroups : groups;
   const refreshSettings = useGroupStore((state) => state.refreshSettings);
-  const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
-  const requestAssistantOpen = useBuiltInAssistantStore((state) => state.requestOpen);
-  const showError = useUIStore((state) => state.showError);
-  const showNotice = useUIStore((state) => state.showNotice);
-  const [petBusy, setPetBusy] = useState(false);
-  const petEnabled = Boolean(groupSettings?.desktop_pet_enabled);
 
   const readRootFontScale = () => {
     if (typeof document === "undefined") return 1;
@@ -284,62 +288,6 @@ export function ChatComposer({
     void refreshSettings(selectedGroupId);
   }, [groupSettings, refreshSettings, selectedGroupId]);
 
-  const activatePet = useCallback(async () => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid || busy === "send" || petBusy) return;
-    if (petEnabled) {
-      const confirmed = window.confirm(t("builtInAssistantPetStopConfirm", { defaultValue: "Stop PET?" }));
-      if (!confirmed) return;
-      setPetBusy(true);
-      try {
-        const resp = await updateSettings(gid, { desktop_pet_enabled: false });
-        if (!resp.ok) {
-          showError(resp.error.message);
-          return;
-        }
-        await refreshSettings(gid);
-        await refreshInternalRuntimeActors(gid);
-        showNotice({
-          message: t("builtInAssistantPetDisabled", { defaultValue: "PET disabled for this group." }),
-        });
-      } catch {
-        showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
-      } finally {
-        setPetBusy(false);
-      }
-      return;
-    }
-    setPetBusy(true);
-    try {
-      const resp = await updateSettings(gid, { desktop_pet_enabled: true });
-      if (!resp.ok) {
-        showError(resp.error.message);
-        return;
-      }
-      await refreshSettings(gid);
-      await refreshInternalRuntimeActors(gid);
-      showNotice({
-        message: t("builtInAssistantPetEnabled", { defaultValue: "PET enabled for this group." }),
-      });
-      requestAssistantOpen(gid, "pet");
-    } catch {
-      showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
-    } finally {
-      setPetBusy(false);
-    }
-  }, [
-    busy,
-    petBusy,
-    petEnabled,
-    refreshInternalRuntimeActors,
-    refreshSettings,
-    requestAssistantOpen,
-    selectedGroupId,
-    showError,
-    showNotice,
-    t,
-  ]);
-
   const chipBaseClass =
     "flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-[10px] font-medium leading-none transition-all sm:px-2.5 sm:text-[11px]";
   const chipActiveClass = isDark
@@ -403,6 +351,58 @@ export function ChatComposer({
     parts.push(escapeHtml(composerText.slice(cursor)));
     return parts.join("");
   }, [composerText, liveAgentMentionTokens, liveGroupMentionTokens]);
+  const consumedSuggestedUserMessageIds = readConsumedSuggestedUserMessageIds();
+  for (const eventId of sessionConsumedSuggestedUserMessageIds) {
+    consumedSuggestedUserMessageIds.add(eventId);
+  }
+  const suggestedUserMessage = latestSuggestedUserMessage(
+    suggestionSourceMessages || recentMessages,
+    consumedSuggestedUserMessageIds,
+  );
+  const canShowSuggestedUserMessageForTarget = composerTargetAllowsSuggestedUserMessage({
+    selectedGroupId,
+    destGroupId,
+    composerGroupSettled,
+  });
+  const showSuggestedUserMessage = Boolean(
+    suggestedUserMessage
+    && canShowSuggestedUserMessageForTarget
+    && !composerText.trim()
+    && composerFiles.length === 0
+    && busy !== "send",
+  );
+  const suggestedUserMessageHelpId = showSuggestedUserMessage
+    ? `suggested-user-message-${suggestedUserMessage?.eventId || "current"}`
+    : undefined;
+  const suggestedUserMessageHintLabel = t("suggestedUserMessageHint", {
+    defaultValue: "Suggested next message. Press Tab to use it.",
+  });
+  const suggestedUserMessageUseLabel = t("suggestedUserMessageUse", {
+    defaultValue: "Use suggestion",
+  });
+  const markSuggestedUserMessageConsumed = useCallback(() => {
+    const eventId = String(suggestedUserMessage?.eventId || "").trim();
+    if (!eventId) return;
+    consumeSuggestedUserMessage(eventId);
+    setSessionConsumedSuggestedUserMessageIds((current) => {
+      if (current.has(eventId)) return current;
+      const next = new Set(current);
+      next.add(eventId);
+      return next;
+    });
+  }, [setSessionConsumedSuggestedUserMessageIds, suggestedUserMessage?.eventId]);
+  const acceptSuggestedUserMessage = useCallback(() => {
+    const text = String(suggestedUserMessage?.text || "").trim();
+    if (!showSuggestedUserMessage || !text) return;
+    markSuggestedUserMessageConsumed();
+    setComposerText(text);
+    requestAnimationFrame(() => {
+      const textarea = composerRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(text.length, text.length);
+    });
+  }, [composerRef, markSuggestedUserMessageConsumed, setComposerText, showSuggestedUserMessage, suggestedUserMessage?.text]);
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -449,6 +449,9 @@ export function ChatComposer({
   // Handle text changes.
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
+    if (showSuggestedUserMessage && val.trim()) {
+      markSuggestedUserMessageConsumed();
+    }
     isUserInputRef.current = true;
     setComposerText(val);
     setComposerGroupMentionTokens((tokens) => pruneComposerGroupMentionTokens({ text: val, tokens }));
@@ -600,6 +603,23 @@ export function ChatComposer({
         setMentionSelectedIndex(0);
         return;
       }
+    }
+    if (
+      showSuggestedUserMessage
+      && e.key === "Tab"
+      && !e.shiftKey
+      && !e.ctrlKey
+      && !e.metaKey
+      && !e.altKey
+    ) {
+      e.preventDefault();
+      acceptSuggestedUserMessage();
+      return;
+    }
+    if (showSuggestedUserMessage && e.key === "Escape") {
+      e.preventDefault();
+      markSuggestedUserMessageConsumed();
+      return;
     }
     if (e.key === "Enter" && !showMentionMenu) {
       if (showSlashMenu) return;
@@ -767,6 +787,9 @@ export function ChatComposer({
     shortcut: sendShortcutLabel,
     defaultValue: "Send message ({{shortcut}})",
   });
+  const composerPlaceholder = showSuggestedUserMessage
+    ? ""
+    : isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop');
 
   return (
     <footer
@@ -995,7 +1018,8 @@ export function ChatComposer({
               <textarea
                 ref={composerRef as RefObject<HTMLTextAreaElement>}
                 className={classNames(
-                  "relative w-full bg-transparent border-0 px-4 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
+                  "relative w-full bg-transparent border-0 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
+                  showSuggestedUserMessage ? "pl-11 pr-4" : "px-4",
                 )}
                 style={{
                   minHeight: `${Math.max(baseComposerHeight + 6, 52)}px`,
@@ -1003,7 +1027,7 @@ export function ChatComposer({
                   fontSize: `${composerFontSize}px`,
                   lineHeight: `${composerLineHeight}px`,
                 }}
-                placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
+                placeholder={composerPlaceholder}
                 rows={1}
                 value={composerText}
                 onPaste={handlePaste}
@@ -1012,7 +1036,45 @@ export function ChatComposer({
                 onScroll={(event) => setComposerScrollTop(event.currentTarget.scrollTop)}
                 onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
                 aria-label={t('messageInput')}
+                aria-describedby={suggestedUserMessageHelpId}
               />
+              {showSuggestedUserMessage && suggestedUserMessage ? (
+                <button
+                  type="button"
+                  className={classNames(
+                    "absolute left-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    isDark
+                      ? "text-white/45 hover:bg-white/10 hover:text-white/75"
+                      : "text-gray-400 hover:bg-black/[0.06] hover:text-gray-600",
+                  )}
+                  onClick={acceptSuggestedUserMessage}
+                  aria-label={suggestedUserMessageUseLabel}
+                  title={suggestedUserMessageUseLabel}
+                >
+                  <SparklesIcon size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              {showSuggestedUserMessage && suggestedUserMessage ? (
+                <div
+                  className={classNames(
+                    "pointer-events-none absolute inset-x-0 top-0 overflow-hidden py-3 pl-11 pr-4 whitespace-pre-wrap",
+                    isDark ? "text-white/22" : "text-gray-400/80",
+                  )}
+                  style={{
+                    maxHeight: `${maxComposerHeight}px`,
+                    fontSize: `${composerFontSize}px`,
+                    lineHeight: `${composerLineHeight}px`,
+                  }}
+                  aria-hidden="true"
+                >
+                  {suggestedUserMessage.text}
+                </div>
+              ) : null}
+              {showSuggestedUserMessage && suggestedUserMessageHelpId ? (
+                <span id={suggestedUserMessageHelpId} className="sr-only">
+                  {suggestedUserMessageHintLabel}
+                </span>
+              ) : null}
 
               {/* Mention menu */}
               {showMentionMenu && mentionSuggestions.length > 0 && (
@@ -1045,7 +1107,6 @@ export function ChatComposer({
                 />
               )}
             </div>
-
             {/* Row 3 — Action bar */}
             <div
               className={classNames(
@@ -1067,41 +1128,6 @@ export function ChatComposer({
                 >
                   <AttachmentIcon size={18} />
                 </button>
-
-                {actionVisibility.showPetShortcut ? (
-                  <button
-                    type="button"
-                    className={classNames(
-                      "relative flex h-11 w-11 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-9",
-                      petEnabled
-                        ? "border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/15"
-                        : "glass-btn text-[var(--color-text-secondary)]",
-                    )}
-                    onClick={() => void activatePet()}
-                    disabled={!selectedGroupId || busy === "send" || petBusy}
-                    aria-label={
-                      petEnabled
-                        ? t("builtInAssistantPetTurnOff", { defaultValue: "Turn PET off" })
-                        : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" })
-                    }
-                    title={
-                      petEnabled
-                        ? t("builtInAssistantPetTurnOff", { defaultValue: "Turn PET off" })
-                        : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" })
-                    }
-                  >
-                    <PetIcon size={17} aria-hidden="true" />
-                    <span
-                      className={classNames(
-                        "absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full",
-                        petEnabled
-                          ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]"
-                          : isDark ? "bg-white/20" : "bg-gray-300",
-                      )}
-                      aria-hidden="true"
-                    />
-                  </button>
-                ) : null}
 
                 <div className="min-w-0 sm:min-w-max">
                 <VoiceSecretaryComposerControl

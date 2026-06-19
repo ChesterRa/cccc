@@ -2,6 +2,9 @@
 
 import json
 import logging
+import math
+import re
+from collections import Counter
 from pathlib import Path
 
 from .base_file_store import BaseFileStore
@@ -37,6 +40,33 @@ class LocalFileStore(BaseFileStore):
         # Persistence paths (mirror ChromaFileStore convention)
         self._chunks_file: Path = self.db_path / f"{self.store_name}_chunks.jsonl"
         self._metadata_file: Path = self.db_path / f"{self.store_name}_file_metadata.json"
+
+    _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+    _WORD_RE = re.compile(r"(?u)[a-zA-Z0-9_]+(?:[._:/-][a-zA-Z0-9_]+)*")
+    _WORD_SPLIT_RE = re.compile(r"[_./:\-]+")
+
+    @classmethod
+    def _keyword_tokens(cls, text: str) -> list[str]:
+        """Tokenize text for local keyword ranking without optional dependencies.
+
+        This follows the same dependency-free direction as ReMe4's regex tokenizer:
+        CJK text is indexed by characters and bigrams, while latin/code-like tokens
+        keep both the full identifier and separator-delimited parts.
+        """
+        raw = str(text or "").lower()
+        tokens: list[str] = []
+        for run in cls._CJK_RUN_RE.findall(raw):
+            tokens.extend(run)
+            tokens.extend(run[i : i + 2] for i in range(max(0, len(run) - 1)))
+
+        latin_text = cls._CJK_RUN_RE.sub(" ", raw)
+        for word in cls._WORD_RE.findall(latin_text):
+            if len(word) >= 2:
+                tokens.append(word)
+            for part in cls._WORD_SPLIT_RE.split(word):
+                if len(part) >= 2 and part != word:
+                    tokens.append(part)
+        return tokens
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -295,32 +325,68 @@ class LocalFileStore(BaseFileStore):
         limit: int,
         sources: list[MemorySource] | None = None,
     ) -> list[MemorySearchResult]:
-        """Perform keyword/full-text search via Python substring matching."""
+        """Perform keyword/full-text search with a lightweight BM25-style ranker."""
         if not self.fts_enabled or not query:
             return []
 
-        words = query.split()
-        if not words:
+        query_tokens = self._keyword_tokens(query)
+        if not query_tokens:
             return []
 
         query_lower = query.lower()
-        words_lower = [w.lower() for w in words]
-        n_words = len(words)
+        query_counts = Counter(query_tokens)
+        query_terms = set(query_counts)
 
-        results = []
+        documents = []
         for chunk in self._chunks.values():
             if sources and chunk.source not in sources:
                 continue
-
-            text_lower = chunk.text.lower()
-            match_count = sum(1 for w in words_lower if w in text_lower)
-            if match_count == 0:
+            doc_tokens = self._keyword_tokens(chunk.text)
+            if not doc_tokens:
                 continue
+            token_counts = Counter(doc_tokens)
+            matched_terms = query_terms.intersection(token_counts)
+            if not matched_terms:
+                continue
+            documents.append((chunk, token_counts, len(doc_tokens), matched_terms))
 
-            base_score = match_count / n_words
-            # Bonus for full phrase match (multi-word queries only)
-            phrase_bonus = 0.2 if n_words > 1 and query_lower in text_lower else 0.0
-            score = min(1.0, base_score + phrase_bonus)
+        if not documents:
+            return []
+
+        doc_count = len(documents)
+        avg_len = sum(doc_len for _, _, doc_len, _ in documents) / doc_count
+        doc_freq: Counter[str] = Counter()
+        for _, _, _, matched_terms in documents:
+            doc_freq.update(matched_terms)
+
+        k1 = 1.5
+        b = 0.75
+        scored = []
+        for chunk, token_counts, doc_len, matched_terms in documents:
+            raw_score = 0.0
+            for term, query_tf in query_counts.items():
+                tf = token_counts.get(term, 0)
+                if tf <= 0:
+                    continue
+                df = max(1, doc_freq.get(term, 0))
+                idf = math.log(1.0 + (doc_count - df + 0.5) / (df + 0.5))
+                denom = tf + k1 * (1.0 - b + b * (doc_len / max(avg_len, 1.0)))
+                raw_score += idf * ((tf * (k1 + 1.0)) / denom) * min(query_tf, 2)
+            if raw_score <= 0:
+                continue
+            scored.append((chunk, raw_score, len(matched_terms) / max(1, len(query_terms)), matched_terms))
+
+        if not scored:
+            return []
+
+        max_raw_score = max(raw_score for _, raw_score, _, _ in scored) or 1.0
+        results = []
+        for chunk, raw_score, coverage, matched_terms in scored:
+            phrase_bonus = 0.15 if query_lower in chunk.text.lower() else 0.0
+            raw_rank = raw_score / max_raw_score
+            # Coverage is absolute relevance: a one-token match in a multi-token
+            # query must not be normalized into a high-confidence hit.
+            score = min(1.0, coverage * (0.85 + raw_rank * 0.1) + phrase_bonus)
 
             results.append(
                 MemorySearchResult(
@@ -330,6 +396,7 @@ class LocalFileStore(BaseFileStore):
                     score=score,
                     snippet=chunk.text,
                     source=chunk.source,
+                    raw_metric=raw_score,
                 ),
             )
 

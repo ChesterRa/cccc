@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..util.conv import coerce_bool
-from .actors import get_effective_role, is_pet_actor, is_voice_secretary_actor, list_visible_actors
+from .actors import get_effective_role, is_voice_secretary_actor, list_visible_actors
 from .group import Group
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 
@@ -20,8 +20,8 @@ def render_role_system_prompt(
     """Render the shared system prompt frame for a concrete role/identity.
 
     This is the common prompt scaffold used by normal peer/foreman actors.
-    Other role-adjacent surfaces, like the pet peer context injector, should
-    reuse this frame instead of hand-rolling a parallel prompt format.
+    Role-adjacent first-party assistants can reuse this frame instead of
+    hand-rolling a parallel prompt format.
     """
     group_id = str(group.group_id or "").strip()
     actor_id = str(actor_id or "").strip()
@@ -171,10 +171,6 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     - Ops playbook lives in MCP: see cccc_help
     """
     actor_id = str(actor.get("id") or "").strip()
-    if is_pet_actor(actor):
-        from .pet_prompt import render_pet_system_prompt
-
-        return render_pet_system_prompt(group, actor=actor)
     if is_voice_secretary_actor(actor):
         from .voice_secretary_prompt import render_voice_secretary_actor_system_prompt
 

@@ -169,7 +169,7 @@ class TestServerPtyExit(unittest.TestCase):
         _, cleanup = self._with_home()
         try:
             from cccc.daemon.server import _handle_pty_session_exit
-            from cccc.kernel.actors import INTERNAL_KIND_PET, add_actor, find_actor
+            from cccc.kernel.actors import INTERNAL_KIND_VOICE_SECRETARY, add_actor, find_actor
             from cccc.kernel.group import load_group
 
             create, _ = self._call("group_create", {"title": "pty-internal-exit", "topic": "", "by": "user"})
@@ -180,20 +180,20 @@ class TestServerPtyExit(unittest.TestCase):
             assert group is not None
             add_actor(
                 group,
-                actor_id="pet-peer",
+                actor_id="voice-secretary",
                 runner="pty",
                 runtime="codex",
                 enabled=True,
-                internal_kind=INTERNAL_KIND_PET,
+                internal_kind=INTERNAL_KIND_VOICE_SECRETARY,
             )
 
-            session = type("_Session", (), {"group_id": group_id, "actor_id": "pet-peer", "pid": 23456})()
+            session = type("_Session", (), {"group_id": group_id, "actor_id": "voice-secretary", "pid": 23456})()
             _handle_pty_session_exit(session)  # type: ignore[arg-type]
 
             reloaded = load_group(group_id)
             self.assertIsNotNone(reloaded)
             assert reloaded is not None
-            actor = find_actor(reloaded, "pet-peer")
+            actor = find_actor(reloaded, "voice-secretary")
             self.assertIsInstance(actor, dict)
             assert isinstance(actor, dict)
             self.assertTrue(bool(actor.get("enabled")))

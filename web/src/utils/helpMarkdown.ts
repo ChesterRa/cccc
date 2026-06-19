@@ -1,10 +1,9 @@
-export type HelpChangedBlock = "common" | "role:foreman" | "role:peer" | "pet" | "voice_secretary" | `actor:${string}`;
+export type HelpChangedBlock = "common" | "role:foreman" | "role:peer" | "voice_secretary" | `actor:${string}`;
 
 export type ParsedHelpMarkdown = {
   common: string;
   foreman: string;
   peer: string;
-  pet: string;
   voiceSecretary: string;
   actorNotes: Record<string, string>;
   extraTaggedBlocks: string[];
@@ -12,7 +11,7 @@ export type ParsedHelpMarkdown = {
 };
 
 type TaggedSection = {
-  kind: "role" | "actor" | "pet" | "voice_secretary" | "extra";
+  kind: "role" | "actor" | "voice_secretary" | "extra";
   key: string;
   raw: string;
   body: string;
@@ -76,8 +75,8 @@ function parseTaggedSection(section: string): TaggedSection | null {
   }
   if (PET_TAG_RE.test(header)) {
     return {
-      kind: "pet",
-      key: "pet",
+      kind: "extra",
+      key: "legacy:pet",
       raw: trimBlock(normalized),
       body: trimBlock(lines.slice(1).join("\n")),
     };
@@ -180,7 +179,6 @@ export function parseHelpMarkdown(markdown: string): ParsedHelpMarkdown {
   const extraTaggedBlocks: string[] = [];
   let foreman = "";
   let peer = "";
-  let pet = "";
   let voiceSecretary = "";
 
   for (const section of sections) {
@@ -203,10 +201,6 @@ export function parseHelpMarkdown(markdown: string): ParsedHelpMarkdown {
       else extraTaggedBlocks.push(tagged.raw);
       continue;
     }
-    if (tagged.kind === "pet") {
-      pet = tagged.body;
-      continue;
-    }
     if (tagged.kind === "voice_secretary") {
       voiceSecretary = tagged.body;
       continue;
@@ -224,14 +218,13 @@ export function parseHelpMarkdown(markdown: string): ParsedHelpMarkdown {
     usedLegacyRoleNotes = legacy.used;
   }
 
-  return { common, foreman, peer, pet, voiceSecretary, actorNotes, extraTaggedBlocks, usedLegacyRoleNotes };
+  return { common, foreman, peer, voiceSecretary, actorNotes, extraTaggedBlocks, usedLegacyRoleNotes };
 }
 
 export function buildHelpMarkdown(input: {
   common: string;
   foreman: string;
   peer: string;
-  pet: string;
   voiceSecretary?: string;
   actorNotes: Record<string, string>;
   actorOrder?: string[];
@@ -241,7 +234,6 @@ export function buildHelpMarkdown(input: {
   const common = trimBlock(input.common);
   const foreman = trimBlock(input.foreman);
   const peer = trimBlock(input.peer);
-  const pet = trimBlock(input.pet);
   const voiceSecretary = trimBlock(input.voiceSecretary || "");
   const actorNotes = input.actorNotes || {};
   const extraTaggedBlocks = Array.isArray(input.extraTaggedBlocks) ? input.extraTaggedBlocks.map(trimBlock).filter(Boolean) : [];
@@ -249,7 +241,6 @@ export function buildHelpMarkdown(input: {
   if (common) parts.push(common);
   if (foreman) parts.push(`## @role: foreman\n\n${foreman}`);
   if (peer) parts.push(`## @role: peer\n\n${peer}`);
-  if (pet) parts.push(`## @pet\n\n${pet}`);
   if (voiceSecretary) parts.push(`## @voice_secretary\n\n${voiceSecretary}`);
 
   const seen = new Set<string>();
@@ -285,23 +276,8 @@ export function updateActorHelpNote(markdown: string, actorId: string, note: str
     common: parsed.common,
     foreman: parsed.foreman,
     peer: parsed.peer,
-    pet: parsed.pet,
     voiceSecretary: parsed.voiceSecretary,
     actorNotes: nextActorNotes,
-    actorOrder,
-    extraTaggedBlocks: parsed.extraTaggedBlocks,
-  });
-}
-
-export function updatePetHelpNote(markdown: string, note: string, actorOrder?: string[]): string {
-  const parsed = parseHelpMarkdown(markdown);
-  return buildHelpMarkdown({
-    common: parsed.common,
-    foreman: parsed.foreman,
-    peer: parsed.peer,
-    pet: trimBlock(note),
-    voiceSecretary: parsed.voiceSecretary,
-    actorNotes: parsed.actorNotes,
     actorOrder,
     extraTaggedBlocks: parsed.extraTaggedBlocks,
   });
@@ -313,7 +289,6 @@ export function updateVoiceSecretaryHelpNote(markdown: string, note: string, act
     common: parsed.common,
     foreman: parsed.foreman,
     peer: parsed.peer,
-    pet: parsed.pet,
     voiceSecretary: trimBlock(note),
     actorNotes: parsed.actorNotes,
     actorOrder,

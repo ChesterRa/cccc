@@ -1,4 +1,3 @@
-/* eslint-disable no-control-regex */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Terminal } from "@xterm/xterm";
 
@@ -15,6 +14,7 @@ import {
   isTerminalAttachStartupRaceErrorCode,
   parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
+  shouldSuppressTerminalGeneratedInput,
 } from "../../utils/terminalConnection";
 
 export type AgentTerminalConnectionStatus = "disconnected" | "connecting" | "connected" | "reconnecting";
@@ -421,14 +421,7 @@ export function useAgentTerminalConnection(args: {
           disposable = term.onData((data) => {
             if (ws.readyState !== WebSocket.OPEN) return;
             const runtime = runtimeRef.current;
-            if (runtime === "droid" || runtime === "gemini" || runtime === "neovate") {
-              const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
-              if (isDeviceAttributesReply) return;
-              const isOscColorReply = /^\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)$/.test(data);
-              if (isOscColorReply) return;
-              const isFocusEvent = /^\x1b\[[IO]$/.test(data);
-              if (isFocusEvent) return;
-            }
+            if (shouldSuppressTerminalGeneratedInput(data, runtime)) return;
             if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
               setTerminalSignalRef.current(groupId, actorId, {
                 kind: "working_output",

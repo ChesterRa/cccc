@@ -1655,6 +1655,7 @@ export function AppModals({
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         actorId={editingActor?.id || ""}
+        groupRole={editingActor?.role || "peer"}
         avatarUrl={editingActor?.avatar_url || undefined}
         hasCustomAvatar={!!editingActor?.has_custom_avatar}
         isRunning={!!(editingActor && (editingActor.running ?? editingActor.enabled ?? false))}

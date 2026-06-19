@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+SUGGESTED_USER_MESSAGE_MAX_CHARS = 4000
+
+
 class Reference(BaseModel):
     """Reference to a file/commit/URL/text snippet."""
 
@@ -75,6 +78,10 @@ class ChatMessageData(BaseModel):
 
     # Metadata
     client_id: Optional[str] = None  # Client-generated idempotency key
+    suggested_user_message: Optional[str] = Field(
+        default=None,
+        max_length=SUGGESTED_USER_MESSAGE_MAX_CHARS,
+    )  # Optional human-owned next-message suggestion; never auto-sent.
 
     model_config = ConfigDict(extra="forbid")
 

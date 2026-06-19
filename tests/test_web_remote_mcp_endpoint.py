@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import yaml
 from fastapi.testclient import TestClient
@@ -191,7 +191,6 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertNotIn("cccc_voice_secretary_document", names)
             self.assertNotIn("cccc_voice_secretary_request", names)
             self.assertNotIn("cccc_voice_secretary_composer", names)
-            self.assertNotIn("cccc_pet_decisions", names)
             repo_spec = next((item for item in tools if isinstance(item, dict) and item.get("name") == "cccc_repo"), {})
             self.assertTrue(((repo_spec.get("annotations") or {}).get("readOnlyHint")))
 
@@ -1125,6 +1124,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                         "pending_new_chat_last_event_ids": [],
                         "pending_new_chat_last_tab_url": "",
                         "new_chat_bound_at": "",
+                        "target_saved_at": ANY,
                         "bootstrap_seed_delivered_at": "",
                         "bootstrap_seed_version": "",
                         "bootstrap_seed_digest": "",
@@ -1251,6 +1251,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(state.get("pending_new_chat_submitted"), False)
             self.assertEqual(state.get("pending_new_chat_delivery_id"), "")
             self.assertTrue(str(state.get("pending_new_chat_bind_started_at") or ""))
+            self.assertTrue(str(state.get("target_saved_at") or ""))
         finally:
             cleanup()
 
@@ -1283,6 +1284,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(state.get("conversation_url"), "")
             self.assertEqual(state.get("pending_new_chat_bind"), True)
             self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
+            self.assertTrue(str(state.get("target_saved_at") or ""))
         finally:
             cleanup()
 

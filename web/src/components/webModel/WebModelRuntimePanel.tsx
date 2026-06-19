@@ -189,12 +189,14 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
         tone: "needs",
       };
     }
-    if (state === "submitted" && health.delivery.last_delivery_at) {
+    if ((state === "submitted" || state === "bound") && health.delivery.last_delivery_at) {
       const evidence = String(health.delivery.last_submission_evidence || "").trim();
       return {
         label: "Activity",
         value: `Last ${formatTime(health.delivery.last_delivery_at)}`,
-        detail: evidence ? `Submitted: ${evidence}` : String(health.delivery.reason || "").trim() || "Browser delivery completed.",
+        detail: state === "bound"
+          ? String(health.delivery.reason || "").trim() || "ChatGPT chat binding completed."
+          : evidence ? `Submitted: ${evidence}` : String(health.delivery.reason || "").trim() || "Browser delivery completed.",
         tone: "neutral",
       };
     }
@@ -233,6 +235,14 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       value: "Delivery failed",
       detail: lastError || "The last ChatGPT delivery did not complete.",
       tone: "error",
+    };
+  }
+  if (deliveryStatus === "bound") {
+    return {
+      label: "Activity",
+      value: "Chat bound",
+      detail: "ChatGPT chat binding completed.",
+      tone: "neutral",
     };
   }
   if (queuedCount > 0) {

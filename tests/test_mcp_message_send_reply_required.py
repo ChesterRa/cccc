@@ -77,6 +77,34 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("refs"), refs)
 
+    def test_message_send_passes_suggested_user_message(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        captured = {}
+
+        def _fake_call_daemon(req):
+            captured["req"] = req
+            return {"ok": True, "result": {"event_id": "ev_test"}}
+
+        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            out = mcp_server.handle_tool_call(
+                "cccc_message_send",
+                {
+                    "group_id": "g_test",
+                    "actor_id": "peer1",
+                    "text": "done",
+                    "to": ["user"],
+                    "suggested_user_message": "  Please continue with the next check.  ",
+                },
+            )
+
+        self.assertEqual(out.get("event_id"), "ev_test")
+        req = captured.get("req") or {}
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("suggested_user_message"), "Please continue with the next check.")
+
     def test_message_send_uses_cross_group_op_for_explicit_destination(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
@@ -215,6 +243,30 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertIn("do not forward a template", str(raised.exception))
         call_daemon.assert_not_called()
 
+    def test_message_send_rejects_suggested_user_message_for_cross_group(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        def _fake_call_daemon(req):
+            raise AssertionError(f"daemon should not be called: {req}")
+
+        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.handle_tool_call(
+                    "cccc_message_send",
+                    {
+                        "group_id": "g_runtime",
+                        "dst_group_id": "g_selected",
+                        "actor_id": "peer1",
+                        "text": "done",
+                        "to": ["user"],
+                        "suggested_user_message": "Please continue.",
+                    },
+                )
+
+        self.assertEqual(cm.exception.code, "suggested_user_message_not_supported")
+
     def test_message_reply_passes_refs(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
@@ -245,6 +297,34 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("refs"), refs)
+
+    def test_message_reply_passes_suggested_user_message(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        captured = {}
+
+        def _fake_call_daemon(req):
+            captured["req"] = req
+            return {"ok": True, "result": {"event_id": "ev_test"}}
+
+        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            out = mcp_server.handle_tool_call(
+                "cccc_message_reply",
+                {
+                    "group_id": "g_test",
+                    "actor_id": "peer1",
+                    "event_id": "ev_1",
+                    "text": "reply",
+                    "suggested_user_message": "  Please run the next implementation pass.  ",
+                },
+            )
+
+        self.assertEqual(out.get("event_id"), "ev_test")
+        req = captured.get("req") or {}
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("suggested_user_message"), "Please run the next implementation pass.")
 
     def test_tracked_send_passes_task_contract_args(self) -> None:
         from cccc.ports.mcp import server as mcp_server

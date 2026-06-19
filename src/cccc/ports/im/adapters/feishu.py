@@ -94,6 +94,22 @@ class FeishuAdapter(IMAdapter):
     """
 
     platform = "feishu"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "partial",
+        "files_out": "yes",
+        "threads": "yes",
+        "reactions": "yes",
+        "typing": "no",
+        "streaming": "no",
+        "voice_in": "no",
+        "markdown": "partial",
+    }
+    capability_notes = {
+        "threads": "root_id is preserved for replies when present",
+        "reactions": "used for processing indicators where available",
+    }
 
     def __init__(
         self,

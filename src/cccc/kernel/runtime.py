@@ -85,12 +85,6 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "kimi mcp add --transport stdio {name} -- {cmd}",
     },
-    "neovate": {
-        "display_name": "Neovate Code",
-        "command": "neovate",
-        "capabilities": "MCP; MCP setup: auto",
-        "mcp_add_pattern": "neovate mcp add -g {name} {cmd}",
-    },
     "opencode": {
         "display_name": "OpenCode",
         "command": "opencode",
@@ -118,7 +112,6 @@ PRIMARY_RUNTIMES = [
     "droid",
     "amp",
     "auggie",
-    "neovate",
     "gemini",
     "grok",
     "hermes",
@@ -187,7 +180,7 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, neovate, gemini, grok, hermes, kimi, opencode).
+        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, gemini, grok, hermes, kimi, opencode).
                      If False, check all configured runtimes (including custom).
     
     Returns:
@@ -284,7 +277,6 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "grok": ["grok"],
         "hermes": ["hermes", "--tui", "--yolo"],
         "kimi": ["kimi", "--yolo"],
-        "neovate": ["neovate"],
         "opencode": ["opencode"],
         "custom": [],
         "web_model": [],

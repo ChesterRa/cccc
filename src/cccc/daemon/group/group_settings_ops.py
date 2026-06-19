@@ -9,20 +9,8 @@ from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc, coerce_aut
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.messaging import get_default_send_to
-from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...kernel.permissions import require_group_permission
 from ...kernel.terminal_transcript import apply_terminal_transcript_patch, get_terminal_transcript_settings
-from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
-from ..pet.pet_runtime_ops import (
-    capture_pet_actor_state,
-    is_pet_actor_running,
-    pet_runtime_changed,
-    restore_pet_actor_state,
-    stop_pet_actor_runtime,
-    sync_pet_actor_from_foreman,
-)
-from ..pet.review_scheduler import cancel_pet_review, request_pet_review
-from ..pet.profile_refresh import maybe_request_pet_profile_refresh
 from ...util.conv import coerce_bool
 
 
@@ -34,16 +22,6 @@ def _group_settings_error_details(exc: Exception) -> Optional[Dict[str, Any]]:
     message = str(exc or "").strip()
     if not message:
         return None
-    if message == "desktop pet requires a foreman actor":
-        return {"reason": "desktop_pet_requires_foreman"}
-    if message.startswith("failed to start pet actor:"):
-        cause = message.partition(":")[2].strip()
-        return {"reason": "pet_actor_start_failed", "cause": cause}
-    if message == "failed to start pet actor":
-        return {"reason": "pet_actor_start_failed"}
-    if message.startswith("pet start failed and rollback restart failed:"):
-        cause = message.partition(":")[2].strip()
-        return {"reason": "pet_actor_rollback_restart_failed", "cause": cause}
     return None
 
 
@@ -103,7 +81,7 @@ def handle_group_settings_update(
         "terminal_transcript_notify_tail",
         "terminal_transcript_notify_lines",
     }
-    feature_keys = {"panorama_enabled", "desktop_pet_enabled"}
+    feature_keys = {"panorama_enabled"}
     allowed = messaging_keys | delivery_keys | automation_keys | terminal_transcript_keys | feature_keys
 
     unknown = set(patch.keys()) - allowed
@@ -121,7 +99,6 @@ def handle_group_settings_update(
             )
     try:
         require_group_permission(group, by=by, action="group.settings_update")
-        pet_review_after_save = False
 
         messaging_patch = {k: v for k, v in patch.items() if k in messaging_keys}
         if messaging_patch:
@@ -159,148 +136,11 @@ def handle_group_settings_update(
         features_patch = {k: v for k, v in patch.items() if k in feature_keys}
         if features_patch:
             features = group.doc.get("features") if isinstance(group.doc.get("features"), dict) else {}
-            pet_actor_before = get_pet_actor(group) if "desktop_pet_enabled" in features_patch else None
-            pet_state_before = (
-                capture_pet_actor_state(group, load_actor_private_env=load_actor_private_env)
-                if "desktop_pet_enabled" in features_patch
-                else None
-            )
-            pet_was_running = is_pet_actor_running(
-                group,
-                actor=pet_actor_before,
-                effective_runner_kind=effective_runner_kind,
-            ) if "desktop_pet_enabled" in features_patch else False
-            desktop_pet_enabled_before = coerce_bool(features.get("desktop_pet_enabled"), default=False)
             if "panorama_enabled" in features_patch:
                 features["panorama_enabled"] = coerce_bool(features_patch["panorama_enabled"], default=False)
-            if "desktop_pet_enabled" in features_patch:
-                features["desktop_pet_enabled"] = coerce_bool(features_patch["desktop_pet_enabled"], default=False)
             group.doc["features"] = features
-            if "desktop_pet_enabled" in features_patch:
-                try:
-                    desired_enabled = coerce_bool(features_patch["desktop_pet_enabled"], default=False)
-                    resolve_before_start = lambda grp, aid, caller_id="", is_admin=False: resolve_linked_actor_before_start(
-                        grp,
-                        aid,
-                        get_actor_profile=get_actor_profile,
-                        load_actor_profile_secrets=load_actor_profile_secrets,
-                        update_actor_private_env=update_actor_private_env,
-                        caller_id=caller_id,
-                        is_admin=is_admin,
-                    )
-                    if not desired_enabled and isinstance(pet_actor_before, dict):
-                        stop_pet_actor_runtime(
-                            group,
-                            actor=pet_actor_before,
-                            by=by,
-                            effective_runner_kind=effective_runner_kind,
-                            remove_headless_state=remove_headless_state,
-                            remove_pty_state_if_pid=remove_pty_state_if_pid,
-                            emit_event=pet_was_running,
-                        )
-                        cancel_pet_review(group.group_id)
-                        sync_pet_actor_from_foreman(
-                            group,
-                            effective_runner_kind=effective_runner_kind,
-                            load_actor_private_env=load_actor_private_env,
-                            update_actor_private_env=update_actor_private_env,
-                            delete_actor_private_env=delete_actor_private_env,
-                            resolve_linked_actor_before_start=resolve_before_start,
-                            caller_id=str(args.get("caller_id") or "").strip(),
-                            is_admin=coerce_bool(args.get("is_admin"), default=False),
-                        )
-                    else:
-                        sync_pet_actor_from_foreman(
-                            group,
-                            effective_runner_kind=effective_runner_kind,
-                            load_actor_private_env=load_actor_private_env,
-                            update_actor_private_env=update_actor_private_env,
-                            delete_actor_private_env=delete_actor_private_env,
-                            resolve_linked_actor_before_start=resolve_before_start,
-                            caller_id=str(args.get("caller_id") or "").strip(),
-                            is_admin=coerce_bool(args.get("is_admin"), default=False),
-                        )
-                        pet_actor_after = get_pet_actor(group)
-                        pet_private_env_after = load_actor_private_env(group.group_id, PET_ACTOR_ID)
-                        if coerce_bool(group.doc.get("running"), default=False) and isinstance(pet_actor_after, dict):
-                            pet_private_env_before = (
-                                pet_state_before.get("private_env")
-                                if isinstance(pet_state_before, dict) and isinstance(pet_state_before.get("private_env"), dict)
-                                else {}
-                            )
-                            pet_actor_before_doc = (
-                                pet_state_before.get("actor_doc")
-                                if isinstance(pet_state_before, dict) and isinstance(pet_state_before.get("actor_doc"), dict)
-                                else None
-                            )
-                            config_changed = pet_runtime_changed(
-                                pet_actor_before_doc,
-                                pet_actor_after,
-                                before_private_env=pet_private_env_before,
-                                after_private_env=pet_private_env_after,
-                            )
-                            if pet_was_running and config_changed:
-                                stop_pet_actor_runtime(
-                                    group,
-                                    actor=pet_actor_before,
-                                    by=by,
-                                    effective_runner_kind=effective_runner_kind,
-                                    remove_headless_state=remove_headless_state,
-                                    remove_pty_state_if_pid=remove_pty_state_if_pid,
-                                    emit_event=True,
-                                )
-                            should_start = (not pet_was_running) or config_changed
-                            if should_start:
-                                start_result = start_actor_process(
-                                    group,
-                                    PET_ACTOR_ID,
-                                    command=list(pet_actor_after.get("command") or []),
-                                    env=dict(pet_actor_after.get("env") or {}),
-                                    runner=str(pet_actor_after.get("runner") or "pty"),
-                                    runtime=str(pet_actor_after.get("runtime") or "codex"),
-                                    by=by,
-                                )
-                                if not bool(start_result.get("success")):
-                                    start_error = str(start_result.get("error") or "").strip()
-                                    if start_error:
-                                        raise RuntimeError(f"failed to start pet actor: {start_error}")
-                                    raise RuntimeError("failed to start pet actor")
-                            pet_review_after_save = True
-                except Exception:
-                    features["desktop_pet_enabled"] = desktop_pet_enabled_before
-                    group.doc["features"] = features
-                    restored_actor = restore_pet_actor_state(
-                        group,
-                        pet_state_before,
-                        update_actor_private_env=update_actor_private_env,
-                        delete_actor_private_env=delete_actor_private_env,
-                    )
-                    if desktop_pet_enabled_before and pet_was_running and isinstance(restored_actor, dict):
-                        restart_result = start_actor_process(
-                            group,
-                            PET_ACTOR_ID,
-                            command=list(restored_actor.get("command") or []),
-                            env=dict(restored_actor.get("env") or {}),
-                            runner=str(restored_actor.get("runner") or "pty"),
-                            runtime=str(restored_actor.get("runtime") or "codex"),
-                            by=by,
-                        )
-                        if not bool(restart_result.get("success")):
-                            raise RuntimeError(
-                                f"pet start failed and rollback restart failed: {restart_result.get('error') or 'unknown error'}"
-                            )
-                    raise
 
         group.save()
-        if pet_review_after_save:
-            try:
-                request_pet_review(group.group_id, reason="pet_enabled", immediate=True)
-            except Exception:
-                pass
-            try:
-                maybe_request_pet_profile_refresh(group.group_id, reason="pet_enabled")
-            except Exception:
-                pass
     except Exception as e:
         return _error("group_settings_update_failed", str(e), details=_group_settings_error_details(e))
 
@@ -362,7 +202,6 @@ def handle_group_settings_update(
             max_value=80,
         ),
         "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
-        "desktop_pet_enabled": coerce_bool(features.get("desktop_pet_enabled"), default=False),
     }
 
     event = append_event(

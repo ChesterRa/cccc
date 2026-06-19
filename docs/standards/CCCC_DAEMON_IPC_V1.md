@@ -1380,7 +1380,7 @@ process; heavy ASR runtimes remain behind an explicit local command adapter.
 
 Args:
 ```ts
-{ group_id: string; assistant_id?: "pet" | "voice_secretary" }
+{ group_id: string; assistant_id?: "voice_secretary" }
 ```
 
 Result:
@@ -1400,13 +1400,24 @@ Result:
   active_document_id?: string                    // daemon sidecar/internal compatibility only
   capture_target_document_id?: string            // daemon sidecar/internal compatibility only
   new_input_available?: boolean
+  service_runtime?: Record<string, unknown>
+  service_runtimes_by_id?: Record<string, unknown>
+  service_models?: Array<Record<string, unknown>>
+  service_models_by_id?: Record<string, unknown>
 }
 ```
 
+Voice service runtime records may include `primary_package`, `package_versions`,
+`installed_version`, `latest_version`, `latest_checked_at`,
+`latest_check_error`, and `update_available` so local ASR settings can show the
+installed sherpa-onnx version and whether a newer official PyPI release is
+available. Voice model records may include `installed_manifest_sha256`,
+`update_available`, `last_update_error`, and artifact source fields (`url`,
+`sha256`, `archive`) so model updates remain explicit and inspectable.
+
 #### `assistant_settings_update`
 
-Update group-scoped built-in assistant settings. `pet` is read-only in M0 and
-mirrors `group_settings_update.patch.desktop_pet_enabled`.
+Update group-scoped built-in assistant settings.
 
 When `voice_secretary.enabled=true`, the daemon also materializes a hidden
 internal actor with `internal_kind="voice_secretary"` and `actor_id="voice-secretary"`.
@@ -1492,7 +1503,8 @@ Download and verify a daemon-managed local Voice Secretary ASR model into
 CCCC-owned cache storage. Built-in releases include a default model manifest;
 tests and local development may add a local overlay at
 `CCCC_HOME/config/voice-models.json`. Each artifact entry must include a fixed
-URL and `sha256`.
+URL and `sha256`. Reinstalling/updating a model downloads into staging storage
+and replaces the active model only after all artifacts verify successfully.
 
 Args:
 ```ts
@@ -1515,6 +1527,8 @@ Result:
     installed_at?: string
     updated_at?: string
     error?: Record<string, unknown>
+    update_available?: boolean
+    installed_manifest_sha256?: string
   }
 }
 ```
@@ -1870,7 +1884,7 @@ update it for control-plane repair.
 
 Args:
 ```ts
-{ group_id: string; by?: string; assistant_id: "voice_secretary" | "pet"; lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed"; health?: Record<string, unknown> }
+{ group_id: string; by?: string; assistant_id: "voice_secretary"; lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed"; health?: Record<string, unknown> }
 ```
 
 Result:

@@ -186,7 +186,7 @@ class TestQueryProjections(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-    def test_actor_list_include_internal_opt_in_exposes_pet_actor_only_when_requested(self) -> None:
+    def test_actor_list_include_internal_opt_in_exposes_internal_actor_only_when_requested(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
         from cccc.kernel.actors import add_actor
         from cccc.kernel.group import create_group, load_group
@@ -201,7 +201,17 @@ class TestQueryProjections(unittest.TestCase):
                 group = load_group(gid)
                 self.assertIsNotNone(group)
                 add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
-                add_actor(group, actor_id="pet-peer", title="Pet Peer", internal_kind="pet")  # type: ignore[arg-type]
+                actors = group.doc.get("actors") if isinstance(group.doc.get("actors"), list) else []
+                actors.append(
+                    {
+                        "id": "internal-helper",
+                        "title": "Internal Helper",
+                        "internal_kind": "legacy",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "enabled": True,
+                    }
+                )
                 group.save()  # type: ignore[union-attr]
 
                 standard = handle_actor_list(
@@ -220,7 +230,7 @@ class TestQueryProjections(unittest.TestCase):
                 internal_rows = (internal.result or {}).get("actors") if isinstance(internal.result, dict) else []
                 self.assertIsInstance(internal_rows, list)
                 internal_ids = [str(item.get("id") or "") for item in internal_rows if isinstance(item, dict)]
-                self.assertEqual(internal_ids, ["peer1", "pet-peer"])
+                self.assertEqual(internal_ids, ["peer1", "internal-helper"])
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

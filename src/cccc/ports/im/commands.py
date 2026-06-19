@@ -17,7 +17,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+
+_CAPABILITY_NAMES = {
+    "yes": "yes",
+    "partial": "partial",
+    "no": "no",
+}
+
+
+def _capability_state(features: Dict[str, str], key: str) -> str:
+    raw = str(features.get(key) or "").strip().lower()
+    return _CAPABILITY_NAMES.get(raw, "no")
+
+
+def _format_bool(value: bool) -> str:
+    return "yes" if value else "no"
 
 
 class CommandType(str, Enum):
@@ -215,6 +231,7 @@ def format_status(
     group_state: str,
     running: bool,
     actors: List[dict],
+    im_status: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Format status response."""
     def _actor_label(actor_doc: dict) -> str:
@@ -240,6 +257,57 @@ def format_status(
             status_icon = "🟢" if is_running else "⚪"
             role_icon = "👑" if role == "foreman" else "👤"
             lines.append(f"  {status_icon} {role_icon} {actor_label} ({runtime})")
+
+    if im_status:
+        lines.append("")
+        platform = str(im_status.get("platform") or "unknown")
+        authorized = bool(im_status.get("authorized"))
+        subscribed = bool(im_status.get("subscribed"))
+        verbose = bool(im_status.get("verbose"))
+        thread_id = int(im_status.get("thread_id") or 0)
+        lines.append("IM:")
+        chat_bits = [
+            f"authorized {_format_bool(authorized)}",
+            f"subscribed {_format_bool(subscribed)}",
+            f"verbose {_format_bool(verbose)}",
+        ]
+        if thread_id:
+            chat_bits.append(f"thread {thread_id}")
+        lines.append(f"  Platform: {platform}")
+        lines.append(f"  This chat: {' | '.join(chat_bits)}")
+
+        capabilities = im_status.get("capabilities") if isinstance(im_status.get("capabilities"), dict) else {}
+        features = capabilities.get("features") if isinstance(capabilities.get("features"), dict) else {}
+        if features:
+            lines.append("  Capabilities:")
+            lines.append(
+                "    "
+                + "Text: "
+                + f"in {_capability_state(features, 'text_in')} / out {_capability_state(features, 'text_out')}"
+            )
+            lines.append(
+                "    "
+                + "Files: "
+                + f"in {_capability_state(features, 'files_in')} / out {_capability_state(features, 'files_out')}"
+            )
+            lines.append(
+                "    "
+                + "Thread "
+                + _capability_state(features, "threads")
+                + " | Reaction "
+                + _capability_state(features, "reactions")
+                + " | Typing "
+                + _capability_state(features, "typing")
+                + " | Stream "
+                + _capability_state(features, "streaming")
+            )
+            lines.append(
+                "    "
+                + "Voice/audio "
+                + _capability_state(features, "voice_in")
+                + " | Markdown "
+                + _capability_state(features, "markdown")
+            )
 
     return "\n".join(lines)
 

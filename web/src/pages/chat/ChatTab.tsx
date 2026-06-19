@@ -2,7 +2,7 @@
 // Refactored to use useChatTab hook for business logic, reducing prop drilling.
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
-import { BookmarkIcon, CompassIcon } from "../../components/Icons";
+import { BookmarkIcon, CompassIcon, InfoIcon } from "../../components/Icons";
 import { Actor, HeadlessPreviewSession, LedgerEvent, PresentationMessageRef, StreamingActivity, TaskMessageRef } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
@@ -20,7 +20,15 @@ import {
   getMobileMessageTopInsetPx,
   MOBILE_FLOATING_CONTROLS_TOP_INSET_PX,
 } from "../../utils/responsiveLayout";
-import { buildWebModelDeliveryStatusByEventId } from "../../utils/webModelDeliveryStatus";
+import {
+  buildWebModelDeliveryStatusByEventId,
+  latestWebModelDeliveryStatusNeedingAppPermissionHint,
+} from "../../utils/webModelDeliveryStatus";
+import {
+  CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT,
+  dismissChatGptAppPermissionHint,
+  readChatGptAppPermissionHintDismissed,
+} from "../../utils/chatGptAppPermissionHint";
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
 import { buildLiveWorkCards } from "./liveWorkCards";
 import type { ComposerMentionKind } from "./chatMentionSuggestions";
@@ -44,6 +52,45 @@ const EMPTY_LATEST_LIVE_WORK_PREVIEW: Record<string, HeadlessPreviewSession> = {
 
 function ChatLazyFallback({ className }: { className?: string }) {
   return <div className={classNames("min-h-0", className)} />;
+}
+
+function ChatGptAppPermissionNotice({
+  isDark,
+  onDismiss,
+}: {
+  isDark: boolean;
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation("chat");
+  return (
+    <div className="flex-shrink-0 px-2 pb-1.5 sm:px-2.5">
+      <div
+        className={classNames(
+          "mx-auto flex max-w-5xl items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5 shadow-sm",
+          isDark
+            ? "border-amber-400/25 bg-amber-500/10 text-amber-100"
+            : "border-amber-200 bg-amber-50 text-amber-800",
+        )}
+        role="status"
+        aria-live="polite"
+      >
+        <InfoIcon size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <div className="min-w-0 flex-1">{t("webModelDelivery.permissionHint")}</div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className={classNames(
+            "inline-flex min-h-7 shrink-0 items-center justify-center rounded-md px-2.5 text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current",
+            isDark ? "hover:bg-white/10" : "hover:bg-amber-100",
+          )}
+          aria-label={t("webModelDelivery.permissionHintDismiss")}
+          title={t("webModelDelivery.permissionHintDismiss")}
+        >
+          {t("webModelDelivery.permissionHintDismiss")}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export interface ChatTabProps {
@@ -132,6 +179,7 @@ export function ChatTab({
   const {
     // Chat state
     chatMessages,
+    suggestionSourceMessages,
     liveWorkEvents,
     hasAnyChatMessages,
     chatFilter,
@@ -259,6 +307,25 @@ export function ChatTab({
     ]),
     [liveWorkBucket?.chatWindow?.events, liveWorkBucket?.events],
   );
+  const [appPermissionHintDismissed, setAppPermissionHintDismissed] = useState(readChatGptAppPermissionHintDismissed);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleDismissed = () => setAppPermissionHintDismissed(true);
+    window.addEventListener(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT, handleDismissed);
+    return () => window.removeEventListener(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT, handleDismissed);
+  }, []);
+  const appPermissionHintStatus = useMemo(
+    () => latestWebModelDeliveryStatusNeedingAppPermissionHint(
+      webModelDeliveryStatusByEventId,
+      appPermissionHintDismissed,
+    ),
+    [appPermissionHintDismissed, webModelDeliveryStatusByEventId],
+  );
+  const showAppPermissionNotice = !readOnly && !!appPermissionHintStatus;
+  const dismissAppPermissionNotice = useCallback(() => {
+    setAppPermissionHintDismissed(true);
+    dismissChatGptAppPermissionHint();
+  }, []);
 
   const isHydratingEmptyState = chatMessages.length === 0 && chatEmptyState === "hydrating";
   const isBusinessEmptyState = chatMessages.length === 0 && chatEmptyState === "business_empty";
@@ -877,6 +944,12 @@ export function ChatTab({
       {/* 3. Footer Area: Composer */}
       {!readOnly && (
         <>
+          {showAppPermissionNotice ? (
+            <ChatGptAppPermissionNotice
+              isDark={isDark}
+              onDismiss={dismissAppPermissionNotice}
+            />
+          ) : null}
           <ChatComposer
             isDark={isDark}
             isSmallScreen={isSmallScreen}
@@ -891,6 +964,7 @@ export function ChatTab({
             destGroupScopeLabel={destGroupScopeLabel}
             busy={busy}
             recentMessages={chatMessages}
+            suggestionSourceMessages={suggestionSourceMessages}
             replyTarget={replyTarget}
             onCancelReply={cancelReply}
             quotedPresentationRef={quotedPresentationRef}

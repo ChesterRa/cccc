@@ -287,36 +287,6 @@ class TestWebModelActorLifecycle(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_pet_seed_does_not_inherit_web_model_runtime(self) -> None:
-        home, cleanup = self._with_home()
-        try:
-            from cccc.kernel.group import load_group
-            from cccc.kernel.pet_actor import build_pet_actor_seed
-
-            root = Path(home) / "repo"
-            root.mkdir(parents=True, exist_ok=True)
-            group_id = self._create_attached_group(root)
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-
-            seed = build_pet_actor_seed(
-                group,
-                runtime="web_model",
-                runner="headless",
-                command=[],
-                env={},
-                default_scope_key="",
-                submit="enter",
-            )
-
-            self.assertEqual(seed.get("runtime"), "codex")
-            self.assertEqual(seed.get("runner"), "headless")
-            self.assertTrue(seed.get("command"))
-            self.assertEqual(seed.get("internal_kind"), "pet")
-        finally:
-            cleanup()
-
     def test_actor_update_to_chatgpt_web_model_is_singleton_guarded(self) -> None:
         home, cleanup = self._with_home()
         try:

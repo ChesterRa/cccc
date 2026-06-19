@@ -352,6 +352,23 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
             self.sent_messages.append((str(chat_id), str(text), int(thread_id or 0)))
             return True
 
+        def get_capabilities(self) -> dict:
+            return {
+                "platform": self.platform,
+                "features": {
+                    "text_in": "yes",
+                    "text_out": "yes",
+                    "files_in": "partial",
+                    "files_out": "yes",
+                    "threads": "yes",
+                    "reactions": "yes",
+                    "typing": "yes",
+                    "streaming": "no",
+                    "voice_in": "no",
+                    "markdown": "partial",
+                },
+            }
+
     def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory()
         self.group_path = Path(self._td.name)
@@ -510,6 +527,53 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
 
         self.assertEqual(len(adapter.file_calls), 2)
         self.assertEqual(removed, ["chat_auth"])
+
+    def test_status_includes_im_chat_state_and_capabilities(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+        key = km.generate_key("chat_auth", 7, "telegram")
+        km.authorize("chat_auth", 7, "telegram", key)
+        sm.subscribe("chat_auth", chat_title="auth", thread_id=7, platform="telegram")
+        sm.set_verbose("chat_auth", True, thread_id=7)
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        def _daemon(req: dict) -> dict:
+            op = str(req.get("op") or "")
+            if op == "group_show":
+                return {"ok": True, "result": {"group": {"title": "demo", "state": "active"}, "running": True}}
+            if op == "actor_list":
+                return {
+                    "ok": True,
+                    "result": {
+                        "actors": [
+                            {"id": "foreman", "title": "Planner", "role": "foreman", "running": True, "runtime": "codex"}
+                        ]
+                    },
+                }
+            return {"ok": False, "error": {"message": "unexpected op"}}
+
+        bridge._daemon = _daemon  # type: ignore[method-assign]
+        bridge._handle_status("chat_auth", thread_id=7)
+
+        self.assertEqual(len(adapter.sent_messages), 1)
+        _chat_id, text, thread_id = adapter.sent_messages[0]
+        self.assertEqual(thread_id, 7)
+        self.assertIn("IM:", text)
+        self.assertIn("Platform: telegram", text)
+        self.assertIn("authorized yes | subscribed yes | verbose yes | thread 7", text)
+        self.assertIn("Files: in partial / out yes", text)
+        self.assertIn("Voice/audio no | Markdown partial", text)
 
     def test_typing_indicator_kept_when_send_message_fails(self) -> None:
         from cccc.ports.im.bridge import IMBridge

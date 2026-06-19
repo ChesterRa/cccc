@@ -33,6 +33,24 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
 
         return create_app()
 
+    def _route_paths(self, app) -> set[str]:
+        paths: set[str] = set()
+
+        def collect(routes, prefix: str = "") -> None:
+            for route in routes:
+                path = getattr(route, "path", None)
+                if isinstance(path, str):
+                    paths.add(f"{prefix}{path}")
+                original_router = getattr(route, "original_router", None)
+                if original_router is None:
+                    continue
+                include_context = getattr(route, "include_context", None)
+                include_prefix = str(getattr(include_context, "prefix", "") or "")
+                collect(getattr(original_router, "routes", []), f"{prefix}{include_prefix}")
+
+        collect(getattr(app, "routes", []))
+        return paths
+
     def _create_group(self) -> str:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
@@ -106,7 +124,7 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
         try:
             group_id = self._create_group()
             app = self._app()
-            route_paths = {getattr(route, "path", "") for route in app.routes}
+            route_paths = self._route_paths(app)
             self.assertIn("/api/v1/groups/{group_id}/codex/stream", route_paths)
 
             with TestClient(app) as client:

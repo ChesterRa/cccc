@@ -66,6 +66,21 @@ _READONLY_ACTOR_TTL_S = 0.8
 _STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude", "web_model"})
 
 
+def _resolve_terminal_attach_mode(query_params: Any, *, read_only: bool) -> tuple[str, bool]:
+    if read_only:
+        return "viewer", False
+    get_param = getattr(query_params, "get", None)
+    if not callable(get_param):
+        get_param = lambda _key, default=None: default
+    requested_mode = str(get_param("mode", "control") or "control").strip().lower()
+    if requested_mode not in {"control", "viewer"}:
+        requested_mode = "control"
+    takeover = str(get_param("takeover", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+    if requested_mode != "control":
+        takeover = False
+    return requested_mode, takeover
+
+
 def _decorate_actor_runtime_session(group_id: str, actor: Dict[str, Any]) -> None:
     gid = str(group_id or "").strip()
     aid = str(actor.get("id") or "").strip()
@@ -1366,10 +1381,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         try:
             since = str(websocket.query_params.get("since") or "").strip()
-            requested_mode = str(websocket.query_params.get("mode") or "control").strip().lower()
-            if requested_mode not in {"control", "viewer"}:
-                requested_mode = "control"
-            takeover = str(websocket.query_params.get("takeover") or "").strip().lower() in {"1", "true", "yes", "on"}
+            requested_mode, takeover = _resolve_terminal_attach_mode(websocket.query_params, read_only=ctx.read_only)
             req = {
                 "op": "term_attach",
                 "args": {

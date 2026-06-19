@@ -1505,67 +1505,6 @@ class ProjectedBrowserSession:
                     **submit,
                 },
             }
-        elif kind == "chatgpt_auto_confirm_tools":
-            from ...ports.web_model_browser_sidecar import (
-                TOOL_CONFIRM_MAX_CLICKS,
-                _auto_confirm_page_tool_prompts,
-                _normalize_chatgpt_url,
-            )
-
-            target_url = _normalize_chatgpt_url(payload.get("target_url"))
-            page = runtime.page
-            page_url = str(getattr(page, "url", "") or "")
-            normalized_page_url = _normalize_chatgpt_url(page_url)
-            if not normalized_page_url:
-                return {
-                    "ok": True,
-                    "browser_active": True,
-                    "clicked": 0,
-                    "candidate_count": 0,
-                    "details": [],
-                    "errors": [],
-                    "pages_seen": 0,
-                    "page_url": page_url,
-                    "skipped": "non_chatgpt_page",
-                }
-            if target_url and normalized_page_url != target_url:
-                return {
-                    "ok": True,
-                    "browser_active": True,
-                    "clicked": 0,
-                    "candidate_count": 0,
-                    "details": [],
-                    "errors": [],
-                    "pages_seen": 0,
-                    "page_url": page_url,
-                    "skipped": "target_mismatch",
-                }
-            try:
-                max_clicks = int(payload.get("max_clicks") or TOOL_CONFIRM_MAX_CLICKS)
-            except Exception:
-                max_clicks = TOOL_CONFIRM_MAX_CLICKS
-            result = _auto_confirm_page_tool_prompts(
-                page,
-                max_clicks=max(1, min(max_clicks, TOOL_CONFIRM_MAX_CLICKS)),
-            )
-            if not isinstance(result, dict):
-                result = {"clicked": 0, "details": []}
-            errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-            if result.get("error"):
-                errors = [*errors, {"error": str(result.get("error") or "")[:300]}]
-            with self._lock:
-                self._url = str(runtime.current_url() or page_url or self._url)
-                self._updated_at = utc_now_iso()
-            return {
-                "ok": True,
-                "browser_active": True,
-                "clicked": max(0, int(result.get("clicked") or 0)),
-                "candidate_count": max(0, int(result.get("candidate_count") or 0)),
-                "details": result.get("details") if isinstance(result.get("details"), list) else [],
-                "errors": errors,
-                "pages_seen": 1,
-                "page_url": str(runtime.current_url() or page_url),
-            }
         elif kind == "close":
             self._stop_event.set()
             return {"ok": True}

@@ -83,6 +83,22 @@ class DingTalkAdapter(IMAdapter):
     """
 
     platform = "dingtalk"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "yes",
+        "files_out": "yes",
+        "threads": "no",
+        "reactions": "no",
+        "typing": "no",
+        "streaming": "partial",
+        "voice_in": "partial",
+        "markdown": "yes",
+    }
+    capability_notes = {
+        "streaming": "AI Card streaming is available when the card client is configured",
+        "voice_in": "audio attachments/recognition may arrive from DingTalk; local ASR is not automatic",
+    }
     _LAST_SENDER_MAX = 256
 
     def __init__(

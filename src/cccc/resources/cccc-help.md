@@ -61,6 +61,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - Visible coordination belongs in `cccc_message_send` / `cccc_message_reply`.
 - Targets: `@all`, `@foreman`, `@peers`, `user`, or one actor.
 - Before sending, verify `reply_to` and `to`; make the audience explicit when it differs. Do not use `@all` for routine status, acknowledgements, or narrow updates.
+- When sending to `user`, you may include `suggested_user_message` to offer an editable next message in CCCC Web. It is only a suggestion; never use it for approvals, permissions, or decisions.
 
 ### Coordination
 

@@ -7,20 +7,21 @@
 
 # CCCC
 
-### Local-first Multi-agent Collaboration Kernel
+### Coordinate your coding agents like a group chat
 
-**A lightweight multi-agent framework with infrastructure-grade reliability.**
+**Read receipts, delivery tracking, and remote ops from your phone —
+for Claude Code, Codex, Gemini, and 8 more runtimes in one durable group.**
 
-Chat-native, prompt-driven, and bi-directional by design.
+Run multiple coding agents as a **persistent, coordinated team** — not a pile of disconnected terminal sessions.
 
-Run multiple coding agents as a **durable, coordinated system** — not a pile of disconnected terminal sessions.
-
-Three commands to go. Zero infrastructure, production-grade power.
+One `pip install`. Zero infrastructure, production-grade power.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
+[![Downloads](https://static.pepy.tech/badge/cccc-pair/month)](https://pepy.tech/projects/cccc-pair)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://chesterra.github.io/cccc/)
+[![Telegram](https://img.shields.io/badge/Telegram-ccccpair-2CA5E8?logo=telegram&logoColor=white)](https://t.me/ccccpair)
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -28,24 +29,24 @@ Three commands to go. Zero infrastructure, production-grade power.
 
 ---
 
+<div align="center">
+
+<video src="https://github.com/user-attachments/assets/460b6719-428b-4c1c-8879-0ebf8b8cee4f" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
+</video>
+
+</div>
+
 ## Why CCCC
 
-- **Durable coordination**: working state lives in an append-only ledger, not in terminal scrollback.
-- **Visible delivery semantics**: messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
-- **One control plane**: Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
-- **Multi-runtime by default**: Claude Code, Codex CLI, ChatGPT Web, Gemini CLI, and the rest of the first-class runtimes can collaborate in one group.
-- **Local-first operations**: one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
+Using multiple coding agents today usually means lost context in terminal scrollback, no proof an agent actually *read* your message, start/stop/recover operations scattered across tools, and no way to check on a long-running group from your phone. That's why most multi-agent setups stay fragile demos instead of reliable workflows.
 
-## The Problem
+CCCC runs your agents as one durable, coordinated system:
 
-Using multiple coding agents today usually means:
-
-- **Lost context** — coordination lives in terminal scrollback and disappears on restart
-- **No delivery guarantees** — did the agent actually *read* your message?
-- **Fragmented ops** — start/stop/recover/escalate across separate tools
-- **No remote access** — checking on a long-running group from your phone is not an option
-
-These aren't minor inconveniences. They're the reason most multi-agent setups stay fragile demos instead of reliable workflows.
+- **Durable coordination** — working state lives in an append-only ledger, not in terminal scrollback.
+- **Visible delivery semantics** — messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
+- **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
+- **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Gemini CLI, and the rest of the first-class runtimes can collaborate in one group.
+- **Local-first operations** — one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
 ## What CCCC Does
 
@@ -56,19 +57,10 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, Gemini CLI, and 6 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
-
-## How CCCC looks
-
-<div align="center">
-
-<video src="https://github.com/user-attachments/assets/460b6719-428b-4c1c-8879-0ebf8b8cee4f" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
-</video>
-
-</div>
 
 ## Quick Start
 
@@ -120,6 +112,8 @@ cccc tracked-send "Please take the first concrete task and reply with validation
 ```
 
 You now have two agents collaborating in a persistent group with full message history, delivery tracking, and a web dashboard. The daemon owns delivery and coordination, and runtime state stays in `CCCC_HOME` rather than inside your repo.
+
+**What you should see:** in the Web UI at http://127.0.0.1:8848, both actors show as running, the foreman's reply arrives in **Chat**, and the tracked request displays its delivery and read state on the message. If an actor stays stopped, run `cccc doctor` to check the runtime, and see the [FAQ](https://chesterra.github.io/cccc/guide/faq) for common first-run fixes.
 
 ## Programmatic Access (SDK)
 
@@ -190,7 +184,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 12 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 11 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Command / Surface |
 |---------|-------------|-------------------|
@@ -204,7 +198,6 @@ CCCC orchestrates agents across 12 first-class runtimes, with `custom` available
 | Amp | Auto MCP setup | `amp` |
 | Auggie | Auto MCP setup | `auggie` |
 | Kimi CLI | Auto MCP setup | `kimi` |
-| Neovate | Auto MCP setup | `neovate` |
 | OpenCode | Auto MCP setup via runtime config | `opencode` |
 | Custom | Manual | Any command |
 
@@ -216,31 +209,11 @@ cccc doctor                    # verify environment and runtime availability
 
 Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code and Codex CLI support both modes; headless gives the daemon tighter delivery and streaming control.
 
-### ChatGPT Web / GPT-5.x local development
+### ChatGPT Web / GPT-5.x as a local development actor
 
-ChatGPT Web can join a CCCC group as a real actor, not just an external chat window. CCCC delivers group messages into one explicitly bound ChatGPT conversation through browser delivery, while ChatGPT calls back into CCCC through a single actor-bound remote MCP connector.
+ChatGPT Web can join a CCCC group as a real actor, not just an external chat window: CCCC delivers group messages into one bound ChatGPT conversation via browser delivery, and GPT-5.x calls back through an actor-bound remote MCP connector — receiving routed messages, replying visibly, editing repository files, and running scoped shell/git commands much like a native local coding agent. This also turns spare ChatGPT Web capacity into additional local-development agent capacity.
 
-In supported ChatGPT sessions, **GPT-5.x** can participate in local development with the same coordination layer as Claude Code or Codex: receive routed messages, reply visibly through CCCC, inspect and edit repository files, run scoped shell/git commands, and coordinate with peer agents. When the selected GPT-5.x chat exposes the CCCC MCP connector, this gives eligible ChatGPT environments an experience close to a native Codex-style local coding agent. It can also turn ChatGPT web capacity into additional local-development agent capacity, reducing pressure on native Codex usage for work that can run well through ChatGPT Web.
-
-**GPT-5.x Pro note:** GPT-5.x Pro currently cannot be treated as a CCCC local-development runtime. ChatGPT Pro sessions do not expose the third-party CCCC MCP connector, and their web fetcher may block private or public tunnel URLs before they reach CCCC. That means Pro has no reliable local access in CCCC: no MCP tools, no repository reads, no shell/git work, and no No-MCP resource fallback. Use a GPT-5.x ChatGPT session that can see the CCCC connector for local development; use Pro only for external advisory work when you manually provide the needed context.
-
-Zero-to-ready setup:
-
-1. Start `cccc web`, expose it through a public HTTPS URL, then enter that URL in `Settings > Global > Web Access`.
-   - Recommended options: Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy such as Caddy/Nginx on a public HTTPS host.
-   - ChatGPT cannot use `localhost`, plain HTTP, or private tailnet-only URLs as the MCP server URL.
-2. Create an Admin Access Token in `Settings > Global > Web Access`.
-3. Open `Settings > Global > ChatGPT Web Model`, create/start the single ChatGPT Web Model actor, then create and copy its MCP URL.
-4. In ChatGPT, open `Settings > Apps > Advanced settings > Create app`, then create a custom MCP app with these fields:
-   - Name: `CCCC`
-   - Description: `CCCC local workspace connector`
-   - MCP Server URL: paste the copied CCCC MCP URL
-   - Authentication: `No Auth`
-   - ChatGPT menu names may vary by plan and workspace. If this exact path is not available, look for Apps or Connectors settings, enable Developer Mode if required, then create a custom MCP app/connector with the copied CCCC MCP URL and `No Auth`.
-5. Sign in through the embedded ChatGPT browser in CCCC, choose a GPT-5.x chat that can see the CCCC MCP app, and bind that chat as the delivery target.
-6. Send a small test message to the actor. ChatGPT should receive it in the bound chat and reply through CCCC MCP tools.
-
-Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
+Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). Note that GPT-5.x Pro sessions currently cannot be used this way — they do not expose third-party MCP connectors. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
 ## Messaging & Coordination
 
@@ -397,6 +370,16 @@ Agents with MCP access can self-organize: read inbox state, reply visibly, coord
 | Pure DAG workflow orchestration | ❌ Use a dedicated orchestrator; CCCC can complement it |
 
 CCCC is a **collaboration kernel** — it owns the coordination layer and stays composable with external CI/CD, orchestrators, and deployment tools.
+
+## How CCCC Compares
+
+| If you already use | It is great at | What CCCC adds |
+|---|---|---|
+| **Native agent teams** (e.g. Claude Code subagents/teams) | The smoothest single-vendor teamwork inside one session | Cross-vendor groups (Claude + Codex + Gemini + Kimi…), state that survives restarts, phone/IM operations, and a full audit ledger |
+| **Parallel task runners** (worktree/task-board tools) | Isolated, parallel task execution | A coordination layer: agents that talk, hand off, ack, and get nudged — plus 24/7 daemon-owned operations |
+| **IM assistant gateways** | A personal assistant living in your chat app | Delivery-grade work semantics: tracked tasks, read/ack receipts, multi-agent groups, and a durable audit trail |
+
+CCCC does not replace your agents — it is the layer that makes them a team. Longer discussion: [FAQ — How does CCCC compare?](https://chesterra.github.io/cccc/guide/faq#how-does-cccc-compare-to-native-agent-teams-and-other-tools)
 
 ## Security
 

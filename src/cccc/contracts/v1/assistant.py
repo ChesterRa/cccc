@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-AssistantKind = Literal["pet", "voice_secretary"]
+AssistantKind = Literal["voice_secretary"]
 AssistantLifecycle = Literal["disabled", "idle", "running", "working", "waiting", "failed"]
 
 

@@ -59,8 +59,8 @@ def _parse_tagged_section(section: str) -> Optional[dict[str, str]]:
         }
     if _HELP_PET_HEADER_RE.match(header):
         return {
-            "kind": "pet",
-            "key": "pet",
+            "kind": "extra",
+            "key": "legacy:pet",
             "raw": _trim_block(normalized),
             "body": _trim_block("\n".join(lines[1:])),
         }
@@ -147,7 +147,6 @@ def parse_help_markdown(markdown: str) -> dict[str, Any]:
     extra_tagged_blocks: list[str] = []
     foreman = ""
     peer = ""
-    pet = ""
     voice_secretary = ""
 
     for section in sections:
@@ -176,9 +175,6 @@ def parse_help_markdown(markdown: str) -> dict[str, Any]:
             else:
                 extra_tagged_blocks.append(str(tagged.get("raw") or ""))
             continue
-        if kind == "pet":
-            pet = body
-            continue
         if kind == "voice_secretary":
             voice_secretary = body
             continue
@@ -197,7 +193,6 @@ def parse_help_markdown(markdown: str) -> dict[str, Any]:
         "common": common,
         "foreman": foreman,
         "peer": peer,
-        "pet": pet,
         "voice_secretary": voice_secretary,
         "actor_notes": actor_notes,
         "extra_tagged_blocks": extra_tagged_blocks,
@@ -210,7 +205,6 @@ def build_help_markdown(
     common: str,
     foreman: str,
     peer: str,
-    pet: str,
     actor_notes: dict[str, str],
     voice_secretary: str = "",
     actor_order: Optional[list[str]] = None,
@@ -220,7 +214,6 @@ def build_help_markdown(
     common_text = _trim_block(common)
     foreman_text = _trim_block(foreman)
     peer_text = _trim_block(peer)
-    pet_text = _trim_block(pet)
     voice_secretary_text = _trim_block(voice_secretary)
     actor_notes_map = dict(actor_notes or {})
     extra_blocks = [_trim_block(item) for item in list(extra_tagged_blocks or []) if _trim_block(item)]
@@ -231,8 +224,6 @@ def build_help_markdown(
         parts.append(f"## @role: foreman\n\n{foreman_text}")
     if peer_text:
         parts.append(f"## @role: peer\n\n{peer_text}")
-    if pet_text:
-        parts.append(f"## @pet\n\n{pet_text}")
     if voice_secretary_text:
         parts.append(f"## @voice_secretary\n\n{voice_secretary_text}")
 
@@ -272,7 +263,6 @@ def update_actor_help_note(markdown: str, actor_id: str, note: str, actor_order:
         common=str(parsed.get("common") or ""),
         foreman=str(parsed.get("foreman") or ""),
         peer=str(parsed.get("peer") or ""),
-        pet=str(parsed.get("pet") or ""),
         voice_secretary=str(parsed.get("voice_secretary") or ""),
         actor_notes=next_actor_notes,
         actor_order=actor_order,
@@ -285,7 +275,6 @@ def _select_help_markdown(
     *,
     role: Optional[str],
     actor_id: Optional[str],
-    include_pet: bool = False,
     include_voice_secretary: bool = False,
 ) -> str:
     """Filter CCCC_HELP markdown by optional conditional blocks.
@@ -293,7 +282,6 @@ def _select_help_markdown(
     Supported markers (level-2 headings):
     - "## @role: foreman|peer"
     - "## @actor: <actor_id>"
-    - "## @pet"
     - "## @voice_secretary"
 
     Untagged content is always included. Tagged blocks are filtered only when the selector is known.
@@ -326,8 +314,8 @@ def _select_help_markdown(
             if not actor_norm:
                 return False
             return actor_norm == str(tag_value or "").strip()
-        if tag_kind == "pet":
-            return bool(include_pet)
+        if tag_kind == "legacy_pet":
+            return False
         if tag_kind == "voice_secretary":
             return bool(include_voice_secretary)
         return True
@@ -363,9 +351,8 @@ def _select_help_markdown(
                     tag_value = str(m_actor.group(1) or "").strip()
                     ln = "## Notes for you"
                 elif m_pet:
-                    tag_kind = "pet"
+                    tag_kind = "legacy_pet"
                     tag_value = ""
-                    ln = "## Pet Persona"
                 else:
                     tag_kind = "voice_secretary"
                     tag_value = ""

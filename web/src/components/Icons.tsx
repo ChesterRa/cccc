@@ -34,7 +34,6 @@ import {
   Moon,
   Paperclip,
   Pause,
-  PawPrint,
   Pencil,
   Play,
   Plus,
@@ -153,4 +152,3 @@ export const ChevronLeftIcon = createIcon(ChevronLeft);
 export const ChevronRightIcon = createIcon(ChevronRight);
 export const GlobeIcon = createIcon(Globe);
 export const GripIcon = createIcon(GripVertical);
-export const PetIcon = createIcon(PawPrint);

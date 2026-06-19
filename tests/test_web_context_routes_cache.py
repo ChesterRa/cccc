@@ -115,6 +115,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             context_get_calls = 0
             call_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             def fake_call_daemon(req: dict):
@@ -125,6 +126,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
                         context_get_calls += 1
                         current = context_get_calls
                     if current == 1:
+                        first_read_started.set()
                         first_read_release.wait(timeout=2)
                         return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "stale"}}}
                     return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "fresh"}}}
@@ -138,7 +140,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         stale_future = executor.submit(client.get, path)
-                        time.sleep(0.05)
+                        self.assertTrue(first_read_started.wait(timeout=2))
 
                         sync_resp = client.post(path, json={"ops": [{"op": "coordination.brief.update", "current_focus": "fresh"}], "by": "user"})
                         self.assertEqual(sync_resp.status_code, 200)
@@ -163,6 +165,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             context_get_calls = 0
             call_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             from cccc.kernel.group import attach_scope_to_group, load_group
@@ -183,6 +186,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
                             context_get_calls += 1
                             current = context_get_calls
                         if current == 1:
+                            first_read_started.set()
                             first_read_release.wait(timeout=2)
                             return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "stale"}}}
                         return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "fresh"}}}
@@ -196,7 +200,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
 
                         with ThreadPoolExecutor(max_workers=1) as executor:
                             stale_future = executor.submit(client.get, path)
-                            time.sleep(0.05)
+                            self.assertTrue(first_read_started.wait(timeout=2))
 
                             put_resp = client.put(
                                 f"/api/v1/groups/{group_id}/project_md",
@@ -225,6 +229,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             context_get_calls = 0
             call_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             def fake_call_daemon(req: dict):
@@ -235,6 +240,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
                         context_get_calls += 1
                         current = context_get_calls
                     if current == 1:
+                        first_read_started.set()
                         first_read_release.wait(timeout=2)
                         return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "stale"}}}
                     return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "fresh"}}}
@@ -246,7 +252,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         stale_future = executor.submit(client.get, path)
-                        time.sleep(0.05)
+                        self.assertTrue(first_read_started.wait(timeout=2))
 
                         fresh_resp = client.get(f"{path}&fresh=1")
                         self.assertEqual(fresh_resp.status_code, 200)
@@ -268,6 +274,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             context_get_calls = 0
             call_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             def fake_call_daemon(req: dict):
@@ -278,6 +285,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
                         context_get_calls += 1
                         current = context_get_calls
                     if current == 1:
+                        first_read_started.set()
                         first_read_release.wait(timeout=2)
                         return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "stale"}}}
                     return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "fresh"}}}
@@ -291,7 +299,7 @@ class TestWebContextRoutesCache(unittest.TestCase):
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         stale_future = executor.submit(client.get, path)
-                        time.sleep(0.05)
+                        self.assertTrue(first_read_started.wait(timeout=2))
 
                         delete_resp = client.delete(f"/api/v1/groups/{group_id}/actors/peer-1")
                         self.assertEqual(delete_resp.status_code, 200)

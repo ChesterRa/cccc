@@ -51,7 +51,7 @@ function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntime
   for (const actor of Array.isArray(actors) ? actors : []) {
     const internalKind = String(actor.internal_kind || "").trim().toLowerCase();
     if (internalKind) {
-      if (internalKind === "pet" || internalKind === "voice_secretary") {
+      if (internalKind === "voice_secretary") {
         internalRuntimeActors.push(actor);
       }
       continue;

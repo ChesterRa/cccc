@@ -4,11 +4,11 @@ export type RuntimeVisibilityMode = "hidden" | "visible";
 
 export type RuntimeVisibilityState = {
   peerRuntimeVisibility: RuntimeVisibilityMode;
-  petRuntimeVisibility: RuntimeVisibilityMode;
+  assistantRuntimeVisibility: RuntimeVisibilityMode;
 };
 
 export const DEFAULT_PEER_RUNTIME_VISIBILITY: RuntimeVisibilityMode = "visible";
-export const DEFAULT_PET_RUNTIME_VISIBILITY: RuntimeVisibilityMode = "hidden";
+export const DEFAULT_ASSISTANT_RUNTIME_VISIBILITY: RuntimeVisibilityMode = "hidden";
 
 export function normalizeRuntimeVisibilityMode(
   value: unknown,
@@ -18,10 +18,13 @@ export function normalizeRuntimeVisibilityMode(
   return normalized === "hidden" || normalized === "visible" ? normalized : fallback;
 }
 
-export function isPetRuntimeActor(actor: Actor | null | undefined): boolean {
+export function isUnsupportedInternalRuntimeActor(actor: Actor | null | undefined): boolean {
   const internalKind = String(actor?.internal_kind || "").trim().toLowerCase();
-  const id = String(actor?.id || "").trim();
-  return internalKind === "pet" || id === "pet-peer" || internalKind === "voice_secretary" || id === "voice-secretary";
+  return Boolean(internalKind && internalKind !== "voice_secretary");
+}
+
+export function isAssistantRuntimeActor(actor: Actor | null | undefined): boolean {
+  return String(actor?.internal_kind || "").trim().toLowerCase() === "voice_secretary";
 }
 
 export function isRuntimeSurfaceActorVisible(
@@ -29,17 +32,19 @@ export function isRuntimeSurfaceActorVisible(
   options: Partial<RuntimeVisibilityState>,
 ): boolean {
   if (!actor) return false;
+  if (isUnsupportedInternalRuntimeActor(actor)) return false;
+  if (isAssistantRuntimeActor(actor)) {
+    const assistantRuntimeVisibility = normalizeRuntimeVisibilityMode(
+      options.assistantRuntimeVisibility,
+      DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
+    );
+    return assistantRuntimeVisibility === "visible";
+  }
   const peerRuntimeVisibility = normalizeRuntimeVisibilityMode(
     options.peerRuntimeVisibility,
     DEFAULT_PEER_RUNTIME_VISIBILITY,
   );
-  const petRuntimeVisibility = normalizeRuntimeVisibilityMode(
-    options.petRuntimeVisibility,
-    DEFAULT_PET_RUNTIME_VISIBILITY,
-  );
-  return isPetRuntimeActor(actor)
-    ? petRuntimeVisibility === "visible"
-    : peerRuntimeVisibility === "visible";
+  return peerRuntimeVisibility === "visible";
 }
 
 export function filterVisibleRuntimeActors(

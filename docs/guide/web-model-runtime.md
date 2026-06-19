@@ -28,7 +28,7 @@ ChatGPT developer mode supports remote MCP over SSE or streamable HTTP and does 
 
 ## Zero-to-ready setup
 
-Follow this order. The CCCC settings page shows the same milestones, but this checklist is the full beginner path.
+Follow this order. `Settings > Global > ChatGPT Web Model` shows the prerequisite status, then handles only the ChatGPT-specific steps: sign-in, MCP app URL, and delivery target.
 
 ### 1. Start CCCC and expose Web
 
@@ -60,11 +60,15 @@ Create an Admin Access Token in the same Web Access panel. CCCC uses this public
 
 ### 2. Create the ChatGPT Web Model actor
 
-Open `Settings > Global > ChatGPT Web Model`. If no actor exists, use `Create actor` there. This creates the single CCCC actor identity that ChatGPT will use.
+In CCCC Web, open the target group and create one actor with runtime `ChatGPT Web Model`. This is the single CCCC actor identity that ChatGPT will use. Start it from the group actor controls if it is stopped, then return to `Settings > Global > ChatGPT Web Model`.
 
-Start the actor if it is stopped. Then create the MCP URL and copy it. If the page says the URL is local-only or not HTTPS, return to `Web Access` and fix the public Web URL before continuing.
+### 3. Sign in to ChatGPT
 
-### 3. Create the ChatGPT MCP app
+In `Settings > Global > ChatGPT Web Model`, open the embedded ChatGPT browser and sign in once. CCCC reuses that browser profile for delivery.
+
+### 4. Connect the ChatGPT MCP app
+
+After ChatGPT sign-in, create or copy the actor-bound MCP URL in `Settings > Global > ChatGPT Web Model`. If the page says the URL is local-only or not HTTPS, return to `Web Access` and fix the public Web URL before continuing.
 
 In ChatGPT, open `Settings > Apps > Advanced settings > Create app`. ChatGPT menu names may vary by plan and workspace. If this exact path is not available, look for Apps or Connectors settings, enable Developer Mode if required, then create a custom MCP app/connector. Use these fields:
 
@@ -77,17 +81,17 @@ Authentication: No Auth
 
 Check the custom MCP risk acknowledgement and click `Create`.
 
-Open a GPT-5.x chat, select Developer mode/tools, and enable the CCCC connector. If CCCC was upgraded after the connector was created, refresh the app/tool list in ChatGPT settings so new tools such as `cccc_code_exec` are visible.
+Open a GPT-5.x chat, select Developer mode/tools, and enable the CCCC connector. On the first CCCC tool call, ChatGPT may show an app permission approval card. Choose `Always allow` if that option is available and you trust this local CCCC connector; otherwise approve the action manually when ChatGPT asks. CCCC does not automate ChatGPT permission approvals. If CCCC was upgraded after the connector was created, refresh the app/tool list in ChatGPT settings so new tools such as `cccc_code_exec` are visible.
 
-### 4. Sign in and choose the delivery target
+### 5. Choose the delivery target
 
-Back in `Settings > Global > ChatGPT Web Model`, click `Set up ChatGPT` or `Open ChatGPT`. Sign in through the embedded browser. CCCC reuses that browser profile for delivery.
+The delivery target panel separates the saved target from the current browser tab. The current tab is visible for sign-in and inspection only; CCCC does not use it for delivery until you save it as the target.
 
-For an existing conversation, open it in the embedded browser and click `Use current ChatGPT chat`. For a new conversation, click `Start a new ChatGPT chat`; CCCC will deliver the first prompt to ChatGPT and automatically bind the actor once ChatGPT creates the final `/c/...` URL.
+To use an existing conversation, open it in the embedded browser, choose `Use current browser chat`, then click `Save target`. To start fresh, choose `Start new chat on next delivery`, then click `Save target`; CCCC will deliver the first prompt to ChatGPT and bind the actor once ChatGPT creates the final `/c/...` URL. You can also paste a specific `https://chatgpt.com/c/...` URL and save it.
 
-Browser delivery never guesses between unrelated ChatGPT tabs. An existing chat is bound by URL; a new chat is temporarily marked pending and becomes bound only after the first delivery produces a concrete ChatGPT conversation URL.
+Browser delivery never guesses between unrelated ChatGPT tabs. An existing chat is bound by saved URL; a new chat is a saved pending target until the first delivery produces a concrete ChatGPT conversation URL. The diagnostic `last_tab_url` is not a delivery target.
 
-### 5. Run a smoke test
+### Optional manual check
 
 Send a small CCCC message to the actor:
 
@@ -120,13 +124,13 @@ For remote-MCP pull mode, prompt the model to use CCCC explicitly:
 - **ChatGPT cannot see the CCCC connector**: use a GPT-5.x chat with Developer mode/tools enabled. GPT-5.x Pro does not expose the CCCC MCP connector for local development.
 - **CCCC still says the MCP app is not connected**: after creating the app in ChatGPT, ask the model to call `cccc_bootstrap` once, or refresh the app/tool list in ChatGPT settings.
 - **ChatGPT is signed in but CCCC has not confirmed it**: open the embedded browser in `Settings > Global > ChatGPT Web Model` and use `Check status` if needed.
-- **Messages go to the wrong ChatGPT chat**: bind the explicit `chatgpt.com/c/...` conversation, or choose `Start a new ChatGPT chat` before sending work.
+- **Messages go to the wrong ChatGPT chat**: open `Settings > Global > ChatGPT Web Model`, check `Saved target`, then choose `Use current browser chat`, `Start new chat on next delivery`, or paste an explicit `chatgpt.com/c/...` URL and click `Save target`.
 
 ### ChatGPT Browser Delivery
 
-Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared daemon-owned projected Chrome/Edge browser session for settings, runtime inspection, tool-confirm approval, auto-reload, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If the selected model cannot see MCP tools, switch to an MCP-capable GPT-5.x chat before assigning local work.
+Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared daemon-owned projected Chrome/Edge browser session for settings, runtime inspection, optional manual reload, optional auto-reload recovery, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If the selected model cannot see MCP tools, switch to an MCP-capable GPT-5.x chat before assigning local work.
 
-The default submit timeout is 30 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. This is the outer delivery hard cap; slow page loads, composer waits, and new-chat binding share that budget and may not each consume their full internal timeout. Browser startup is handled by the projected browser runtime, which requires a real system Chrome or Edge CDP-capable browser for ChatGPT. During an active delivery window, CCCC defaults to a 60-second soft auto-reload interval (`CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD_INACTIVITY_SECONDS`) so long ChatGPT threads have time to recover after each reload. If CCCC clicks the submit control but cannot verify ChatGPT accepted the prompt, the message is marked as delivery unverified instead of failed; it is not automatically re-bundled into the next delivery.
+The default submit timeout is 30 seconds and can be changed with `CCCC_WEB_MODEL_BROWSER_DELIVERY_TIMEOUT_SECONDS`. This is the outer delivery hard cap; slow page loads, composer waits, and new-chat binding share that budget and may not each consume their full internal timeout. Browser startup is handled by the projected browser runtime, which requires a real system Chrome or Edge CDP-capable browser for ChatGPT. Automatic page reload recovery is disabled by default. To opt into the legacy recovery behavior for a fragile ChatGPT browser session, set `CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD=1`; the inactivity threshold is controlled by `CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD_INACTIVITY_SECONDS`. If CCCC clicks the submit control but cannot verify ChatGPT accepted the prompt, the message is marked as delivery unverified instead of failed; it is not automatically re-bundled into the next delivery.
 
 Embedded browser viewing uses a localhost VNC projection when the session is running on a CCCC-owned Xvfb display and `x11vnc` is installed. CCCC does not attach VNC to an inherited host desktop display; those sessions fall back to the built-in CDP screencast viewer. This keeps the visual/interactive viewer separate from the Playwright/CDP delivery path without exposing unrelated local windows. The VNC server binds to localhost and is intended for trusted single-user hosts or containers; remote access still goes through the authenticated CCCC WebSocket bridge. Set `CCCC_PROJECTED_BROWSER_VNC=0` to force the screencast fallback while diagnosing viewer issues.
 
@@ -213,7 +217,7 @@ curl -s "$CONNECTOR_URL" \
 - The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Seeing a management tool in ChatGPT does not grant permission; role checks happen on `tools/call`.
 - ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.
 - ChatGPT proactive delivery depends on the shared projected browser session and an active logged-in browser profile.
-- New ChatGPT chats are supported through a pending auto-bind state: the first successful browser delivery commits the submitted batch, then CCCC waits for ChatGPT to expose the concrete `chatgpt.com/c/...` URL before binding future deliveries to that conversation.
+- New ChatGPT chats are supported through a saved pending target: the first successful browser delivery commits the submitted batch, then CCCC waits for ChatGPT to expose the concrete `chatgpt.com/c/...` URL before binding future deliveries to that conversation. Ordinary browser history such as `last_tab_url` is diagnostic only and is never treated as a saved target.
 - GPT-5.x is selected inside ChatGPT. CCCC treats ChatGPT Web Model as one browser-delivery/runtime path, not as a separate provider per model.
 - GPT-5.x Pro currently has no reliable CCCC local access. Do not document it as a local-development runtime or No-MCP fallback path.
 - ChatGPT Web Model prompt/help behavior intentionally reuses the normal CCCC agent help path; only the transport note is runtime-specific.

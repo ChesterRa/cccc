@@ -91,6 +91,54 @@ def _clear_voice_model_dir(model_id: str) -> None:
                 pass
 
 
+def _is_install_control_entry(path: Path) -> bool:
+    return (
+        path.name in {_INSTALL_LOCK_FILENAME, _INSTALL_STATE_FILENAME}
+        or path.name.startswith(".install-staging-")
+        or path.name.startswith(".install-previous-")
+    )
+
+
+def _remove_voice_model_payloads(root: Path) -> None:
+    if not root.exists():
+        return
+    for child in list(root.iterdir()):
+        if _is_install_control_entry(child):
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _replace_voice_model_payloads(install_dir: Path, staging_dir: Path) -> None:
+    backup_dir = install_dir / f".install-previous-{os.getpid()}-{int(time.time() * 1000)}"
+    backup_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        for child in list(install_dir.iterdir()):
+            if child == staging_dir or child == backup_dir or _is_install_control_entry(child):
+                continue
+            shutil.move(str(child), str(backup_dir / child.name))
+        for child in list(staging_dir.iterdir()):
+            shutil.move(str(child), str(install_dir / child.name))
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+    except Exception as exc:
+        _remove_voice_model_payloads(install_dir)
+        for child in list(backup_dir.iterdir()):
+            shutil.move(str(child), str(install_dir / child.name))
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        raise VoiceModelError(
+            "voice_model_replace_failed",
+            "voice model update downloaded successfully but could not replace the active model",
+            details={"install_dir": str(install_dir)},
+        ) from exc
+
+
 def _local_manifest_path() -> Path:
     return ensure_home().joinpath(*_LOCAL_MANIFEST_REL_PATH)
 
@@ -787,13 +835,7 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
             }
     state_manifest_sha256 = str(state.get("manifest_sha256") or "").strip()
     manifest_sha256 = str(entry.get("manifest_sha256") or "").strip()
-    if state_manifest_sha256 and manifest_sha256 and state_manifest_sha256 != manifest_sha256:
-        status = VOICE_MODEL_STATUS_NOT_INSTALLED
-        state = {
-            "status": status,
-            "error": {},
-            "manifest_sha256": manifest_sha256,
-        }
+    update_available = bool(state_manifest_sha256 and manifest_sha256 and state_manifest_sha256 != manifest_sha256)
     install_dir = voice_model_dir(model_id)
     artifacts_ready = True
     required_paths = [str(path) for path in (entry.get("required_files") or [])]
@@ -832,7 +874,10 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
         "installed_at": str(state.get("installed_at") or ""),
         "updated_at": str(state.get("updated_at") or ""),
         "error": state.get("error") if isinstance(state.get("error"), dict) else {},
+        "last_update_error": state.get("last_update_error") if isinstance(state.get("last_update_error"), dict) else {},
         "manifest_sha256": str(entry.get("manifest_sha256") or ""),
+        "installed_manifest_sha256": state_manifest_sha256,
+        "update_available": update_available,
         "command_ready": bool(status == VOICE_MODEL_STATUS_READY and entry.get("command_template")),
         "offline_ready": bool(status == VOICE_MODEL_STATUS_READY and entry.get("offline")),
         "streaming_ready": bool(status == VOICE_MODEL_STATUS_READY and entry.get("streaming")),
@@ -850,7 +895,10 @@ def get_voice_model_status(model_id: str, *, source: str = "") -> Dict[str, Any]
         "artifacts": [
             {
                 "path": str(artifact["path"]),
+                "url": str(artifact.get("url") or ""),
+                "sha256": str(artifact.get("sha256") or ""),
                 "size_bytes": artifact.get("size_bytes"),
+                "archive": str(artifact.get("archive") or ""),
             }
             for artifact in (entry.get("artifacts") or [])
         ],
@@ -870,7 +918,27 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
     install_dir = voice_model_dir(model_id)
     install_dir.mkdir(parents=True, exist_ok=True)
     lock_handle = acquire_lockfile(_install_lock_path(model_id))
+    staging_dir = install_dir / f".install-staging-{os.getpid()}-{int(time.time() * 1000)}"
+    previous_state = _read_install_state(model_id)
+    previous_state_ready = str(previous_state.get("status") or "") == VOICE_MODEL_STATUS_READY
+    payloads_replaced = False
+    total_expected_bytes = 0
+
+    def restore_previous_ready_state(error: Dict[str, Any]) -> None:
+        _write_install_state(
+            model_id,
+            {
+                **previous_state,
+                "updated_at": utc_now_iso(),
+                "last_update_error": error,
+            },
+        )
+
     try:
+        for child in list(install_dir.iterdir()):
+            if child.name.startswith(".install-staging-") or child.name.startswith(".install-previous-"):
+                shutil.rmtree(child, ignore_errors=True)
+        staging_dir.mkdir(parents=True, exist_ok=False)
         artifacts = entry.get("artifacts") or []
         total_expected_bytes = sum(int(artifact.get("size_bytes") or 0) for artifact in artifacts)
         artifact_count = len(artifacts)
@@ -913,7 +981,7 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
 
             result = _download_artifact(
                 artifact,
-                output_path=install_dir / artifact_path,
+                output_path=staging_dir / artifact_path,
                 progress=on_progress,
             )
             _write_install_state(
@@ -930,7 +998,7 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
                 ),
             )
             if artifact.get("archive"):
-                _safe_extract_tar(install_dir / artifact_path, install_dir)
+                _safe_extract_tar(staging_dir / artifact_path, staging_dir)
             downloaded.append(result)
             total_bytes += int(result.get("size_bytes") or 0)
             _write_install_state(
@@ -946,6 +1014,8 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
                     artifact_count=artifact_count,
                 ),
             )
+        _replace_voice_model_payloads(install_dir, staging_dir)
+        payloads_replaced = True
         payload = {
             "model_id": model_id,
             "status": VOICE_MODEL_STATUS_READY,
@@ -965,39 +1035,47 @@ def install_voice_model(model_id: str, *, source: str = "") -> Dict[str, Any]:
         _write_install_state(model_id, payload)
         return get_voice_model_status(model_id, source=source)
     except VoiceModelError as exc:
-        _write_install_state(
-            model_id,
-            {
-                **_install_progress_state(
-                    model_id=model_id,
-                    entry=entry,
-                    status=VOICE_MODEL_STATUS_FAILED,
-                    downloaded_bytes=int(_read_install_state(model_id).get("downloaded_bytes") or 0),
-                    total_bytes=int(_read_install_state(model_id).get("total_size_bytes") or 0),
-                    error={"code": exc.code, "message": exc.message, "details": exc.details},
-                ),
-            }
-        )
+        if previous_state_ready and not payloads_replaced:
+            restore_previous_ready_state({"code": exc.code, "message": exc.message, "details": exc.details})
+        else:
+            _write_install_state(
+                model_id,
+                {
+                    **_install_progress_state(
+                        model_id=model_id,
+                        entry=entry,
+                        status=VOICE_MODEL_STATUS_FAILED,
+                        downloaded_bytes=int(_read_install_state(model_id).get("downloaded_bytes") or 0),
+                        total_bytes=int(_read_install_state(model_id).get("total_size_bytes") or 0),
+                        error={"code": exc.code, "message": exc.message, "details": exc.details},
+                    ),
+                }
+            )
         raise
     except Exception as exc:
         current = _read_install_state(model_id)
-        _write_install_state(
-            model_id,
-            _install_progress_state(
-                model_id=model_id,
-                entry=entry,
-                status=VOICE_MODEL_STATUS_FAILED,
-                downloaded_bytes=int(current.get("downloaded_bytes") or 0),
-                total_bytes=int(current.get("total_size_bytes") or total_expected_bytes),
-                error={
-                    "code": "voice_model_install_failed",
-                    "message": str(exc),
-                    "details": {"error_type": type(exc).__name__},
-                },
-            ),
-        )
+        error = {
+            "code": "voice_model_install_failed",
+            "message": str(exc),
+            "details": {"error_type": type(exc).__name__},
+        }
+        if previous_state_ready and not payloads_replaced:
+            restore_previous_ready_state(error)
+        else:
+            _write_install_state(
+                model_id,
+                _install_progress_state(
+                    model_id=model_id,
+                    entry=entry,
+                    status=VOICE_MODEL_STATUS_FAILED,
+                    downloaded_bytes=int(current.get("downloaded_bytes") or 0),
+                    total_bytes=int(current.get("total_size_bytes") or total_expected_bytes),
+                    error=error,
+                ),
+            )
         raise
     finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
         release_lockfile(lock_handle)
 
 

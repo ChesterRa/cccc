@@ -300,6 +300,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        old_reload = os.environ.get("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD")
         try:
             group = self._create_group_with_actor()
             self._bind_chatgpt_conversation(group)
@@ -312,6 +313,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 data={"text": "browser-delivered task", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            os.environ.pop("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD", None)
             calls: list[dict] = []
 
             def submit_via_session(**kwargs) -> dict:
@@ -334,10 +336,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertTrue(bool(result.get("cursor_committed")))
             self.assertEqual(str(read_headless_state(group.group_id, "peer1").get("status") or ""), "waiting")
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
-            self.assertEqual(browser_state.get("auto_reload_active"), True)
-            self.assertEqual(browser_state.get("auto_reload_last_progress_reason"), "browser_delivery")
-            self.assertEqual(browser_state.get("auto_reload_last_delivery_id"), "delivery-1")
-            self.assertEqual(browser_state.get("auto_reload_last_event_ids"), [event["id"]])
+            self.assertEqual(browser_state.get("auto_reload_active"), False)
+            self.assertEqual(browser_state.get("auto_reload_completed_reason"), "disabled")
             self.assertEqual(len(calls), 1)
             payload = calls[0]
             self.assertEqual(payload.get("group_id"), group.group_id)
@@ -380,6 +380,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            if old_reload is None:
+                os.environ.pop("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD"] = old_reload
             cleanup()
 
     def test_browser_delivery_does_not_include_nomcp_fallback_when_public_https_is_available(self) -> None:
@@ -1113,7 +1117,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     side_effect=submit_via_session,
                 ),
                 patch(
-                    "cccc.daemon.actors.web_model_tool_confirm_watcher.ensure_web_model_tool_confirm_watcher",
+                    "cccc.daemon.actors.web_model_browser_recovery_watcher.ensure_web_model_browser_recovery_watcher",
                     return_value=True,
                 ) as ensure_watcher,
             ):
@@ -1263,7 +1267,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             record_chatgpt_browser_state(
                 group.group_id,
                 "peer1",
-                {"last_tab_url": "https://chatgpt.com/c/delayed-chat"},
+                {"pending_new_chat_last_tab_url": "https://chatgpt.com/c/delayed-chat"},
             )
             second = append_event(
                 group.ledger_path,
@@ -1432,14 +1436,23 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
     def test_browser_delivery_resolves_pending_new_chat_then_delivers_to_bound_url(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
-        from cccc.kernel.inbox import get_cursor
-        from cccc.kernel.ledger import append_event
+        from cccc.kernel.inbox import get_cursor, set_cursor
+        from cccc.kernel.ledger import append_event, read_last_lines
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
         _, cleanup = self._with_home()
         old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
         try:
             group = self._create_group_with_actor()
+            pending_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "first message creates a new ChatGPT chat", "to": ["peer1"]},
+            )
+            set_cursor(group, "peer1", event_id=str(pending_event["id"]), ts=str(pending_event["ts"]))
             record_chatgpt_browser_state(
                 group.group_id,
                 "peer1",
@@ -1448,6 +1461,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     "pending_new_chat_url": "https://chatgpt.com/",
                     "pending_new_chat_submitted": True,
                     "pending_new_chat_delivery_id": "delivery-pending",
+                    "pending_new_chat_last_turn_id": "turn-pending",
+                    "pending_new_chat_last_event_ids": [pending_event["id"]],
                 },
             )
             event = append_event(
@@ -1472,7 +1487,16 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                         "pending_new_chat_submitted": False,
                     },
                 )
-                return {"ok": True, "resolved": True, "conversation_url": "https://chatgpt.com/c/resolved"}
+                return {
+                    "ok": True,
+                    "resolved": True,
+                    "conversation_url": "https://chatgpt.com/c/resolved",
+                    "target_url": "https://chatgpt.com/",
+                    "delivery_id": "delivery-pending",
+                    "turn_id": "turn-pending",
+                    "event_ids": [pending_event["id"]],
+                    "bound_at": "2026-05-01T00:00:20Z",
+                }
 
             def submit_via_session(**kwargs) -> dict:
                 calls.append(dict(kwargs))
@@ -1499,11 +1523,62 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/resolved")
             self.assertEqual(state.get("pending_new_chat_bind"), False)
+            lines = [json.loads(line) for line in read_last_lines(group.ledger_path, 20) if line.strip()]
+            bound_events = [line for line in lines if line.get("kind") == "web_model.browser_delivery.bound"]
+            self.assertEqual(len(bound_events), 1)
+            self.assertEqual((bound_events[-1].get("data") or {}).get("event_ids"), [pending_event["id"]])
+            self.assertEqual((bound_events[-1].get("data") or {}).get("delivery_id"), "delivery-pending")
+            self.assertEqual((bound_events[-1].get("data") or {}).get("bound_conversation_url"), "https://chatgpt.com/c/resolved")
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
             else:
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_pending_new_chat_bound_event_append_is_idempotent(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import append_pending_new_chat_bound_event
+        from cccc.kernel.ledger import append_event, read_last_lines
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            pending_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "first message creates a new ChatGPT chat", "to": ["peer1"]},
+            )
+            resolution = {
+                "ok": True,
+                "resolved": True,
+                "conversation_url": "https://chatgpt.com/c/resolved",
+                "target_url": "https://chatgpt.com/",
+                "delivery_id": "delivery-pending",
+                "turn_id": "turn-pending",
+                "event_ids": [pending_event["id"]],
+                "submitted_at": "2026-05-01T00:00:10Z",
+                "bound_at": "2026-05-01T00:00:20Z",
+            }
+
+            first = append_pending_new_chat_bound_event(group.group_id, "peer1", resolution)
+            second = append_pending_new_chat_bound_event(group.group_id, "peer1", resolution)
+
+            self.assertTrue(first)
+            self.assertTrue(second)
+            self.assertEqual(first.get("id"), second.get("id"))
+            lines = [json.loads(line) for line in read_last_lines(group.ledger_path, 20) if line.strip()]
+            bound_events = [
+                line for line in lines
+                if line.get("kind") == "web_model.browser_delivery.bound"
+                and ((line.get("data") or {}).get("delivery_id") == "delivery-pending")
+            ]
+            self.assertEqual(len(bound_events), 1)
+            self.assertEqual((bound_events[0].get("data") or {}).get("event_ids"), [pending_event["id"]])
+            self.assertEqual((bound_events[0].get("data") or {}).get("bound_conversation_url"), "https://chatgpt.com/c/resolved")
+        finally:
             cleanup()
 
     def test_browser_delivery_retries_stale_active_turn_before_next_delivery(self) -> None:

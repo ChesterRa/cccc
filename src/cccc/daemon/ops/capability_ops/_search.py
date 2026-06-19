@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ....contracts.v1 import DaemonError, DaemonResponse
-from ....kernel.actors import find_actor, get_effective_role, is_pet_actor, is_voice_secretary_actor
+from ....kernel.actors import find_actor, get_effective_role, is_voice_secretary_actor
 from ....kernel.capabilities import (
     BUILTIN_CAPABILITY_PACKS,
     BUILTIN_CAPSULE_SKILLS,
@@ -1319,7 +1319,6 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             actor_id = "user"
         actor_role = _resolve_actor_role(group, actor_id)
         actor = find_actor(group, actor_id) if actor_id and actor_id != "user" else None
-        actor_is_pet = isinstance(actor, dict) and is_pet_actor(actor)
         actor_is_voice_secretary = actor_id == "voice-secretary" or (isinstance(actor, dict) and is_voice_secretary_actor(actor))
         actor_is_web_model = isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "web_model"
         policy = _allowlist_policy()
@@ -1436,7 +1435,6 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                     resolve_visible_tool_names(
                         builtin_enabled,
                         actor_role=actor_role,
-                        is_pet=actor_is_pet,
                         is_voice_secretary=actor_is_voice_secretary,
                         is_web_model=actor_is_web_model,
                     )
@@ -2054,7 +2052,6 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             "core_tool_count": len(
                 resolve_core_tool_names(
                     actor_role=actor_role,
-                    is_pet=actor_is_pet,
                     is_voice_secretary=actor_is_voice_secretary,
                     is_web_model=actor_is_web_model,
                 )

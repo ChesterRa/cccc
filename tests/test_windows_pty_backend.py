@@ -9,6 +9,12 @@ from collections import deque
 from pathlib import Path
 
 
+def _windows_pty_diagnostics() -> str:
+    from cccc.runners.platform_support import pty_support_details
+
+    return f"details={pty_support_details()!r}"
+
+
 class _WakeSocket:
     def __init__(self) -> None:
         self._reads = 0
@@ -139,13 +145,16 @@ class TestWindowsPtyBackend(unittest.TestCase):
 
         self.assertTrue(
             bool(getattr(pty_runner, "PTY_SUPPORTED", False)),
-            msg="Windows PTY backend unavailable (expected ConPTY via pywinpty)",
+            msg=f"Windows PTY backend unavailable (expected ConPTY via pywinpty). {_windows_pty_diagnostics()}",
         )
 
     def test_conpty_session_smoke_echo_output(self) -> None:
         from cccc.runners import pty as pty_runner
 
-        self.assertTrue(bool(getattr(pty_runner, "PTY_SUPPORTED", False)))
+        self.assertTrue(
+            bool(getattr(pty_runner, "PTY_SUPPORTED", False)),
+            msg=f"Windows PTY backend unavailable before smoke echo. {_windows_pty_diagnostics()}",
+        )
 
         session = pty_runner.PtySession(
             group_id="g_win",

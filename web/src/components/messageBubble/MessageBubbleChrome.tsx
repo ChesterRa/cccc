@@ -165,7 +165,7 @@ export function MessageFooter({
   const deliveryDetail = String(webModelDeliveryStatus?.detail || "").trim();
   const deliveryToneClass = webModelDeliveryStatus?.state === "failed"
     ? "border-rose-500/20 bg-rose-500/8 text-rose-700 dark:text-rose-300"
-    : webModelDeliveryStatus?.state === "submitted"
+    : webModelDeliveryStatus?.state === "submitted" || webModelDeliveryStatus?.state === "bound"
       ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
       : "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
   const allRead = visibleReadStatusEntries.length > 0 && visibleReadStatusEntries.every(([_, cleared]) => cleared);

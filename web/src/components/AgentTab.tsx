@@ -28,6 +28,19 @@ const STOPPED_TAIL_FETCH_DELAY_MS = 350;
 
 const copyToClipboard = copyTextToClipboard;
 
+function normalizeActorGroupRole(role: unknown): "foreman" | "peer" {
+  return String(role || "").trim().toLowerCase() === "foreman" ? "foreman" : "peer";
+}
+
+function actorGroupRoleBadgeClass(role: "foreman" | "peer"): string {
+  return classNames(
+    "rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
+    role === "foreman"
+      ? "border-amber-500/25 bg-amber-500/12 text-amber-700 dark:text-amber-300"
+      : "border-slate-400/25 bg-slate-500/10 text-slate-600 dark:border-slate-400/20 dark:bg-slate-400/10 dark:text-slate-300",
+  );
+}
+
 function fitTerminalToContainer(
   fitAddon: FitAddon | null,
   container: HTMLDivElement | null,
@@ -315,7 +328,9 @@ export function AgentTab({
     }
   }, [terminalScrollbackLines]);
 
-  // Initialize terminal
+  // Initialize terminal. Theme, stdin, and scrollback changes are applied by
+  // option-update effects above; they must not dispose/recreate the live xterm
+  // instance because the WebSocket input/resize subscriptions are bound to it.
   useEffect(() => {
     if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
@@ -435,7 +450,7 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl, isDark, terminalScrollbackLines]);
+  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl]);
 
   const fitTerminalBeforeAttach = useCallback(() => {
     fitTerminalToContainer(fitAddonRef.current, termRef.current);
@@ -531,6 +546,7 @@ export function AgentTab({
   const stateTask = String(agentState?.hot?.active_task_id || "").trim();
   const blockerCount = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
   const stateNext = String(agentState?.hot?.next_action || "").trim();
+  const actorGroupRole = normalizeActorGroupRole(actor.role);
 
   return (
     <div className="flex flex-col h-full">
@@ -568,11 +584,11 @@ export function AgentTab({
               <div className="min-w-0 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]">{actor.title || actor.id}</span>
-                  {actor.role === "foreman" && (
-                    <span className="rounded-md border border-amber-500/25 bg-amber-500/12 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                      {t('foreman')}
-                    </span>
-                  )}
+                  <span className={actorGroupRoleBadgeClass(actorGroupRole)}>
+                    {actorGroupRole === "foreman"
+                      ? t("groupRoleForeman", { defaultValue: "Foreman" })
+                      : t("groupRolePeer", { defaultValue: "Peer" })}
+                  </span>
                 </div>
                 <div className={classNames("mt-0.5 text-xs truncate", "text-[var(--color-text-tertiary)]")}>
                   {rtInfo?.label || t('custom')} • {runtimeStatusText}

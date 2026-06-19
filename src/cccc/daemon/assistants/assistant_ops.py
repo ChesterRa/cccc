@@ -24,7 +24,6 @@ from ...kernel.group import Group, load_group
 from ...kernel.inbox import iter_events_reverse
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
-from ...kernel.pet_actor import is_desktop_pet_enabled
 from ...kernel.prompt_files import resolve_active_scope_root
 from ...kernel.voice_secretary_actor import VOICE_SECRETARY_ACTOR_ID, get_voice_secretary_actor
 from ...paths import ensure_home
@@ -81,7 +80,6 @@ _VOICE_RUNTIME_INSTALL_THREADS: Dict[str, threading.Thread] = {}
 _VOICE_RECORDING_LEASE_LOCK = threading.Lock()
 
 
-ASSISTANT_ID_PET = "pet"
 ASSISTANT_ID_VOICE_SECRETARY = "voice_secretary"
 
 _STATE_SCHEMA = 1
@@ -165,25 +163,6 @@ _VOICE_PEER_TASK_PATTERNS = (
 
 
 _ASSISTANT_DEFAULTS: Dict[str, Dict[str, Any]] = {
-    ASSISTANT_ID_PET: {
-        "assistant_id": ASSISTANT_ID_PET,
-        "kind": "pet",
-        "enabled": False,
-        "principal": "assistant:pet",
-        "lifecycle": "disabled",
-        "health": {},
-        "policy": {
-            "action_allowlist": ["pet.review", "pet.profile_refresh"],
-            "requires_user_confirmation": [],
-        },
-        "config": {
-            "settings_source": "group.features.desktop_pet_enabled",
-        },
-        "ui": {
-            "surface": "pet_panel",
-            "composer_control": "pet",
-        },
-    },
     ASSISTANT_ID_VOICE_SECRETARY: {
         "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
         "kind": "voice_secretary",
@@ -536,10 +515,7 @@ def _effective_assistant(group: Group, assistant_id: str, *, runtime_state: Opti
     else:
         config.update(stored_config)
 
-    if assistant_id == ASSISTANT_ID_PET:
-        enabled = is_desktop_pet_enabled(group)
-    else:
-        enabled = coerce_bool(stored.get("enabled"), default=bool(default.get("enabled")))
+    enabled = coerce_bool(stored.get("enabled"), default=bool(default.get("enabled")))
 
     lifecycle = str(runtime.get("lifecycle") or "").strip().lower()
     if lifecycle not in _VALID_LIFECYCLES:
@@ -3144,7 +3120,7 @@ def dispatch_voice_idle_review(
         },
     )
     try:
-        from ..pet import assistive_jobs
+        from .. import assistive_jobs
 
         assistive_jobs.mark_job_completed(group.group_id, assistive_jobs.JOB_KIND_VOICE_IDLE_REVIEW)
     except Exception:
@@ -3666,12 +3642,6 @@ def handle_assistant_settings_update(
     entry: Dict[str, Any] = {}
     try:
         require_group_permission(group, by=by, action="group.settings_update")
-        if assistant_id == ASSISTANT_ID_PET:
-            return _error(
-                "assistant_settings_read_only",
-                "pet assistant settings are mirrored from desktop_pet_enabled during M0",
-                details={"settings_source": "group_settings_update.desktop_pet_enabled"},
-            )
         unknown = set(patch.keys()) - {"enabled", "config"}
         if unknown:
             return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)})

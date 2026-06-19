@@ -24,12 +24,11 @@ AgentRuntime = Literal[
     "grok",
     "hermes",
     "kimi",
-    "neovate",
     "opencode",
     "web_model",
     "custom",
 ]
-InternalActorKind = Literal["pet", "voice_secretary"]
+InternalActorKind = Literal["voice_secretary"]
 
 # Group state controls automation/runtime behavior.
 # - active/idle/paused are logical workflow states

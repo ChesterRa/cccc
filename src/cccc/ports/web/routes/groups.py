@@ -76,15 +76,6 @@ from ....kernel.prompt_files import (
     resolve_active_scope_root,
     write_group_prompt_file,
 )
-from ....kernel.pet_prompt import build_pet_prompt_parts, build_pet_snapshot_text, load_pet_help_markdown
-from ....kernel.pet_outcomes import append_pet_decision_outcome
-from ....kernel.pet_actor import get_pet_actor, is_desktop_pet_enabled
-from ....kernel.pet_signals import load_pet_signals
-from ....kernel.pet_task_evidence import build_pet_task_evidence
-from ....daemon.pet.review_scheduler import request_manual_pet_review
-from ...mcp.utils.help_markdown import parse_help_markdown
-from ....kernel.access_tokens import list_access_tokens
-from ....kernel.pet_decisions import load_pet_decisions
 from ....paths import ensure_home
 from ....util.conv import coerce_bool
 from ....util.fs import atomic_write_text
@@ -118,7 +109,6 @@ from ..schemas import (
     GroupPresentationPublishWorkspaceRequest,
     GroupSettingsRequest,
     GroupUpdateRequest,
-    PetDecisionOutcomeRequest,
     ProjectMdUpdateRequest,
     RepoPromptUpdateRequest,
     RouteContext,
@@ -965,61 +955,6 @@ async def invalidate_context_read(group_id: str, *, detail: Optional[str] = None
                 _CONTEXT_GENERATION[key] = 1
 
 
-def _build_pet_context_payload(
-    group: Any,
-    help_prompt: Dict[str, Any],
-    context_payload: Dict[str, Any],
-    *,
-    fresh: bool = False,
-    verbose: bool = False,
-) -> Dict[str, Any]:
-    help_content = str(help_prompt.get("content") or "")
-    persona = str(help_prompt.get("persona") or "").strip()
-    source = str(help_prompt.get("pet_source") or "default").strip() or "default"
-    signals = load_pet_signals(
-        group,
-        context_payload=context_payload,
-        recent_chat_limit=50 if verbose or fresh else 10,
-        recent_chat_source="active_tail",
-        context_sync_limit=0,
-        include_reply_obligation_status=False,
-    )
-    enriched_context_payload = dict(context_payload)
-    enriched_context_payload["pet_signals"] = signals
-    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=enriched_context_payload)
-    decisions = load_pet_decisions(group)
-    task_evidence: list[dict[str, Any]] = []
-    try:
-        storage = ContextStorage(group)
-        task_evidence = build_pet_task_evidence(
-            storage.list_tasks(),
-            getattr(storage.load_agents(), "agents", []) or [],
-            limit=4,
-        )
-    except Exception:
-        task_evidence = []
-    snapshot = str(parts.get("snapshot") or "").strip() or build_pet_snapshot_text(group, enriched_context_payload)
-    payload = {
-        "persona": persona,
-        "snapshot": snapshot,
-        "decisions": decisions,
-        "task_evidence": task_evidence,
-        "signals": signals,
-        "source": str(parts.get("source") or source),
-        "companion": parts.get("profile") or {},
-    }
-    if not verbose:
-        return payload
-    payload.update(
-        {
-            "help": str(parts.get("help") or ""),
-            "prompt": str(parts.get("prompt") or ""),
-            "help_prompt": help_prompt,
-        }
-    )
-    return payload
-
-
 def _collect_ledger_event_statuses(
     group: Any,
     events: list[dict[str, Any]],
@@ -1122,6 +1057,7 @@ def _collect_ledger_event_statuses(
 _WEB_MODEL_DELIVERY_KIND_TO_STATE = {
     "web_model.browser_delivery.submitting": "submitting",
     "web_model.browser_delivery.submitted": "submitted",
+    "web_model.browser_delivery.bound": "bound",
     "web_model.browser_delivery.pending": "pending",
     "web_model.browser_delivery.ambiguous": "ambiguous",
     "web_model.browser_delivery.failed": "failed",
@@ -1281,15 +1217,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             async with _CONTEXT_LOCK:
                 if _CONTEXT_INFLIGHT.get(key) is fut:
                     _CONTEXT_INFLIGHT.pop(key, None)
-
-    def _request_access_token(request: Request) -> str:
-        auth = str(request.headers.get("authorization") or "").strip()
-        if auth.lower().startswith("bearer "):
-            return str(auth[7:] or "").strip()
-        cookie_token = str(request.cookies.get("cccc_access_token") or "").strip()
-        if cookie_token:
-            return cookie_token
-        return str(request.query_params.get("token") or "").strip()
 
     def _presentation_card_type_for_url(url: str) -> str:
         suffix = Path(urlparse(str(url or "").strip()).path or "").suffix.lower()
@@ -1962,7 +1889,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 seen.add(value)
                 out.append(value)
                 continue
-            if value in {"pet", "voice_secretary"}:
+            if value == "voice_secretary":
                 seen.add(value)
                 out.append(value)
                 continue
@@ -2058,8 +1985,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         normalized_blocks: set[str] = set()
         if str(editor_mode or "").strip().lower() == "structured":
             normalized_blocks = {str(item or "").strip() for item in list(changed_blocks or []) if str(item or "").strip()}
-            if normalized_blocks and normalized_blocks.issubset({"pet"}):
-                return []
         running = await _list_running_actor_views(group_id)
         if not running:
             return []
@@ -2077,7 +2002,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if reasons:
                 target_reasons[aid] = reasons
 
-        if not target_reasons and normalized_blocks and normalized_blocks.issubset({"pet", "voice_secretary"}):
+        if not target_reasons and normalized_blocks and normalized_blocks.issubset({"voice_secretary"}):
             return []
 
         if not target_reasons:
@@ -2136,102 +2061,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "help": _one("help"),
             },
         }
-
-    @group_router.get("/pet-context")
-    async def pet_context_get(group_id: str, fresh: bool = False, verbose: bool = False) -> Dict[str, Any]:
-        """Get the injected context payload for the independent pet peer."""
-        group = load_group(group_id)
-        if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-
-        def _help_prompt() -> Dict[str, Any]:
-            pf = read_group_prompt_file(group, HELP_FILENAME)
-            content = ""
-            prompt_source = "builtin"
-            if pf.found and isinstance(pf.content, str) and pf.content.strip():
-                content = str(pf.content)
-                prompt_source = "home"
-            else:
-                content = load_pet_help_markdown(group)
-            parsed = parse_help_markdown(content)
-            persona = str(parsed.get("pet") or "").strip()
-            return {
-                "kind": "help",
-                "source": prompt_source,
-                "pet_source": "help" if persona else "default",
-                "prompt_source": prompt_source,
-                "filename": HELP_FILENAME,
-                "path": pf.path,
-                "content": content,
-                "persona": persona,
-            }
-
-        if fresh:
-            await invalidate_context_read(group_id, detail="summary")
-        def _load_pet_context_payload() -> Dict[str, Any]:
-            storage = ContextStorage(group)
-            if fresh:
-                _rebuild_summary_snapshot(group_id)
-                snapshot = storage.load_summary_snapshot()
-                context_payload = snapshot.get("result") if isinstance(snapshot.get("result"), dict) else {}
-                if context_payload:
-                    return context_payload
-            return _get_summary_context_fast(storage, group_id=group_id)
-
-        context_payload = await run_in_threadpool(_load_pet_context_payload)
-
-        help_prompt = _help_prompt()
-        return {
-            "ok": True,
-            "result": {
-                **_build_pet_context_payload(
-                    group,
-                    help_prompt,
-                    context_payload,
-                    fresh=fresh,
-                    verbose=verbose,
-                ),
-            },
-        }
-
-    @group_router.post("/pet-context/review")
-    async def pet_context_review_post(group_id: str) -> Dict[str, Any]:
-        group = load_group(group_id)
-        if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        if not is_desktop_pet_enabled(group):
-            return {"ok": False, "error": {"code": "desktop_pet_disabled", "message": "desktop pet is disabled"}}
-        if get_group_state(group) not in {"active", "idle"}:
-            return {"ok": False, "error": {"code": "group_not_active", "message": "pet review requires active or idle group state"}}
-        pet_actor = get_pet_actor(group)
-        if not isinstance(pet_actor, dict) or not bool(pet_actor.get("enabled", True)):
-            return {"ok": False, "error": {"code": "pet_actor_unavailable", "message": "pet actor is unavailable"}}
-        accepted = await run_in_threadpool(
-            request_manual_pet_review,
-            group_id,
-            reason="bubble_click",
-        )
-        if not accepted:
-            return {"ok": False, "error": {"code": "pet_review_unavailable", "message": "pet review is currently unavailable"}}
-        return {"ok": True, "result": {"accepted": True}}
-
-    @group_router.post("/pet-decisions/outcome")
-    async def pet_decision_outcome_post(group_id: str, req: PetDecisionOutcomeRequest) -> Dict[str, Any]:
-        group = load_group(group_id)
-        if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        event = await run_in_threadpool(
-            append_pet_decision_outcome,
-            group,
-            by=str(req.by or "user").strip() or "user",
-            fingerprint=str(req.fingerprint or "").strip(),
-            outcome=str(req.outcome or "").strip(),
-            decision_id=str(req.decision_id or "").strip(),
-            action_type=str(req.action_type or "").strip(),
-            cooldown_ms=int(req.cooldown_ms or 0),
-            source_event_id=str(req.source_event_id or "").strip(),
-        )
-        return {"ok": True, "result": {"event": event}}
 
     @group_router.put("/prompts/{kind}")
     async def prompts_put(group_id: str, kind: str, req: RepoPromptUpdateRequest) -> Dict[str, Any]:
@@ -2373,23 +2202,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
                     "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
-                    "desktop_pet_enabled": coerce_bool(features.get("desktop_pet_enabled"), default=False),
                 }
             }
         }
-
-    @group_router.get("/desktop_pet/launch_token")
-    async def group_desktop_pet_launch_token(request: Request, group_id: str) -> Dict[str, Any]:
-        token = _request_access_token(request)
-        if not token:
-            # Empty password mode: no tokens configured → allow with empty token
-            if not list_access_tokens():
-                return {"ok": True, "result": {"token": ""}}
-            raise HTTPException(
-                status_code=403,
-                detail={"code": "permission_denied", "message": "authentication required", "details": {}},
-            )
-        return {"ok": True, "result": {"token": token}}
 
     @group_router.get("/assistants")
     async def group_assistants_get(group_id: str) -> Dict[str, Any]:
@@ -3594,8 +3409,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         if req.panorama_enabled is not None:
             patch["panorama_enabled"] = bool(req.panorama_enabled)
-        if req.desktop_pet_enabled is not None:
-            patch["desktop_pet_enabled"] = bool(req.desktop_pet_enabled)
 
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}

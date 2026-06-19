@@ -82,6 +82,22 @@ class WecomAdapter(IMAdapter):
     """
 
     platform = "wecom"
+    capabilities = {
+        "text_in": "yes",
+        "text_out": "yes",
+        "files_in": "yes",
+        "files_out": "yes",
+        "threads": "no",
+        "reactions": "no",
+        "typing": "no",
+        "streaming": "partial",
+        "voice_in": "partial",
+        "markdown": "partial",
+    }
+    capability_notes = {
+        "streaming": "requires callback reply state for the current chat",
+        "voice_in": "voice attachments are preserved; local ASR is not automatic",
+    }
 
     def __init__(
         self,

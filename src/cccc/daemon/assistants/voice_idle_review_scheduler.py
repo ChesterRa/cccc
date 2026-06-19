@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Set
 
-from ..pet import assistive_jobs
+from .. import assistive_jobs
 from . import assistant_ops
 
 

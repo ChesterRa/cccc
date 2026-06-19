@@ -4,7 +4,7 @@ import * as apiClient from "../services/api";
 import type { Observability } from "../services/api";
 import type { WebAccessSession } from "../types";
 import {
-  DEFAULT_PET_RUNTIME_VISIBILITY,
+  DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
   DEFAULT_PEER_RUNTIME_VISIBILITY,
   normalizeRuntimeVisibilityMode,
   type RuntimeVisibilityMode,
@@ -20,7 +20,7 @@ interface ObservabilityState {
   terminalBacklogMiB: number;
   terminalScrollbackLines: number;
   peerRuntimeVisibility: RuntimeVisibilityMode;
-  petRuntimeVisibility: RuntimeVisibilityMode;
+  assistantRuntimeVisibility: RuntimeVisibilityMode;
 
   setFromObs: (obs: Observability) => void;
   setRuntimeVisibilityFromSession: (session: WebAccessSession | null | undefined) => void;
@@ -46,9 +46,9 @@ const _fromObs = (obs: Observability) => {
       runtimeVisibility.peer_runtime,
       DEFAULT_PEER_RUNTIME_VISIBILITY,
     ),
-    petRuntimeVisibility: normalizeRuntimeVisibilityMode(
-      runtimeVisibility.pet_runtime,
-      DEFAULT_PET_RUNTIME_VISIBILITY,
+    assistantRuntimeVisibility: normalizeRuntimeVisibilityMode(
+      runtimeVisibility.assistant_runtime,
+      DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
     ),
   };
 };
@@ -60,7 +60,7 @@ export const useObservabilityStore = create<ObservabilityState>((set) => ({
   terminalBacklogMiB: DEFAULT_PTY_BACKLOG_MIB,
   terminalScrollbackLines: DEFAULT_SCROLLBACK_LINES,
   peerRuntimeVisibility: DEFAULT_PEER_RUNTIME_VISIBILITY,
-  petRuntimeVisibility: DEFAULT_PET_RUNTIME_VISIBILITY,
+  assistantRuntimeVisibility: DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
 
   setFromObs: (obs) => {
     set(_fromObs(obs));
@@ -73,9 +73,9 @@ export const useObservabilityStore = create<ObservabilityState>((set) => ({
         runtimeVisibility.peer_runtime,
         DEFAULT_PEER_RUNTIME_VISIBILITY,
       ),
-      petRuntimeVisibility: normalizeRuntimeVisibilityMode(
-        runtimeVisibility.pet_runtime,
-        DEFAULT_PET_RUNTIME_VISIBILITY,
+      assistantRuntimeVisibility: normalizeRuntimeVisibilityMode(
+        runtimeVisibility.assistant_runtime,
+        DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
       ),
     });
   },

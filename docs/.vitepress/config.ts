@@ -1,4 +1,20 @@
-import { defineConfig } from 'vitepress'
+import { defineConfig, type HeadConfig } from 'vitepress'
+
+// Privacy-friendly visit counting (no cookies, no personal data).
+// To enable: create a site at https://www.goatcounter.com (free for open source),
+// then set the site code here, e.g. 'cccc'. Leave empty to ship no analytics at all.
+const GOATCOUNTER_CODE = ''
+
+const analyticsHead: HeadConfig[] = GOATCOUNTER_CODE
+  ? [[
+      'script',
+      {
+        'data-goatcounter': `https://${GOATCOUNTER_CODE}.goatcounter.com/count`,
+        async: '',
+        src: 'https://gc.zgo.at/count.js'
+      }
+    ]]
+  : []
 
 export default defineConfig({
   title: 'CCCC',
@@ -24,7 +40,8 @@ export default defineConfig({
   ],
 
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/cccc/logo.svg' }]
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/cccc/logo.svg' }],
+    ...analyticsHead
   ],
 
   themeConfig: {
@@ -107,6 +124,13 @@ export default defineConfig({
           text: 'Release Hub',
           items: [
             { text: 'Overview', link: '/release/' },
+            { text: 'v0.4.27 Release Notes', link: '/release/v0.4.27_release_notes' },
+            { text: 'v0.4.26 Release Notes', link: '/release/v0.4.26_release_notes' },
+            { text: 'v0.4.25 Release Notes', link: '/release/v0.4.25_release_notes' },
+            { text: 'v0.4.24 Release Notes', link: '/release/v0.4.24_release_notes' },
+            { text: 'v0.4.23 Release Notes', link: '/release/v0.4.23_release_notes' },
+            { text: 'v0.4.22 Release Notes', link: '/release/v0.4.22_release_notes' },
+            { text: 'v0.4.21 Release Notes', link: '/release/v0.4.21_release_notes' },
             { text: 'v0.4.20 Release Notes', link: '/release/v0.4.20_release_notes' },
             { text: 'v0.4.19 Release Notes', link: '/release/v0.4.19_release_notes' },
             { text: 'v0.4.18 Release Notes', link: '/release/v0.4.18_release_notes' },

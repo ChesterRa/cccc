@@ -8,8 +8,7 @@ import {
   DEFAULT_SERVICE_MODEL_ID,
   STREAMING_ASR_RUNTIME_ID,
 } from "../../../pages/chat/voice-secretary/voiceServiceModelRuntime";
-import { parseHelpMarkdown, updatePetHelpNote, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
-import { getDefaultPetPersonaSeed } from "../../../utils/rolePresets";
+import { parseHelpMarkdown, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
 import { GroupCombobox } from "../../GroupCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { resolveLocalAsrModels } from "./assistantsLocalAsrModels";
@@ -32,9 +31,7 @@ interface AssistantsTabProps {
   isDark: boolean;
   groupId?: string;
   isActive: boolean;
-  petEnabled: boolean;
   busy: boolean;
-  onUpdatePetEnabled?: (enabled: boolean) => Promise<boolean | void>;
 }
 
 const VOICE_BACKENDS = [
@@ -58,7 +55,7 @@ const DEFAULT_VOICE_SECRETARY_GUIDANCE = [
   "- Preserve uncertainty and ASR-risk terms. For fragmented audio, write a best-effort rolling summary instead of refusing.",
 ].join("\n");
 
-type AssistantPromptBlock = "pet" | "voice_secretary";
+type AssistantPromptBlock = "voice_secretary";
 
 function findAssistant(state: AssistantStateResult | null, assistantId: string): BuiltinAssistant | null {
   if (!state) return null;
@@ -97,6 +94,15 @@ function formatModelSize(bytes: number | undefined): string {
   return `${Math.round(value)} B`;
 }
 
+function firstArtifact(model: AssistantServiceModel | null | undefined) {
+  return model?.artifacts && model.artifacts.length > 0 ? model.artifacts[0] : null;
+}
+
+function shortHash(value: string | undefined): string {
+  const raw = String(value || "").trim();
+  return raw.length > 16 ? `${raw.slice(0, 12)}...${raw.slice(-6)}` : raw;
+}
+
 function serviceModelStatusLabel(
   status: string,
   model: AssistantServiceModel | null | undefined,
@@ -111,11 +117,6 @@ function serviceModelStatusLabel(
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function resolvePetPersonaDraft(savedPetPersona: string): string {
-  const saved = String(savedPetPersona || "").trim();
-  return saved || getDefaultPetPersonaSeed();
 }
 
 function resolveVoiceSecretaryGuidanceDraft(savedGuidance: string): string {
@@ -347,9 +348,7 @@ export function AssistantsTab({
   isDark,
   groupId,
   isActive,
-  petEnabled,
   busy,
-  onUpdatePetEnabled,
 }: AssistantsTabProps) {
   const { t } = useTranslation("settings");
   const loadSeq = useRef(0);
@@ -362,7 +361,6 @@ export function AssistantsTab({
   const [assistantState, setAssistantState] = useState<AssistantStateResult | null>(null);
   const [loadBusy, setLoadBusy] = useState(false);
   const [voiceSaveBusy, setVoiceSaveBusy] = useState(false);
-  const [petSaveBusy, setPetSaveBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -376,7 +374,6 @@ export function AssistantsTab({
 
   const [assistantHelpPrompt, setAssistantHelpPrompt] = useState<GroupPromptInfo | null>(null);
   const [assistantHelpPromptGroupId, setAssistantHelpPromptGroupId] = useState("");
-  const [petPersonaDraft, setPetPersonaDraft] = useState("");
   const [voiceSecretaryGuidanceDraft, setVoiceSecretaryGuidanceDraft] = useState("");
   const [assistantPromptBusy, setAssistantPromptBusy] = useState(false);
   const [assistantPromptError, setAssistantPromptError] = useState("");
@@ -388,11 +385,6 @@ export function AssistantsTab({
     () => findAssistant(assistantState, "voice_secretary"),
     [assistantState],
   );
-  const petAssistant = useMemo(
-    () => findAssistant(assistantState, "pet"),
-    [assistantState],
-  );
-  const effectivePetEnabled = Boolean(petAssistant?.enabled ?? petEnabled);
   const activeAssistantHelpPrompt = assistantHelpPromptGroupId === groupIdRef.current ? assistantHelpPrompt : null;
 
   const syncVoiceDraft = useCallback((state: AssistantStateResult | null) => {
@@ -419,7 +411,6 @@ export function AssistantsTab({
     visibleLoadCount.current = 0;
     setLoadBusy(false);
     setVoiceSaveBusy(false);
-    setPetSaveBusy(false);
     setServiceRuntimeInstallBusy(false);
     setDiarizationModelInstallBusy(false);
     setLocalAsrMaintenanceBusy(false);
@@ -430,7 +421,6 @@ export function AssistantsTab({
     setNotice("");
     setAssistantHelpPrompt(null);
     setAssistantHelpPromptGroupId("");
-    setPetPersonaDraft("");
     setVoiceSecretaryGuidanceDraft("");
     setAssistantPromptBusy(false);
     setAssistantPromptError("");
@@ -497,7 +487,6 @@ export function AssistantsTab({
       const parsed = parseHelpMarkdown(String(nextHelp.content || ""));
       setAssistantHelpPrompt(nextHelp);
       setAssistantHelpPromptGroupId(gid);
-      setPetPersonaDraft(resolvePetPersonaDraft(parsed.pet));
       setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(parsed.voiceSecretary));
       return nextHelp;
     } catch {
@@ -603,30 +592,6 @@ export function AssistantsTab({
     if (!ok) setVoiceEnabled(previous);
   };
 
-  const togglePet = async (nextEnabled?: boolean) => {
-    if (!onUpdatePetEnabled) return;
-    const gid = String(groupId || "").trim();
-    setPetSaveBusy(true);
-    setError("");
-    setNotice("");
-    const requestedEnabled = typeof nextEnabled === "boolean" ? nextEnabled : !effectivePetEnabled;
-    try {
-      const ok = await onUpdatePetEnabled(requestedEnabled);
-      if (!isCurrentGroup(gid)) return;
-      if (ok === false) {
-        setError(t("assistants.petSaveFailed"));
-        return;
-      }
-      setNotice(requestedEnabled ? t("assistants.petEnabled") : t("assistants.petDisabled"));
-      await loadAssistants({ quiet: true });
-    } catch {
-      if (!isCurrentGroup(gid)) return;
-      setError(t("assistants.petSaveFailed"));
-    } finally {
-      if (isCurrentGroup(gid)) setPetSaveBusy(false);
-    }
-  };
-
   const saveAssistantGuidance = async (block: AssistantPromptBlock) => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
@@ -642,10 +607,7 @@ export function AssistantsTab({
       const currentContent = String(currentHelp.content || "");
       const parsed = parseHelpMarkdown(currentContent);
       const actorOrder = Object.keys(parsed.actorNotes);
-      const nextContent =
-        block === "pet"
-          ? updatePetHelpNote(currentContent, petPersonaDraft, actorOrder)
-          : updateVoiceSecretaryHelpNote(currentContent, voiceSecretaryGuidanceDraft, actorOrder);
+      const nextContent = updateVoiceSecretaryHelpNote(currentContent, voiceSecretaryGuidanceDraft, actorOrder);
       const resp = await api.updateGroupPrompt(gid, "help", nextContent, {
         editorMode: "structured",
         changedBlocks: [block],
@@ -659,25 +621,14 @@ export function AssistantsTab({
       const nextParsed = parseHelpMarkdown(String(nextHelp.content || ""));
       setAssistantHelpPrompt(nextHelp);
       setAssistantHelpPromptGroupId(gid);
-      setPetPersonaDraft(resolvePetPersonaDraft(nextParsed.pet));
       setVoiceSecretaryGuidanceDraft(resolveVoiceSecretaryGuidanceDraft(nextParsed.voiceSecretary));
-      setAssistantPromptNotice(
-        block === "pet" ? t("assistants.petPersonaSaved") : t("assistants.voiceGuidanceSaved"),
-      );
+      setAssistantPromptNotice(t("assistants.voiceGuidanceSaved"));
     } catch {
       if (!isCurrentGroup(gid)) return;
       setAssistantPromptError(t("assistants.assistantGuidanceSaveFailed"));
     } finally {
       if (isCurrentGroup(gid)) setAssistantPromptBusy(false);
     }
-  };
-
-  const discardPetPersona = () => {
-    const saved = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")).pet : "";
-    setPetPersonaDraft(resolvePetPersonaDraft(saved));
-    setAssistantPromptError("");
-    setAssistantPromptNotice("");
-    setAssistantPromptFeedbackBlock("");
   };
 
   const discardVoiceSecretaryGuidance = () => {
@@ -722,33 +673,46 @@ export function AssistantsTab({
   const streamingRuntimeStatus = String(streamingRuntime?.status || "not_installed").trim() || "not_installed";
   const streamingRuntimeInstalling = streamingRuntimeStatus === "installing";
   const streamingRuntimeReady = streamingRuntimeStatus === "ready";
+  const streamingRuntimeUpdateAvailable = Boolean(streamingRuntime?.update_available);
+  const streamingRuntimeInstalledVersion = String(streamingRuntime?.installed_version || "").trim();
+  const streamingRuntimeLatestVersion = String(streamingRuntime?.latest_version || "").trim();
+  const streamingRuntimeLatestError = String(streamingRuntime?.latest_check_error?.message || "").trim();
   const finalServiceAsrModelId = String(finalServiceAsrModel?.model_id || "").trim();
   const finalServiceAsrModelStatus = String(finalServiceAsrModel?.status || "not_installed").trim() || "not_installed";
   const finalServiceAsrModelInstalling = finalServiceAsrModelStatus === "downloading" || finalServiceAsrModelStatus === "installing";
   const finalServiceAsrModelReady = finalServiceAsrModelStatus === "ready";
+  const finalServiceAsrModelUpdateAvailable = Boolean(finalServiceAsrModel?.update_available);
   const finalServiceAsrModelSize = formatModelSize(finalServiceAsrModel?.total_size_bytes);
+  const finalServiceAsrArtifact = firstArtifact(finalServiceAsrModel);
   const liveServiceAsrModelId = String(liveServiceAsrModel?.model_id || "").trim();
   const liveServiceAsrModelStatus = String(liveServiceAsrModel?.status || "not_installed").trim() || "not_installed";
   const liveServiceAsrModelInstalling = liveServiceAsrModelStatus === "downloading" || liveServiceAsrModelStatus === "installing";
   const liveServiceAsrModelReady = liveServiceAsrModelStatus === "ready";
+  const liveServiceAsrModelUpdateAvailable = Boolean(liveServiceAsrModel?.update_available);
   const liveServiceAsrModelSize = formatModelSize(liveServiceAsrModel?.total_size_bytes);
+  const liveServiceAsrArtifact = firstArtifact(liveServiceAsrModel);
   const diarizationModel = serviceModelsById[DIARIZATION_MODEL_ID];
   const diarizationModelStatus = String(diarizationModel?.status || "not_installed").trim() || "not_installed";
   const diarizationModelInstalling = diarizationModelStatus === "downloading" || diarizationModelStatus === "installing";
   const diarizationModelReady = diarizationModelStatus === "ready";
+  const diarizationModelUpdateAvailable = Boolean(diarizationModel?.update_available);
   const diarizationModelSize = formatModelSize(diarizationModel?.total_size_bytes);
   const diarizationModelDiskSize = formatModelSize(diarizationModel?.disk_usage_bytes);
+  const diarizationModelArtifact = firstArtifact(diarizationModel);
   const localAsrInstalling = serviceRuntimeInstallBusy || streamingRuntimeInstalling || liveServiceAsrModelInstalling || finalServiceAsrModelInstalling;
   const localAsrReady = streamingRuntimeReady && liveServiceAsrModelReady && finalServiceAsrModelReady;
   const localAsrFailed = streamingRuntimeStatus === "failed" || liveServiceAsrModelStatus === "failed" || finalServiceAsrModelStatus === "failed";
-  const localAsrStatusTone: "on" | "off" | "info" = localAsrReady ? "on" : localAsrFailed ? "off" : "info";
+  const localAsrUpdateAvailable = streamingRuntimeUpdateAvailable || liveServiceAsrModelUpdateAvailable || finalServiceAsrModelUpdateAvailable;
+  const localAsrStatusTone: "on" | "off" | "info" = localAsrReady && !localAsrUpdateAvailable ? "on" : localAsrFailed ? "off" : "info";
   const localAsrStatusLabel = localAsrInstalling
     ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
-    : localAsrReady
-      ? t("assistants.localAsrReady", { defaultValue: "Ready" })
-      : localAsrFailed
-        ? t("assistants.localAsrFailed", { defaultValue: "Needs repair" })
-        : t("assistants.localAsrSetupNeeded", { defaultValue: "Setup needed" });
+    : localAsrUpdateAvailable
+      ? t("assistants.localAsrUpdateAvailable", { defaultValue: "Update available" })
+      : localAsrReady
+        ? t("assistants.localAsrReady", { defaultValue: "Ready" })
+        : localAsrFailed
+          ? t("assistants.localAsrFailed", { defaultValue: "Needs repair" })
+          : t("assistants.localAsrSetupNeeded", { defaultValue: "Setup needed" });
   const localAsrDiskUsage = formatModelSize(
     Number(streamingRuntime?.disk_usage_bytes || 0)
     + Number(liveServiceAsrModel?.disk_usage_bytes || 0)
@@ -812,7 +776,8 @@ export function AssistantsTab({
       const saved = await saveVoiceSettings({ backend: "assistant_service_local_asr" });
       if (!isCurrentGroup(gid)) return;
       if (!saved) return;
-      if (!streamingRuntimeReady) {
+      const updating = localAsrUpdateAvailable;
+      if (!streamingRuntimeReady || streamingRuntimeUpdateAvailable) {
         const runtimeResp = await api.installVoiceAssistantRuntime(gid, {
           runtimeId: STREAMING_ASR_RUNTIME_ID,
           by: "user",
@@ -824,15 +789,17 @@ export function AssistantsTab({
           return;
         }
       }
-      if (!liveServiceAsrModelReady && liveServiceAsrModelId) {
+      if ((!liveServiceAsrModelReady || liveServiceAsrModelUpdateAvailable) && liveServiceAsrModelId) {
         const installed = await installLocalAsrModel(liveServiceAsrModelId);
         if (!installed) return;
       }
-      if (!finalServiceAsrModelReady && finalServiceAsrModelId) {
+      if ((!finalServiceAsrModelReady || finalServiceAsrModelUpdateAvailable) && finalServiceAsrModelId) {
         const installed = await installLocalAsrModel(finalServiceAsrModelId);
         if (!installed) return;
       }
-      setNotice(t("assistants.localAsrInstallStarted", { defaultValue: "Local ASR setup started." }));
+      setNotice(updating
+        ? t("assistants.localAsrUpdateStarted", { defaultValue: "Local ASR update started." })
+        : t("assistants.localAsrInstallStarted", { defaultValue: "Local ASR setup started." }));
       await loadAssistants({ quiet: true });
     } catch {
       if (!isCurrentGroup(gid)) return;
@@ -862,7 +829,9 @@ export function AssistantsTab({
         setError(resp.error?.message || t("assistants.diarizationModelInstallFailed", { defaultValue: "Failed to install speaker diarization model." }));
         return;
       }
-      setNotice(t("assistants.diarizationModelInstallStarted", { defaultValue: "Speaker diarization model download started." }));
+      setNotice(diarizationModelUpdateAvailable
+        ? t("assistants.diarizationModelUpdateStarted", { defaultValue: "Speaker-label model update started." })
+        : t("assistants.diarizationModelInstallStarted", { defaultValue: "Speaker diarization model download started." }));
       await loadAssistants({ quiet: true });
     } catch {
       if (!isCurrentGroup(gid)) return;
@@ -1032,14 +1001,7 @@ export function AssistantsTab({
     );
   }
   const parsedHelp = activeAssistantHelpPrompt ? parseHelpMarkdown(String(activeAssistantHelpPrompt.content || "")) : null;
-  const savedPetPersona = parsedHelp?.pet || "";
   const savedVoiceSecretaryGuidance = parsedHelp?.voiceSecretary || "";
-  const hasPetPersonaUnsaved = promptDraftDirty(
-    savedPetPersona,
-    petPersonaDraft,
-    activeAssistantHelpPrompt !== null,
-    resolvePetPersonaDraft(""),
-  );
   const hasVoiceGuidanceUnsaved = promptDraftDirty(
     savedVoiceSecretaryGuidance,
     voiceSecretaryGuidanceDraft,
@@ -1071,35 +1033,6 @@ export function AssistantsTab({
       onExpand={() => setExpandedPromptBlock("voice_secretary")}
       onChange={(value) => {
         setVoiceSecretaryGuidanceDraft(value);
-        setAssistantPromptNotice("");
-        setAssistantPromptFeedbackBlock("");
-      }}
-    />
-  );
-
-  const renderPetPersonaEditor = (expanded = false) => (
-    <AssistantPromptEditor
-      isDark={isDark}
-      title={t("assistants.petPersonaTitle")}
-      hint={t("assistants.petPersonaHint")}
-      path={activeAssistantHelpPrompt?.path || undefined}
-      value={petPersonaDraft}
-      placeholder={t("assistants.petPersonaPlaceholder")}
-      busy={assistantPromptBusy}
-      error={!assistantPromptFeedbackBlock || assistantPromptFeedbackBlock === "pet" ? assistantPromptError : ""}
-      notice={assistantPromptFeedbackBlock === "pet" ? assistantPromptNotice : ""}
-      hasUnsaved={hasPetPersonaUnsaved}
-      reloadLabel={assistantPromptBusy ? t("assistants.refreshing") : t("assistants.reloadAssistantGuidance")}
-      discardLabel={t("assistants.discardAssistantGuidance")}
-      saveLabel={assistantPromptBusy ? t("common:saving") : t("assistants.savePetPersona")}
-      expandLabel={t("assistants.expandAssistantGuidance")}
-      expanded={expanded}
-      onReload={() => void loadAssistantGuidance({ force: true })}
-      onDiscard={discardPetPersona}
-      onSave={() => void saveAssistantGuidance("pet")}
-      onExpand={() => setExpandedPromptBlock("pet")}
-      onChange={(value) => {
-        setPetPersonaDraft(value);
         setAssistantPromptNotice("");
         setAssistantPromptFeedbackBlock("");
       }}
@@ -1201,17 +1134,19 @@ export function AssistantsTab({
                           </div>
                           <button
                             type="button"
-                            onClick={() => void (localAsrFailed ? reinstallLocalAsrBundle() : installLocalAsrBundle())}
-                            disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr || localAsrReady}
-                            className={localAsrReady ? secondaryButtonClass("sm") : primaryButtonClass(false)}
+                            onClick={() => void installLocalAsrBundle()}
+                            disabled={busy || voiceSaveBusy || selectedServiceModelInstalling || !canManageLocalAsr || (localAsrReady && !localAsrUpdateAvailable)}
+                            className={localAsrReady && !localAsrUpdateAvailable ? secondaryButtonClass("sm") : primaryButtonClass(false)}
                           >
-                            {localAsrReady
-                              ? t("assistants.localAsrInstalled", { defaultValue: "Installed" })
-                              : localAsrFailed
-                                ? t("assistants.localAsrRepair", { defaultValue: "Repair local ASR" })
-                                : localAsrInstalling
-                                  ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
-                                  : t("assistants.localAsrInstall", { defaultValue: "Install local ASR" })}
+                            {localAsrInstalling
+                              ? t("assistants.localAsrInstalling", { defaultValue: "Installing" })
+                              : localAsrUpdateAvailable
+                                ? t("assistants.localAsrUpdate", { defaultValue: "Update local ASR" })
+                                : localAsrReady
+                                  ? t("assistants.localAsrUpToDate", { defaultValue: "Up to date" })
+                                  : localAsrFailed
+                                    ? t("assistants.localAsrRepair", { defaultValue: "Repair local ASR" })
+                                    : t("assistants.localAsrInstall", { defaultValue: "Install local ASR" })}
                           </button>
                         </div>
                         <div className="mt-4 grid gap-2 lg:grid-cols-3">
@@ -1223,10 +1158,23 @@ export function AssistantsTab({
                               <StatusPill tone={streamingRuntimeReady ? "on" : streamingRuntimeStatus === "failed" ? "off" : "info"}>
                                 {t("assistants.componentStatusShort", { status: streamingRuntimeStatus, defaultValue: "{{status}}" })}
                               </StatusPill>
+                              {streamingRuntimeUpdateAvailable ? (
+                                <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                              ) : null}
                             </div>
                             <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
                               {t("assistants.localAsrEngineHint", { defaultValue: "sherpa-onnx runtime environment." })}
                             </p>
+                            {streamingRuntimeInstalledVersion || streamingRuntimeLatestVersion ? (
+                              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                                {streamingRuntimeInstalledVersion
+                                  ? t("assistants.localAsrEngineInstalledVersion", { version: streamingRuntimeInstalledVersion, defaultValue: "Installed {{version}}" })
+                                  : t("assistants.localAsrEngineVersionUnknown", { defaultValue: "Installed version unknown" })}
+                                {streamingRuntimeLatestVersion
+                                  ? ` · ${t("assistants.localAsrEngineLatestVersion", { version: streamingRuntimeLatestVersion, defaultValue: "Latest official {{version}}" })}`
+                                  : ""}
+                              </p>
+                            ) : null}
                           </div>
                           <div className={localVoiceModelCardClass()}>
                             <div className="flex flex-wrap items-center gap-2">
@@ -1236,6 +1184,9 @@ export function AssistantsTab({
                               <StatusPill tone={liveServiceAsrModelReady ? "on" : liveServiceAsrModelStatus === "failed" ? "off" : "info"}>
                                 {serviceModelStatusLabel(liveServiceAsrModelStatus, liveServiceAsrModel, t)}
                               </StatusPill>
+                              {liveServiceAsrModelUpdateAvailable ? (
+                                <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                              ) : null}
                               {liveServiceAsrModelSize ? <StatusPill tone="info">{liveServiceAsrModelSize}</StatusPill> : null}
                             </div>
                             <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -1250,6 +1201,9 @@ export function AssistantsTab({
                               <StatusPill tone={finalServiceAsrModelReady ? "on" : finalServiceAsrModelStatus === "failed" ? "off" : "info"}>
                                 {serviceModelStatusLabel(finalServiceAsrModelStatus, finalServiceAsrModel, t)}
                               </StatusPill>
+                              {finalServiceAsrModelUpdateAvailable ? (
+                                <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                              ) : null}
                               {finalServiceAsrModelSize ? <StatusPill tone="info">{finalServiceAsrModelSize}</StatusPill> : null}
                             </div>
                             <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -1273,6 +1227,9 @@ export function AssistantsTab({
                             <StatusPill tone={diarizationModelReady ? "on" : diarizationModelStatus === "failed" ? "off" : "info"}>
                               {serviceModelStatusLabel(diarizationModelStatus, diarizationModel, t)}
                             </StatusPill>
+                            {diarizationModelUpdateAvailable ? (
+                              <StatusPill tone="info">{t("assistants.updateAvailable", { defaultValue: "Update available" })}</StatusPill>
+                            ) : null}
                             <StatusPill tone="info">{t("assistants.optional", { defaultValue: "Optional" })}</StatusPill>
                             {diarizationModelSize ? <StatusPill tone="info">{diarizationModelSize}</StatusPill> : null}
                           </div>
@@ -1288,14 +1245,16 @@ export function AssistantsTab({
                         <button
                           type="button"
                           onClick={() => void installDiarizationModel()}
-                          disabled={busy || voiceSaveBusy || diarizationModelInstalling || diarizationModelReady}
+                          disabled={busy || voiceSaveBusy || diarizationModelInstalling || (diarizationModelReady && !diarizationModelUpdateAvailable)}
                           className={secondaryButtonClass("sm")}
                         >
-                          {diarizationModelReady
-                            ? t("assistants.diarizationModelInstalled", { defaultValue: "Model installed" })
-                            : diarizationModelInstalling
-                              ? t("assistants.diarizationModelInstalling", { defaultValue: "Downloading..." })
-                              : t("assistants.diarizationModelInstall", { defaultValue: "Install speaker model" })}
+                          {diarizationModelInstalling
+                            ? t("assistants.diarizationModelInstalling", { defaultValue: "Downloading..." })
+                            : diarizationModelUpdateAvailable
+                              ? t("assistants.diarizationModelUpdate", { defaultValue: "Update speaker model" })
+                              : diarizationModelReady
+                                ? t("assistants.diarizationModelInstalled", { defaultValue: "Model installed" })
+                                : t("assistants.diarizationModelInstall", { defaultValue: "Install speaker model" })}
                         </button>
                       </div>
 
@@ -1313,18 +1272,54 @@ export function AssistantsTab({
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.speakerLabelsCacheLabel", { defaultValue: "Speaker-label cache" })}: </span>
                               {diarizationModelDiskSize || t("assistants.none", { defaultValue: "none" })}
                             </div>
+                            <div>
+                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrRuntimeVersionLabel", { defaultValue: "Runtime version" })}: </span>
+                              {streamingRuntimeInstalledVersion || "-"}
+                              {streamingRuntimeLatestVersion ? ` / ${streamingRuntimeLatestVersion}` : ""}
+                            </div>
+                            <div>
+                              <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrLatestCheckedLabel", { defaultValue: "Latest check" })}: </span>
+                              {streamingRuntime?.latest_checked_at || t("assistants.notChecked", { defaultValue: "not checked" })}
+                            </div>
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.localAsrRuntimePath", { defaultValue: "Runtime path" })}: </span>
                               {streamingRuntime?.install_dir || "-"}
                             </div>
+                            {streamingRuntimeLatestError ? (
+                              <div className="break-words text-amber-700 dark:text-amber-300 md:col-span-2">
+                                <span className="font-semibold">{t("assistants.localAsrLatestCheckError", { defaultValue: "Latest check failed" })}: </span>
+                                {streamingRuntimeLatestError}
+                              </div>
+                            ) : null}
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.liveAsrModelPath", { defaultValue: "Live model path" })}: </span>
                               {liveServiceAsrModel?.install_dir || "-"}
                             </div>
+                            {liveServiceAsrArtifact?.url ? (
+                              <div className="break-words md:col-span-2">
+                                <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.liveAsrModelSource", { defaultValue: "Live model source" })}: </span>
+                                {liveServiceAsrArtifact.url}
+                                {liveServiceAsrArtifact.sha256 ? ` · sha256 ${shortHash(liveServiceAsrArtifact.sha256)}` : ""}
+                              </div>
+                            ) : null}
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.finalAsrModelPath", { defaultValue: "Final model path" })}: </span>
                               {finalServiceAsrModel?.install_dir || "-"}
                             </div>
+                            {finalServiceAsrArtifact?.url ? (
+                              <div className="break-words md:col-span-2">
+                                <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.finalAsrModelSource", { defaultValue: "Final model source" })}: </span>
+                                {finalServiceAsrArtifact.url}
+                                {finalServiceAsrArtifact.sha256 ? ` · sha256 ${shortHash(finalServiceAsrArtifact.sha256)}` : ""}
+                              </div>
+                            ) : null}
+                            {diarizationModelArtifact?.url ? (
+                              <div className="break-words md:col-span-2">
+                                <span className="font-semibold text-[var(--color-text-secondary)]">{t("assistants.speakerLabelsModelSource", { defaultValue: "Speaker model source" })}: </span>
+                                {diarizationModelArtifact.url}
+                                {diarizationModelArtifact.sha256 ? ` · sha256 ${shortHash(diarizationModelArtifact.sha256)}` : ""}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
@@ -1467,31 +1462,6 @@ export function AssistantsTab({
               </div>
             </div>
 
-            <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.petTitle")}</h4>
-                    <StatusPill tone={effectivePetEnabled ? "on" : "off"}>
-                      {effectivePetEnabled ? t("assistants.enabled") : t("assistants.disabled")}
-                    </StatusPill>
-                  </div>
-                  <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
-                    {t("assistants.petDescription")}
-                  </p>
-                </div>
-                <AssistantSwitch
-                  checked={effectivePetEnabled}
-                  disabled={busy || petSaveBusy || !onUpdatePetEnabled}
-                  label={t("assistants.groupSwitch")}
-                  onChange={(checked) => void togglePet(checked)}
-                />
-              </div>
-
-              <div className="mt-5">
-                {renderPetPersonaEditor()}
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -1515,9 +1485,7 @@ export function AssistantsTab({
                     {t("common:close")}
                   </button>
                 </div>
-                <div className={settingsDialogBodyClass}>
-                  {expandedPromptBlock === "voice_secretary" ? renderVoiceGuidanceEditor(true) : renderPetPersonaEditor(true)}
-                </div>
+                <div className={settingsDialogBodyClass}>{renderVoiceGuidanceEditor(true)}</div>
               </div>
             </div>
           </BodyPortal>

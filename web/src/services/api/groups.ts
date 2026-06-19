@@ -39,7 +39,6 @@ import {
   normalizePresentation,
   normalizePresentationBrowserSurfaceState,
   normalizePresentationCard,
-  petPeerContextRequestKey,
   RECENT_BOOTSTRAP_READ_TTL_MS,
   reuseRecentReadRequest,
   reuseSharedReadRequest,
@@ -193,7 +192,10 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
           if (!artifact) return null;
           return {
             path: asOptionalString(artifact.path) || undefined,
+            url: asOptionalString(artifact.url) || undefined,
+            sha256: asOptionalString(artifact.sha256) || undefined,
             size_bytes: Number.isFinite(Number(artifact.size_bytes)) ? Number(artifact.size_bytes) : undefined,
+            archive: asOptionalString(artifact.archive) || undefined,
           };
         })
         .filter((item) => item !== null)
@@ -226,6 +228,9 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     artifact_index: Number.isFinite(Number(record.artifact_index)) ? Number(record.artifact_index) : undefined,
     artifact_count: Number.isFinite(Number(record.artifact_count)) ? Number(record.artifact_count) : undefined,
     error: asRecord(record.error) ?? undefined,
+    last_update_error: asRecord(record.last_update_error) ?? undefined,
+    installed_manifest_sha256: asOptionalString(record.installed_manifest_sha256) || undefined,
+    update_available: typeof record.update_available === "boolean" ? record.update_available : undefined,
     artifacts,
   };
 }
@@ -240,6 +245,22 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
   if (rawModules) {
     for (const [key, value] of Object.entries(rawModules)) modules[key] = Boolean(value);
   }
+  const rawPackageVersions = asRecord(record.package_versions);
+  const packageVersions: Record<string, string> = {};
+  if (rawPackageVersions) {
+    for (const [key, value] of Object.entries(rawPackageVersions)) {
+      const version = asString(value).trim();
+      if (key && version) packageVersions[key] = version;
+    }
+  }
+  const rawLatestVersions = asRecord(record.latest_versions);
+  const latestVersions: Record<string, string> = {};
+  if (rawLatestVersions) {
+    for (const [key, value] of Object.entries(rawLatestVersions)) {
+      const version = asString(value).trim();
+      if (key && version) latestVersions[key] = version;
+    }
+  }
   return {
     runtime_id: runtimeId,
     status: asOptionalString(record.status) || undefined,
@@ -248,6 +269,14 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     install_dir: asOptionalString(record.install_dir) || undefined,
     python: asOptionalString(record.python) || undefined,
     packages: Array.isArray(record.packages) ? record.packages.map((item) => String(item || "")).filter(Boolean) : undefined,
+    primary_package: asOptionalString(record.primary_package) || undefined,
+    package_versions: Object.keys(packageVersions).length > 0 ? packageVersions : undefined,
+    installed_version: asOptionalString(record.installed_version) || undefined,
+    latest_version: asOptionalString(record.latest_version) || undefined,
+    latest_versions: Object.keys(latestVersions).length > 0 ? latestVersions : undefined,
+    latest_checked_at: asOptionalString(record.latest_checked_at) || undefined,
+    latest_check_error: asRecord(record.latest_check_error) ?? undefined,
+    update_available: typeof record.update_available === "boolean" ? record.update_available : undefined,
     modules: Object.keys(modules).length > 0 ? modules : undefined,
     missing_modules: asStringArray(record.missing_modules),
     installed_at: asOptionalString(record.installed_at) || undefined,
@@ -1581,141 +1610,6 @@ export type GroupPromptsResponse = {
   help: GroupPromptInfo;
 };
 
-export type PetPeerContextResponse = {
-  companion?: {
-    name?: string | null;
-    species?: string | null;
-    identity?: string | null;
-    temperament?: string | null;
-    speech_style?: string | null;
-    care_style?: string | null;
-  };
-  decisions?: Array<{
-    id?: string;
-    kind?: string;
-    priority?: number;
-    summary?: string | null;
-    confidence?: "low" | "medium" | "high" | string | null;
-    reasoning_brief?: string | null;
-    agent?: string | null;
-    fingerprint?: string | null;
-    ephemeral?: boolean;
-    source?: {
-      event_id?: string | null;
-      task_id?: string | null;
-      actor_id?: string | null;
-      actor_role?: string | null;
-      error_reason?: string | null;
-      suggestion_kind?: "mention" | "reply_required" | string | null;
-    };
-    action?: {
-      type?: "draft_message" | "restart_actor" | "task_proposal" | string;
-      group_id?: string | null;
-      actor_id?: string | null;
-      text?: string | null;
-      to?: string[];
-      reply_to?: string | null;
-      operation?: "create" | "update" | "move" | "handoff" | "archive" | string | null;
-      task_id?: string | null;
-      title?: string | null;
-      status?: string | null;
-      assignee?: string | null;
-    };
-    updated_at?: string | null;
-  }>;
-  task_evidence?: Array<{
-    kind?: string | null;
-    priority?: number;
-    hypothesis?: string | null;
-    actor?: {
-      id?: string | null;
-      active_task_id?: string | null;
-      focus?: string | null;
-      next_action?: string | null;
-      blockers?: string[] | null;
-    };
-    task?: {
-      id?: string | null;
-      title?: string | null;
-      status?: string | null;
-      assignee?: string | null;
-      waiting_on?: string | null;
-      blocked_by?: string[] | null;
-      handoff_to?: string | null;
-      updated_at?: string | null;
-    };
-    current_active_task?: {
-      id?: string | null;
-      title?: string | null;
-      status?: string | null;
-      assignee?: string | null;
-      waiting_on?: string | null;
-      blocked_by?: string[] | null;
-      handoff_to?: string | null;
-      updated_at?: string | null;
-    };
-    signals?: {
-      task_stale_minutes?: number;
-      same_workstream_hint?: boolean;
-      blocker_count?: number;
-    };
-  }>;
-  persona: string;
-  help?: string;
-  prompt?: string;
-  snapshot: string;
-  signals?: {
-    reply_pressure?: {
-      severity?: string;
-      pending_count?: number;
-      overdue_count?: number;
-      oldest_pending_seconds?: number;
-      baseline_median_reply_seconds?: number;
-    };
-    coordination_rhythm?: {
-      severity?: string;
-      foreman_id?: string;
-      silence_seconds?: number;
-      baseline_median_gap_seconds?: number;
-    };
-    task_pressure?: {
-      severity?: string;
-      score?: number;
-      trend_score?: number;
-      blocked_count?: number;
-      waiting_user_count?: number;
-      handoff_count?: number;
-      planned_backlog_count?: number;
-      recent_blocked_updates?: number;
-      recent_waiting_user_updates?: number;
-      recent_handoff_updates?: number;
-      recent_task_create_ops?: number;
-      recent_task_update_ops?: number;
-      recent_task_move_ops?: number;
-      recent_task_restore_ops?: number;
-      recent_task_delete_ops?: number;
-      recent_task_change_count?: number;
-      recent_task_context_sync_events?: number;
-      ledger_trend_score?: number;
-    };
-    proposal_ready?: {
-      ready?: boolean;
-      focus?: string;
-      severity?: string;
-      summary?: string;
-      pending_reply_count?: number;
-      overdue_reply_count?: number;
-      waiting_user_count?: number;
-      blocked_count?: number;
-      handoff_count?: number;
-      recent_task_change_count?: number;
-      foreman_silence_seconds?: number;
-    };
-  };
-  source: "help" | "default";
-  help_prompt?: GroupPromptInfo;
-};
-
 export type PromptUpdateOptions = {
   editorMode?: "structured" | "raw";
   changedBlocks?: string[];
@@ -1727,64 +1621,6 @@ export async function fetchGroupPrompts(groupId: string) {
     groupPromptsKey(gid),
     () => apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`),
   );
-}
-
-export async function fetchPetPeerContext(groupId: string, opts?: { fresh?: boolean; verbose?: boolean }) {
-  const gid = String(groupId || "").trim();
-  const fresh = !!opts?.fresh;
-  const verbose = !!opts?.verbose;
-  const params = new URLSearchParams();
-  if (fresh) params.set("fresh", "1");
-  if (verbose) params.set("verbose", "1");
-  const suffix = params.toString();
-  return reuseSharedReadRequest(
-    petPeerContextRequestKey(gid, fresh, verbose),
-    () =>
-      apiJson<PetPeerContextResponse>(
-        `/api/v1/groups/${encodeURIComponent(gid)}/pet-context${suffix ? `?${suffix}` : ""}`,
-      ),
-  );
-}
-
-export async function requestPetPeerReview(groupId: string) {
-  const gid = String(groupId || "").trim();
-  clearSharedReadRequest(petPeerContextRequestKey(gid, false, false));
-  clearSharedReadRequest(petPeerContextRequestKey(gid, false, true));
-  clearSharedReadRequest(petPeerContextRequestKey(gid, true, false));
-  clearSharedReadRequest(petPeerContextRequestKey(gid, true, true));
-  return apiJson<{ accepted?: boolean }>(`/api/v1/groups/${encodeURIComponent(gid)}/pet-context/review`, {
-    method: "POST",
-  });
-}
-
-export async function recordPetDecisionOutcome(
-  groupId: string,
-  payload: {
-    fingerprint: string;
-    outcome: "executed" | "dismissed";
-    decisionId?: string;
-    actionType?: string;
-    cooldownMs?: number;
-    sourceEventId?: string;
-  },
-) {
-  const gid = String(groupId || "").trim();
-  clearSharedReadRequest(petPeerContextRequestKey(gid, false, false));
-  clearSharedReadRequest(petPeerContextRequestKey(gid, false, true));
-  clearSharedReadRequest(petPeerContextRequestKey(gid, true, false));
-  clearSharedReadRequest(petPeerContextRequestKey(gid, true, true));
-  return apiJson<{ event?: unknown }>(`/api/v1/groups/${encodeURIComponent(gid)}/pet-decisions/outcome`, {
-    method: "POST",
-    body: JSON.stringify({
-      fingerprint: String(payload.fingerprint || "").trim(),
-      outcome: payload.outcome,
-      decision_id: String(payload.decisionId || "").trim(),
-      action_type: String(payload.actionType || "").trim(),
-      cooldown_ms: Number(payload.cooldownMs || 0),
-      source_event_id: String(payload.sourceEventId || "").trim(),
-      by: "user",
-    }),
-  });
 }
 
 export async function updateGroupPrompt(

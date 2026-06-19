@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 import threading
 import tempfile
 import unittest
@@ -9,6 +10,15 @@ from unittest.mock import patch
 
 
 class TestWindowsSupportDiagnostics(unittest.TestCase):
+    def test_project_pins_windows_pywinpty_below_regressed_release(self) -> None:
+        pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = pyproject["project"]["dependencies"]
+        pywinpty_deps = [str(dep) for dep in dependencies if dep.lower().startswith("pywinpty")]
+
+        self.assertEqual(len(pywinpty_deps), 1)
+        self.assertIn(">=2.0", pywinpty_deps[0])
+        self.assertIn("<3.0.4", pywinpty_deps[0])
+
     def test_platform_support_reports_missing_pywinpty(self) -> None:
         from cccc.runners import platform_support
 
@@ -25,7 +35,7 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
         self.assertEqual(str(details.get("code") or ""), "pywinpty_missing")
         self.assertIn("pywinpty", str(details.get("message") or ""))
         hints = details.get("hints") if isinstance(details.get("hints"), list) else []
-        self.assertTrue(any("pip install pywinpty" in str(item) for item in hints))
+        self.assertTrue(any("pywinpty>=2.0,<3.0.4" in str(item) for item in hints))
 
     def test_platform_support_matches_real_import_path(self) -> None:
         from cccc.runners import platform_support

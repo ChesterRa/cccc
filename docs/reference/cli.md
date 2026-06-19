@@ -108,7 +108,7 @@ Options:
 - `--runner`: Runner type (pty or headless; web_model is headless-only)
 - `--title`: Display title
 
-For the ChatGPT Web Model actor, create the actor first, then finish MCP URL and chat binding in `Settings > Global > ChatGPT Web Model`.
+For the ChatGPT Web Model actor, create and start the actor from the target CCCC Web group, then finish ChatGPT sign-in, MCP URL, and chat binding in `Settings > Global > ChatGPT Web Model`.
 
 ### `cccc actor`
 
