@@ -20,6 +20,7 @@ import {
   shouldNotifyScrollChange,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
+  wasAtBottomBeforeContentChange,
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
@@ -328,6 +329,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     anchorOffsetPx: number;
   } | null>(null);
   const lastScrollTopRef = useRef(0);
+  const previousContentSizeRef = useRef(0);
   // Mark container resize work, such as the footer reply bar appearing or
   // disappearing, so handleScroll does not treat browser-clamped scrollTop as user scroll-up.
   const isContainerResizingRef = useRef(false);
@@ -471,14 +473,24 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     return forceStickToBottomUntilRef.current > performance.now();
   }, []);
 
-  const shouldAutoScrollNow = useCallback(() => {
+  const wasFollowingBeforeContentChange = useCallback((previousContentSize?: number) => {
+    const el = parentRef.current;
+    if (!el) return false;
+    return wasAtBottomBeforeContentChange({
+      previousContentSize: previousContentSize ?? previousContentSizeRef.current,
+      scrollTop: el.scrollTop,
+      clientHeight: el.clientHeight,
+    });
+  }, []);
+
+  const shouldAutoScrollNow = useCallback((opts?: { previousContentSize?: number }) => {
     if (shouldForceStickToBottom()) return true;
     return shouldAutoScrollToBottom({
       followMode: followModeRef.current,
-      isAtBottom: isAtBottomRef.current,
+      isAtBottom: isAtBottomRef.current && wasFollowingBeforeContentChange(opts?.previousContentSize),
       forceStickToBottom: false,
     });
-  }, [shouldForceStickToBottom]);
+  }, [shouldForceStickToBottom, wasFollowingBeforeContentChange]);
 
   const scheduleForceStickToBottom = useCallback(() => {
     forceStickToBottomUntilRef.current = performance.now() + 900;
@@ -751,6 +763,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     }
     pendingPrependCompensationRef.current = null;
     lastScrollTopRef.current = 0;
+    previousContentSizeRef.current = getCurrentContentSize();
     prevTailSnapshotRef.current = getChatTailSnapshot(
       displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
       displayMessages.length,
@@ -766,7 +779,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (shouldVirtualize) {
       virtualizer.measure();
     }
-  }, [displayMessages, initialScrollAnchorId, initialScrollTargetId, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, setFollowMode, shouldVirtualize, virtualizer]);
+  }, [displayMessages, getCurrentContentSize, initialScrollAnchorId, initialScrollTargetId, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, setFollowMode, shouldVirtualize, virtualizer]);
 
   const tailMutationSignature = useMemo(() => {
     const lastMessage = displayMessages[displayMessages.length - 1];
@@ -865,11 +878,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     );
     const prevTailSnapshot = prevTailSnapshotRef.current;
     const prevSnapshot = prevTailMutationSnapshotRef.current;
+    const previousContentSize = previousContentSizeRef.current;
     prevTailSnapshotRef.current = nextTailSnapshot;
     prevTailMutationSnapshotRef.current = nextSnapshot;
+    previousContentSizeRef.current = getCurrentContentSize();
     if (!didInitialScrollRef.current) return;
     if (isLoadingHistory) return;
-    if (!shouldAutoScrollNow()) return;
+    if (!shouldAutoScrollNow({ previousContentSize })) return;
     if (
       !getAutoFollowTrigger({
         previousTailSnapshot: prevTailSnapshot,
@@ -882,10 +897,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     }
 
     scheduleScroll(() => {
-      if (!shouldAutoScrollNow()) return;
+      if (!shouldAutoScrollNow({ previousContentSize })) return;
       scrollToBottom();
     });
-  }, [displayMessages, isLoadingHistory, scheduleScroll, scrollToBottom, shouldAutoScrollNow, tailMutationSignature]);
+  }, [displayMessages, getCurrentContentSize, isLoadingHistory, scheduleScroll, scrollToBottom, shouldAutoScrollNow, tailMutationSignature]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
@@ -912,10 +927,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       // Images, streaming text, and expanded attachment lists change content height
       // without changing the container size; observing only the container misses bottom-follow updates.
       lastScrollTopRef.current = scrollEl.scrollTop;
+      const previousContentSize = previousContentSizeRef.current;
+      previousContentSizeRef.current = getCurrentContentSize();
 
-      if (shouldAutoScrollNow()) {
+      if (shouldAutoScrollNow({ previousContentSize })) {
         scheduleScroll(() => {
-          if (!shouldAutoScrollNow()) return;
+          if (!shouldAutoScrollNow({ previousContentSize })) return;
           scrollToBottom();
         });
       }
@@ -926,7 +943,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     });
     observer.observe(observedEl);
     return () => observer.disconnect();
-  }, [scheduleScroll, scrollToBottom, shouldAutoScrollNow]);
+  }, [getCurrentContentSize, scheduleScroll, scrollToBottom, shouldAutoScrollNow]);
 
   useEffect(() => {
     return () => {

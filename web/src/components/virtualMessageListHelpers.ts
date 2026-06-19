@@ -95,6 +95,20 @@ export function shouldRunScheduledBottomScroll(input: {
   });
 }
 
+export function wasAtBottomBeforeContentChange(input: {
+  previousContentSize: number;
+  scrollTop: number;
+  clientHeight: number;
+  thresholdPx?: number;
+}): boolean {
+  const previousContentSize = Math.max(0, Number(input.previousContentSize) || 0);
+  if (previousContentSize <= 0) return false;
+  const scrollTop = Math.max(0, Number(input.scrollTop) || 0);
+  const clientHeight = Math.max(0, Number(input.clientHeight) || 0);
+  const thresholdPx = Math.max(0, Number(input.thresholdPx ?? 24) || 0);
+  return previousContentSize - scrollTop - clientHeight < thresholdPx;
+}
+
 export function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
   if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
     const eventId = typeof message.id === "string" ? String(message.id || "").trim() : "";

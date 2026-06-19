@@ -8,6 +8,7 @@ import {
   shouldNotifyScrollChange,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
+  wasAtBottomBeforeContentChange,
 } from "../../src/components/virtualMessageListHelpers";
 import type { LedgerEvent } from "../../src/types";
 
@@ -327,5 +328,27 @@ describe("shouldRunScheduledBottomScroll", () => {
         explicitForce: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("wasAtBottomBeforeContentChange", () => {
+  it("detects that the viewport was following bottom before new content increased height", () => {
+    expect(
+      wasAtBottomBeforeContentChange({
+        previousContentSize: 1200,
+        scrollTop: 700,
+        clientHeight: 500,
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks stale follow refs when the viewport was already browsing history", () => {
+    expect(
+      wasAtBottomBeforeContentChange({
+        previousContentSize: 1200,
+        scrollTop: 360,
+        clientHeight: 500,
+      }),
+    ).toBe(false);
   });
 });
