@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -17,12 +18,23 @@ from .ws_session import (
     unregister_session,
 )
 
+logger = logging.getLogger("cccc.daemon.federation.ws")
+
 
 async def handle_federation_session_websocket(websocket: WebSocket) -> None:
+    client = getattr(websocket, "client", None)
+    client_host = getattr(client, "host", "") or ""
+    client_port = getattr(client, "port", "") or ""
     await websocket.accept()
     try:
         hello = await websocket.receive_json()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "federation session invalid hello client=%s:%s error=%s",
+            client_host,
+            client_port,
+            exc,
+        )
         await websocket.send_json({"ok": False, "error": {"code": "invalid_hello", "message": "invalid federation session hello"}})
         await websocket.close(code=1008)
         return
@@ -31,11 +43,37 @@ async def handle_federation_session_websocket(websocket: WebSocket) -> None:
     src_group_id = str((hello or {}).get("src_group_id") or "").strip()
     remote_peer_id = str((hello or {}).get("remote_peer_id") or "").strip()
     authenticated_peer_id = authenticated_session_peer_id(hello if isinstance(hello, dict) else {})
+    logger.info(
+        "federation session hello client=%s:%s target_group=%s src_group=%s remote_peer=%s authenticated_peer=%s",
+        client_host,
+        client_port,
+        target_group_id,
+        src_group_id,
+        remote_peer_id,
+        authenticated_peer_id,
+    )
     if not authenticated_peer_id or authenticated_peer_id != remote_peer_id:
+        logger.warning(
+            "federation session rejected reason=invalid_signature client=%s:%s target_group=%s src_group=%s remote_peer=%s authenticated_peer=%s",
+            client_host,
+            client_port,
+            target_group_id,
+            src_group_id,
+            remote_peer_id,
+            authenticated_peer_id,
+        )
         await websocket.send_json({"ok": False, "error": {"code": "unauthorized_peer", "message": "remote peer signature is invalid"}})
         await websocket.close(code=1008)
         return
     if not authorize_session(target_group_id=target_group_id, src_group_id=src_group_id, remote_peer_id=remote_peer_id):
+        logger.warning(
+            "federation session rejected reason=untrusted_peer client=%s:%s target_group=%s src_group=%s remote_peer=%s",
+            client_host,
+            client_port,
+            target_group_id,
+            src_group_id,
+            remote_peer_id,
+        )
         await websocket.send_json({"ok": False, "error": {"code": "unauthorized_peer", "message": "remote peer is not trusted for this group"}})
         await websocket.close(code=1008)
         return
@@ -49,6 +87,14 @@ async def handle_federation_session_websocket(websocket: WebSocket) -> None:
         loop=asyncio.get_running_loop(),
     )
     await register_session(session)
+    logger.info(
+        "federation session registered client=%s:%s target_group=%s src_group=%s remote_peer=%s",
+        client_host,
+        client_port,
+        target_group_id,
+        src_group_id,
+        remote_peer_id,
+    )
     await websocket.send_json({"ok": True, "type": "ready"})
     try:
         while True:
@@ -67,10 +113,37 @@ async def handle_federation_session_websocket(websocket: WebSocket) -> None:
                 remote_peer_id=remote_peer_id,
             )
             await websocket.send_json({"type": "response", "response_to": request_id, "result": result})
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        logger.info(
+            "federation session disconnected client=%s:%s target_group=%s src_group=%s remote_peer=%s code=%s reason=%s",
+            client_host,
+            client_port,
+            target_group_id,
+            src_group_id,
+            remote_peer_id,
+            getattr(exc, "code", ""),
+            getattr(exc, "reason", ""),
+        )
+    except Exception:
+        logger.exception(
+            "federation session failed client=%s:%s target_group=%s src_group=%s remote_peer=%s",
+            client_host,
+            client_port,
+            target_group_id,
+            src_group_id,
+            remote_peer_id,
+        )
+        raise
     finally:
         await unregister_session(session)
+        logger.info(
+            "federation session unregistered client=%s:%s target_group=%s src_group=%s remote_peer=%s",
+            client_host,
+            client_port,
+            target_group_id,
+            src_group_id,
+            remote_peer_id,
+        )
 
 
 def handle_federation_session_request(

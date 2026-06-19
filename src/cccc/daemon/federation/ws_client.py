@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Any, Callable, Dict
 from urllib.parse import urlparse, urlunparse
@@ -15,6 +16,8 @@ from .ws_session import FederationWsSession, register_session, unregister_sessio
 WsConnect = Callable[[str, float], Any]
 RequestHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
 ReadyHook = Callable[[], Any]
+
+logger = logging.getLogger("cccc.daemon.federation.ws")
 
 
 def federation_session_ws_url(base_url: str) -> str:
@@ -104,7 +107,7 @@ def start_federation_session_client(
 
     def run() -> None:
         while not stop_event.is_set():
-            connect_federation_session_once(
+            result = connect_federation_session_once(
                 remote_base_url=remote_base_url,
                 local_group_id=local_group_id,
                 remote_group_id=remote_group_id,
@@ -112,6 +115,19 @@ def start_federation_session_client(
                 connect=connect,
                 handle_request=handle_request,
             )
+            if not stop_event.is_set():
+                error = result.get("error") if isinstance(result.get("error"), dict) else {}
+                logger.warning(
+                    "federation session client reconnecting remote_base_url=%s local_group=%s remote_group=%s remote_peer=%s ok=%s error_code=%s error_message=%s retry_seconds=%s",
+                    remote_base_url,
+                    local_group_id,
+                    remote_group_id,
+                    remote_peer_id,
+                    bool(result.get("ok")),
+                    str(error.get("code") or ""),
+                    str(error.get("message") or ""),
+                    max(0.1, float(retry_seconds or 0.1)),
+                )
             stop_event.wait(max(0.1, float(retry_seconds or 0.1)))
 
     thread = threading.Thread(target=run, name="cccc-federation-ws-client", daemon=True)
