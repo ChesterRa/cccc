@@ -94,6 +94,12 @@ describe("federation settings placement", () => {
     expect(src).toContain("approveFederationPairingRequest");
   });
 
+  it("libp2p connection info copy uses the shared clipboard fallback", () => {
+    const src = readSource("./FederationLibp2pPairingSection.tsx");
+    expect(src).toContain("copyTextToClipboard");
+    expect(src).not.toContain("navigator.clipboard?.writeText");
+  });
+
   it("libp2p pairing is cross-instance first and demotes same-instance codes", () => {
     const src = readSource("./FederationLibp2pPairingSection.tsx");
     expect(src).toContain('t("federation.connectRemoteCcccGroup")');

@@ -59,7 +59,7 @@ def relay_federation_reply(
                 "reply_to_remote_event_id": str(original_data.get("src_event_id") or "").strip(),
                 "payload": {
                     "text": text,
-                    "to": list(to or []),
+                    "to": _reply_return_recipients(original_data=original_data, fallback=to),
                     "priority": priority,
                     "reply_required": reply_required,
                     "refs": list(refs or []),
@@ -85,6 +85,15 @@ def relay_federation_reply(
 
 def can_relay_federation_reply(*, group_id: str, original_data: Dict[str, Any]) -> bool:
     return bool(federation_reply_registration_id(group_id=group_id, original_data=original_data))
+
+
+def _reply_return_recipients(*, original_data: Dict[str, Any], fallback: list[str]) -> list[str]:
+    raw_to = original_data.get("to")
+    if isinstance(raw_to, list):
+        original_to = [str(item).strip() for item in raw_to if isinstance(item, str) and str(item).strip()]
+        if original_to and all(item in ("@all", "@peers", "@foreman", "user", "@user") for item in original_to):
+            return original_to
+    return list(fallback or [])
 
 
 def federation_reply_registration_id(*, group_id: str, original_data: Dict[str, Any]) -> str:

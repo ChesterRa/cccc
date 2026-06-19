@@ -313,7 +313,7 @@ class TestChatOps(unittest.TestCase):
                 captured[0]["payload"],
                 {
                     "text": "reply over federation",
-                    "to": ["user"],
+                    "to": ["@foreman"],
                     "priority": "attention",
                     "reply_required": False,
                     "refs": [],

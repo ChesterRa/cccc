@@ -304,6 +304,7 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 self.assertEqual([event["data"]["text"] for event in a_events], ["answer from B"])
                 self.assertEqual(a_events[0]["data"]["source_platform"], "libp2p_cccc")
                 self.assertEqual(a_events[0]["data"]["src_group_id"], "g_b")
+                self.assertEqual(a_events[0]["data"]["to"], ["@foreman"])
             finally:
                 route["local_node"].stop()
                 route["remote_node"].stop()

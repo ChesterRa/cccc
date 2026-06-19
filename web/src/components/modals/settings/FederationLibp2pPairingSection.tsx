@@ -31,6 +31,7 @@ import {
   settingsWorkspaceSoftPanelClass,
 } from "./types";
 import { publishFederationPairingChanged } from "../../../utils/federationPairingEvents";
+import { copyTextToClipboard } from "../../../utils/copy";
 
 interface Props {
   isDark: boolean;
@@ -125,12 +126,8 @@ export function FederationLibp2pPairingSection({
 
   const onCopyConnectionInfo = useCallback(async () => {
     if (!createdInfo) return;
-    try {
-      await navigator.clipboard?.writeText(createdInfo);
-      setCopyNotice(t("federation.copyConnectionInfoDone"));
-    } catch {
-      setCopyNotice(t("federation.copyConnectionInfoManual"));
-    }
+    const copied = await copyTextToClipboard(createdInfo);
+    setCopyNotice(t(copied ? "federation.copyConnectionInfoDone" : "federation.copyConnectionInfoManual"));
   }, [createdInfo, t]);
 
   const onCreateRequest = useCallback(async () => {
