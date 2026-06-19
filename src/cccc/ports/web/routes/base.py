@@ -37,6 +37,7 @@ from ..branding import (
 from ...mcp.common import MCPError, runtime_context_override
 from ...mcp.handlers.cccc_capability import capability_install as mcp_capability_install
 from ...mcp.handlers.cccc_capability import capability_use as mcp_capability_use
+from ..stream_close import close_stream_writer
 from ..schemas import (
     BrandingUpdateRequest,
     DebugClearLogsRequest,
@@ -818,11 +819,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     return
                 await proxy_daemon_raw_stream_to_websocket(websocket, reader, writer)
             finally:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
+                await close_stream_writer(writer)
             return
 
         try:
@@ -893,21 +890,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     task.cancel()
                 await asyncio.gather(*pending, return_exceptions=True)
             finally:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
+                await close_stream_writer(writer)
                 try:
                     await websocket.close(code=1000)
                 except Exception:
                     pass
         finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+            await close_stream_writer(writer)
 
     @global_router.post("/mcp/web-model/{connector_id}")
     async def web_model_mcp_jsonrpc(connector_id: str, request: Request) -> Response:

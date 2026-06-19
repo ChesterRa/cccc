@@ -3,6 +3,7 @@ import os
 import tempfile
 import asyncio
 from pathlib import Path
+from unittest.mock import patch
 
 
 class _EnvPatch:
@@ -663,6 +664,97 @@ class TestFederationTransport(unittest.TestCase):
         self.assertFalse(res_refs.ok)
         self.assertFalse(res_refs.retriable)
         self.assertEqual(res_refs.error_code, "unsupported_refs")
+
+    def test_receive_remote_send_delivers_once_and_deduplicates(self) -> None:
+        from cccc.daemon.federation.receiver import receive_remote_send
+        from cccc.kernel.federation.pairing import _save_store
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_dir = home / "groups" / "g_local"
+            group_dir.mkdir(parents=True)
+            (group_dir / "group.yaml").write_text(
+                "\n".join(
+                    [
+                        "v: 1",
+                        "group_id: g_local",
+                        "title: Local",
+                        "state: active",
+                        "active_scope_key: ''",
+                        "scopes: []",
+                        "actors:",
+                        "  - id: peer1",
+                        "    title: Peer 1",
+                        "    runtime: codex",
+                        "    enabled: true",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            _save_store(
+                {
+                    "invites": {},
+                    "requests": {},
+                    "outbounds": {},
+                    "trusts": {
+                        "ptrust_1": {
+                            "trust_id": "ptrust_1",
+                            "group_id": "g_local",
+                            "remote_group_id": "g_remote",
+                            "remote_peer_id": "peer_remote",
+                            "registration_id": "reg_remote",
+                            "transport": "federation_session",
+                            "remote_group_title": "Remote Group",
+                            "status": "active",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "updated_at": "2026-01-01T00:00:00Z",
+                        }
+                    },
+                },
+                home=home,
+            )
+
+            deliveries = []
+
+            def capture_delivery(**kwargs):
+                deliveries.append(kwargs)
+
+            with (
+                _EnvPatch(CCCC_CHAT_POST_COMMIT_MODE="inline"),
+                patch("cccc.daemon.federation.receiver.deliver_appended_chat_message", side_effect=capture_delivery),
+            ):
+                first = receive_remote_send(
+                    target_group_id="g_local",
+                    src_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention"},
+                    idempotency_key="remote-client-1",
+                    home=home,
+                )
+                duplicate = receive_remote_send(
+                    target_group_id="g_local",
+                    src_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention"},
+                    idempotency_key="remote-client-1",
+                    home=home,
+                )
+
+        self.assertTrue(first["ok"], first)
+        self.assertFalse(first["duplicate"])
+        self.assertTrue(duplicate["ok"], duplicate)
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(duplicate["event_id"], first["event_id"])
+        self.assertEqual(len(deliveries), 1)
+        delivery = deliveries[0]
+        self.assertEqual(delivery["by"], "federation:peer_remote")
+        self.assertEqual(delivery["effective_to"], ["peer1"])
+        self.assertEqual(delivery["priority"], "attention")
+        self.assertFalse(delivery["reply_required"])
+        self.assertEqual(str(delivery["event"].get("id") or ""), first["event_id"])
+        self.assertEqual(delivery["text"], "hello from remote")
+        self.assertEqual(delivery["source_user_name"], "Remote Group")
 
 
 if __name__ == "__main__":

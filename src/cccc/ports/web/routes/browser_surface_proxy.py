@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from ....daemon.server import get_daemon_endpoint
+from ..stream_close import close_stream_writer
 
 
 async def open_daemon_stream(*, home: Path, limit: int):
@@ -74,8 +75,4 @@ async def proxy_daemon_raw_stream_to_websocket(
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
-        try:
-            writer.close()
-            await writer.wait_closed()
-        except Exception:
-            pass
+        await close_stream_writer(writer)

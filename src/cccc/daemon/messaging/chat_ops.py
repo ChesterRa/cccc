@@ -30,11 +30,9 @@ from ...util.time import utc_now_iso
 from ..federation.reply_relay import can_relay_federation_reply, relay_federation_reply
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
-from .delivery import append_mcp_reply_reminder, flush_pending_messages
-from .chat_delivery_ops import deliver_chat_message
+from .delivery import flush_pending_messages
+from .chat_delivery_ops import deliver_appended_chat_message
 from .actor_turn_rendering import (
-    build_actor_delivery_text as _build_delivery_text,
-    build_actor_headless_delivery_text as _build_headless_delivery_text,
     compact_delivery_text as _compact_delivery_text,
 )
 from ..context.context_ops import handle_context_sync
@@ -488,42 +486,26 @@ def handle_send(
     effective_to = to if to else ["@all"]
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
-    delivery_text = _build_delivery_text(
-        text=delivery_body_text,
-        priority=priority,
-        reply_required=reply_required,
-        event_id=event_id,
-        refs=refs,
-        attachments=attachments,
-        src_group_id=src_group_id,
-        src_event_id=src_event_id,
-    )
-    headless_delivery_text = append_mcp_reply_reminder(
-        _build_headless_delivery_text(
-            by=by,
-            to=effective_to,
-            body=delivery_text,
-            quote_text=quote_text,
-            source_platform=source_platform,
-            source_user_name=source_user_name,
-            source_user_id=source_user_id,
-        )
-    )
     logger.debug("[SEND] group=%s text=%r effective_to=%s", group_id, text[:30], effective_to)
     run_group_chat_post_commit(
         group_id,
         "send-delivery",
-        lambda: deliver_chat_message(
+        lambda: deliver_appended_chat_message(
             group=group,
             event=event,
             by=by,
             effective_to=effective_to,
-            delivery_text=delivery_text,
-            headless_delivery_text=headless_delivery_text,
-            event_id=event_id,
-            event_ts=event_ts,
+            text=delivery_body_text,
             priority=priority,
             reply_required=reply_required,
+            refs=refs,
+            attachments=attachments,
+            quote_text=quote_text,
+            source_platform=source_platform,
+            source_user_name=source_user_name,
+            source_user_id=source_user_id,
+            src_group_id=src_group_id,
+            src_event_id=src_event_id,
             effective_runner_kind=effective_runner_kind,
             codex_actor_running=codex_app_supervisor.actor_running,
             claude_actor_running=claude_app_supervisor.actor_running,
@@ -531,10 +513,6 @@ def handle_send(
             claude_submit_user_message=claude_app_supervisor.submit_user_message,
             woken=set(woken),
             logger=logger,
-            attachments=attachments,
-            source_platform=source_platform,
-            source_user_name=source_user_name,
-            source_user_id=source_user_id,
         ),
     )
     diag.mark("schedule_delivery")
@@ -951,37 +929,21 @@ def handle_reply(
     effective_to = to if to else ["@all"]
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
-    delivery_text = _build_delivery_text(
-        text=text,
-        priority=priority,
-        reply_required=reply_required,
-        event_id=event_id,
-        refs=refs,
-        attachments=attachments,
-    )
-    headless_delivery_text = append_mcp_reply_reminder(
-        _build_headless_delivery_text(
-            by=by,
-            to=effective_to,
-            body=delivery_text,
-            reply_to=target_event_id or reply_to,
-            quote_text=quote_text,
-        )
-    )
     run_group_chat_post_commit(
         group_id,
         "reply-delivery",
-        lambda: deliver_chat_message(
+        lambda: deliver_appended_chat_message(
             group=group,
             event=event,
             by=by,
             effective_to=effective_to,
-            delivery_text=delivery_text,
-            headless_delivery_text=headless_delivery_text,
-            event_id=event_id,
-            event_ts=event_ts,
+            text=text,
             priority=priority,
             reply_required=reply_required,
+            refs=refs,
+            attachments=attachments,
+            reply_to=target_event_id or reply_to,
+            quote_text=quote_text,
             effective_runner_kind=effective_runner_kind,
             codex_actor_running=codex_app_supervisor.actor_running,
             claude_actor_running=claude_app_supervisor.actor_running,
@@ -989,9 +951,6 @@ def handle_reply(
             claude_submit_user_message=claude_app_supervisor.submit_user_message,
             woken=set(woken),
             logger=logger,
-            attachments=attachments,
-            reply_to=target_event_id or reply_to,
-            quote_text=quote_text,
         ),
     )
     diag.mark("schedule_delivery")

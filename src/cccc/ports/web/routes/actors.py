@@ -39,6 +39,7 @@ from ..actor_avatar import (
     store_actor_avatar,
 )
 from .groups import invalidate_context_read
+from ..stream_close import close_stream_writer
 from ..schemas import (
     ActorCreateRequest,
     ActorProfileUpsertRequest,
@@ -1513,10 +1514,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             except WebSocketDisconnect:
                 pass
         finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+            await close_stream_writer(writer)
 
     return [group_router, global_router]

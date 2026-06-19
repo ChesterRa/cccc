@@ -11,6 +11,9 @@ from typing import Any, Callable, Optional
 
 from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
+from ..actors.runner_ops import _effective_runner_kind as default_effective_runner_kind
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .actor_delivery_planner import (
     TRANSPORT_CLAUDE_HEADLESS,
     TRANSPORT_CODEX_APP_SERVER,
@@ -20,9 +23,16 @@ from .actor_delivery_planner import (
     event_with_effective_to,
     plan_actor_chat_delivery,
 )
+from .actor_turn_rendering import build_actor_delivery_text, build_actor_headless_delivery_text
 from ..actors.web_model_browser_delivery import schedule_web_model_browser_delivery, web_model_browser_delivery_enabled
 from .chat_support_ops import schedule_headless_post_wake_delivery
-from .delivery import emit_system_notify, get_headless_targets_for_message, queue_chat_message, request_flush_pending_messages
+from .delivery import (
+    append_mcp_reply_reminder,
+    emit_system_notify,
+    get_headless_targets_for_message,
+    queue_chat_message,
+    request_flush_pending_messages,
+)
 
 
 def notify_headless_targets(
@@ -193,4 +203,83 @@ def deliver_chat_message(
         reply_required=reply_required,
         event=event_with_effective_to(event, effective_to),
         skip_actor_ids=skip_headless_notify_actor_ids,
+    )
+
+
+def deliver_appended_chat_message(
+    *,
+    group: Any,
+    event: dict[str, Any],
+    by: str,
+    effective_to: list[str],
+    text: str,
+    priority: str,
+    reply_required: bool,
+    refs: Optional[list[dict[str, Any]]] = None,
+    attachments: Optional[list[dict[str, Any]]] = None,
+    reply_to: str = "",
+    quote_text: str = "",
+    source_platform: str = "",
+    source_user_name: str = "",
+    source_user_id: str = "",
+    src_group_id: str = "",
+    src_event_id: str = "",
+    effective_runner_kind: Callable[[str], str] = default_effective_runner_kind,
+    codex_actor_running: Callable[[str, str], bool] = codex_app_supervisor.actor_running,
+    claude_actor_running: Callable[[str, str], bool] = claude_app_supervisor.actor_running,
+    codex_submit_user_message: Callable[..., bool] = codex_app_supervisor.submit_user_message,
+    claude_submit_user_message: Callable[..., bool] = claude_app_supervisor.submit_user_message,
+    woken: Optional[set[str]] = None,
+    logger: logging.Logger = logging.getLogger("cccc.daemon.server"),
+) -> None:
+    clean_refs = [item for item in (refs or []) if isinstance(item, dict)]
+    clean_attachments = [item for item in (attachments or []) if isinstance(item, dict)]
+    event_id = str(event.get("id") or "").strip()
+    event_ts = str(event.get("ts") or "").strip()
+    delivery_text = build_actor_delivery_text(
+        text=text,
+        priority=priority,
+        reply_required=reply_required,
+        event_id=event_id,
+        refs=clean_refs,
+        attachments=clean_attachments,
+        src_group_id=src_group_id,
+        src_event_id=src_event_id,
+    )
+    headless_delivery_text = append_mcp_reply_reminder(
+        build_actor_headless_delivery_text(
+            by=by,
+            to=effective_to,
+            body=delivery_text,
+            reply_to=reply_to,
+            quote_text=quote_text,
+            source_platform=source_platform,
+            source_user_name=source_user_name,
+            source_user_id=source_user_id,
+        )
+    )
+    deliver_chat_message(
+        group=group,
+        event=event,
+        by=by,
+        effective_to=effective_to,
+        delivery_text=delivery_text,
+        headless_delivery_text=headless_delivery_text,
+        event_id=event_id,
+        event_ts=event_ts,
+        priority=priority,
+        reply_required=reply_required,
+        effective_runner_kind=effective_runner_kind,
+        codex_actor_running=codex_actor_running,
+        claude_actor_running=claude_actor_running,
+        codex_submit_user_message=codex_submit_user_message,
+        claude_submit_user_message=claude_submit_user_message,
+        woken=woken or set(),
+        logger=logger,
+        attachments=clean_attachments,
+        reply_to=reply_to,
+        quote_text=quote_text,
+        source_platform=source_platform,
+        source_user_name=source_user_name,
+        source_user_id=source_user_id,
     )

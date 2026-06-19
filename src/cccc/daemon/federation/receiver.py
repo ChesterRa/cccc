@@ -9,8 +9,11 @@ from typing import Any, Dict, Optional
 from ...contracts.v1.federation import RemoteSendPayload
 from ...contracts.v1.message import ChatMessageData
 from ...kernel.federation.pairing import list_trusts
+from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event, read_last_lines
+from ..messaging.chat_delivery_ops import deliver_appended_chat_message
+from ..messaging.post_commit import run_group_chat_post_commit
 from .peer_address_sync import sync_federation_peer_multiaddrs
 from .remote_dispatch import retry_remote_send_for_peer
 
@@ -164,7 +167,35 @@ def receive_remote_send(
             client_id=key,
         ).model_dump(),
     )
+    effective_to = _resolve_remote_send_to(group, msg.to)
+    run_group_chat_post_commit(
+        group.group_id,
+        "federation-receive-delivery",
+        lambda: deliver_appended_chat_message(
+            group=group,
+            event=event,
+            by=f"federation:{peer_id}",
+            effective_to=effective_to,
+            text=msg.text,
+            priority=msg.priority,
+            reply_required=msg.reply_required,
+            refs=[],
+            attachments=[],
+            source_platform="federation_session",
+            source_user_name=str(trust.get("remote_group_title") or src_gid),
+            source_user_id=peer_id,
+            src_group_id=src_gid,
+            src_event_id=str(payload_doc.get("src_event_id") or "").strip(),
+        ),
+    )
     return {"ok": True, "event_id": str(event.get("id") or ""), "duplicate": False}
+
+
+def _resolve_remote_send_to(group: Any, to: list[str]) -> list[str]:
+    try:
+        return resolve_recipient_tokens(group, to) if to else ["@all"]
+    except Exception:
+        return [str(item).strip() for item in (to or []) if str(item).strip()] or ["@all"]
 
 
 def _load_group(group_id: str, *, home: Optional[Path]):  # type: ignore[no-untyped-def]

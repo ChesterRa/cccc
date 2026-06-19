@@ -25,6 +25,7 @@ from ..schemas import (
     resolve_websocket_principal,
     websocket_tokens_active,
 )
+from ..stream_close import close_stream_writer
 from .browser_surface_proxy import (
     open_daemon_stream,
     proxy_daemon_raw_stream_to_websocket,
@@ -464,11 +465,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     return
                 await proxy_daemon_raw_stream_to_websocket(websocket, reader, writer)
             finally:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
+                await close_stream_writer(writer)
             return
 
         try:
@@ -540,20 +537,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 except Exception:
                     pass
             finally:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
+                await close_stream_writer(writer)
                 try:
                     await websocket.close(code=1000)
                 except Exception:
                     pass
         finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+            await close_stream_writer(writer)
 
     return [group_router, global_router]
