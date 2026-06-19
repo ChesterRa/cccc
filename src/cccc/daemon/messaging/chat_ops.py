@@ -851,7 +851,7 @@ def handle_reply(
     )
     relayable_federation_reply = can_relay_federation_reply(group_id=group.group_id, original_data=original_data)
 
-    if not to_tokens:
+    if not to_tokens and not relayable_federation_reply:
         to_tokens = default_reply_recipients(group, by=by, original_event=original)
     try:
         to = resolve_recipient_tokens(group, to_tokens)

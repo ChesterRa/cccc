@@ -113,6 +113,7 @@ _PUBLIC_API_PATHS = frozenset({
     "/api/v1/branding",
     "/api/federation/pairing/requests/remote",
     "/api/federation/pairing/requests/remote/status",
+    "/api/federation/session/ws",
 })
 
 

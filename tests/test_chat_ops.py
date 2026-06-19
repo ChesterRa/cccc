@@ -501,6 +501,89 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_reply_to_federation_session_message_without_to_does_not_wake_local_foreman(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.contracts.v1.message import ChatMessageData
+            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+            from cccc.kernel.ledger import append_event
+
+            create, _ = self._call("group_create", {"title": "chat-federation-session-reply-no-local", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            _save_store(
+                {
+                    "invites": {},
+                    "requests": {},
+                    "outbounds": {},
+                    "trusts": {
+                        "ptrust_session": {
+                            "trust_id": "ptrust_session",
+                            "group_id": group_id,
+                            "remote_group_id": "g_remote",
+                            "remote_peer_id": "peer_remote",
+                            "registration_id": "reg_session",
+                            "transport": "federation_session",
+                            "remote_endpoint": "http://remote.example:8848",
+                            "status": "active",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "updated_at": "2026-01-01T00:00:00Z",
+                        }
+                    },
+                }
+            )
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            inbound_event = append_event(
+                group.ledger_path,  # type: ignore[union-attr]
+                kind="chat.message",
+                group_id=group_id,
+                scope_key="",
+                by="federation:peer_remote",
+                data=ChatMessageData(
+                    text="hello via federation session",
+                    to=["@foreman"],
+                    source_platform="federation_session",
+                    source_user_id="peer_remote",
+                    src_group_id="g_remote",
+                    src_event_id="remote-event-1",
+                ).model_dump(),
+            )
+
+            captured: list[dict] = []
+
+            def fake_remote_send(args):
+                captured.append(dict(args))
+                from cccc.contracts.v1.ipc import DaemonResponse
+
+                return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
+
+            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+                reply, _ = self._call(
+                    "reply",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "reply_to": str(inbound_event.get("id") or ""),
+                        "text": "reply via federation session",
+                        "to": [],
+                    },
+                )
+
+            self.assertTrue(reply.ok, getattr(reply, "error", None))
+            self.assertEqual(captured[0]["payload"]["to"], ["@foreman"])
+            events = list(iter_events(group.ledger_path))  # type: ignore[union-attr]
+            reply_events = [event for event in events if (event.get("data") or {}).get("reply_to") == inbound_event.get("id")]
+            self.assertEqual(len(reply_events), 1)
+            self.assertEqual((reply_events[0].get("data") or {}).get("to"), [])
+        finally:
+            cleanup()
+
     def test_federation_reply_relay_exception_does_not_fail_local_reply(self) -> None:
         _, cleanup = self._with_home()
         try:

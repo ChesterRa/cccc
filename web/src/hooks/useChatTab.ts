@@ -53,6 +53,7 @@ import {
 import type { FederationTrust } from "../services/api/federation";
 import { isDelegationSourceOutboundEvent } from "../components/messageBubbleDelegation";
 import { subscribeFederationPairingChanged } from "../utils/federationPairingEvents";
+import { canOpenSourceMessageLocally } from "./chatSourceNavigation";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -1790,6 +1791,10 @@ export function useChatTab({
       const gid = String(srcGroupId || "").trim();
       const eid = String(srcEventId || "").trim();
       if (!gid || !eid) return;
+      if (!canOpenSourceMessageLocally(groups, gid)) {
+        showError(t("sourceMessageNotLocal", { groupId: gid, defaultValue: "Original message is in a remote group that is not open locally: {{groupId}}" }));
+        return;
+      }
 
       const url = new URL(window.location.href);
       url.searchParams.set("group", gid);
@@ -1806,7 +1811,7 @@ export function useChatTab({
         // Note: App.tsx handles the deep link effect
       }
     },
-    [selectedGroupId, openChatWindow]
+    [groups, selectedGroupId, openChatWindow, showError, t]
   );
 
   const exitChatWindow = useCallback(() => {

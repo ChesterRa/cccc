@@ -432,6 +432,25 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(captured["kwargs"]["target_group_id"], "g_local")
         self.assertEqual(captured["kwargs"]["src_group_id"], "g_remote")
 
+    def test_federation_session_client_reports_connect_failure_without_escaping(self) -> None:
+        from cccc.daemon.federation.ws_client import connect_federation_session_once
+
+        def connect(url, timeout):
+            raise RuntimeError("HTTP error: 401 Unauthorized")
+
+        result = connect_federation_session_once(
+            remote_base_url="http://peer.example:8848",
+            local_group_id="g_local",
+            remote_group_id="g_remote",
+            remote_peer_id="peer_remote",
+            connect=connect,
+            timeout=2.0,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "session_connect_failed")
+        self.assertIn("401 Unauthorized", result["error"]["message"])
+
     def test_federation_session_manager_starts_one_client_per_active_trust_with_endpoint(self) -> None:
         import threading
         from pathlib import Path

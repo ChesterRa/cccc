@@ -40,6 +40,23 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
         token = create_access_token("scoped-user", is_admin=False, allowed_groups=groups)["token"]
         return {"Authorization": f"Bearer {token}"}
 
+    def test_federation_websocket_session_is_web_auth_public_path(self) -> None:
+        from cccc.ports.web.app import _is_public_path
+        from starlette.requests import Request
+
+        request = Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/api/federation/session/ws",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 50000),
+        })
+
+        self.assertTrue(_is_public_path(request))
+
     def test_pairing_identity_invite_request_approve_flow(self) -> None:
         _, cleanup = self._with_home()
         try:

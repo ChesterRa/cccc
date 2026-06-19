@@ -36,7 +36,10 @@ def connect_federation_session_once(
     timeout: float = 5.0,
 ) -> Dict[str, Any]:
     connector = connect or _default_connect
-    ws = connector(federation_session_ws_url(remote_base_url), timeout)
+    try:
+        ws = connector(federation_session_ws_url(remote_base_url), timeout)
+    except Exception as exc:
+        return {"ok": False, "error": {"code": "session_connect_failed", "message": str(exc)}}
     send_lock = threading.Lock()
     local_peer_id = str(get_local_identity().get("peer_id") or "").strip()
     try:
