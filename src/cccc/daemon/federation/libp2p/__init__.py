@@ -1,7 +1,7 @@
-"""Stage C1 direct libp2p runtime boundary.
+"""Direct libp2p-style runtime boundary.
 
-This package keeps the network runtime isolated from daemon entrypoints. C1 is
-limited to localhost/direct multiaddr streams and the CCCC remote-send protocol.
+This package keeps the network runtime isolated from daemon entrypoints. It is
+limited to known direct IPv4 multiaddr streams and the CCCC remote-send protocol.
 It does not implement DHT, relay, hole punching, pubsub, or HTTP fallback.
 """
 

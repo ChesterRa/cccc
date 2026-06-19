@@ -22,6 +22,24 @@ class _HomeEnv:
             os.environ["CCCC_HOME"] = self._old
 
 
+class _EnvVars:
+    def __init__(self, **values: str) -> None:
+        self.values = values
+        self.previous: dict[str, str | None] = {}
+
+    def __enter__(self) -> None:
+        for key, value in self.values.items():
+            self.previous[key] = os.environ.get(key)
+            os.environ[key] = value
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        for key, value in self.previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 class TestFederationLibp2pC1(unittest.TestCase):
     def _make_group(self, home: Path, group_id: str, title: str) -> None:
         from cccc.kernel.ledger_segments import ensure_ledger_layout
@@ -83,6 +101,36 @@ class TestFederationLibp2pC1(unittest.TestCase):
             finally:
                 node.stop()
 
+    def test_sidecar_can_advertise_cross_machine_multiaddr(self) -> None:
+        from cccc.daemon.federation.libp2p.identity import get_libp2p_identity
+        from cccc.daemon.federation.libp2p.sidecar import Libp2pNode, parse_direct_multiaddr
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            identity = get_libp2p_identity(home=home)
+
+            node = Libp2pNode(
+                home=home,
+                listen_multiaddr="/ip4/0.0.0.0/tcp/0",
+                advertise_host="172.30.79.171",
+            )
+            node.start()
+            try:
+                addrs = node.multiaddrs()
+                self.assertEqual(len(addrs), 1)
+                self.assertRegex(addrs[0], rf"^/ip4/172\.30\.79\.171/tcp/[0-9]+/p2p/{identity.peer_id}$")
+                parsed = parse_direct_multiaddr(addrs[0])
+                self.assertEqual(parsed.host, "172.30.79.171")
+                self.assertEqual(parsed.peer_id, identity.peer_id)
+            finally:
+                node.stop()
+
+    def test_sidecar_rejects_unspecified_dial_multiaddr(self) -> None:
+        from cccc.daemon.federation.libp2p.sidecar import parse_direct_multiaddr
+
+        with self.assertRaisesRegex(ValueError, "dial multiaddr host must be a concrete IPv4 address"):
+            parse_direct_multiaddr("/ip4/0.0.0.0/tcp/4001/p2p/peer_remote")
+
     def test_sidecar_supervisor_persists_queryable_listen_multiaddr(self) -> None:
         from cccc.daemon.federation.libp2p.supervisor import read_sidecar_status, start_sidecar
 
@@ -97,6 +145,27 @@ class TestFederationLibp2pC1(unittest.TestCase):
                 host, port = _host_port(status["multiaddrs"][0])
                 with socket.create_connection((host, port), timeout=3.0) as sock:
                     self.assertTrue(sock.recv(8192))
+            finally:
+                node.stop()
+
+    def test_sidecar_supervisor_uses_env_listen_and_advertise_address(self) -> None:
+        from cccc.daemon.federation.libp2p.supervisor import read_sidecar_status, start_sidecar
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            with _EnvVars(
+                CCCC_LIBP2P_LISTEN_MULTIADDR="/ip4/0.0.0.0/tcp/0",
+                CCCC_LIBP2P_ADVERTISE_HOST="172.30.79.171",
+            ):
+                node = start_sidecar(home=home)
+            try:
+                status = read_sidecar_status(home=home)
+                self.assertEqual(status["peer_id"], node.identity.peer_id)
+                self.assertEqual(status["multiaddrs"], node.multiaddrs())
+                self.assertRegex(
+                    status["multiaddrs"][0],
+                    rf"^/ip4/172\.30\.79\.171/tcp/[0-9]+/p2p/{node.identity.peer_id}$",
+                )
             finally:
                 node.stop()
 

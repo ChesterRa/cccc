@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -13,12 +14,24 @@ _LOCK = threading.RLock()
 _NODES: dict[Path, Libp2pNode] = {}
 
 
+def _default_listen_multiaddr() -> str:
+    return str(os.environ.get("CCCC_LIBP2P_LISTEN_MULTIADDR") or "").strip() or "/ip4/127.0.0.1/tcp/0"
+
+
+def _default_advertise_host() -> str:
+    return str(os.environ.get("CCCC_LIBP2P_ADVERTISE_HOST") or "").strip()
+
+
 def get_default_node(*, home: Optional[Path] = None) -> Libp2pNode:
     base = Path(home) if home is not None else ensure_home()
     with _LOCK:
         node = _NODES.get(base)
         if node is None:
-            node = Libp2pNode(home=base, listen_multiaddr="/ip4/127.0.0.1/tcp/0")
+            node = Libp2pNode(
+                home=base,
+                listen_multiaddr=_default_listen_multiaddr(),
+                advertise_host=_default_advertise_host(),
+            )
             node.start()
             _NODES[base] = node
         return node

@@ -1,6 +1,6 @@
-"""Small Stage C1 direct stream sidecar.
+"""Small direct stream sidecar.
 
-This is intentionally narrow: localhost TCP, known multiaddr dialing, one CCCC
+This is intentionally narrow: TCP, known IPv4 multiaddr dialing, one CCCC
 remote-send stream protocol. It is the daemon/client boundary that a future
 full libp2p runtime can replace without changing remote_send dispatch.
 """
@@ -11,6 +11,7 @@ import json
 import secrets
 import socket
 import threading
+import ipaddress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -41,8 +42,12 @@ def parse_direct_multiaddr(value: str) -> ParsedMultiaddr:
     if len(parts) != 6 or parts[0] != "ip4" or parts[2] != "tcp" or parts[4] != "p2p":
         raise ValueError("only /ip4/<host>/tcp/<port>/p2p/<peer_id> multiaddrs are supported in C1")
     host = parts[1].strip()
-    if host not in {"127.0.0.1", "localhost"}:
-        raise ValueError("Stage C1 direct libp2p only supports localhost multiaddrs")
+    try:
+        ip = ipaddress.IPv4Address(host)
+    except Exception as exc:
+        raise ValueError("dial multiaddr host must be a concrete IPv4 address") from exc
+    if ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        raise ValueError("dial multiaddr host must be a concrete IPv4 address")
     try:
         port = int(parts[3])
     except Exception as exc:
@@ -52,14 +57,21 @@ def parse_direct_multiaddr(value: str) -> ParsedMultiaddr:
     peer_id = parts[5].strip()
     if not peer_id:
         raise ValueError("multiaddr peer id is required")
-    return ParsedMultiaddr(host="127.0.0.1", port=port, peer_id=peer_id)
+    return ParsedMultiaddr(host=str(ip), port=port, peer_id=peer_id)
 
 
 class Libp2pNode:
-    def __init__(self, *, home: Optional[Path] = None, listen_multiaddr: str = "/ip4/127.0.0.1/tcp/0") -> None:
+    def __init__(
+        self,
+        *,
+        home: Optional[Path] = None,
+        listen_multiaddr: str = "/ip4/127.0.0.1/tcp/0",
+        advertise_host: str = "",
+    ) -> None:
         self.home = Path(home) if home is not None else None
         self.identity = get_libp2p_identity(home=self.home)
         self._listen = listen_multiaddr
+        self._advertise_host = advertise_host
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -109,7 +121,8 @@ class Libp2pNode:
         if self._bound is None:
             return []
         host, port = self._bound
-        return [f"/ip4/{host}/tcp/{port}/p2p/{self.identity.peer_id}"]
+        advertised_host = _advertise_host_for_bound(host, self._advertise_host)
+        return [f"/ip4/{advertised_host}/tcp/{port}/p2p/{self.identity.peer_id}"]
 
     def send_remote(self, *, multiaddr: str, request: Dict[str, Any], timeout: float = _DEFAULT_TIMEOUT) -> Dict[str, Any]:
         return self._send_authenticated(multiaddr=multiaddr, body=_remote_send_body(request), timeout=timeout)
@@ -195,14 +208,36 @@ def _parse_listen_addr(value: str) -> tuple[str, int]:
     raw = str(value or "").strip()
     parts = [part for part in raw.split("/") if part]
     if len(parts) != 4 or parts[0] != "ip4" or parts[2] != "tcp":
-        raise ValueError("listen multiaddr must be /ip4/127.0.0.1/tcp/<port>")
-    if parts[1] not in {"127.0.0.1", "localhost"}:
-        raise ValueError("Stage C1 only supports localhost listen multiaddrs")
+        raise ValueError("listen multiaddr must be /ip4/<host>/tcp/<port>")
+    try:
+        host_ip = ipaddress.IPv4Address(parts[1].strip())
+    except Exception as exc:
+        raise ValueError("listen multiaddr host must be an IPv4 address") from exc
+    if host_ip.is_multicast or host_ip.is_reserved:
+        raise ValueError("listen multiaddr host must be a bindable IPv4 address")
     try:
         port = int(parts[3])
     except Exception as exc:
         raise ValueError("invalid listen tcp port") from exc
-    return ("127.0.0.1", port)
+    if port < 0 or port > 65535:
+        raise ValueError("invalid listen tcp port")
+    return (str(host_ip), port)
+
+
+def _advertise_host_for_bound(bound_host: str, advertise_host: str) -> str:
+    raw = str(advertise_host or "").strip()
+    if raw:
+        try:
+            advertised_ip = ipaddress.IPv4Address(raw)
+        except Exception as exc:
+            raise ValueError("advertise host must be an IPv4 address") from exc
+        if advertised_ip.is_unspecified or advertised_ip.is_multicast or advertised_ip.is_reserved:
+            raise ValueError("advertise host must be a concrete IPv4 address")
+        return str(advertised_ip)
+    bound_ip = ipaddress.IPv4Address(str(bound_host or "").strip())
+    if bound_ip.is_unspecified:
+        return "127.0.0.1"
+    return str(bound_ip)
 
 
 def _write_frame(sock: socket.socket, payload: Dict[str, Any]) -> None:

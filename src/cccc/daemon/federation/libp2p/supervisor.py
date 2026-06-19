@@ -26,16 +26,38 @@ def read_sidecar_status(*, home: Optional[Path] = None) -> Dict[str, Any]:
     return status if isinstance(status, dict) else {}
 
 
-def start_sidecar(*, home: Optional[Path] = None, listen_multiaddr: str = "/ip4/127.0.0.1/tcp/0") -> Libp2pNode:
-    node = Libp2pNode(home=home, listen_multiaddr=listen_multiaddr)
+def _default_listen_multiaddr() -> str:
+    return str(os.environ.get("CCCC_LIBP2P_LISTEN_MULTIADDR") or "").strip() or "/ip4/127.0.0.1/tcp/0"
+
+
+def _default_advertise_host() -> str:
+    return str(os.environ.get("CCCC_LIBP2P_ADVERTISE_HOST") or "").strip()
+
+
+def start_sidecar(
+    *,
+    home: Optional[Path] = None,
+    listen_multiaddr: Optional[str] = None,
+    advertise_host: Optional[str] = None,
+) -> Libp2pNode:
+    node = Libp2pNode(
+        home=home,
+        listen_multiaddr=str(listen_multiaddr or "").strip() or _default_listen_multiaddr(),
+        advertise_host=_default_advertise_host() if advertise_host is None else str(advertise_host or "").strip(),
+    )
     node.start()
     _write_status(node)
     announce_sidecar_addresses(node)
     return node
 
 
-def run_forever(*, home: Optional[Path] = None, listen_multiaddr: str = "/ip4/127.0.0.1/tcp/0") -> None:
-    node = start_sidecar(home=home, listen_multiaddr=listen_multiaddr)
+def run_forever(
+    *,
+    home: Optional[Path] = None,
+    listen_multiaddr: Optional[str] = None,
+    advertise_host: Optional[str] = None,
+) -> None:
+    node = start_sidecar(home=home, listen_multiaddr=listen_multiaddr, advertise_host=advertise_host)
     stopping = False
 
     def _stop(_signum, _frame):  # type: ignore[no-untyped-def]
