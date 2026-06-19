@@ -103,6 +103,9 @@ async def handle_federation_session_websocket(websocket: WebSocket) -> None:
             if frame_type == "response":
                 peer.receive_response(frame)
                 continue
+            if frame_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
             if frame_type != "request":
                 continue
             request_id = str((frame or {}).get("request_id") or "").strip()

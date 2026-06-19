@@ -196,6 +196,9 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
                 ws.send_json(hello)
                 ready = ws.receive_json()
                 self.assertTrue(ready["ok"])
+                ws.send_json({"type": "ping"})
+                pong = ws.receive_json()
+                self.assertEqual(pong, {"type": "pong"})
                 ws.send_json({
                     "type": "request",
                     "request_id": "req-1",

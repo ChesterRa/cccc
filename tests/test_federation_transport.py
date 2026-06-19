@@ -371,6 +371,93 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(fake_ws.sent[2]["payload"]["text"], "outbound")
         self.assertEqual(outbound_result["event_id"], "remote-over-outbound")
 
+    def test_federation_session_client_keeps_session_active_across_idle_recv_timeout(self) -> None:
+        import socket
+        import threading
+        import time
+
+        from cccc.daemon.federation.ws_client import connect_federation_session_once
+        from cccc.daemon.federation.ws_session import clear_sessions, send_via_session_sync
+
+        class FakeWs:
+            def __init__(self) -> None:
+                self.sent = []
+                self.frames = [{"ok": True, "type": "ready"}]
+                self.outbound_request_sent = threading.Event()
+                self.outbound_response_sent = False
+                self.closed = False
+
+            def send(self, raw):
+                import json
+
+                payload = json.loads(raw)
+                self.sent.append(payload)
+                if payload.get("type") == "request" and (payload.get("payload") or {}).get("text") == "outbound":
+                    self.outbound_request_sent.set()
+
+            def recv(self):
+                import json
+
+                if self.frames:
+                    return json.dumps(self.frames.pop(0))
+                if self.outbound_request_sent.wait(0.01):
+                    for sent in self.sent:
+                        if sent.get("type") == "request" and (sent.get("payload") or {}).get("text") == "outbound":
+                            if self.outbound_response_sent:
+                                raise RuntimeError("closed")
+                            self.outbound_response_sent = True
+                            return json.dumps(
+                                {
+                                    "type": "response",
+                                    "response_to": sent.get("request_id"),
+                                    "result": {"ok": True, "event_id": "remote-after-idle"},
+                                }
+                            )
+                raise socket.timeout("idle")
+
+            def close(self):
+                self.closed = True
+
+        fake_ws = FakeWs()
+        outbound_result = {}
+        outbound_done = threading.Event()
+
+        def send_outbound_after_idle() -> None:
+            time.sleep(0.05)
+            try:
+                outbound_result.update(
+                    send_via_session_sync(
+                        target_group_id="g_local",
+                        src_group_id="g_remote",
+                        remote_peer_id="peer_remote",
+                        request={"op": "remote_send", "payload": {"text": "outbound"}},
+                        timeout=1.0,
+                    )
+                )
+            finally:
+                outbound_done.set()
+
+        clear_sessions()
+        try:
+            result = connect_federation_session_once(
+                remote_base_url="http://peer.example:8848",
+                local_group_id="g_local",
+                remote_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                connect=lambda url, timeout: fake_ws,
+                on_ready=lambda: threading.Thread(target=send_outbound_after_idle, daemon=True).start(),
+                idle_tick_seconds=0.01,
+                timeout=1.0,
+            )
+        finally:
+            outbound_done.wait(2.0)
+            clear_sessions()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "session_closed")
+        self.assertEqual(outbound_result["event_id"], "remote-after-idle")
+        self.assertTrue(any(sent.get("type") == "ping" for sent in fake_ws.sent))
+
     def test_federation_session_client_default_handler_uses_connected_remote_peer_id(self) -> None:
         from unittest.mock import patch
 

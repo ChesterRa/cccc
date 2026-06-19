@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 from typing import Any, Callable, Dict
 from urllib.parse import urlparse, urlunparse
@@ -18,6 +19,7 @@ RequestHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
 ReadyHook = Callable[[], Any]
 
 logger = logging.getLogger("cccc.daemon.federation.ws")
+_IDLE = object()
 
 
 def federation_session_ws_url(base_url: str) -> str:
@@ -37,12 +39,19 @@ def connect_federation_session_once(
     handle_request: RequestHandler | None = None,
     on_ready: ReadyHook | None = None,
     timeout: float = 5.0,
+    connect_timeout: float | None = None,
+    handshake_timeout: float | None = None,
+    idle_tick_seconds: float = 30.0,
 ) -> Dict[str, Any]:
     connector = connect or _default_connect
+    connect_timeout_value = max(0.1, float(connect_timeout if connect_timeout is not None else timeout or 5.0))
+    handshake_timeout_value = max(0.1, float(handshake_timeout if handshake_timeout is not None else timeout or 5.0))
+    idle_tick_value = max(0.1, float(idle_tick_seconds or 30.0))
     try:
-        ws = connector(federation_session_ws_url(remote_base_url), timeout)
+        ws = connector(federation_session_ws_url(remote_base_url), connect_timeout_value)
     except Exception as exc:
         return {"ok": False, "error": {"code": "session_connect_failed", "message": str(exc)}}
+    _set_ws_timeout(ws, handshake_timeout_value)
     send_lock = threading.Lock()
     local_peer_id = str(get_local_identity().get("peer_id") or "").strip()
     try:
@@ -58,6 +67,7 @@ def connect_federation_session_once(
         ready = _ws_recv_json(ws)
         if not bool(ready.get("ok")):
             return {"ok": False, "error": ready.get("error") or {"code": "session_rejected", "message": "remote rejected federation session"}}
+        _set_ws_timeout(ws, idle_tick_value)
         peer = ThreadFederationWsPeer(lambda payload: _ws_send_json(ws, payload, send_lock=send_lock))
         session = FederationWsSession(
             target_group_id=str(local_group_id or "").strip(),
@@ -71,10 +81,15 @@ def connect_federation_session_once(
             if on_ready is not None:
                 on_ready()
             while True:
-                frame = _ws_recv_json(ws)
+                frame = _ws_recv_json_or_idle(ws)
+                if frame is _IDLE:
+                    _ws_send_json(ws, {"type": "ping"}, send_lock=send_lock)
+                    continue
                 frame_type = str(frame.get("type") or "").strip()
                 if frame_type == "response":
                     peer.receive_response(frame)
+                    continue
+                if frame_type == "pong":
                     continue
                 if frame_type != "request":
                     continue
@@ -101,6 +116,9 @@ def start_federation_session_client(
     connect: WsConnect | None = None,
     handle_request: RequestHandler | None = None,
     retry_seconds: float = 5.0,
+    connect_timeout: float | None = None,
+    handshake_timeout: float | None = None,
+    idle_tick_seconds: float = 30.0,
     stop: threading.Event | None = None,
 ) -> threading.Thread:
     stop_event = stop or threading.Event()
@@ -114,6 +132,9 @@ def start_federation_session_client(
                 remote_peer_id=remote_peer_id,
                 connect=connect,
                 handle_request=handle_request,
+                connect_timeout=connect_timeout,
+                handshake_timeout=handshake_timeout,
+                idle_tick_seconds=idle_tick_seconds,
             )
             if not stop_event.is_set():
                 error = result.get("error") if isinstance(result.get("error"), dict) else {}
@@ -170,6 +191,37 @@ def _ws_recv_json(ws: Any) -> Dict[str, Any]:
     raw = ws.recv()
     parsed = json.loads(raw)
     return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _ws_recv_json_or_idle(ws: Any) -> Dict[str, Any] | object:
+    try:
+        return _ws_recv_json(ws)
+    except Exception as exc:
+        if _is_idle_timeout(exc):
+            return _IDLE
+        raise
+
+
+def _is_idle_timeout(exc: BaseException) -> bool:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    name = type(exc).__name__
+    if name == "WebSocketTimeoutException":
+        return True
+    message = str(exc).lower()
+    return "timed out" in message or "timeout" in message
+
+
+def _set_ws_timeout(ws: Any, timeout: float) -> None:
+    value = max(0.1, float(timeout or 0.1))
+    setter = getattr(ws, "settimeout", None)
+    if callable(setter):
+        setter(value)
+        return
+    sock = getattr(ws, "sock", None)
+    sock_setter = getattr(sock, "settimeout", None)
+    if callable(sock_setter):
+        sock_setter(value)
 
 
 async def _send_request_async(peer: ThreadFederationWsPeer, request: Dict[str, Any], timeout: float) -> Dict[str, Any]:
