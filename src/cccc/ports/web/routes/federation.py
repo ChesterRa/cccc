@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ....daemon.federation.ops import try_handle_remote_send_op
 from ....daemon.federation.ws_endpoint import handle_federation_session_websocket
+from ....daemon.federation.ws_session import send_via_session
 from ....kernel.federation.receipts import safe_error_projection
 from ....kernel.federation.pairing import (
     approve_pairing_request,
@@ -97,6 +98,14 @@ class RemotePairingRequestCreateRequest(BaseModel):
     requester_multiaddrs: List[str] = Field(default_factory=list, max_length=32)
 
 
+class FederationSessionSendRequest(BaseModel):
+    target_group_id: str
+    src_group_id: str
+    remote_peer_id: str
+    request: Dict[str, Any] = Field(default_factory=dict)
+    timeout: float = 5.0
+
+
 class RemotePairingSubmitRequest(BaseModel):
     payload: Dict[str, Any]
     local_group_id: str
@@ -152,6 +161,13 @@ def _filter_group_scoped_items(request: Request, items: List[Dict[str, Any]]) ->
 def _filter_local_group_scoped_items(request: Request, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     principal = get_principal(request)
     return [item for item in items if _principal_can_access(principal, str(item.get("local_group_id") or ""))]
+
+
+def _require_loopback_client(request: Request) -> None:
+    client = getattr(request, "client", None)
+    host = str(getattr(client, "host", "") or "").strip().lower()
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "local federation session owner calls only", "details": {}})
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -409,5 +425,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @public_router.websocket("/session/ws")
     async def federation_session_ws(websocket: WebSocket) -> None:
         await handle_federation_session_websocket(websocket)
+
+    @public_router.post("/session/send")
+    async def federation_session_send(request: Request, req: FederationSessionSendRequest) -> Dict[str, Any]:
+        _require_loopback_client(request)
+        return await send_via_session(
+            target_group_id=req.target_group_id,
+            src_group_id=req.src_group_id,
+            remote_peer_id=req.remote_peer_id,
+            request=req.request,
+            timeout=req.timeout,
+        )
 
     return [public_router, router]

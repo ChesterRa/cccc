@@ -650,6 +650,22 @@ class TestFederationTransport(unittest.TestCase):
         self.assertTrue(res.retriable)
         self.assertEqual(res.error_code, "peer_session_unavailable")
 
+    def test_federation_session_transport_routes_to_web_owner_when_daemon_has_no_session(self) -> None:
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
+
+        with patch(
+            "cccc.daemon.federation.transports.federation_session._send_session_request_via_web_owner",
+            return_value={"ok": True, "event_id": "remote-via-web-owner"},
+        ) as fallback:
+            res = FederationSessionTransport().deliver(self._session_envelope())
+
+        self.assertTrue(res.ok)
+        self.assertEqual(res.remote_event_id, "remote-via-web-owner")
+        fallback.assert_called_once()
+        self.assertEqual(fallback.call_args.kwargs["local_group_id"], "g_local")
+        self.assertEqual(fallback.call_args.kwargs["remote_group_id"], "g_remote")
+        self.assertEqual(fallback.call_args.kwargs["remote_peer_id"], "peer-remote")
+
     def test_federation_session_unsupported_attachments_and_refs_are_permanent(self) -> None:
         from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
 

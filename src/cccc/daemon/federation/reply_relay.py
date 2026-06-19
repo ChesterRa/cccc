@@ -144,22 +144,5 @@ def _registration_for_remote_peer(*, group_id: str, remote_group_id: str, remote
 def _trust_route_is_sendable(trust: Dict[str, Any]) -> bool:
     transport = str(trust.get("transport") or "").strip()
     if transport == "federation_session":
-        if str(trust.get("remote_endpoint") or "").strip():
-            return True
-        return _has_active_session(trust)
+        return True
     return False
-
-
-def _has_active_session(trust: Dict[str, Any]) -> bool:
-    try:
-        from .ws_session import get_session
-    except Exception:
-        return False
-    return (
-        get_session(
-            target_group_id=str(trust.get("group_id") or "").strip(),
-            src_group_id=str(trust.get("remote_group_id") or "").strip(),
-            remote_peer_id=str(trust.get("remote_peer_id") or "").strip(),
-        )
-        is not None
-    )

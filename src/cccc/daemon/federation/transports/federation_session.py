@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any, Mapping
+import urllib.error
+import urllib.request
 
 from .base import (
     RemoteMessageEnvelope,
@@ -13,6 +17,8 @@ from .base import (
     transient_result,
 )
 from ..remote_payloads import build_remote_chat_payload
+from ....paths import ensure_home
+from ....ports.web.runtime_control import http_url, local_connect_host, read_web_runtime_state
 
 
 class FederationSessionTransport(RemoteSendTransport):
@@ -65,13 +71,62 @@ def _send_session_request(
         )
         is None
     ):
-        return None
+        return _send_session_request_via_web_owner(
+            local_group_id=local_group_id,
+            remote_group_id=remote_group_id,
+            remote_peer_id=remote_peer_id,
+            request=request,
+        )
     return send_via_session_sync(
         target_group_id=local_group_id,
         src_group_id=remote_group_id,
         remote_peer_id=remote_peer_id,
         request=dict(request),
     )
+
+
+def _send_session_request_via_web_owner(
+    *,
+    local_group_id: str,
+    remote_group_id: str,
+    remote_peer_id: str,
+    request: Mapping[str, Any],
+    timeout: float = 5.0,
+) -> Mapping[str, Any] | None:
+    # The supervised web child owns inbound WebSocket objects. Daemon/MCP sends
+    # must route to that owner instead of reading their own process-local session map.
+    if os.environ.get("CCCC_WEB_SUPERVISED"):
+        return None
+    runtime = read_web_runtime_state(ensure_home())
+    try:
+        port = int(runtime.get("port") or 0)
+    except Exception:
+        port = 0
+    if port <= 0:
+        return None
+    host = local_connect_host(str(runtime.get("host") or "127.0.0.1"))
+    url = http_url(host, port, path="/api/federation/session/send")
+    body = json.dumps(
+        {
+            "target_group_id": local_group_id,
+            "src_group_id": remote_group_id,
+            "remote_peer_id": remote_peer_id,
+            "request": dict(request or {}),
+            "timeout": float(timeout or 5.0),
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=max(0.1, float(timeout or 5.0)) + 0.5) as resp:
+            parsed = json.loads(resp.read().decode("utf-8") or "{}")
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
 
 
 def _result_from_response(parsed: Mapping[str, Any], *, transport: str) -> RemoteSendResult:

@@ -115,6 +115,32 @@ class TestFederationReplyRelay(unittest.TestCase):
 
         self.assertEqual(registration_id, approved["registration"]["registration_id"])
 
+    def test_session_reply_route_without_endpoint_is_sendable_for_retry_without_local_session(self) -> None:
+        from cccc.daemon.federation.reply_relay import federation_reply_registration_id
+        from cccc.daemon.federation.ws_session import clear_sessions
+        from cccc.kernel.federation import pairing as pairing_kernel
+
+        original_data = {
+            "source_platform": "federation_session",
+            "source_user_id": "peer-main",
+            "src_group_id": "g_main",
+            "src_event_id": "remote-event-1",
+        }
+
+        with tempfile.TemporaryDirectory() as td, self._isolated_home(td):
+            invite = pairing_kernel.create_pairing_invite(group_id="g_cross")
+            request = pairing_kernel.create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_main",
+                requester_peer_id="peer-main",
+            )
+            approved = pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            clear_sessions()
+            registration_id = federation_reply_registration_id(group_id="g_cross", original_data=original_data)
+
+        self.assertEqual(registration_id, approved["registration"]["registration_id"])
+
     def test_http_inbound_source_multiaddrs_updates_address_book_only(self) -> None:
         import os
 

@@ -44,18 +44,80 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
         from cccc.ports.web.app import _is_public_path
         from starlette.requests import Request
 
-        request = Request({
-            "type": "http",
-            "method": "GET",
-            "path": "/api/federation/session/ws",
-            "headers": [],
-            "query_string": b"",
-            "server": ("testserver", 80),
-            "scheme": "http",
-            "client": ("testclient", 50000),
-        })
+        for path in ("/api/federation/session/ws", "/api/federation/session/send"):
+            request = Request({
+                "type": "http",
+                "method": "GET",
+                "path": path,
+                "headers": [],
+                "query_string": b"",
+                "server": ("testserver", 80),
+                "scheme": "http",
+                "client": ("testclient", 50000),
+            })
 
-        self.assertTrue(_is_public_path(request))
+            self.assertTrue(_is_public_path(request))
+
+    def test_federation_session_send_requires_loopback_owner_and_uses_web_session(self) -> None:
+        from cccc.daemon.federation.ws_session import FederationWsSession, clear_sessions, register_session
+
+        async def send_request(request, timeout):
+            return {"ok": True, "event_id": "remote-via-web-route", "request": dict(request), "timeout": timeout}
+
+        _, cleanup = self._with_home()
+        clear_sessions()
+        try:
+            import asyncio
+            from cccc.ports.web.app import create_app
+
+            asyncio.run(
+                register_session(
+                    FederationWsSession(
+                        target_group_id="g_local",
+                        src_group_id="g_remote",
+                        remote_peer_id="peer_remote",
+                        send_request=send_request,
+                    )
+                )
+            )
+            client = TestClient(create_app(), client=("127.0.0.1", 50000))
+            resp = client.post(
+                "/api/federation/session/send",
+                json={
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "request": {"op": "remote_send", "payload": {"text": "hi"}},
+                    "timeout": 1.0,
+                },
+            )
+            self.assertEqual(resp.status_code, 200, resp.text)
+            body = resp.json()
+            self.assertTrue(body["ok"])
+            self.assertEqual(body["event_id"], "remote-via-web-route")
+            self.assertEqual(body["request"]["payload"]["text"], "hi")
+        finally:
+            clear_sessions()
+            cleanup()
+
+    def test_federation_session_send_rejects_non_loopback_owner_calls(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.ports.web.app import create_app
+
+            client = TestClient(create_app(), client=("198.51.100.10", 50000))
+            resp = client.post(
+                "/api/federation/session/send",
+                json={
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "request": {"op": "remote_send"},
+                },
+            )
+            self.assertEqual(resp.status_code, 403, resp.text)
+        finally:
+            cleanup()
 
     def test_pairing_identity_invite_request_approve_flow(self) -> None:
         _, cleanup = self._with_home()
