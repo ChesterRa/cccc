@@ -301,8 +301,6 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
         return ["amp", "mcp", "add", "cccc", *cccc_cmd]
     if runtime == "auggie":
         return ["auggie", "mcp", "add", "cccc", "--", *cccc_cmd]
-    if runtime == "gemini":
-        return ["gemini", "mcp", "add", "-s", "user", "cccc", *cccc_cmd]
     if runtime == "grok":
         command = cccc_cmd[0] if cccc_cmd else "cccc"
         args = cccc_cmd[1:] if len(cccc_cmd) > 1 else ["mcp"]
@@ -430,9 +428,6 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         if entry is None:
             return "missing"
         return "ready" if _json_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
-
-    if runtime == "gemini":
-        return _json_mcp_state((_home_dir(env) / ".gemini" / "settings.json",), expected_cmd)
 
     if runtime == "grok":
         result = _run_cli(["grok", "mcp", "list", "--json"], timeout=10, env=env)

@@ -55,7 +55,6 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   claude: "claude --dangerously-skip-permissions",
   codex: "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
   droid: "droid --auto high",
-  gemini: "gemini --yolo",
   grok: "grok",
   kimi: "kimi --yolo",
   opencode: "opencode",

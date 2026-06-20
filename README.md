@@ -10,7 +10,7 @@
 ### Coordinate your coding agents like a group chat
 
 **Read receipts, delivery tracking, and remote ops from your phone —
-for Claude Code, Codex, Gemini, and 8 more runtimes in one durable group.**
+for Claude Code, Codex, ChatGPT Web, and 7 more runtimes in one durable group.**
 
 Run multiple coding agents as a **persistent, coordinated team** — not a pile of disconnected terminal sessions.
 
@@ -45,7 +45,7 @@ CCCC runs your agents as one durable, coordinated system:
 - **Durable coordination** — working state lives in an append-only ledger, not in terminal scrollback.
 - **Visible delivery semantics** — messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
 - **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
-- **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Gemini CLI, and the rest of the first-class runtimes can collaborate in one group.
+- **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Grok Build, and the rest of the first-class runtimes can collaborate in one group.
 - **Local-first operations** — one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
 ## What CCCC Does
@@ -57,7 +57,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, Grok Build, OpenCode, ChatGPT Web, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -135,7 +135,7 @@ graph TB
         A1["Claude Code"]
         A2["Codex CLI"]
         A3["ChatGPT Web<br/>GPT-5.x via MCP"]
-        A4["Gemini CLI"]
+        A4["Grok Build"]
         A5["+ 6 more + custom"]
     end
 
@@ -184,14 +184,13 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 11 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 10 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Command / Surface |
 |---------|-------------|-------------------|
 | Claude Code | Auto MCP setup | `claude` |
 | Codex CLI | Auto MCP setup | `codex` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
-| Gemini CLI | Auto MCP setup | `gemini` |
 | Grok Build | Auto MCP setup | `grok` |
 | Hermes Agent | Auto MCP setup | `hermes` |
 | Droid | Auto MCP setup | `droid` |
@@ -365,7 +364,7 @@ Agents with MCP access can self-organize: read inbox state, reply visibly, coord
 | Multiple coding agents collaborating on one codebase | ✅ Core use case |
 | Human + agent coordination with full audit trail | ✅ Core use case |
 | Long-running groups managed remotely via phone/IM | ✅ Strong fit |
-| Multi-runtime teams (e.g., Claude + Codex + Gemini) | ✅ Strong fit |
+| Multi-runtime teams (e.g., Claude + Codex + Kimi) | ✅ Strong fit |
 | Single-agent local coding helper | ⚠️ Works, but CCCC's value shines with multiple participants |
 | Pure DAG workflow orchestration | ❌ Use a dedicated orchestrator; CCCC can complement it |
 
@@ -375,7 +374,7 @@ CCCC is a **collaboration kernel** — it owns the coordination layer and stays 
 
 | If you already use | It is great at | What CCCC adds |
 |---|---|---|
-| **Native agent teams** (e.g. Claude Code subagents/teams) | The smoothest single-vendor teamwork inside one session | Cross-vendor groups (Claude + Codex + Gemini + Kimi…), state that survives restarts, phone/IM operations, and a full audit ledger |
+| **Native agent teams** (e.g. Claude Code subagents/teams) | The smoothest single-vendor teamwork inside one session | Cross-vendor groups (Claude + Codex + Grok + Kimi…), state that survives restarts, phone/IM operations, and a full audit ledger |
 | **Parallel task runners** (worktree/task-board tools) | Isolated, parallel task execution | A coordination layer: agents that talk, hand off, ack, and get nudged — plus 24/7 daemon-owned operations |
 | **IM assistant gateways** | A personal assistant living in your chat app | Delivery-grade work semantics: tracked tasks, read/ack receipts, multi-agent groups, and a durable audit trail |
 
@@ -460,7 +459,7 @@ cd docker
 docker compose up -d  # then create an Admin Access Token in Settings > Web Access before exposing beyond localhost
 ```
 
-The Docker image bundles Claude Code, Codex CLI, Gemini CLI, and Factory CLI. See [`docker/`](docker/) for full configuration.
+The Docker image bundles Claude Code, Codex CLI, and Factory CLI. See [`docker/`](docker/) for full configuration.
 
 ### Upgrading from 0.3.x
 

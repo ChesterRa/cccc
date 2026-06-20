@@ -43,7 +43,6 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 
 # Install other CLI tools via npm
 RUN npm install -g \
-    @google/gemini-cli \
     @openai/codex \
     @factory/cli
 

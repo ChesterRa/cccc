@@ -14,7 +14,7 @@ Guide the user step-by-step through Docker deployment. Ask questions interactive
 
 ## What you're deploying
 CCCC is a multi-agent collaboration hub. The Docker image includes Python 3.11, Node.js 20,
-and pre-installed AI agent CLIs (Claude Code, Gemini CLI, Codex CLI, Factory CLI).
+and pre-installed AI agent CLIs (Claude Code, Codex CLI, Factory CLI).
 
 ## Step 1: Get the source code
 Ask: "Do you already have the CCCC repo cloned? If yes, what's the path?"
@@ -30,7 +30,7 @@ If build fails, check: Docker version >= 20.10, sufficient disk space, network a
 Ask each one individually:
 1. "What port do you want the Web UI on? (default: 8848)"
 2. "Where are your project files? (absolute path, will be mounted to /workspace)"
-3. "Which AI agent API keys do you have? (ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY / GEMINI_API_KEY)"
+3. "Which AI agent API keys do you have? (ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY)"
 4. "Will this stay localhost-only until you create an Admin Access Token in Web Access?"
 
 ## Step 4: Run the container
@@ -53,7 +53,7 @@ Run these and report results:
 - Volume permission errors after upgrading: `docker run --rm -v cccc-data:/data python:3.11-slim chown -R 1000:1000 /data`
 - Claude CLI onboarding already pre-configured via: `{"hasCompletedOnboarding":true}` in /home/cccc/.claude.json
 - Custom Claude CLI config: `docker exec cccc sh -c 'cat > /home/cccc/.claude.json << EOF\n{your json}\nEOF'`
-- Check runtime CLIs: `docker exec cccc claude --version` / `gemini --version` / `codex --version`
+- Check runtime CLIs: `docker exec cccc claude --version` / `codex --version`
 
 ## Optional: Docker Compose
 If user prefers Compose, point them to the bundled docker/docker-compose.yml:
@@ -75,7 +75,6 @@ If user prefers Compose, point them to the bundled docker/docker-compose.yml:
 | CCCC_DAEMON_PORT | 9765 | Daemon IPC port |
 | ANTHROPIC_AUTH_TOKEN | (none) | Auth token for Claude |
 | OPENAI_API_KEY | (none) | API key for Codex runtime |
-| GEMINI_API_KEY | (none) | API key for Gemini CLI runtime |
 
 ## Tone: concise, practical, one step at a time. Confirm each step succeeds before moving on.
 ```
@@ -98,7 +97,7 @@ docker build -f docker/Dockerfile -t cccc .
 ```
 
 ::: tip Build Context
-The build uses a multi-stage approach: first compiles the Web UI (Node.js), then packages the Python daemon with pre-installed AI agent CLIs (Claude Code, Gemini CLI, Codex CLI).
+The build uses a multi-stage approach: first compiles the Web UI (Node.js), then packages the Python daemon with pre-installed AI agent CLIs (Claude Code, Codex CLI).
 :::
 
 ### 2. Run the Container
@@ -144,7 +143,6 @@ docker exec cccc cccc doctor
 | `ANTHROPIC_BASE_URL` | _(none)_ | Custom API endpoint for Claude Code |
 | `OPENAI_API_KEY` | _(none)_ | API key for Codex runtime |
 | `OPENAI_BASE_URL` | _(none)_ | CCCC compatibility entry for Codex custom endpoints. CCCC maps this to Codex CLI's `openai_base_url` runtime config when launching Codex actors. |
-| `GEMINI_API_KEY` | _(none)_ | API key for Gemini CLI runtime |
 
 ### Volume Mounts
 
@@ -273,7 +271,7 @@ docker run --rm -v cccc-data:/data python:3.11-slim \
 
 ### Agent CLI Not Found
 
-The image ships with Claude Code, Gemini CLI, and Codex CLI pre-installed. If a runtime isn't detected:
+The image ships with Claude Code and Codex CLI pre-installed. If a runtime isn't detected:
 
 ```bash
 # Check available runtimes
@@ -281,7 +279,6 @@ docker exec cccc cccc doctor
 
 # Verify CLI availability
 docker exec cccc claude --version
-docker exec cccc gemini --version
 docker exec cccc codex --version
 ```
 
@@ -304,7 +301,6 @@ The Docker image includes:
 | Python 3.11 | CCCC daemon runtime |
 | Node.js 20 | Agent CLI runtime (npm-based tools) |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic's AI coding agent |
-| [Gemini CLI](https://github.com/google/gemini-cli) | Google's AI coding agent |
 | [Codex CLI](https://github.com/openai/codex) | OpenAI's AI coding agent |
 | [Factory CLI](https://www.factory.ai/) | Factory's AI coding agent |
 | Git | Version control |

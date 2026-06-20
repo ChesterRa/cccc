@@ -312,7 +312,6 @@ Recommended options:
 | claude | `claude` | Claude Code |
 | codex | `codex` | Codex CLI |
 | droid | `droid` | Droid |
-| gemini | `gemini` | Gemini CLI |
 | grok | `grok` | Grok Build |
 | hermes | `hermes --tui --yolo` | Hermes Agent |
 | kimi | `kimi --yolo` | Kimi CLI |
@@ -330,7 +329,6 @@ cccc setup --runtime codex
 cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
-cccc setup --runtime gemini
 cccc setup --runtime grok
 cccc setup --runtime hermes
 cccc setup --runtime kimi

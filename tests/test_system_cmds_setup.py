@@ -33,7 +33,6 @@ class TestSystemCmdsSetup(unittest.TestCase):
                 "droid",
                 "amp",
                 "auggie",
-                "gemini",
                 "grok",
                 "hermes",
                 "kimi",

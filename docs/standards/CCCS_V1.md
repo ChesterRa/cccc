@@ -29,7 +29,7 @@ CCCS v1 MUST enable:
 
 CCCS v1 does NOT standardize:
 - Any specific workflow engine, DAG, or no-code builder.
-- Any model/provider API (OpenAI/Claude/Gemini/etc.) or prompt format.
+- Any model/provider API (OpenAI/Claude/etc.) or prompt format.
 - Any single transport (Unix socket, HTTP, SSE, WS, gRPC). CCCS v1 is transport-agnostic.
 - Multi-tenant auth schemes (but it reserves fields and rules for provenance/permissions).
 

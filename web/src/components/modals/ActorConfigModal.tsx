@@ -128,10 +128,6 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: "# Configure OpenAI-compatible Codex providers with Codex config or command -c overrides.",
     unset: "",
   },
-  gemini: {
-    set: 'GOOGLE_API_KEY="..."',
-    unset: "GOOGLE_API_KEY",
-  },
   grok: {
     set: "# Configure Grok providers and auth through Grok config or environment variables.",
     unset: "",

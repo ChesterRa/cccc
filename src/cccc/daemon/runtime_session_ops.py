@@ -28,7 +28,6 @@ _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _ID_RE = r"([A-Za-z0-9][A-Za-z0-9._:-]{7,})"
 _CLAUDE_RESUME_RE = re.compile(rf"\bclaude\s+(?:--resume|-r)\s+{_ID_RE}\b")
 _CODEX_RESUME_RE = re.compile(rf"\bcodex\s+resume\s+{_ID_RE}\b")
-_GEMINI_RESUME_RE = re.compile(rf"\bgemini\s+(?:--resume|-r)\s+{_ID_RE}\b")
 _CODEX_SESSION_ID_RE = r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
 _CODEX_STATUS_SESSION_RE = re.compile(rf"\bSession:\s*{_CODEX_SESSION_ID_RE}\b")
 
@@ -52,13 +51,6 @@ _CODEX_KNOWN_SUBCOMMANDS = {
     "sandbox",
     "server",
     "status",
-}
-_GEMINI_KNOWN_SUBCOMMANDS = {
-    "auth",
-    "extensions",
-    "help",
-    "mcp",
-    "resume",
 }
 
 
@@ -227,15 +219,6 @@ def parse_runtime_resume_hint(text: str | bytes, *, runtime: str = "") -> Dict[s
         if match:
             return {
                 "runtime": "codex",
-                "provider_session_id": match.group(1),
-                "resume_command_hint": match.group(0).strip(),
-            }
-
-    if wanted in {"", "gemini"}:
-        match = _GEMINI_RESUME_RE.search(source)
-        if match:
-            return {
-                "runtime": "gemini",
                 "provider_session_id": match.group(1),
                 "resume_command_hint": match.group(0).strip(),
             }
@@ -422,27 +405,8 @@ def _has_claude_session_control(args: list[str]) -> bool:
     return False
 
 
-def _has_gemini_session_control(args: list[str]) -> bool:
-    for item in args[1:]:
-        value = str(item or "").strip()
-        if value in {"--resume", "-r", "--session-id"}:
-            return True
-        if value.startswith("--resume=") or value.startswith("--session-id="):
-            return True
-    return False
-
-
 def _claude_resume_command(base_command: list[str], session_id: str) -> list[str]:
     if not base_command or _has_claude_session_control(base_command):
-        return []
-    return [base_command[0], "--resume", session_id, *base_command[1:]]
-
-
-def _gemini_resume_command(base_command: list[str], session_id: str) -> list[str]:
-    if not base_command or _has_gemini_session_control(base_command):
-        return []
-    rest = [str(item or "").strip() for item in base_command[1:]]
-    if any(item in _GEMINI_KNOWN_SUBCOMMANDS for item in rest):
         return []
     return [base_command[0], "--resume", session_id, *base_command[1:]]
 
@@ -475,34 +439,6 @@ def _claude_initial_session_command(
         provider_session_id=session_id,
         resume_command_hint=f"claude --resume {session_id}",
         captured_from="claude_generated_session_id",
-        status="usable",
-        resume_eligible=True,
-    )
-    return [base_command[0], "--session-id", session_id, *base_command[1:]], doc
-
-
-def _gemini_initial_session_command(
-    *,
-    group_id: str,
-    actor_id: str,
-    cwd: Path,
-    base_command: list[str],
-) -> Tuple[list[str], Optional[Dict[str, Any]]]:
-    if not base_command or _has_gemini_session_control(base_command):
-        return base_command, None
-    rest = [str(item or "").strip() for item in base_command[1:]]
-    if any(item in _GEMINI_KNOWN_SUBCOMMANDS for item in rest):
-        return base_command, None
-    session_id = str(uuid.uuid4())
-    doc = record_pty_runtime_session(
-        group_id=group_id,
-        actor_id=actor_id,
-        runtime="gemini",
-        cwd=cwd,
-        command=base_command,
-        provider_session_id=session_id,
-        resume_command_hint=f"gemini --resume {session_id}",
-        captured_from="gemini_generated_session_id",
         status="usable",
         resume_eligible=True,
     )
@@ -756,8 +692,6 @@ def prepare_initial_pty_session_command(
     runtime_norm = str(runtime or "").strip().lower()
     if runtime_norm == "claude":
         return _claude_initial_session_command(group_id=group_id, actor_id=actor_id, cwd=cwd, base_command=command)
-    if runtime_norm == "gemini":
-        return _gemini_initial_session_command(group_id=group_id, actor_id=actor_id, cwd=cwd, base_command=command)
     if runtime_norm == "codex":
         return command, None
     return command, None
@@ -777,7 +711,7 @@ def prepare_pty_resume_command(
         return command, None
 
     runtime_norm = str(runtime or "").strip().lower()
-    if runtime_norm not in {"claude", "codex", "gemini"}:
+    if runtime_norm not in {"claude", "codex"}:
         return command, None
 
     doc = read_runtime_session(group_id, actor_id)
@@ -806,8 +740,6 @@ def prepare_pty_resume_command(
 
     if runtime_norm == "claude":
         resume_command = _claude_resume_command(command, session_id)
-    elif runtime_norm == "gemini":
-        resume_command = _gemini_resume_command(command, session_id)
     else:
         resume_command = _codex_resume_command(command, session_id)
     if not resume_command:
@@ -1026,7 +958,7 @@ def _start_fresh_pty_actor_after_resume_failure(
     runtime_norm = str(runtime or "").strip().lower()
     fresh_command = list(base_command)
     fresh_doc: Optional[Dict[str, Any]] = None
-    if runtime_norm in {"claude", "gemini"}:
+    if runtime_norm == "claude":
         fresh_command, fresh_doc = prepare_initial_pty_session_command(
             group_id=group_id,
             actor_id=actor_id,

@@ -80,10 +80,8 @@ describe("shouldSuppressTerminalGeneratedInput", () => {
   });
 
   it("preserves existing suppression for runtimes that already needed it", () => {
-    for (const runtime of ["droid", "gemini"]) {
-      expect(shouldSuppressTerminalGeneratedInput("\x1b[?1;2c", runtime)).toBe(true);
-      expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:0f0f/1717/2a2a\x1b\\", runtime)).toBe(true);
-    }
+    expect(shouldSuppressTerminalGeneratedInput("\x1b[?1;2c", "droid")).toBe(true);
+    expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:0f0f/1717/2a2a\x1b\\", "droid")).toBe(true);
   });
 });
 

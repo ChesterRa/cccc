@@ -20,7 +20,6 @@ services:
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
 volumes:
   cccc-data:

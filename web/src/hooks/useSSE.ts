@@ -1138,7 +1138,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         // When a renderable canonical reply arrives from a non-user actor,
         // clear any resolved queued-only streaming placeholders for that actor.
         // For headless actors this is handled by headless.turn.completed; this path
-        // covers all other runtimes (claude, gemini, etc.).
+        // covers all other runtimes (claude, grok, etc.).
         if (isChatMessageEvent(nextEvent) && hasRenderableChatMessageContent(nextEvent)) {
           const actorId = String(nextEvent.by || "").trim();
           if (actorId && actorId !== "user") {

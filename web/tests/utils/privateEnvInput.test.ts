@@ -37,14 +37,14 @@ describe("privateEnvInput", () => {
   });
 
   it("parses unset statements across POSIX, cmd, and PowerShell forms", () => {
-    const result = parsePrivateEnvUnsetText("unset OPENAI_API_KEY;\nset OPENAI_BASE_URL=\nRemove-Item Env:ANTHROPIC_API_KEY\n$env:GEMINI_API_KEY=$null");
+    const result = parsePrivateEnvUnsetText("unset OPENAI_API_KEY;\nset OPENAI_BASE_URL=\nRemove-Item Env:ANTHROPIC_API_KEY\n$env:MISTRAL_API_KEY=$null");
     expect(result).toEqual({
       ok: true,
       unsetKeys: [
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
+        "MISTRAL_API_KEY",
       ],
     });
   });

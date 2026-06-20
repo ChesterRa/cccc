@@ -61,12 +61,6 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "droid mcp add --type stdio {name} {cmd}",
     },
-    "gemini": {
-        "display_name": "Gemini CLI",
-        "command": "gemini",
-        "capabilities": "MCP; MCP setup: auto",
-        "mcp_add_pattern": "gemini mcp add -s user {name} {cmd}",
-    },
     "grok": {
         "display_name": "Grok Build",
         "command": "grok",
@@ -112,7 +106,6 @@ PRIMARY_RUNTIMES = [
     "droid",
     "amp",
     "auggie",
-    "gemini",
     "grok",
     "hermes",
     "kimi",
@@ -180,7 +173,7 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, gemini, grok, hermes, kimi, opencode).
+        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, grok, hermes, kimi, opencode).
                      If False, check all configured runtimes (including custom).
     
     Returns:
@@ -273,7 +266,6 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
         "droid": ["droid", "--auto", "high"],
-        "gemini": ["gemini", "--yolo"],
         "grok": ["grok"],
         "hermes": ["hermes", "--tui", "--yolo"],
         "kimi": ["kimi", "--yolo"],

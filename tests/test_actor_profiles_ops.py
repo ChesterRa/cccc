@@ -1,6 +1,8 @@
+import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 
 class TestActorProfilesOps(unittest.TestCase):
@@ -64,6 +66,111 @@ class TestActorProfilesOps(unittest.TestCase):
         assert isinstance(profile, dict)
         self.assertTrue(str(profile.get("id") or "").strip())
         return profile
+
+    def _write_raw_profiles(self, home: str, profiles: dict) -> None:
+        path = Path(home) / "state" / "actor_profiles" / "profiles.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "v": 1,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "profiles": profiles,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_legacy_unsupported_profile_runtimes_load_as_custom(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            self._write_raw_profiles(
+                home,
+                {
+                    "legacy-gemini": {
+                        "id": "legacy-gemini",
+                        "name": "Legacy Gemini",
+                        "runtime": "gemini",
+                        "runner": "pty",
+                        "submit": "enter",
+                        "env": {},
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "revision": 1,
+                    },
+                    "legacy-future": {
+                        "id": "legacy-future",
+                        "name": "Legacy Future Runtime",
+                        "runtime": "future-runtime",
+                        "runner": "pty",
+                        "command": ["future-cli", "--flag"],
+                        "submit": "enter",
+                        "env": {},
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "revision": 1,
+                    },
+                },
+            )
+
+            list_resp, _ = self._call("actor_profile_list", {"by": "user"})
+            self.assertTrue(list_resp.ok, getattr(list_resp, "error", None))
+            profiles = {
+                str(item.get("id") or ""): item
+                for item in ((list_resp.result or {}).get("profiles") or [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("legacy-gemini", profiles)
+            self.assertIn("legacy-future", profiles)
+            self.assertEqual(profiles["legacy-gemini"].get("runtime"), "custom")
+            self.assertEqual(profiles["legacy-gemini"].get("command"), [])
+            self.assertEqual(profiles["legacy-future"].get("runtime"), "custom")
+            self.assertEqual(profiles["legacy-future"].get("command"), ["future-cli", "--flag"])
+
+            get_resp, _ = self._call("actor_profile_get", {"by": "user", "profile_id": "legacy-gemini"})
+            self.assertTrue(get_resp.ok, getattr(get_resp, "error", None))
+            profile = (get_resp.result or {}).get("profile") if isinstance(get_resp.result, dict) else {}
+            self.assertIsInstance(profile, dict)
+            assert isinstance(profile, dict)
+            self.assertEqual(profile.get("runtime"), "custom")
+
+            group_id = self._create_group("ap-legacy-runtime-profile")
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Legacy Profile Peer",
+                    "runtime": "grok",
+                    "runner": "pty",
+                    "profile_id": "legacy-future",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            actor = (add.result or {}).get("actor") if isinstance(add.result, dict) else {}
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(actor.get("runtime"), "custom")
+            self.assertEqual(actor.get("command"), ["future-cli", "--flag"])
+
+            bad_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "name": "New Unknown Runtime",
+                        "runtime": "future-runtime",
+                        "runner": "pty",
+                        "command": ["future-cli"],
+                    },
+                },
+            )
+            self.assertFalse(bad_upsert.ok)
+            self.assertEqual(getattr(bad_upsert.error, "code", ""), "actor_profile_upsert_failed")
+        finally:
+            cleanup()
 
     def test_profile_upsert_revision_and_secret_keys(self) -> None:
         _, cleanup = self._with_home()
@@ -153,7 +260,7 @@ class TestActorProfilesOps(unittest.TestCase):
                     "group_id": group_id,
                     "actor_id": "peer1",
                     "title": "peer1",
-                    "runtime": "gemini",  # should be overridden by profile
+                    "runtime": "grok",  # should be overridden by profile
                     "runner": "pty",
                     "profile_id": pid,
                     "by": "user",
@@ -419,7 +526,7 @@ class TestActorProfilesOps(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "actor_id": "lead",
-                    "runtime": "gemini",
+                    "runtime": "grok",
                     "runner": "headless",
                     "title": "Foreman",
                     "by": "user",
@@ -432,7 +539,7 @@ class TestActorProfilesOps(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "runtime": "gemini",  # should be overridden by profile
+                    "runtime": "grok",  # should be overridden by profile
                     "runner": "headless",
                     "title": "Peer One",
                     "profile_id": pid,
@@ -585,7 +692,7 @@ class TestActorProfilesOps(unittest.TestCase):
                     "group_id": group_id,
                     "actor_id": "peer1",
                     "title": "Peer One",
-                    "runtime": "gemini",
+                    "runtime": "grok",
                     "runner": "headless",
                     "by": "user",
                 },
@@ -632,7 +739,7 @@ class TestActorProfilesOps(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "runtime": "gemini",
+                    "runtime": "grok",
                     "runner": "headless",
                     "by": "user",
                 },

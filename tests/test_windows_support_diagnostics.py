@@ -215,13 +215,13 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
 
         mock_terminate.assert_called_once_with(4321, timeout_s=1.0, include_group=True, force=True)
 
-    def test_windows_pty_replies_to_gemini_device_attributes_when_writer_attached(self) -> None:
+    def test_windows_pty_replies_to_droid_device_attributes_when_writer_attached(self) -> None:
         from cccc.runners import pty_win
 
         session = object.__new__(pty_win.PtySession)
         session._query_tail = b""
         session._writer_fd = object()
-        session._runtime = "gemini"
+        session._runtime = "droid"
         session._lock = threading.RLock()
         writes: list[bytes] = []
         session.write_input = lambda data: writes.append(bytes(data)) or True
@@ -244,13 +244,13 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
         session = object.__new__(pty_win.PtySession)
         session._query_tail = b""
         session._writer_fd = object()
-        session._runtime = "gemini"
+        session._runtime = "droid"
         session._lock = threading.RLock()
         writes: list[bytes] = []
         session.write_input = lambda data: writes.append(bytes(data)) or True
 
         session._maybe_reply_to_terminal_queries(b"\x1b[c")
-        session._maybe_reply_to_terminal_queries(b"Gemini ready")
+        session._maybe_reply_to_terminal_queries(b"Droid ready")
 
         self.assertEqual(writes, [b"\x1b[?1;2c"])
 

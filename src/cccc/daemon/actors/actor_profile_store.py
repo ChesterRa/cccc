@@ -7,15 +7,16 @@ import re
 import secrets
 import shlex
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, get_args
 
-from ...contracts.v1 import ActorProfile, ActorProfileRef
+from ...contracts.v1 import ActorProfile, ActorProfileRef, AgentRuntime
 from ...kernel.runtime import get_runtime_command_with_flags
 from ...paths import ensure_home
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import utc_now_iso
 
 _PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_SUPPORTED_PROFILE_RUNTIMES = {str(item) for item in get_args(AgentRuntime)}
 
 
 class ProfileRevisionMismatchError(RuntimeError):
@@ -194,10 +195,41 @@ def _model_from_raw_profile(raw: Any, *, storage_key: str) -> Optional[ActorProf
         payload.setdefault("id", storage_key)
     payload.setdefault("scope", "global")
     payload.setdefault("owner_id", "")
+    payload = _coerce_legacy_profile_runtime(payload)
     try:
         return ActorProfile.model_validate(payload)
     except Exception:
         return None
+
+
+def _profile_command_items(command: Any) -> List[str]:
+    if isinstance(command, list):
+        return [str(item).strip() for item in command if isinstance(item, str) and str(item).strip()]
+    if isinstance(command, str):
+        raw = command.strip()
+        if not raw:
+            return []
+        try:
+            return shlex.split(raw)
+        except Exception:
+            return [raw]
+    return []
+
+
+def _coerce_legacy_profile_runtime(payload: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_raw = str(payload.get("runtime") or "codex").strip() or "codex"
+    runtime_norm = runtime_raw.lower()
+    if runtime_raw in _SUPPORTED_PROFILE_RUNTIMES:
+        return payload
+    if runtime_norm in _SUPPORTED_PROFILE_RUNTIMES:
+        out = dict(payload)
+        out["runtime"] = runtime_norm
+        return out
+
+    out = dict(payload)
+    out["runtime"] = "custom"
+    out["command"] = _profile_command_items(out.get("command"))
+    return out
 
 
 def _iter_profiles(raw_profiles: Dict[str, Any]) -> List[tuple[str, ActorProfile]]:

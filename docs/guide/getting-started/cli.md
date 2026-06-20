@@ -19,7 +19,7 @@ This binds the current directory as a "scope" and creates a working group.
 ## Step 3: Configure MCP for Your Runtime
 
 ```bash
-cccc setup --runtime claude   # or codex, droid, gemini, kimi
+cccc setup --runtime claude   # or codex, droid, grok, kimi
 ```
 
 This configures the MCP (Model Context Protocol) so agents can interact with CCCC.

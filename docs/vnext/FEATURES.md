@@ -236,7 +236,6 @@ Ledger (完整记忆)
 | claude | `claude` | Claude Code |
 | codex | `codex` | Codex CLI |
 | droid | `droid` | Droid |
-| gemini | `gemini` | Gemini CLI |
 | kimi | `kimi --yolo` | Kimi CLI |
 | neovate | `neovate` | Neovate Code |
 | custom | 自定义 | 任意命令 |
@@ -252,7 +251,6 @@ cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime neovate
-cccc setup --runtime gemini
 cccc setup --runtime kimi
 cccc setup --runtime custom
 ```

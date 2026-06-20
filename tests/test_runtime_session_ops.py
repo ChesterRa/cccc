@@ -43,10 +43,6 @@ class TestRuntimeSessionOps(unittest.TestCase):
             parse_codex_status_session_id("Session:                     019dbe1d-cd97-7d31-9ba6-212d3e57b15c"),
             "019dbe1d-cd97-7d31-9ba6-212d3e57b15c",
         )
-        gemini = parse_runtime_resume_hint("Resume later with: gemini --resume gemini-session-1234")
-        self.assertEqual(gemini.get("runtime"), "gemini")
-        self.assertEqual(gemini.get("provider_session_id"), "gemini-session-1234")
-
     def test_pty_resume_verify_default_is_long_enough_for_slow_provider_resume(self) -> None:
         from cccc.daemon.runtime_session_ops import _pty_resume_verify_seconds
 
@@ -117,83 +113,6 @@ class TestRuntimeSessionOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_gemini_first_start_generates_explicit_session_id(self) -> None:
-        home, cleanup = self._with_home()
-        try:
-            from cccc.daemon.runtime_session_ops import prepare_initial_pty_session_command, read_runtime_session
-
-            cwd = home / "repo"
-            cwd.mkdir()
-            with patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value="a3df810a-6a19-48e8-b75b-772d3ee65721"):
-                command, doc = prepare_initial_pty_session_command(
-                    group_id="g1",
-                    actor_id="peer1",
-                    runtime="gemini",
-                    cwd=cwd,
-                    base_command=["gemini", "--yolo"],
-                    env={},
-                    max_backlog_bytes=1000,
-                )
-
-            self.assertEqual(command, ["gemini", "--session-id", "a3df810a-6a19-48e8-b75b-772d3ee65721", "--yolo"])
-            self.assertIsNotNone(doc)
-            stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("runtime"), "gemini")
-            self.assertEqual(stored.get("provider_session_id"), "a3df810a-6a19-48e8-b75b-772d3ee65721")
-            self.assertEqual(stored.get("resume_command_hint"), "gemini --resume a3df810a-6a19-48e8-b75b-772d3ee65721")
-            self.assertEqual(stored.get("captured_from"), "gemini_generated_session_id")
-            self.assertTrue(bool(stored.get("resume_eligible")))
-        finally:
-            cleanup()
-
-    def test_gemini_existing_session_control_or_subcommand_is_not_rewritten(self) -> None:
-        home, cleanup = self._with_home()
-        try:
-            from cccc.daemon.runtime_session_ops import prepare_initial_pty_session_command, read_runtime_session
-
-            cwd = home / "repo"
-            cwd.mkdir()
-            command, doc = prepare_initial_pty_session_command(
-                group_id="g1",
-                actor_id="peer1",
-                runtime="gemini",
-                cwd=cwd,
-                base_command=["gemini", "--session-id", "user-owned-session", "--yolo"],
-                env={},
-                max_backlog_bytes=1000,
-            )
-            self.assertEqual(command, ["gemini", "--session-id", "user-owned-session", "--yolo"])
-            self.assertIsNone(doc)
-
-            command, doc = prepare_initial_pty_session_command(
-                group_id="g1",
-                actor_id="peer-short",
-                runtime="gemini",
-                cwd=cwd,
-                base_command=["gemini", "-r", "latest", "--yolo"],
-                env={},
-                max_backlog_bytes=1000,
-            )
-            self.assertEqual(command, ["gemini", "-r", "latest", "--yolo"])
-            self.assertIsNone(doc)
-
-            command, doc = prepare_initial_pty_session_command(
-                group_id="g1",
-                actor_id="peer2",
-                runtime="gemini",
-                cwd=cwd,
-                base_command=["gemini", "mcp", "add", "cccc"],
-                env={},
-                max_backlog_bytes=1000,
-            )
-            self.assertEqual(command, ["gemini", "mcp", "add", "cccc"])
-            self.assertIsNone(doc)
-            self.assertEqual(read_runtime_session("g1", "peer1"), {})
-            self.assertEqual(read_runtime_session("g1", "peer2"), {})
-            self.assertEqual(read_runtime_session("g1", "peer-short"), {})
-        finally:
-            cleanup()
-
     def test_existing_claude_session_prepares_explicit_resume(self) -> None:
         home, cleanup = self._with_home()
         try:
@@ -226,38 +145,6 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 command,
                 ["claude", "--resume", "42e9ef0c-3b75-43a0-9056-eef13dd1061d", "--dangerously-skip-permissions"],
             )
-        finally:
-            cleanup()
-
-    def test_existing_gemini_session_prepares_explicit_resume(self) -> None:
-        home, cleanup = self._with_home()
-        try:
-            from cccc.daemon.runtime_session_ops import (
-                prepare_pty_resume_command,
-                record_pty_runtime_session,
-            )
-
-            cwd = home / "repo"
-            cwd.mkdir()
-            record_pty_runtime_session(
-                group_id="g1",
-                actor_id="peer1",
-                runtime="gemini",
-                cwd=cwd,
-                command=["gemini", "--yolo"],
-                provider_session_id="a3df810a-6a19-48e8-b75b-772d3ee65721",
-                captured_from="gemini_generated_session_id",
-            )
-
-            command, resume_doc = prepare_pty_resume_command(
-                group_id="g1",
-                actor_id="peer1",
-                runtime="gemini",
-                cwd=cwd,
-                base_command=["gemini", "--yolo"],
-            )
-            self.assertIsNotNone(resume_doc)
-            self.assertEqual(command, ["gemini", "--resume", "a3df810a-6a19-48e8-b75b-772d3ee65721", "--yolo"])
         finally:
             cleanup()
 
@@ -409,15 +296,15 @@ class TestRuntimeSessionOps(unittest.TestCase):
                     group_id="g1",
                     actor_id="peer1",
                     cwd=cwd,
-                    base_command=["gemini", "--yolo"],
+                    base_command=["grok"],
                     env={},
-                    runtime="gemini",
+                    runtime="grok",
                     max_backlog_bytes=1000,
                     runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
                 )
 
             self.assertIsInstance(session, ExistingSession)
-            self.assertEqual(calls, [["gemini", "--yolo"]])
+            self.assertEqual(calls, [["grok"]])
             self.assertEqual(read_runtime_session("g1", "peer1"), {})
         finally:
             cleanup()
@@ -591,73 +478,6 @@ class TestRuntimeSessionOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_gemini_resume_failure_fallback_generates_new_durable_session(self) -> None:
-        home, cleanup = self._with_home()
-        try:
-            from cccc.daemon.runtime_session_ops import (
-                read_runtime_session,
-                record_pty_runtime_session,
-                start_pty_actor_with_runtime_resume,
-            )
-
-            cwd = home / "repo"
-            cwd.mkdir()
-            record_pty_runtime_session(
-                group_id="g1",
-                actor_id="peer1",
-                runtime="gemini",
-                cwd=cwd,
-                command=["gemini", "--yolo"],
-                provider_session_id="old-gemini-session-id",
-                captured_from="gemini_generated_session_id",
-            )
-
-            calls: list[list[str]] = []
-
-            class FreshSession:
-                pid = 222
-
-            def fake_start_actor(**kwargs):
-                calls.append(list(kwargs.get("command") or []))
-                if len(calls) == 1:
-                    raise RuntimeError("resume session not found")
-                return FreshSession()
-
-            new_session_id = "42e9ef0c-3b75-43a0-9056-eef13dd1061d"
-            with patch(
-                "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
-                side_effect=fake_start_actor,
-            ), patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value=new_session_id):
-                session = start_pty_actor_with_runtime_resume(
-                    group_id="g1",
-                    actor_id="peer1",
-                    cwd=cwd,
-                    base_command=["gemini", "--yolo"],
-                    env={},
-                    runtime="gemini",
-                    max_backlog_bytes=1000,
-                    runtime_start_preflight_error=lambda runtime, command, runner="pty": "",
-                )
-
-            self.assertIsInstance(session, FreshSession)
-            self.assertEqual(
-                calls,
-                [
-                    ["gemini", "--resume", "old-gemini-session-id", "--yolo"],
-                    ["gemini", "--session-id", new_session_id, "--yolo"],
-                ],
-            )
-            stored = read_runtime_session("g1", "peer1")
-            self.assertEqual(stored.get("runtime"), "gemini")
-            self.assertEqual(stored.get("provider_session_id"), new_session_id)
-            self.assertEqual(stored.get("resume_command_hint"), f"gemini --resume {new_session_id}")
-            self.assertEqual(stored.get("captured_from"), "gemini_generated_session_id")
-            self.assertEqual(stored.get("status"), "usable")
-            self.assertTrue(bool(stored.get("resume_eligible")))
-            self.assertEqual(str(stored.get("last_resume_error") or ""), "")
-        finally:
-            cleanup()
-
     def test_resume_quick_exit_falls_back_to_fresh_actor(self) -> None:
         home, cleanup = self._with_home()
         try:
@@ -814,32 +634,32 @@ class TestRuntimeSessionOps(unittest.TestCase):
             record_pty_runtime_session(
                 group_id="g1",
                 actor_id="peer1",
-                runtime="gemini",
+                runtime="claude",
                 cwd=cwd,
-                command=["gemini", "--yolo"],
+                command=["claude"],
                 provider_session_id="old-session-id",
-                captured_from="gemini_generated_session_id",
+                captured_from="claude_generated_session_id",
             )
             command, resume_doc = prepare_pty_resume_command(
                 group_id="g1",
                 actor_id="peer1",
-                runtime="gemini",
+                runtime="claude",
                 cwd=cwd,
-                base_command=["gemini", "--yolo"],
+                base_command=["claude"],
             )
-            self.assertEqual(command, ["gemini", "--resume", "old-session-id", "--yolo"])
+            self.assertEqual(command, ["claude", "--resume", "old-session-id"])
             self.assertIsNotNone(resume_doc)
 
             mark_runtime_session_resume_failed(group_id="g1", actor_id="peer1", error="resume id not found")
             command, resume_doc = prepare_pty_resume_command(
                 group_id="g1",
                 actor_id="peer1",
-                runtime="gemini",
+                runtime="claude",
                 cwd=cwd,
-                base_command=["gemini", "--yolo"],
+                base_command=["claude"],
             )
 
-            self.assertEqual(command, ["gemini", "--yolo"])
+            self.assertEqual(command, ["claude"])
             self.assertIsNone(resume_doc)
         finally:
             cleanup()

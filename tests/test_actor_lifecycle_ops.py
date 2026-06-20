@@ -668,7 +668,7 @@ class TestActorLifecycleOps(unittest.TestCase):
                     "group_id": group_id,
                     "actor_id": "peer1",
                     "title": "Peer 1",
-                    "runtime": "gemini",
+                    "runtime": "grok",
                     "runner": "pty",
                     "by": "user",
                 },
@@ -680,10 +680,10 @@ class TestActorLifecycleOps(unittest.TestCase):
             record_pty_runtime_session(
                 group_id=group_id,
                 actor_id="peer1",
-                runtime="gemini",
+                runtime="grok",
                 cwd=Path("."),
-                command=["gemini"],
-                provider_session_id="gemini-session-1234",
+                command=["grok"],
+                provider_session_id="grok-session-1234",
                 captured_from="test",
             )
 
@@ -694,7 +694,7 @@ class TestActorLifecycleOps(unittest.TestCase):
 
             self.assertFalse(new_session.ok)
             self.assertEqual(getattr(new_session.error, "code", ""), "unsupported_runtime")
-            self.assertEqual(read_runtime_session(group_id, "peer1").get("provider_session_id"), "gemini-session-1234")
+            self.assertEqual(read_runtime_session(group_id, "peer1").get("provider_session_id"), "grok-session-1234")
         finally:
             cleanup()
 
