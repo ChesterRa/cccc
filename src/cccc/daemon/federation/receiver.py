@@ -11,7 +11,8 @@ from ...contracts.v1.message import ChatMessageData
 from ...kernel.federation.pairing import list_trusts
 from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
-from ...kernel.ledger import append_event, read_last_lines
+from ...kernel.inbox import iter_events_reverse
+from ...kernel.ledger import append_event
 from ..messaging.chat_delivery_ops import deliver_appended_chat_message
 from ..messaging.post_commit import run_group_chat_post_commit
 from .peer_address_sync import sync_federation_peer_multiaddrs
@@ -140,6 +141,13 @@ def receive_remote_send(
         return _error("unsupported_refs", "refs are not supported by federation sessions")
     if not msg.text.strip():
         return _error("empty_message", "message text cannot be empty")
+    recipients = _explicit_remote_recipients(msg.to)
+    if not recipients:
+        return _error(
+            "missing_remote_recipient",
+            "remote federation messages require explicit to; use '@foreman', '@all', or a target actor",
+        )
+    msg = msg.model_copy(update={"to": recipients})
 
     existing = _find_existing_event(group.ledger_path, client_id=key)
     if existing is not None:
@@ -193,9 +201,15 @@ def receive_remote_send(
 
 def _resolve_remote_send_to(group: Any, to: list[str]) -> list[str]:
     try:
-        return resolve_recipient_tokens(group, to) if to else ["@all"]
+        return resolve_recipient_tokens(group, to) if to else []
     except Exception:
-        return [str(item).strip() for item in (to or []) if str(item).strip()] or ["@all"]
+        return [str(item).strip() for item in (to or []) if str(item).strip()]
+
+
+def _explicit_remote_recipients(to: Any) -> list[str]:
+    if not isinstance(to, list):
+        return []
+    return [str(item or "").strip() for item in to if str(item or "").strip()]
 
 
 def _load_group(group_id: str, *, home: Optional[Path]):  # type: ignore[no-untyped-def]
@@ -227,13 +241,7 @@ def _find_active_trust(*, target_group_id: str, src_group_id: str, remote_peer_i
 
 
 def _find_existing_event(ledger_path: Any, *, client_id: str) -> Optional[Dict[str, Any]]:
-    for line in reversed(read_last_lines(ledger_path, 1000)):
-        try:
-            import json
-
-            event = json.loads(line)
-        except Exception:
-            continue
+    for event in iter_events_reverse(ledger_path):
         if str(event.get("kind") or "") != "chat.message":
             continue
         data = event.get("data") if isinstance(event.get("data"), dict) else {}

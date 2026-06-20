@@ -48,6 +48,22 @@ class TestMcpFederationTools(unittest.TestCase):
                 idempotency_key="",
             )
 
+    def test_remote_send_requires_explicit_recipient(self) -> None:
+        from cccc.ports.mcp.common import MCPError
+        from cccc.ports.mcp.handlers import cccc_federation
+
+        with self.assertRaises(MCPError) as raised:
+            cccc_federation.remote_send(
+                group_id="g_local",
+                actor_id="actor-a",
+                registration_id="reg_1",
+                text="hi",
+                to=[],
+                idempotency_key="k1",
+            )
+
+        self.assertEqual(raised.exception.code, "missing_remote_recipient")
+
     def test_delivery_status_delegates_to_daemon(self) -> None:
         from cccc.ports.mcp.handlers import cccc_federation
 

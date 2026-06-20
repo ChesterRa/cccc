@@ -27,6 +27,55 @@ class _EnvPatch:
                 os.environ[key] = value
 
 
+def _write_local_group_with_federation_trust(home: Path) -> Path:
+    from cccc.kernel.federation.pairing import _save_store
+
+    group_dir = home / "groups" / "g_local"
+    group_dir.mkdir(parents=True)
+    (group_dir / "group.yaml").write_text(
+        "\n".join(
+            [
+                "v: 1",
+                "group_id: g_local",
+                "title: Local",
+                "state: active",
+                "active_scope_key: ''",
+                "scopes: []",
+                "actors:",
+                "  - id: peer1",
+                "    title: Peer 1",
+                "    runtime: codex",
+                "    enabled: true",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _save_store(
+        {
+            "invites": {},
+            "requests": {},
+            "outbounds": {},
+            "trusts": {
+                "ptrust_1": {
+                    "trust_id": "ptrust_1",
+                    "group_id": "g_local",
+                    "remote_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "registration_id": "reg_remote",
+                    "transport": "federation_session",
+                    "remote_group_title": "Remote Group",
+                    "status": "active",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                }
+            },
+        },
+        home=home,
+    )
+    return group_dir
+
+
 class TestFederationTransport(unittest.TestCase):
     def test_unknown_transport_raises(self) -> None:
         from cccc.daemon.federation.transports.base import (
@@ -722,54 +771,13 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(res_refs.error_code, "unsupported_refs")
 
     def test_receive_remote_send_delivers_once_and_deduplicates(self) -> None:
+        from cccc.contracts.v1.message import ChatMessageData
         from cccc.daemon.federation.receiver import receive_remote_send
-        from cccc.kernel.federation.pairing import _save_store
+        from cccc.kernel.ledger import append_event
 
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
-            group_dir = home / "groups" / "g_local"
-            group_dir.mkdir(parents=True)
-            (group_dir / "group.yaml").write_text(
-                "\n".join(
-                    [
-                        "v: 1",
-                        "group_id: g_local",
-                        "title: Local",
-                        "state: active",
-                        "active_scope_key: ''",
-                        "scopes: []",
-                        "actors:",
-                        "  - id: peer1",
-                        "    title: Peer 1",
-                        "    runtime: codex",
-                        "    enabled: true",
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            _save_store(
-                {
-                    "invites": {},
-                    "requests": {},
-                    "outbounds": {},
-                    "trusts": {
-                        "ptrust_1": {
-                            "trust_id": "ptrust_1",
-                            "group_id": "g_local",
-                            "remote_group_id": "g_remote",
-                            "remote_peer_id": "peer_remote",
-                            "registration_id": "reg_remote",
-                            "transport": "federation_session",
-                            "remote_group_title": "Remote Group",
-                            "status": "active",
-                            "created_at": "2026-01-01T00:00:00Z",
-                            "updated_at": "2026-01-01T00:00:00Z",
-                        }
-                    },
-                },
-                home=home,
-            )
+            group_dir = _write_local_group_with_federation_trust(home)
 
             deliveries = []
 
@@ -788,6 +796,15 @@ class TestFederationTransport(unittest.TestCase):
                     idempotency_key="remote-client-1",
                     home=home,
                 )
+                for idx in range(1005):
+                    append_event(
+                        group_dir / "ledger.jsonl",
+                        kind="chat.message",
+                        group_id="g_local",
+                        scope_key="",
+                        by="user",
+                        data=ChatMessageData(text=f"filler {idx}", client_id=f"filler-{idx}").model_dump(),
+                    )
                 duplicate = receive_remote_send(
                     target_group_id="g_local",
                     src_group_id="g_remote",
@@ -811,6 +828,33 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(str(delivery["event"].get("id") or ""), first["event_id"])
         self.assertEqual(delivery["text"], "hello from remote")
         self.assertEqual(delivery["source_user_name"], "Remote Group")
+
+    def test_receive_remote_send_requires_explicit_recipient(self) -> None:
+        from cccc.daemon.federation.receiver import receive_remote_send
+        from cccc.kernel.inbox import iter_events
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_dir = _write_local_group_with_federation_trust(home)
+
+            with (
+                _EnvPatch(CCCC_CHAT_POST_COMMIT_MODE="inline"),
+                patch("cccc.daemon.federation.receiver.deliver_appended_chat_message") as deliver,
+            ):
+                result = receive_remote_send(
+                    target_group_id="g_local",
+                    src_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    payload={"text": "hello from remote"},
+                    idempotency_key="remote-client-1",
+                    home=home,
+                )
+
+            self.assertFalse(result["ok"], result)
+            self.assertEqual(result["error"]["code"], "missing_remote_recipient")
+            deliver.assert_not_called()
+            events = [event for event in iter_events(group_dir / "ledger.jsonl") if event.get("kind") == "chat.message"]
+            self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

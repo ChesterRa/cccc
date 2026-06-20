@@ -23,10 +23,15 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from ...paths import ensure_home
-from ...kernel.access_tokens import create_access_token
+from ...kernel.access_tokens import delete_access_token
 from ...kernel.events import publish_event
 from ...util.fs import atomic_write_text
 from ...util.time import parse_utc_iso, utc_now_iso
+from .credentials import (
+    create_pairing_remote_send_credential,
+    delete_federation_credential,
+    resolve_pairing_remote_send_token,
+)
 from .registration import upsert_registration
 from .registration import delete_registration
 from .peer_addresses import record_peer_addresses
@@ -49,6 +54,10 @@ def _identity_path(home: Optional[Path] = None) -> Path:
 def _pairing_path(home: Optional[Path] = None) -> Path:
     base = Path(home) if home is not None else ensure_home()
     return base / "federation_pairing.yaml"
+
+
+def _aux_home(home: Optional[Path] = None) -> Path:
+    return Path(home) if home is not None else ensure_home()
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -389,6 +398,8 @@ def approve_pairing_request(
         raise ValueError("pairing request not found")
     status = str(request.get("status") or "")
     if status == "approved" and request.get("registration_id"):
+        _ensure_pairing_remote_send_credential(request, home=home)
+        _save_store(store, home)
         reg = _registration_from_request(request, home=home)
         _record_request_peer_addresses(request, home=home)
         return {
@@ -406,8 +417,7 @@ def approve_pairing_request(
     request["status"] = "approved"
     request["approved_by"] = str(approver_user_id or "").strip()
     request["registration_id"] = registration["registration_id"]
-    if not str(request.get("remote_send_token") or "").strip():
-        request["remote_send_token"] = _create_pairing_remote_send_token(request, home=home)
+    _ensure_pairing_remote_send_credential(request, home=home)
     request["updated_at"] = now
     trust_id = _new_id(_TRUST_PREFIX, store["trusts"])
     trust = {
@@ -519,6 +529,8 @@ def revoke_trust(
     if not isinstance(trust, dict):
         raise ValueError("trust not found")
     if str(trust.get("status") or "") == "revoked":
+        _cleanup_trust_remote_send_credential(store, trust, home=home)
+        _save_store(store, home)
         return _project_trust(trust)
     trust["status"] = "revoked"
     trust["revoked_by"] = str(revoked_by or "").strip()
@@ -526,6 +538,7 @@ def revoke_trust(
     registration_id = str(trust.get("registration_id") or "").strip()
     if registration_id:
         delete_registration(registration_id, home=home)
+    _cleanup_trust_remote_send_credential(store, trust, home=home)
     _save_store(store, home)
     _publish_pairing_event("federation.pairing.trust_revoked", {
         "group_id": str(trust.get("group_id") or ""),
@@ -709,34 +722,82 @@ def _project_request(request: Dict[str, Any]) -> Dict[str, Any]:
 
 def _project_remote_status_request(request: Dict[str, Any], *, home: Optional[Path]) -> Dict[str, Any]:
     out = _project_request(request)
-    if str(request.get("status") or "") == "approved":
-        token = str(request.get("remote_send_token") or "").strip()
-        if not token:
-            token = _create_pairing_remote_send_token(request, home=home)
-            store = _load_store(home)
-            stored = store["requests"].get(str(request.get("request_id") or ""))
-            if isinstance(stored, dict):
-                stored["remote_send_token"] = token
-                stored["updated_at"] = utc_now_iso()
-                _save_store(store, home)
-        out["remote_send_token"] = token
+    if str(request.get("status") or "") == "approved" and _request_has_active_trust(request, home=home):
+        token = _ensure_pairing_remote_send_credential(request, home=home)
+        store = _load_store(home)
+        stored = store["requests"].get(str(request.get("request_id") or ""))
+        if isinstance(stored, dict):
+            stored.update({k: request[k] for k in ("remote_send_credential_ref",) if k in request})
+            stored["updated_at"] = utc_now_iso()
+            _save_store(store, home)
+        if token:
+            out["remote_send_token"] = token
     return out
 
 
-def _create_pairing_remote_send_token(request: Dict[str, Any], *, home: Optional[Path]) -> str:
+def _ensure_pairing_remote_send_credential(request: Dict[str, Any], *, home: Optional[Path]) -> str:
     group_id = str(request.get("group_id") or "").strip()
+    remote_group_id = str(request.get("remote_group_id") or "").strip()
+    remote_peer_id = str(request.get("remote_peer_id") or "").strip()
     request_id = str(request.get("request_id") or "").strip()
-    if not group_id or not request_id:
+    if not group_id or not remote_group_id or not remote_peer_id or not request_id:
         return ""
-    return str(
-        create_access_token(
-            f"federation:{request_id}",
-            allowed_groups=[group_id],
-            is_admin=False,
-            home=home,
-        ).get("token")
-        or ""
+    aux_home = _aux_home(home)
+    legacy_token = str(request.pop("remote_send_token", "") or "").strip()
+    if legacy_token:
+        delete_access_token(legacy_token, home=aux_home)
+    ref = str(request.get("remote_send_credential_ref") or "").strip()
+    token = resolve_pairing_remote_send_token(ref, home=aux_home) if ref else ""
+    if token:
+        return token
+    created = create_pairing_remote_send_credential(
+        group_id=group_id,
+        remote_group_id=remote_group_id,
+        remote_peer_id=remote_peer_id,
+        request_id=request_id,
+        home=aux_home,
     )
+    request["remote_send_credential_ref"] = str(created.get("credential_ref") or "").strip()
+    return str(created.get("token") or "").strip()
+
+
+def _delete_pairing_remote_send_credential(request: Dict[str, Any], *, home: Optional[Path]) -> None:
+    aux_home = _aux_home(home)
+    ref = str(request.pop("remote_send_credential_ref", "") or "").strip()
+    if ref:
+        delete_federation_credential(ref, home=aux_home)
+    legacy_token = str(request.pop("remote_send_token", "") or "").strip()
+    if legacy_token:
+        delete_access_token(legacy_token, home=aux_home)
+
+
+def _cleanup_trust_remote_send_credential(
+    store: Dict[str, Dict[str, Dict[str, Any]]],
+    trust: Dict[str, Any],
+    *,
+    home: Optional[Path],
+) -> None:
+    request_id = str(trust.get("request_id") or "").strip()
+    if not request_id:
+        return
+    request = store["requests"].get(request_id)
+    if not isinstance(request, dict):
+        return
+    _delete_pairing_remote_send_credential(request, home=home)
+    request["status"] = "revoked"
+    request["updated_at"] = str(trust.get("updated_at") or utc_now_iso())
+
+
+def _request_has_active_trust(request: Dict[str, Any], *, home: Optional[Path]) -> bool:
+    request_id = str(request.get("request_id") or "").strip()
+    if not request_id:
+        return False
+    for trust in _load_store(home)["trusts"].values():
+        if str(trust.get("request_id") or "").strip() != request_id:
+            continue
+        if str(trust.get("status") or "") == "active":
+            return True
+    return False
 
 
 def _project_trust(trust: Dict[str, Any]) -> Dict[str, Any]:

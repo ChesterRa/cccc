@@ -13,6 +13,12 @@ from ....kernel.federation import pairing as pairing_kernel
 from ..common import MCPError, _call_daemon_or_raise
 
 
+def _explicit_remote_recipients(to: Optional[List[str]]) -> List[str]:
+    if not isinstance(to, list):
+        return []
+    return [str(item or "").strip() for item in to if str(item or "").strip()]
+
+
 def remote_send(
     *,
     group_id: str,
@@ -34,10 +40,16 @@ def remote_send(
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    recipients = _explicit_remote_recipients(to)
+    if not recipients:
+        raise MCPError(
+            code="missing_remote_recipient",
+            message="remote_send requires explicit to across federation; use '@foreman', '@all', or a target actor",
+        )
 
     payload = {
         "text": str(text or ""),
-        "to": list(to) if isinstance(to, list) else [],
+        "to": recipients,
         "priority": prio,
         "reply_required": bool(reply_required),
     }

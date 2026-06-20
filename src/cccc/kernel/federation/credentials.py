@@ -7,6 +7,7 @@ mapping from federation credential refs to raw bearer tokens used by transports.
 from __future__ import annotations
 
 import hashlib
+import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,6 +18,8 @@ from ...util.fs import atomic_write_text
 from ...util.time import utc_now_iso
 
 _PAIRING_REF_PREFIX = "fsec_pairing_"
+_REMOTE_SEND_REF_PREFIX = "fsec_remote_send_"
+_REMOTE_SEND_TOKEN_PREFIX = "frs_"
 
 
 def _path(home: Optional[Path] = None) -> Path:
@@ -40,6 +43,14 @@ def _load(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
 
 def _save(records: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
     atomic_write_text(_path(home), yaml.safe_dump({"credentials": records}, allow_unicode=True, sort_keys=True))
+
+
+def _new_remote_send_token(records: Dict[str, Dict[str, Any]]) -> str:
+    existing = {str(record.get("token") or "").strip() for record in records.values() if isinstance(record, dict)}
+    while True:
+        token = _REMOTE_SEND_TOKEN_PREFIX + secrets.token_urlsafe(32)
+        if token not in existing:
+            return token
 
 
 def save_pairing_bearer_token(
@@ -84,3 +95,62 @@ def resolve_federation_credential(credential_ref: str, *, home: Optional[Path] =
     if str(record.get("kind") or "") != "bearer":
         return ""
     return str(record.get("token") or "").strip()
+
+
+def create_pairing_remote_send_credential(
+    *,
+    group_id: str,
+    remote_group_id: str,
+    remote_peer_id: str,
+    request_id: str,
+    home: Optional[Path] = None,
+) -> Dict[str, str]:
+    gid = str(group_id or "").strip()
+    remote_gid = str(remote_group_id or "").strip()
+    peer_id = str(remote_peer_id or "").strip()
+    rid = str(request_id or "").strip()
+    if not gid or not remote_gid or not peer_id or not rid:
+        return {"credential_ref": "", "token": ""}
+    material = "|".join(("remote_send", gid, remote_gid, peer_id, rid))
+    ref = _REMOTE_SEND_REF_PREFIX + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+    records = _load(home)
+    now = utc_now_iso()
+    existing = records.get(ref) if isinstance(records.get(ref), dict) else {}
+    token = str(existing.get("token") or "").strip() or _new_remote_send_token(records)
+    records[ref] = {
+        "credential_ref": ref,
+        "kind": "remote_send",
+        "token": token,
+        "group_id": gid,
+        "remote_group_id": remote_gid,
+        "remote_peer_id": peer_id,
+        "request_id": rid,
+        "created_at": str(existing.get("created_at") or now),
+        "updated_at": now,
+    }
+    _save(records, home)
+    return {"credential_ref": ref, "token": token}
+
+
+def resolve_pairing_remote_send_token(credential_ref: str, *, home: Optional[Path] = None) -> str:
+    ref = str(credential_ref or "").strip()
+    if not ref:
+        return ""
+    record = _load(home).get(ref)
+    if not isinstance(record, dict):
+        return ""
+    if str(record.get("kind") or "") != "remote_send":
+        return ""
+    return str(record.get("token") or "").strip()
+
+
+def delete_federation_credential(credential_ref: str, *, home: Optional[Path] = None) -> bool:
+    ref = str(credential_ref or "").strip()
+    if not ref:
+        return False
+    records = _load(home)
+    if ref not in records:
+        return False
+    del records[ref]
+    _save(records, home)
+    return True

@@ -191,6 +191,39 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(payload.get("reply_required"), True)
         self.assertEqual(payload.get("refs"), [{"kind": "note", "id": "ref-1"}])
 
+    def test_message_send_requires_explicit_recipient_for_federation_remote_destination(self) -> None:
+        from cccc.kernel.federation import pairing as pairing_kernel
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        with tempfile.TemporaryDirectory() as td, \
+             _isolated_runtime_context(), \
+             patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch.object(mcp_common, "call_daemon") as call_daemon:
+            request = pairing_kernel.create_pairing_request(
+                pairing_kernel.create_pairing_invite(group_id="g_runtime")["pairing_code"],
+                requester_group_id="g_remote",
+                requester_group_title="Remote Group",
+                requester_peer_id="peer_remote",
+                requester_endpoint="http://remote.example:8848",
+            )
+            pairing_kernel.approve_pairing_request(request["request_id"], approver_user_id="user-a")
+
+            with self.assertRaises(mcp_server.MCPError) as raised:
+                mcp_server.handle_tool_call(
+                    "cccc_message_send",
+                    {
+                        "group_id": "g_runtime",
+                        "dst_group_id": "g_remote",
+                        "actor_id": "peer1",
+                        "text": "hello remote",
+                    },
+                )
+
+        self.assertEqual(raised.exception.code, "missing_remote_recipient")
+        call_daemon.assert_not_called()
+
     def test_message_send_rejects_hash_recipient_for_cross_group_string_to(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common

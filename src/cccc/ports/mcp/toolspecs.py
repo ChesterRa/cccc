@@ -1286,7 +1286,7 @@ MCP_TOOLS = [
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
             },
-            required=["registration_id", "text", "idempotency_key"],
+            required=["registration_id", "text", "idempotency_key", "to"],
         ),
     },
     {

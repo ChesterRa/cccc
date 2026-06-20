@@ -708,7 +708,7 @@ class TestFederationPairingRemote(unittest.TestCase):
                         "group_id": "g_joiner",
                         "registration_id": registration["registration_id"],
                         "idempotency_key": "send-credential",
-                        "payload": {"text": "hello"},
+                        "payload": {"text": "hello", "to": ["@foreman"]},
                     }
                 )
             finally:

@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 class TestFederationPairing(unittest.TestCase):
     def _with_home(self):
@@ -40,13 +42,18 @@ class TestFederationPairing(unittest.TestCase):
 
     def test_invite_request_approve_creates_federation_session_registration(self) -> None:
         from cccc.kernel.federation.pairing import (
+            _load_store,
+            _save_store,
             approve_pairing_request,
             create_pairing_invite,
             create_pairing_request,
+            get_pairing_request_public_status,
             get_pairing_request,
             list_trusts,
             revoke_trust,
         )
+        from cccc.kernel.access_tokens import create_access_token, list_access_tokens, lookup_access_token
+        from cccc.kernel.federation.credentials import resolve_pairing_remote_send_token
         from cccc.kernel.federation.registration import get_registration
 
         _, cleanup = self._with_home()
@@ -109,6 +116,26 @@ class TestFederationPairing(unittest.TestCase):
             self.assertEqual(after["status"], "approved")
             self.assertEqual(after["registration_id"], registration["registration_id"])
             self.assertEqual(after["approved_by"], "user-a")
+            legacy_token = create_access_token("legacy-federation-token", allowed_groups=["g_local"], is_admin=False)["token"]
+            legacy_store = _load_store()
+            legacy_store["requests"][request["request_id"]]["remote_send_token"] = legacy_token
+            _save_store(legacy_store)
+            self.assertIsNotNone(lookup_access_token(legacy_token))
+            status = get_pairing_request_public_status(request["request_id"], invite_id=invite["invite_id"])
+            self.assertIsNotNone(status)
+            assert status is not None
+            remote_send_token = str(status.get("remote_send_token") or "")
+            self.assertTrue(remote_send_token.startswith("frs_"))
+            self.assertEqual(list_access_tokens(), [])
+            self.assertIsNone(lookup_access_token(remote_send_token))
+            self.assertIsNone(lookup_access_token(legacy_token))
+            store_doc = yaml.safe_load(pairing_store.read_text(encoding="utf-8")) or {}
+            credential_ref = str(
+                (((store_doc.get("requests") or {}).get(request["request_id"]) or {}).get("remote_send_credential_ref"))
+                or ""
+            )
+            self.assertTrue(credential_ref.startswith("fsec_remote_send_"))
+            self.assertEqual(resolve_pairing_remote_send_token(credential_ref), remote_send_token)
 
             replay = approve_pairing_request(request["request_id"], approver_user_id="user-b")
             self.assertEqual(replay["status"], "approved")
@@ -120,6 +147,13 @@ class TestFederationPairing(unittest.TestCase):
             self.assertEqual(revoked["status"], "revoked")
             self.assertIsNone(get_registration(registration["registration_id"]))
             self.assertEqual(list_trusts(group_id="g_local")[0]["status"], "revoked")
+            revoked_status = get_pairing_request_public_status(request["request_id"], invite_id=invite["invite_id"])
+            self.assertIsNotNone(revoked_status)
+            assert revoked_status is not None
+            self.assertEqual(revoked_status["status"], "revoked")
+            self.assertNotIn("remote_send_token", revoked_status)
+            self.assertEqual(resolve_pairing_remote_send_token(credential_ref), "")
+            self.assertEqual(list_access_tokens(), [])
         finally:
             cleanup()
 

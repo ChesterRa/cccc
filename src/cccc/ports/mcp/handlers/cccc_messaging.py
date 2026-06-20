@@ -109,6 +109,12 @@ def message_send(
             raise MCPError(code="invalid_recipient_syntax", message=CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
         federation_route = resolve_remote_group_route(group_id=group_id, remote_group_id=dst_gid)
         if federation_route is not None:
+            remote_to = normalize_recipient_tokens(to)
+            if not remote_to:
+                raise MCPError(
+                    code="missing_remote_recipient",
+                    message="remote messages require explicit to across federation; use '@foreman', '@all', or a target actor",
+                )
             return _call_daemon_or_raise(
                 {
                     "op": "remote_send",
@@ -119,7 +125,7 @@ def message_send(
                         "idempotency_key": _remote_message_idempotency_key(idempotency_key),
                         "payload": {
                             "text": text,
-                            "to": to if to is not None else [],
+                            "to": remote_to,
                             "priority": prio,
                             "reply_required": reply_required_flag,
                             "refs": refs if refs is not None else [],

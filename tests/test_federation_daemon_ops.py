@@ -65,7 +65,7 @@ class TestFederationDaemonOps(unittest.TestCase):
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
                     "remote_peer_id": "peer_remote",
-                    "payload": {"text": "hi"},
+                    "payload": {"text": "hi", "to": ["@foreman"]},
                     "idempotency_key": "remote-1",
                 },
             )
@@ -78,7 +78,7 @@ class TestFederationDaemonOps(unittest.TestCase):
             target_group_id="g_local",
             src_group_id="g_remote",
             remote_peer_id="peer_remote",
-            payload={"text": "hi"},
+            payload={"text": "hi", "to": ["@foreman"]},
             idempotency_key="remote-1",
         )
 
@@ -98,7 +98,7 @@ class TestFederationDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "hi"},
+                    "payload": {"text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -115,7 +115,7 @@ class TestFederationDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "changed"},
+                    "payload": {"text": "changed", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -147,7 +147,7 @@ class TestFederationDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "hi"},
+                    "payload": {"text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -176,7 +176,7 @@ class TestFederationDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "hi"},
+                    "payload": {"text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 credential_resolver=lambda _ref: "raw-token-from-store",
@@ -195,7 +195,12 @@ class TestFederationDaemonOps(unittest.TestCase):
         try:
             resp = try_handle_remote_send_op(
                 "remote_send",
-                {"group_id": "g_local", "registration_id": "reg_missing", "idempotency_key": "k1", "payload": {"text": "x"}},
+                {
+                    "group_id": "g_local",
+                    "registration_id": "reg_missing",
+                    "idempotency_key": "k1",
+                    "payload": {"text": "x", "to": ["@foreman"]},
+                },
             )
             self.assertIsNotNone(resp)
             assert resp is not None
@@ -221,6 +226,31 @@ class TestFederationDaemonOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_remote_send_requires_explicit_recipient(self) -> None:
+        from cccc.daemon.federation.ops import try_handle_remote_send_op
+        from cccc.kernel.federation.receipts import get_receipt
+
+        _, cleanup = self._with_home()
+        try:
+            reg = self._registration()
+            rid = reg["registration_id"]
+            resp = try_handle_remote_send_op(
+                "remote_send",
+                {
+                    "group_id": "g_local",
+                    "registration_id": rid,
+                    "idempotency_key": "k1",
+                    "payload": {"text": "x", "to": [" "]},
+                },
+            )
+            self.assertIsNotNone(resp)
+            assert resp is not None
+            self.assertFalse(resp.ok)
+            self.assertEqual(resp.error.code, "missing_remote_recipient")
+            self.assertIsNone(get_receipt(rid, "k1"))
+        finally:
+            cleanup()
+
     def test_remote_send_rejects_group_mismatch(self) -> None:
         from cccc.daemon.federation.ops import try_handle_remote_send_op
         from cccc.kernel.federation.receipts import get_receipt
@@ -231,7 +261,12 @@ class TestFederationDaemonOps(unittest.TestCase):
             rid = reg["registration_id"]
             resp = try_handle_remote_send_op(
                 "remote_send",
-                {"group_id": "g_other", "registration_id": rid, "idempotency_key": "k1", "payload": {"text": "x"}},
+                {
+                    "group_id": "g_other",
+                    "registration_id": rid,
+                    "idempotency_key": "k1",
+                    "payload": {"text": "x", "to": ["@foreman"]},
+                },
             )
             assert resp is not None
             self.assertFalse(resp.ok)
@@ -250,7 +285,12 @@ class TestFederationDaemonOps(unittest.TestCase):
             rid = reg["registration_id"]
             try_handle_remote_send_op(
                 "remote_send",
-                {"group_id": "g_local", "registration_id": rid, "idempotency_key": "k1", "payload": {"text": "hi"}},
+                {
+                    "group_id": "g_local",
+                    "registration_id": rid,
+                    "idempotency_key": "k1",
+                    "payload": {"text": "hi", "to": ["@foreman"]},
+                },
             )
             resp = try_handle_remote_send_op(
                 "remote_delivery_status",
@@ -271,7 +311,12 @@ class TestFederationDaemonOps(unittest.TestCase):
             rid = reg["registration_id"]
             try_handle_remote_send_op(
                 "remote_send",
-                {"group_id": "g_local", "registration_id": rid, "idempotency_key": "k1", "payload": {"text": "hi"}},
+                {
+                    "group_id": "g_local",
+                    "registration_id": rid,
+                    "idempotency_key": "k1",
+                    "payload": {"text": "hi", "to": ["@foreman"]},
+                },
             )
             resp = try_handle_remote_send_op(
                 "remote_delivery_status",

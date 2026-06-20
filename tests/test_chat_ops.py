@@ -391,6 +391,7 @@ class TestChatOps(unittest.TestCase):
             )
 
             captured: list[dict] = []
+            deliveries: list[dict] = []
 
             def fake_remote_send(args):
                 captured.append(dict(args))
@@ -398,7 +399,13 @@ class TestChatOps(unittest.TestCase):
 
                 return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
 
-            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+            def capture_delivery(**kwargs):
+                deliveries.append(dict(kwargs))
+
+            with (
+                patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send),
+                patch("cccc.daemon.messaging.chat_ops.deliver_appended_chat_message", side_effect=capture_delivery),
+            ):
                 reply, _ = self._call(
                     "reply",
                     {
@@ -556,6 +563,7 @@ class TestChatOps(unittest.TestCase):
             )
 
             captured: list[dict] = []
+            deliveries: list[dict] = []
 
             def fake_remote_send(args):
                 captured.append(dict(args))
@@ -563,7 +571,13 @@ class TestChatOps(unittest.TestCase):
 
                 return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
 
-            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+            def capture_delivery(**kwargs):
+                deliveries.append(dict(kwargs))
+
+            with (
+                patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send),
+                patch("cccc.daemon.messaging.chat_ops.deliver_appended_chat_message", side_effect=capture_delivery),
+            ):
                 reply, _ = self._call(
                     "reply",
                     {
@@ -580,7 +594,9 @@ class TestChatOps(unittest.TestCase):
             events = list(iter_events(group.ledger_path))  # type: ignore[union-attr]
             reply_events = [event for event in events if (event.get("data") or {}).get("reply_to") == inbound_event.get("id")]
             self.assertEqual(len(reply_events), 1)
-            self.assertEqual((reply_events[0].get("data") or {}).get("to"), [])
+            self.assertEqual((reply_events[0].get("data") or {}).get("to"), ["user"])
+            self.assertEqual(len(deliveries), 1)
+            self.assertEqual(deliveries[0]["effective_to"], ["user"])
         finally:
             cleanup()
 

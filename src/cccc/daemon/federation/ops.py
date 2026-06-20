@@ -29,6 +29,12 @@ def _default_credential_resolver(credential_ref: str) -> Optional[str]:
     return resolve_federation_credential(credential_ref)
 
 
+def _explicit_remote_recipients(to: Any) -> list[str]:
+    if not isinstance(to, list):
+        return []
+    return [str(item or "").strip() for item in to if str(item or "").strip()]
+
+
 def handle_remote_send(
     args: Dict[str, Any],
     *,
@@ -53,6 +59,13 @@ def handle_remote_send(
         payload = RemoteSendPayload(**payload_raw)
     except Exception as e:
         return _error("invalid_payload", str(e))
+    recipients = _explicit_remote_recipients(payload.to)
+    if not recipients:
+        return _error(
+            "missing_remote_recipient",
+            "remote_send requires explicit to across federation; use '@foreman', '@all', or a target actor",
+        )
+    payload = payload.model_copy(update={"to": recipients})
 
     reg = get_registration(registration_id)
     if not reg:
