@@ -19,62 +19,27 @@ import base64
 import json
 import threading
 import time
-import urllib.error
-import urllib.parse
 import urllib.request
-import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import IMAdapter, OutboundStreamHandle
+from .base import IMAdapter, IMProcessingContext, IMProcessingOutcome, OutboundStreamHandle
+from .dingtalk_api import DingTalkApiClient
+from .dingtalk_media import DingTalkMediaService
+from .dingtalk_messages import (
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MAX_LINES,
+    DINGTALK_MAX_MESSAGE_LENGTH,
+    RateLimiter,
+    build_markdown_payload,
+    extract_rich_text,
+    normalize_text,
+    parse_event_time,
+    split_message_chunks,
+)
+from .dingtalk_reactions import DingTalkReactionService
+from .dingtalk_sender import DingTalkSender
 from .dingtalk_session import DingTalkConversationStore
-
-# DingTalk API limits
-DINGTALK_MAX_MESSAGE_LENGTH = 4096
-DEFAULT_MAX_CHARS = 4096
-DEFAULT_MAX_LINES = 64
-
-# API base URLs
-DINGTALK_API_OLD = "https://oapi.dingtalk.com"
-DINGTALK_API_NEW = "https://api.dingtalk.com"
-
-
-class RateLimiter:
-    """
-    Rate limiter for DingTalk API.
-
-    DingTalk limits:
-    - Total: ~20 msg/sec
-    - Same chat: ~5 msg/sec
-    """
-
-    def __init__(self, max_per_second: float = 5.0):
-        self.min_interval = 1.0 / max_per_second
-        self.last_send: Dict[str, float] = {}
-        self.lock = threading.Lock()
-
-    def acquire(self, chat_id: str) -> float:
-        """
-        Check if we can send to this chat.
-        Returns wait time in seconds (0 if can send immediately).
-        """
-        with self.lock:
-            now = time.time()
-            last = self.last_send.get(chat_id, 0)
-            elapsed = now - last
-
-            if elapsed >= self.min_interval:
-                self.last_send[chat_id] = now
-                return 0.0
-            else:
-                return self.min_interval - elapsed
-
-    def wait_and_acquire(self, chat_id: str) -> None:
-        """Wait if needed, then acquire."""
-        wait_time = self.acquire(chat_id)
-        if wait_time > 0:
-            time.sleep(wait_time)
-            self.acquire(chat_id)
 
 
 class DingTalkAdapter(IMAdapter):
@@ -89,14 +54,16 @@ class DingTalkAdapter(IMAdapter):
         "files_in": "yes",
         "files_out": "yes",
         "threads": "no",
-        "reactions": "no",
-        "typing": "no",
+        "reactions": "yes",
+        "typing": "partial",
         "streaming": "partial",
         "voice_in": "partial",
         "markdown": "yes",
     }
     capability_notes = {
         "streaming": "AI Card streaming is available when the card client is configured",
+        "reactions": "Robot emoji reactions are used for processing indicators via DingTalk OpenAPI",
+        "typing": "Processing feedback uses DingTalk emoji reactions, with temporary AI Card fallback when robot_code is configured",
         "voice_in": "audio attachments/recognition may arrive from DingTalk; local ASR is not automatic",
     }
     _LAST_SENDER_MAX = 256
@@ -117,11 +84,7 @@ class DingTalkAdapter(IMAdapter):
         self.log_path = log_path
         self.max_chars = max_chars
         self.max_lines = max_lines
-
-        # Token management
-        self._token: str = ""
-        self._token_expires: float = 0
-        self._token_lock = threading.Lock()
+        self._api = DingTalkApiClient(app_key=app_key, app_secret=app_secret, log=self._log)
 
         # Message queue (thread-safe)
         self._message_queue: List[Dict[str, Any]] = []
@@ -129,6 +92,44 @@ class DingTalkAdapter(IMAdapter):
 
         # Rate limiter
         self._rate_limiter = RateLimiter(max_per_second=5.0)
+        self._sender = DingTalkSender(
+            api_old=lambda method, endpoint, body, timeout=15: self._api_old(method, endpoint, body, timeout),
+            api_new=lambda method, endpoint, body, timeout=15: self._api_new(method, endpoint, body, timeout),
+            send_webhook=lambda url, text, at_user_ids=None: self._send_via_webhook(
+                url,
+                text,
+                at_user_ids=at_user_ids,
+            ),
+            rate_limiter=self._rate_limiter,
+            robot_code_getter=lambda: self.robot_code,
+            is_group=self._is_group_conversation,
+            user_id_for_chat=self._conversation_user_id,
+            webhook_entry=self._session_webhook_entry,
+            last_sender_for_chat=self._last_sender_staff_id,
+            log=self._log,
+            max_chars_getter=lambda: self.max_chars,
+            max_lines_getter=lambda: self.max_lines,
+        )
+        self._media = DingTalkMediaService(
+            get_token=self._get_token,
+            api_new=lambda method, endpoint, body, timeout=15: self._api_new(method, endpoint, body, timeout),
+            robot_code_getter=lambda: self.robot_code,
+            is_group=self._is_group_conversation,
+            user_id_for_chat=self._conversation_user_id,
+            webhook_entry=self._session_webhook_entry,
+            send_message=lambda chat_id, caption, mention_user_ids=None: self.send_message(
+                chat_id,
+                caption,
+                mention_user_ids=mention_user_ids,
+            ),
+            rate_limit=self._rate_limiter.wait_and_acquire,
+            log=self._log,
+        )
+        self._reaction_service = DingTalkReactionService(
+            get_token=self._get_token,
+            robot_code_getter=lambda: self.robot_code,
+            log=self._log,
+        )
 
         # Connection state
         self._connected = False
@@ -213,52 +214,20 @@ class DingTalkAdapter(IMAdapter):
     def _is_group_conversation(self, chat_id: str) -> bool:
         return self._conversation_store.is_group(chat_id)
 
+    def _last_sender_staff_id(self, chat_id: str) -> Optional[str]:
+        sender = self._last_sender.get(chat_id)
+        if not sender:
+            return None
+        staff_id, _nick = sender
+        return staff_id or None
+
     def _get_token(self) -> str:
         """Get valid access_token, refreshing if needed."""
-        with self._token_lock:
-            now = time.time()
-            # Refresh 5 minutes before expiry
-            if self._token and now < self._token_expires - 300:
-                return self._token
-
-            # Refresh token
-            if self._refresh_token():
-                return self._token
-            return ""
+        return self._api.get_token()
 
     def _refresh_token(self) -> bool:
-        """
-        Refresh access_token.
-        Token expires in 2 hours (7200 seconds).
-        """
-        url = f"{DINGTALK_API_OLD}/gettoken"
-        params = {
-            "appkey": self.app_key,
-            "appsecret": self.app_secret,
-        }
-        query = urllib.parse.urlencode(params)
-        full_url = f"{url}?{query}"
-
-        req = urllib.request.Request(full_url, method="GET")
-        req.add_header("Accept", "application/json")
-
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
-                result = json.loads(body)
-
-                if result.get("errcode") == 0:
-                    self._token = result.get("access_token", "")
-                    expire = int(result.get("expires_in", 7200))
-                    self._token_expires = time.time() + expire
-                    self._log(f"[token] Refreshed, expires in {expire}s")
-                    return True
-                else:
-                    self._log(f"[token] Failed: {result.get('errmsg', 'unknown')}")
-                    return False
-        except Exception as e:
-            self._log(f"[token] Error: {e}")
-            return False
+        """Refresh access_token."""
+        return self._api.refresh_token()
 
     def _api_old(
         self,
@@ -267,51 +236,8 @@ class DingTalkAdapter(IMAdapter):
         body: Optional[Dict[str, Any]] = None,
         timeout: int = 15,
     ) -> Dict[str, Any]:
-        """
-        Call DingTalk old API (oapi.dingtalk.com).
-
-        Used for: token, some legacy APIs
-        """
-        token = self._get_token()
-        if not token and "gettoken" not in endpoint:
-            return {"errcode": -1, "errmsg": "No valid token"}
-
-        url = f"{DINGTALK_API_OLD}{endpoint}"
-
-        if method == "GET":
-            if body:
-                query = urllib.parse.urlencode(body)
-                url = f"{url}?{query}"
-            if token and "access_token" not in url:
-                sep = "&" if "?" in url else "?"
-                url = f"{url}{sep}access_token={token}"
-            data = None
-        else:
-            if token and "access_token" not in url:
-                sep = "&" if "?" in url else "?"
-                url = f"{url}{sep}access_token={token}"
-            data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8") if body else None
-
-        req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Content-Type", "application/json; charset=utf-8")
-        req.add_header("Accept", "application/json")
-
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                result_body = resp.read().decode("utf-8", errors="replace")
-                return json.loads(result_body)
-        except urllib.error.HTTPError as e:
-            http_status = e.code
-            err_text = ""
-            try:
-                err_text = e.read().decode("utf-8", "ignore")[:300]
-            except Exception:
-                pass
-            self._log(f"[api_old] {method} {endpoint}: HTTP {http_status} - {err_text}")
-            return {"errcode": http_status, "errmsg": str(e), "error": err_text}
-        except Exception as e:
-            self._log(f"[api_old] {method} {endpoint}: {e}")
-            return {"errcode": -1, "errmsg": str(e)}
+        """Call DingTalk old API."""
+        return self._api.api_old(method, endpoint, body, timeout)
 
     def _api_new(
         self,
@@ -320,45 +246,8 @@ class DingTalkAdapter(IMAdapter):
         body: Optional[Dict[str, Any]] = None,
         timeout: int = 15,
     ) -> Dict[str, Any]:
-        """
-        Call DingTalk new API (api.dingtalk.com).
-
-        Used for: robot messages, conversations, files
-        """
-        token = self._get_token()
-        if not token:
-            return {"code": -1, "message": "No valid token"}
-
-        url = f"{DINGTALK_API_NEW}{endpoint}"
-
-        if method == "GET" and body:
-            query = urllib.parse.urlencode(body)
-            url = f"{url}?{query}"
-            data = None
-        else:
-            data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8") if body else None
-
-        req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("x-acs-dingtalk-access-token", token)
-        req.add_header("Content-Type", "application/json; charset=utf-8")
-        req.add_header("Accept", "application/json")
-
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                result_body = resp.read().decode("utf-8", errors="replace")
-                return json.loads(result_body)
-        except urllib.error.HTTPError as e:
-            http_status = e.code
-            err_text = ""
-            try:
-                err_text = e.read().decode("utf-8", "ignore")[:300]
-            except Exception:
-                pass
-            self._log(f"[api_new] {method} {endpoint}: HTTP {http_status} - {err_text}")
-            return {"code": http_status, "message": str(e), "error": err_text}
-        except Exception as e:
-            self._log(f"[api_new] {method} {endpoint}: {e}")
-            return {"code": -1, "message": str(e)}
+        """Call DingTalk new API."""
+        return self._api.api_new(method, endpoint, body, timeout)
 
     def connect(self) -> bool:
         """
@@ -774,7 +663,7 @@ class DingTalkAdapter(IMAdapter):
                 "from_user": sender_nick or sender_display_id,
                 "from_user_id": sender_display_id,
                 "mention_user_ids": mention_user_ids,
-                "message_id": msg_id,
+                "message_id": _reaction_message_id(msg_id, conversation_id),
                 "timestamp": self._parse_event_time(event.get("createAt")),
                 # Keep sessionWebhook for potential reply use
                 "_session_webhook": session_webhook,
@@ -792,15 +681,7 @@ class DingTalkAdapter(IMAdapter):
 
     def _parse_event_time(self, raw: Any) -> float:
         """Parse DingTalk createAt into epoch seconds (supports ms)."""
-        try:
-            ts = float(raw or 0.0)
-        except Exception:
-            return 0.0
-        if ts <= 0:
-            return 0.0
-        if ts > 1e11:
-            ts = ts / 1000.0
-        return ts
+        return parse_event_time(raw)
 
     def _extract_rich_text(self, rich_text: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
         """Extract text and attachments from rich text content.
@@ -814,25 +695,7 @@ class DingTalkAdapter(IMAdapter):
         Returns:
             tuple of (text, attachments list)
         """
-        texts: List[str] = []
-        attachments: List[Dict[str, Any]] = []
-        try:
-            for item in rich_text:
-                if item.get("text"):
-                    texts.append(item["text"])
-                elif item.get("type") == "picture":
-                    # Extract picture attachment from richText element
-                    download_code = item.get("downloadCode") or item.get("pictureDownloadCode", "")
-                    if download_code:
-                        attachments.append({
-                            "provider": "dingtalk",
-                            "kind": "image",
-                            "download_code": download_code,
-                            "file_name": "image.png",
-                        })
-        except Exception:
-            pass
-        return " ".join(texts), attachments
+        return extract_rich_text(rich_text)
 
     def _get_conversation_title_cached(self, conversation_id: str) -> str:
         """Get conversation title with caching."""
@@ -845,41 +708,12 @@ class DingTalkAdapter(IMAdapter):
 
     def _build_markdown_payload(self, text: str, at_user_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """Build a DingTalk markdown payload with optional real-mention metadata."""
-        payload: Dict[str, Any] = {
-            "title": text[:20] if len(text) > 20 else text,
-            "text": text,
-        }
-        cleaned_at_user_ids = [str(x).strip() for x in (at_user_ids or []) if str(x).strip()]
-        if cleaned_at_user_ids:
-            payload["at"] = {"atUserIds": cleaned_at_user_ids}
-        return payload
+        return build_markdown_payload(text, at_user_ids)
 
     def _send_via_webhook(self, webhook_url: str, text: str,
                           at_user_ids: Optional[List[str]] = None) -> bool:
         """Send message via sessionWebhook (most reliable for groups)."""
-        body: Dict[str, Any] = {
-            "msgtype": "markdown",
-            "markdown": self._build_markdown_payload(text),
-        }
-        cleaned_at_user_ids = [str(x).strip() for x in (at_user_ids or []) if str(x).strip()]
-        if cleaned_at_user_ids:
-            body["at"] = {"atUserIds": cleaned_at_user_ids}
-        data = json.dumps(body, ensure_ascii=False).encode('utf-8')
-
-        req = urllib.request.Request(webhook_url, data=data, method="POST")
-        req.add_header("Content-Type", "application/json; charset=utf-8")
-
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                result = json.loads(resp.read().decode('utf-8', errors='replace'))
-                if result.get('errcode') == 0:
-                    self._log(f"[webhook] Sent successfully")
-                    return True
-                self._log(f"[webhook] Failed: {result}")
-                return False
-        except Exception as e:
-            self._log(f"[webhook] Error: {e}")
-            return False
+        return self._sender.send_via_webhook(webhook_url, text, at_user_ids=at_user_ids)
 
     def send_message(
         self,
@@ -905,80 +739,7 @@ class DingTalkAdapter(IMAdapter):
         if not self._connected:
             return False
 
-        chunks = self._split_message_chunks(text)
-        if not chunks:
-            return True
-
-        # Resolve @mention targets for group conversations
-        at_user_ids: Optional[List[str]]
-        if mention_user_ids is not None:
-            cleaned_explicit_ids = [str(x).strip() for x in mention_user_ids if str(x).strip()]
-            at_user_ids = cleaned_explicit_ids or None
-        else:
-            at_user_ids = None
-            if self._is_group_conversation(chat_id) and chat_id in self._last_sender:
-                staff_id, _nick = self._last_sender[chat_id]
-                if staff_id:
-                    at_user_ids = [staff_id]
-
-        for idx, chunk in enumerate(chunks):
-            chunk_at_user_ids = at_user_ids if idx == 0 else None
-
-            # Rate limit
-            self._rate_limiter.wait_and_acquire(chat_id)
-
-            # Try sessionWebhook first (most reliable for recent conversations)
-            webhook = self._session_webhook_entry(chat_id)
-            if webhook:
-                webhook_url, _expires_at = webhook
-                if self._send_via_webhook(webhook_url, chunk, at_user_ids=chunk_at_user_ids):
-                    continue
-                self._log("[send] Webhook failed, falling back to API...")
-            else:
-                self._log("[send] No cached sessionWebhook; falling back to API.")
-
-            if not self.robot_code:
-                if self._is_group_conversation(chat_id):
-                    self._log("[send] Missing robot_code; cannot use new API fallback. Trying legacy API.")
-                    if self._send_message_legacy(chat_id, chunk, at_user_ids=chunk_at_user_ids):
-                        continue
-                    return False
-                self._log("[send] Missing robot_code; cannot send via API fallback. Configure DINGTALK_ROBOT_CODE.")
-                return False
-
-            # Use robot message API
-            markdown_payload = self._build_markdown_payload(chunk, chunk_at_user_ids)
-            body: Dict[str, Any] = {
-                "robotCode": self.robot_code,
-                "msgKey": "sampleMarkdown",
-                "msgParam": json.dumps(markdown_payload, ensure_ascii=False),
-            }
-
-            if self._is_group_conversation(chat_id):
-                # Group conversation
-                body["openConversationId"] = chat_id
-                endpoint = "/v1.0/robot/groupMessages/send"
-            else:
-                # 1:1 conversation - OpenAPI needs userId, not conversationId.
-                user_id = self._conversation_user_id(chat_id) or chat_id
-                body["userIds"] = [user_id]
-                endpoint = "/v1.0/robot/oToMessages/batchSend"
-
-            resp = self._api_new("POST", endpoint, body)
-
-            if resp.get("processQueryKey") or resp.get("sendResults"):
-                continue
-
-            # Try alternative API for older bots
-            if "code" in resp or "errcode" in resp:
-                if self._send_message_legacy(chat_id, chunk, at_user_ids=chunk_at_user_ids):
-                    continue
-                return False
-
-            self._log(f"[send] Failed to chat {chat_id}: {resp}")
-            return False
-
-        return True
+        return self._sender.send_text(chat_id, text, mention_user_ids=mention_user_ids)
 
     def _send_message_legacy(
         self,
@@ -987,24 +748,7 @@ class DingTalkAdapter(IMAdapter):
         at_user_ids: Optional[List[str]] = None,
     ) -> bool:
         """Send message using legacy API (for older bot types)."""
-        body = {
-            "chatid": chat_id,
-            "msg": {
-                "msgtype": "markdown",
-                "markdown": self._build_markdown_payload(text),
-            },
-        }
-        cleaned_at_user_ids = [str(x).strip() for x in (at_user_ids or []) if str(x).strip()]
-        if cleaned_at_user_ids:
-            body["msg"]["at"] = {"atUserIds": cleaned_at_user_ids}
-
-        resp = self._api_old("POST", "/chat/send", body)
-
-        if resp.get("errcode") == 0:
-            return True
-
-        self._log(f"[send_legacy] Failed: {resp.get('errmsg', 'unknown')}")
-        return False
+        return self._sender.send_legacy(chat_id, text, at_user_ids=at_user_ids)
 
     def _compose_safe(self, text: str) -> str:
         """Ensure message fits within DingTalk limits."""
@@ -1021,85 +765,11 @@ class DingTalkAdapter(IMAdapter):
 
     def _normalize_text(self, text: str) -> str:
         """Normalize outbound text without truncating content."""
-        if not text:
-            return ""
-
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "  ")
-        lines = [ln.rstrip() for ln in normalized.split("\n")]
-
-        while lines and not lines[0].strip():
-            lines.pop(0)
-        while lines and not lines[-1].strip():
-            lines.pop()
-
-        kept: List[str] = []
-        empty_count = 0
-        for ln in lines:
-            if not ln.strip():
-                empty_count += 1
-                if empty_count <= 1:
-                    kept.append("")
-            else:
-                empty_count = 0
-                kept.append(ln)
-
-        return "\n".join(kept).strip()
+        return normalize_text(text)
 
     def _split_message_chunks(self, text: str) -> List[str]:
         """Split a long outbound message into DingTalk-sized chunks."""
-        normalized = self._normalize_text(text)
-        if not normalized:
-            return []
-
-        max_chars = max(1, min(int(self.max_chars or DINGTALK_MAX_MESSAGE_LENGTH), DINGTALK_MAX_MESSAGE_LENGTH))
-        max_lines = max(1, int(self.max_lines or DEFAULT_MAX_LINES))
-        chunks: List[str] = []
-        current_lines: List[str] = []
-        current_chars = 0
-
-        def flush() -> None:
-            nonlocal current_lines, current_chars
-            if not current_lines:
-                return
-            chunk = "\n".join(current_lines).strip()
-            if chunk:
-                chunks.append(chunk)
-            current_lines = []
-            current_chars = 0
-
-        def push_line(line: str) -> None:
-            nonlocal current_chars
-            sep = 1 if current_lines else 0
-            current_lines.append(line)
-            current_chars += len(line) + sep
-
-        for raw_line in normalized.split("\n"):
-            remaining = raw_line
-            while True:
-                if not current_lines and len(remaining) > max_chars:
-                    chunks.append(remaining[:max_chars])
-                    remaining = remaining[max_chars:]
-                    if not remaining:
-                        break
-                    continue
-
-                needs_new_chunk = False
-                if current_lines and len(current_lines) >= max_lines:
-                    needs_new_chunk = True
-                else:
-                    sep = 1 if current_lines else 0
-                    if current_chars + len(remaining) + sep > max_chars:
-                        needs_new_chunk = True
-
-                if needs_new_chunk:
-                    flush()
-                    continue
-
-                push_line(remaining)
-                break
-
-        flush()
-        return chunks
+        return split_message_chunks(text, max_chars=self.max_chars, max_lines=self.max_lines)
 
     def get_chat_title(self, chat_id: str) -> str:
         """Get conversation title via API."""
@@ -1119,110 +789,11 @@ class DingTalkAdapter(IMAdapter):
 
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
         """Download an attachment from DingTalk."""
-        download_code = attachment.get("download_code", "")
-        if not download_code:
-            raise ValueError("Missing download_code")
-
-        if not self.robot_code:
-            raise ValueError("Missing robot_code (configure DINGTALK_ROBOT_CODE to download attachments)")
-
-        token = self._get_token()
-        if not token:
-            raise ValueError("No valid token")
-
-        # Get download URL
-        resp = self._api_new("POST", "/v1.0/robot/messageFiles/download", {
-            "downloadCode": download_code,
-            "robotCode": self.robot_code,
-        })
-
-        download_url = resp.get("downloadUrl", "")
-        if not download_url:
-            raise ValueError(f"Failed to get download URL: {resp}")
-
-        # Download file
-        req = urllib.request.Request(download_url, method="GET")
-
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return r.read()
-        except Exception as e:
-            raise ValueError(f"Download failed: {e}")
-
-    def _is_image_file(self, filename: str) -> bool:
-        """Check if file is an image based on extension."""
-        image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-        ext = Path(filename).suffix.lower()
-        return ext in image_extensions
+        return self._media.download_attachment(attachment)
 
     def _upload_media(self, raw: bytes, filename: str, media_type: str = "file") -> Optional[str]:
-        """
-        Upload file to DingTalk and return media_id.
-
-        Args:
-            raw: File content bytes
-            filename: Original filename
-            media_type: "file" or "image"
-
-        Returns:
-            media_id if successful, None otherwise
-        """
-        token = self._get_token()
-        if not token:
-            return None
-
-        boundary = "----cccc" + uuid.uuid4().hex
-        upload_url = f"{DINGTALK_API_OLD}/media/upload"
-        upload_url = f"{upload_url}?access_token={token}&type={media_type}"
-
-        safe_fn = (filename or "file").replace("\\", "_").replace("/", "_")
-
-        # Determine content type based on media type
-        if media_type == "image":
-            ext = Path(filename).suffix.lower()
-            content_type_map = {
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".gif": "image/gif",
-                ".bmp": "image/bmp",
-                ".webp": "image/webp",
-            }
-            content_type = content_type_map.get(ext, "application/octet-stream")
-        else:
-            content_type = "application/octet-stream"
-
-        # Build multipart form data
-        body = b""
-        body += (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="media"; filename="{safe_fn}"\r\n'
-            f"Content-Type: {content_type}\r\n\r\n"
-        ).encode("utf-8")
-        body += raw
-        body += f"\r\n--{boundary}--\r\n".encode("utf-8")
-
-        req = urllib.request.Request(upload_url, data=body, method="POST")
-        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read().decode("utf-8", errors="replace"))
-
-            if result.get("errcode") != 0:
-                self._log(f"[upload_media] Upload failed: {result.get('errmsg', 'unknown')}")
-                return None
-
-            media_id = result.get("media_id", "")
-            if not media_id:
-                self._log("[upload_media] No media_id in response")
-                return None
-
-            return media_id
-
-        except Exception as e:
-            self._log(f"[upload_media] Upload error: {e}")
-            return None
+        """Upload file to DingTalk and return media_id."""
+        return self._media.upload_media(raw, filename, media_type)
 
     def _send_file_via_webhook(
         self,
@@ -1231,59 +802,8 @@ class DingTalkAdapter(IMAdapter):
         filename: str,
         is_image: bool = False,
     ) -> bool:
-        """
-        Send file via sessionWebhook.
-
-        For images, uploads to DingTalk media API and sends image message.
-        For files, uploads and sends file message.
-
-        Args:
-            webhook_url: Session webhook URL
-            raw: File content bytes
-            filename: Original filename
-            is_image: Whether to send as image type
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Upload media first
-        media_type = "image" if is_image else "file"
-        media_id = self._upload_media(raw, filename, media_type)
-        if not media_id:
-            return False
-
-        # Build webhook message body
-        if is_image:
-            body = {
-                "msgtype": "image",
-                "image": {
-                    "mediaId": media_id
-                }
-            }
-        else:
-            body = {
-                "msgtype": "file",
-                "file": {
-                    "mediaId": media_id
-                }
-            }
-
-        data = json.dumps(body, ensure_ascii=False).encode('utf-8')
-
-        req = urllib.request.Request(webhook_url, data=data, method="POST")
-        req.add_header("Content-Type", "application/json; charset=utf-8")
-
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                result = json.loads(resp.read().decode('utf-8', errors='replace'))
-                if result.get('errcode') == 0:
-                    self._log(f"[send_file_webhook] Sent successfully via webhook")
-                    return True
-                self._log(f"[send_file_webhook] Failed: {result}")
-                return False
-        except Exception as e:
-            self._log(f"[send_file_webhook] Error: {e}")
-            return False
+        """Send file via sessionWebhook."""
+        return self._media.send_file_via_webhook(webhook_url, raw, filename, is_image)
 
     def _send_file_via_api(
         self,
@@ -1292,61 +812,8 @@ class DingTalkAdapter(IMAdapter):
         filename: str,
         is_image: bool = False,
     ) -> bool:
-        """
-        Send file via new robot API (/v1.0/robot/groupMessages/send).
-
-        Args:
-            chat_id: DingTalk conversationId
-            raw: File content bytes
-            filename: Original filename
-            is_image: Whether to send as image type
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.robot_code:
-            self._log("[send_file_api] Missing robot_code; cannot use new API.")
-            return False
-
-        # Upload media first
-        media_type = "image" if is_image else "file"
-        media_id = self._upload_media(raw, filename, media_type)
-        if not media_id:
-            return False
-
-        # Build API request body
-        if is_image:
-            msg_key = "sampleImageMsg"
-            msg_param = json.dumps({"photoURL": f"@lADPD{media_id}"}, ensure_ascii=False)
-        else:
-            msg_key = "sampleFile"
-            msg_param = json.dumps({"mediaId": media_id, "fileName": filename}, ensure_ascii=False)
-
-        body: Dict[str, Any] = {
-            "robotCode": self.robot_code,
-            "msgKey": msg_key,
-            "msgParam": msg_param,
-        }
-
-        # Determine endpoint based on chat type
-        if self._is_group_conversation(chat_id):
-            # Group conversation
-            body["openConversationId"] = chat_id
-            endpoint = "/v1.0/robot/groupMessages/send"
-        else:
-            # 1:1 conversation
-            user_id = self._conversation_user_id(chat_id) or chat_id
-            body["userIds"] = [user_id]
-            endpoint = "/v1.0/robot/oToMessages/batchSend"
-
-        resp = self._api_new("POST", endpoint, body)
-
-        if resp.get("processQueryKey") or resp.get("sendResults"):
-            self._log(f"[send_file_api] Sent successfully via API")
-            return True
-
-        self._log(f"[send_file_api] Failed: {resp}")
-        return False
+        """Send file via new robot API."""
+        return self._media.send_file_via_api(chat_id, raw, filename, is_image)
 
     def send_file(
         self,
@@ -1368,43 +835,113 @@ class DingTalkAdapter(IMAdapter):
 
         if not self._connected:
             return False
-
-        # Rate limit
-        self._rate_limiter.wait_and_acquire(chat_id)
-
-        try:
-            raw = file_path.read_bytes()
-        except Exception as e:
-            self._log(f"[send_file] Read failed: {e}")
-            return False
-
-        safe_fn = (filename or file_path.name or "file").replace("\\", "_").replace("/", "_")
-        is_image = self._is_image_file(safe_fn)
-
-        # Try sessionWebhook first (most reliable for recent conversations)
-        webhook = self._session_webhook_entry(chat_id)
-        if webhook:
-            webhook_url, _expires_at = webhook
-            if self._send_file_via_webhook(webhook_url, raw, safe_fn, is_image):
-                if caption:
-                    self.send_message(chat_id, caption, mention_user_ids=mention_user_ids)
-                return True
-            self._log("[send_file] Webhook failed, falling back to API...")
-        else:
-            self._log("[send_file] No cached sessionWebhook; using API.")
-
-        # Fallback to new robot API
-        if self._send_file_via_api(chat_id, raw, safe_fn, is_image):
-            if caption:
-                self.send_message(chat_id, caption, mention_user_ids=mention_user_ids)
-            return True
-
-        self._log(f"[send_file] All methods failed for chat {chat_id}")
-        return False
+        return self._media.send_file(
+            chat_id,
+            file_path=file_path,
+            filename=filename,
+            caption=caption,
+            mention_user_ids=mention_user_ids,
+        )
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for DingTalk display."""
         return super().format_outbound(by, to, text, is_system)
+
+    def add_reaction(self, message_id: str, emoji_type: str = "") -> Optional[str]:
+        """Add a DingTalk emoji reaction to an inbound message."""
+        if not message_id or not self._connected:
+            return None
+        target = _parse_reaction_message_id(message_id)
+        if not target:
+            self._log(f"[reaction] Invalid DingTalk message_id for reaction: {message_id}")
+            return None
+        msg_id, conversation_id = target
+        reaction_type = emoji_type or "🤔Thinking"
+        ok = self._run_async(
+            self._reaction_service.send_reaction(
+                message_id=msg_id,
+                conversation_id=conversation_id,
+                reaction_type=reaction_type,
+                recall=False,
+            )
+        )
+        if not ok:
+            return None
+        reaction_id = _reaction_message_id(msg_id, conversation_id, reaction_type)
+        self._log(f"[reaction] Added {reaction_type} to {msg_id} -> {reaction_id}")
+        return reaction_id
+
+    def remove_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """Recall a DingTalk emoji reaction."""
+        if not message_id or not reaction_id or not self._connected:
+            return False
+        parsed = _parse_reaction_id(reaction_id)
+        if not parsed:
+            self._log(f"[reaction] Invalid DingTalk reaction_id: {reaction_id}")
+            return False
+        msg_id, conversation_id, reaction_type = parsed
+        ok = self._run_async(
+            self._reaction_service.send_reaction(
+                message_id=msg_id,
+                conversation_id=conversation_id,
+                reaction_type=reaction_type,
+                recall=True,
+            )
+        )
+        if ok:
+            self._log(f"[reaction] Removed {reaction_id}")
+            return True
+        return False
+
+    def on_processing_start(self, context: IMProcessingContext) -> Optional[str]:
+        """Show best-effort processing feedback with a temporary AI Card."""
+        reaction_id = self.add_reaction(context.message_id, "🤔Thinking")
+        if reaction_id:
+            return f"reaction:{reaction_id}"
+        if not self.robot_code:
+            self._log(f"[processing] dingtalk AI Card skipped: missing robot_code chat={context.chat_id}")
+            return None
+        try:
+            client = self._get_card_client()
+            card_instance_id = self._run_async(client.create_card(context.chat_id, "处理中..."))
+        except Exception as exc:
+            self._log(f"[processing] dingtalk AI Card create failed chat={context.chat_id}: {exc}")
+            return None
+        if not card_instance_id:
+            self._log(f"[processing] dingtalk AI Card create returned no card id chat={context.chat_id}")
+            return None
+        self._log(f"[processing] dingtalk AI Card created card={card_instance_id} chat={context.chat_id}")
+        return f"dingtalk_card:{card_instance_id}"
+
+    def on_processing_complete(
+        self,
+        context: IMProcessingContext,
+        outcome: IMProcessingOutcome,
+        handle: Optional[str],
+    ) -> None:
+        """Finalize a temporary processing AI Card, if one was created."""
+        if handle and handle.startswith("reaction:"):
+            reaction_id = handle.removeprefix("reaction:")
+            self.remove_reaction(context.message_id, reaction_id)
+            final_reaction = "🥳Done" if outcome == IMProcessingOutcome.SUCCESS else "❌Failed"
+            self.add_reaction(context.message_id, final_reaction)
+            return
+        if not handle or not handle.startswith("dingtalk_card:"):
+            return
+        card_instance_id = handle.removeprefix("dingtalk_card:")
+        if not card_instance_id:
+            return
+        text = "处理完成"
+        if outcome == IMProcessingOutcome.FAILURE:
+            text = "处理失败"
+        elif outcome == IMProcessingOutcome.CANCELLED:
+            text = "处理已取消"
+        try:
+            client = self._get_card_client()
+            self._run_async(client.finalize_card(card_instance_id, text))
+            self._log(f"[processing] dingtalk AI Card finalized card={card_instance_id} outcome={outcome.value}")
+        except Exception as exc:
+            self._log(f"[processing] dingtalk AI Card finalize failed card={card_instance_id}: {exc}")
 
     # ===== Webhook Event Handling =====
 
@@ -1528,3 +1065,30 @@ class DingTalkAdapter(IMAdapter):
             return computed == signature
         except Exception:
             return False
+
+
+def _reaction_message_id(message_id: str, conversation_id: str, reaction_type: str = "") -> str:
+    parts = [str(message_id or "").strip(), str(conversation_id or "").strip()]
+    if reaction_type:
+        parts.append(str(reaction_type).strip())
+    return "|".join(parts)
+
+
+def _parse_reaction_message_id(message_id: str) -> Optional[tuple[str, str]]:
+    parts = str(message_id or "").split("|", 1)
+    if len(parts) != 2:
+        return None
+    msg_id, conversation_id = (part.strip() for part in parts)
+    if not msg_id or not conversation_id:
+        return None
+    return msg_id, conversation_id
+
+
+def _parse_reaction_id(reaction_id: str) -> Optional[tuple[str, str, str]]:
+    parts = str(reaction_id or "").split("|", 2)
+    if len(parts) != 3:
+        return None
+    msg_id, conversation_id, reaction_type = (part.strip() for part in parts)
+    if not msg_id or not conversation_id or not reaction_type:
+        return None
+    return msg_id, conversation_id, reaction_type

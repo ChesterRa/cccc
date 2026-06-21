@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from .im_bridge_ops import read_live_im_bridge_pid
+from .im_bridge_ops import read_live_im_bridge_pid, sanitize_im_bridge_env
 from ...kernel.group import load_group
 from ...util.conv import coerce_bool
 from ...util.process import resolve_background_python_argv, supervised_process_popen_kwargs
@@ -49,7 +49,7 @@ def autostart_enabled_im_bridges(home: Path) -> None:
 
         try:
             with log_path.open("a", encoding="utf-8") as log_file:
-                env = os.environ.copy()
+                env = sanitize_im_bridge_env(os.environ.copy())
                 env["CCCC_HOME"] = str(home)
                 proc = subprocess.Popen(
                     resolve_background_python_argv([sys.executable, "-m", "cccc.ports.im.bridge", group_id, platform]),

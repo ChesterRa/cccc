@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
-from ....daemon.im.im_bridge_ops import read_live_im_bridge_pid, stop_im_bridges_for_group
+from ....daemon.im.im_bridge_ops import read_live_im_bridge_pid, sanitize_im_bridge_env, stop_im_bridges_for_group
 from ....kernel.group import load_group
 from ....paths import ensure_home
 from ....ports.im.config_schema import canonicalize_im_config
@@ -570,7 +570,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         platform = im_cfg.get("platform", "telegram")
 
         # Prepare environment
-        env = os.environ.copy()
+        env = sanitize_im_bridge_env(os.environ.copy())
 
         if platform == "feishu":
             # Feishu: set FEISHU_APP_ID and FEISHU_APP_SECRET

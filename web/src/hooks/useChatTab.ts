@@ -44,6 +44,7 @@ import {
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
 } from "./composerGroupMentions";
+import { buildComposerSendPlanTargets } from "./composerSendPlan";
 import {
   buildComposerMentionSuggestions,
   buildFederationRouteGroups,
@@ -784,6 +785,10 @@ export type ComposerSendRoutingSnapshot = {
   isCrossGroup: boolean;
 };
 
+type SendMessageResponse =
+  | { ok: true; result: unknown; error?: null }
+  | { ok: false; result?: unknown; error: { code: string; message: string; details?: unknown } };
+
 export function buildComposerSendRoutingSnapshot({
   selectedGroupId,
   activeGroupId,
@@ -1428,6 +1433,15 @@ export function useChatTab({
 
     const dstGroup = routingSnapshot.destGroupId;
     const isCrossGroup = routingSnapshot.isCrossGroup;
+    const sendPlanTargets = buildComposerSendPlanTargets({
+      selectedGroupId: originGroupId,
+      dstGroupId: dstGroup,
+      isCrossGroup,
+      text: composerStateSnapshot.composerText,
+      groupMentionTokens: composerGroupMentionTokens,
+      groups: composerRouteGroups,
+    });
+    const sendsCrossGroup = sendPlanTargets.some((target) => target.isCrossGroup);
     if (await tryExecuteSlashCommand({
       text: composerStateSnapshot.composerText,
       composerFilesCount: composerFilesSnapshot.length,
@@ -1461,12 +1475,12 @@ export function useChatTab({
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
     const toTokensSnapshot = buildComposerSendRecipientTokens({
       toText: toTextSnapshot,
-      isCrossGroup,
+      isCrossGroup: sendsCrossGroup,
       validRecipientSet,
       crossGroupValidRecipientSet,
     });
     const prio = replyRequiredSnapshot ? "attention" : (prioritySnapshot || "normal");
-    const assistantTargets = !isCrossGroup ? resolveAssistantTargets(toTokensSnapshot) : [];
+    const assistantTargets = !sendsCrossGroup ? resolveAssistantTargets(toTokensSnapshot) : [];
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1556,24 +1570,24 @@ export function useChatTab({
     };
 
     // Local validations that must pass before clearing the composer
-    if (replyTargetSnapshot && isCrossGroup) {
+    if (replyTargetSnapshot && sendsCrossGroup) {
       showError("Cross-group send does not support replies.");
       setDestGroupId(selectedGroupId);
       return;
     }
-    if (quotedPresentationRefSnapshot && isCrossGroup) {
+    if (quotedPresentationRefSnapshot && sendsCrossGroup) {
       showError("Cross-group send does not support quoted presentation views.");
       setDestGroupId(selectedGroupId);
       return;
     }
-    if (!replyTargetSnapshot && isCrossGroup && composerFilesSnapshot.length > 0) {
+    if (!replyTargetSnapshot && sendsCrossGroup && composerFilesSnapshot.length > 0) {
       showError("Cross-group send does not support attachments yet.");
       return;
     }
 
     // Optimistic: enqueue to outbox immediately for same-group sends.
     // If the request fails, we remove the pending entry and restore the composer.
-    if (!isCrossGroup) {
+    if (!sendsCrossGroup) {
       const optimisticAttachments: OptimisticAttachment[] = composerFilesSnapshot.map((file) => ({
         kind: "file",
         path: "",
@@ -1608,9 +1622,10 @@ export function useChatTab({
 
     applyImmediateComposerFeedback();
     sendInFlightRef.current = true;
+    let crossGroupSuccessfulSendCount = 0;
     try {
       const to = toTokensSnapshot;
-      let resp;
+      let resp: SendMessageResponse | undefined;
       if (replyTargetSnapshot) {
         resp = await api.replyMessage(
           selectedGroupId,
@@ -1624,8 +1639,16 @@ export function useChatTab({
           refsSnapshot,
         );
       } else {
-        if (isCrossGroup) {
-          resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio, replyRequiredSnapshot);
+        if (sendsCrossGroup) {
+          const crossGroupTargets = sendPlanTargets.filter((item) => item.isCrossGroup);
+          if (crossGroupTargets.length === 0) {
+            resp = { ok: false, error: { code: "missing_cross_group_target", message: "missing cross-group target" } };
+          }
+          for (const target of crossGroupTargets) {
+            resp = await api.sendCrossGroupMessage(selectedGroupId, target.groupId, txt, to, prio, replyRequiredSnapshot);
+            if (!resp.ok) break;
+            crossGroupSuccessfulSendCount += 1;
+          }
         } else {
           resp = await api.sendMessage(
             selectedGroupId,
@@ -1639,21 +1662,26 @@ export function useChatTab({
           );
         }
       }
+      if (!resp) {
+        resp = { ok: false, error: { code: "send_not_dispatched", message: "message send was not dispatched" } };
+      }
       if (!resp.ok) {
         // Pending-only outbox: failed sends roll back to the composer.
         removeOutbox(selectedGroupId, localId);
         clearLocalAssistantPlaceholders();
-        restoreComposerState();
+        const shouldRestoreComposer = !sendsCrossGroup || crossGroupSuccessfulSendCount === 0;
+        if (shouldRestoreComposer) restoreComposerState();
+        const sendError = resp.error || { code: "send_failed", message: "send failed" };
         showError(formatSendMessageError({
-          code: resp.error.code,
-          message: resp.error.message,
+          code: sendError.code,
+          message: sendError.message,
           groupSendBlockedReason,
           t,
         }));
         return;
       }
       const canonicalEvent =
-        !isCrossGroup && resp.result && typeof resp.result === "object" && "event" in resp.result
+        !sendsCrossGroup && resp.result && typeof resp.result === "object" && "event" in resp.result
           ? (resp.result.event as LedgerEvent | null | undefined)
           : undefined;
 
@@ -1664,15 +1692,15 @@ export function useChatTab({
       // client_id. Replacing an optimistic attachment preview with the HTTP
       // response event causes a second image load/layout pass, which produces
       // a visible jump while the list is following bottom.
-      if (isCrossGroup) {
+      if (sendsCrossGroup) {
         removeOutbox(selectedGroupId, localId);
       }
       // For same-group sends, rely on SSE to append the canonical event and
       // clear the matching optimistic row. Cross-group sends still need the
       // returned event because they do not stream back into the current group.
-      if (canonicalEvent && isCrossGroup) {
+      if (canonicalEvent && sendsCrossGroup) {
         appendEvent(canonicalEvent, selectedGroupId);
-      } else if (canonicalEvent && !isCrossGroup) {
+      } else if (canonicalEvent && !sendsCrossGroup) {
         const canonicalEventId = String(canonicalEvent.id || "").trim();
         if (canonicalEventId) {
           promoteStreamingEventsByPrefix(`local:${localId}:`, canonicalEventId, selectedGroupId);
@@ -1699,7 +1727,8 @@ export function useChatTab({
       // Pending-only outbox: failed sends roll back to the composer.
       removeOutbox(selectedGroupId, localId);
       clearLocalAssistantPlaceholders();
-      restoreComposerState();
+      const shouldRestoreComposer = !sendsCrossGroup || crossGroupSuccessfulSendCount === 0;
+      if (shouldRestoreComposer) restoreComposerState();
       showError(message);
     } finally {
       sendInFlightRef.current = false;

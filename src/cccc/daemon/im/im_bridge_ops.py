@@ -9,6 +9,15 @@ from typing import Callable, Dict, Optional
 
 from ...util.process import pid_is_alive
 
+_IM_BRIDGE_UNSAFE_CA_ENV = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+
+
+def sanitize_im_bridge_env(env: Dict[str, str]) -> Dict[str, str]:
+    """Remove inherited CA bundle overrides that can break IM SDK TLS."""
+    for key in _IM_BRIDGE_UNSAFE_CA_ENV:
+        env.pop(key, None)
+    return env
+
 
 def read_live_im_bridge_pid(pid_path: Path) -> Optional[int]:
     """Return a live bridge pid from a pidfile, removing stale pidfiles."""

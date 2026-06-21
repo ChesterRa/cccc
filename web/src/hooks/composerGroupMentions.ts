@@ -127,6 +127,39 @@ export function resolveSelectedComposerGroupMention({
   return best;
 }
 
+export function resolveSelectedComposerGroupMentionTargets({
+  text,
+  selectedGroupId,
+  groups,
+  tokens,
+}: {
+  text: string;
+  selectedGroupId: string;
+  groups: GroupMeta[];
+  tokens: ComposerGroupMentionToken[];
+}): ComposerGroupMentionToken[] {
+  const selected = String(selectedGroupId || "").trim();
+  const liveTokens = pruneComposerGroupMentionTokens({ text, tokens });
+  const seen = new Set<string>();
+  const out: ComposerGroupMentionToken[] = [];
+  const groupsById = new Map<string, GroupMeta>();
+  for (const group of groups || []) {
+    const groupId = String(group.group_id || "").trim();
+    if (groupId) groupsById.set(groupId, group);
+  }
+
+  for (const token of [...liveTokens].sort((a, b) => a.start - b.start)) {
+    const groupId = String(token.groupId || "").trim();
+    if (!groupId || groupId === selected || seen.has(groupId)) continue;
+    const group = groupsById.get(groupId);
+    if (!group) continue;
+    if (!groupCandidateTokens(group).includes(token.token.replace(/^#/, ""))) continue;
+    seen.add(groupId);
+    out.push(token);
+  }
+  return out;
+}
+
 export function buildComposerFederationRouteRefs({
   text,
   tokens,

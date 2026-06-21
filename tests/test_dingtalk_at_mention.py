@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cccc.ports.im.adapters.base import IMProcessingContext, IMProcessingOutcome
 from cccc.ports.im.adapters.dingtalk import DINGTALK_MAX_MESSAGE_LENGTH, DingTalkAdapter
 
 
@@ -77,6 +80,210 @@ class TestFromUserIdNormalized:
         assert msgs[0]["mention_user_ids"] == []
 
 
+class TestDingTalkReactions:
+    def test_add_reaction_uses_message_and_conversation_ids(self, adapter: DingTalkAdapter) -> None:
+        class FakeReactions:
+            def __init__(self) -> None:
+                self.calls: List[tuple[str, str, str, bool]] = []
+
+            async def send_reaction(
+                self,
+                *,
+                message_id: str,
+                conversation_id: str,
+                reaction_type: str,
+                recall: bool = False,
+            ) -> bool:
+                self.calls.append((message_id, conversation_id, reaction_type, recall))
+                return True
+
+        fake = FakeReactions()
+        adapter._reaction_service = fake  # type: ignore[attr-defined]
+
+        reaction_id = adapter.add_reaction("msg_001|cidXXXgroup123", "🤔Thinking")
+
+        assert reaction_id == "msg_001|cidXXXgroup123|🤔Thinking"
+        assert fake.calls == [("msg_001", "cidXXXgroup123", "🤔Thinking", False)]
+
+    def test_remove_reaction_recalls_previous_reaction(self, adapter: DingTalkAdapter) -> None:
+        class FakeReactions:
+            def __init__(self) -> None:
+                self.calls: List[tuple[str, str, str, bool]] = []
+
+            async def send_reaction(
+                self,
+                *,
+                message_id: str,
+                conversation_id: str,
+                reaction_type: str,
+                recall: bool = False,
+            ) -> bool:
+                self.calls.append((message_id, conversation_id, reaction_type, recall))
+                return True
+
+        fake = FakeReactions()
+        adapter._reaction_service = fake  # type: ignore[attr-defined]
+
+        assert adapter.remove_reaction("msg_001|cidXXXgroup123", "msg_001|cidXXXgroup123|🤔Thinking") is True
+        assert fake.calls == [("msg_001", "cidXXXgroup123", "🤔Thinking", True)]
+
+    def test_processing_start_prefers_reaction_over_ai_card(self, adapter: DingTalkAdapter) -> None:
+        class FakeReactions:
+            async def send_reaction(
+                self,
+                *,
+                message_id: str,
+                conversation_id: str,
+                reaction_type: str,
+                recall: bool = False,
+            ) -> bool:
+                _ = message_id, conversation_id, reaction_type, recall
+                return True
+
+        adapter._reaction_service = FakeReactions()  # type: ignore[attr-defined]
+        adapter._get_card_client = MagicMock()  # type: ignore[method-assign]
+
+        handle = adapter.on_processing_start(
+            IMProcessingContext(
+                chat_id="cidXXXgroup123",
+                message_id="msg_001|cidXXXgroup123",
+                platform="dingtalk",
+            )
+        )
+
+        assert handle == "reaction:msg_001|cidXXXgroup123|🤔Thinking"
+        adapter._get_card_client.assert_not_called()
+
+    def test_processing_complete_swaps_thinking_for_done(self, adapter: DingTalkAdapter) -> None:
+        class FakeReactions:
+            def __init__(self) -> None:
+                self.calls: List[tuple[str, str, str, bool]] = []
+
+            async def send_reaction(
+                self,
+                *,
+                message_id: str,
+                conversation_id: str,
+                reaction_type: str,
+                recall: bool = False,
+            ) -> bool:
+                self.calls.append((message_id, conversation_id, reaction_type, recall))
+                return True
+
+        fake = FakeReactions()
+        adapter._reaction_service = fake  # type: ignore[attr-defined]
+
+        adapter.on_processing_complete(
+            IMProcessingContext(
+                chat_id="cidXXXgroup123",
+                message_id="msg_001|cidXXXgroup123",
+                platform="dingtalk",
+            ),
+            IMProcessingOutcome.SUCCESS,
+            "reaction:msg_001|cidXXXgroup123|🤔Thinking",
+        )
+
+        assert fake.calls == [
+            ("msg_001", "cidXXXgroup123", "🤔Thinking", True),
+            ("msg_001", "cidXXXgroup123", "🥳Done", False),
+        ]
+
+    def test_reaction_service_posts_dingtalk_openapi_payload(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cccc.ports.im.adapters.dingtalk_reactions import DingTalkReactionService
+
+        captured: Dict[str, Any] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b"{}"
+
+        def fake_urlopen(req: urllib.request.Request, timeout: int = 0) -> FakeResponse:
+            captured["url"] = req.full_url
+            captured["timeout"] = timeout
+            captured["headers"] = dict(req.header_items())
+            captured["body"] = json.loads((req.data or b"{}").decode("utf-8"))
+            return FakeResponse()
+
+        monkeypatch.setattr("cccc.ports.im.adapters.dingtalk_reactions.urllib.request.urlopen", fake_urlopen)
+        service = DingTalkReactionService(
+            get_token=lambda: "token-1",
+            robot_code_getter=lambda: "robot-1",
+            log=lambda msg: None,
+        )
+
+        ok = asyncio.run(
+            service.send_reaction(
+                message_id="msg_001",
+                conversation_id="cidXXXgroup123",
+                reaction_type="🤔Thinking",
+            )
+        )
+
+        assert ok is True
+        assert captured["url"].endswith("/v1.0/robot/emotion/reply")
+        assert captured["timeout"] == 15
+        assert captured["headers"]["X-acs-dingtalk-access-token"] == "token-1"
+        assert captured["body"] == {
+            "robotCode": "robot-1",
+            "openMsgId": "msg_001",
+            "openConversationId": "cidXXXgroup123",
+            "emotionType": 2,
+            "emotionName": "🤔Thinking",
+            "textEmotion": {
+                "emotionId": "2659900",
+                "emotionName": "🤔Thinking",
+                "text": "🤔Thinking",
+                "backgroundId": "im_bg_1",
+            },
+        }
+
+    def test_reaction_service_posts_dingtalk_recall_payload(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cccc.ports.im.adapters.dingtalk_reactions import DingTalkReactionService
+
+        captured: Dict[str, Any] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b"{}"
+
+        def fake_urlopen(req: urllib.request.Request, timeout: int = 0) -> FakeResponse:
+            captured["url"] = req.full_url
+            captured["body"] = json.loads((req.data or b"{}").decode("utf-8"))
+            return FakeResponse()
+
+        monkeypatch.setattr("cccc.ports.im.adapters.dingtalk_reactions.urllib.request.urlopen", fake_urlopen)
+        service = DingTalkReactionService(
+            get_token=lambda: "token-1",
+            robot_code_getter=lambda: "robot-1",
+            log=lambda msg: None,
+        )
+
+        ok = asyncio.run(
+            service.send_reaction(
+                message_id="msg_001",
+                conversation_id="cidXXXgroup123",
+                reaction_type="🤔Thinking",
+                recall=True,
+            )
+        )
+
+        assert ok is True
+        assert captured["url"].endswith("/v1.0/robot/emotion/recall")
+        assert captured["body"]["textEmotion"]["backgroundId"] == "im_bg_1"
+
+
 # ── Test: _last_sender cache ─────────────────────────────────────────
 
 
@@ -124,6 +331,106 @@ class TestLastSenderCache:
         adapter._enqueue_message(event)
 
         assert "cidGroup1" not in adapter._last_sender
+
+
+class TestMediaCallbacks:
+    def test_file_callback_wrappers_call_media_primitives_without_recursing(
+        self,
+        adapter: DingTalkAdapter,
+    ) -> None:
+        calls: List[tuple[str, tuple[Any, ...]]] = []
+
+        def upload_media(raw: bytes, filename: str, media_type: str = "file") -> str:
+            calls.append(("upload", (raw, filename, media_type)))
+            return "media-1"
+
+        def send_file_via_webhook(
+            webhook_url: str,
+            raw: bytes,
+            filename: str,
+            is_image: bool = False,
+        ) -> bool:
+            calls.append(("webhook", (webhook_url, raw, filename, is_image)))
+            return True
+
+        def send_file_via_api(
+            chat_id: str,
+            raw: bytes,
+            filename: str,
+            is_image: bool = False,
+        ) -> bool:
+            calls.append(("api", (chat_id, raw, filename, is_image)))
+            return True
+
+        adapter._media.upload_media = upload_media  # type: ignore[method-assign]
+        adapter._media.send_file_via_webhook = send_file_via_webhook  # type: ignore[method-assign]
+        adapter._media.send_file_via_api = send_file_via_api  # type: ignore[method-assign]
+
+        assert adapter._upload_media(b"raw", "a.txt", "file") == "media-1"
+        assert adapter._send_file_via_webhook("https://webhook", b"raw", "a.txt", False) is True
+        assert adapter._send_file_via_api("cid-1", b"raw", "a.txt", False) is True
+
+        assert calls == [
+            ("upload", (b"raw", "a.txt", "file")),
+            ("webhook", ("https://webhook", b"raw", "a.txt", False)),
+            ("api", ("cid-1", b"raw", "a.txt", False)),
+        ]
+
+    def test_media_service_callbacks_do_not_route_back_through_adapter_wrappers(
+        self,
+        adapter: DingTalkAdapter,
+    ) -> None:
+        callbacks = [
+            getattr(adapter._media, "_upload_media_callback", None),
+            getattr(adapter._media, "_send_file_via_webhook_callback", None),
+            getattr(adapter._media, "_send_file_via_api_callback", None),
+        ]
+
+        assert callbacks == [None, None, None]
+
+    def test_send_file_uses_media_service_primitives_without_recursing(
+        self,
+        adapter: DingTalkAdapter,
+        tmp_path: Path,
+    ) -> None:
+        chat_id = "cid-file"
+        file_path = tmp_path / "report.txt"
+        file_path.write_bytes(b"report")
+        adapter._remember_conversation(
+            chat_id,
+            chat_type="2",
+            user_id="staff_001",
+            session_webhook=f"https://oapi.dingtalk.com/robot/sendBySession/{chat_id}",
+            session_expires=time.time() + 3600,
+        )
+
+        calls: List[tuple[str, tuple[Any, ...]]] = []
+
+        def upload_media(raw: bytes, filename: str, media_type: str = "file") -> str:
+            calls.append(("upload", (raw, filename, media_type)))
+            return "media-1"
+
+        def mock_urlopen(req, timeout=None):
+            calls.append(("webhook", (req.full_url, req.data)))
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"errcode": 0}).encode()
+            resp.__enter__ = lambda s: resp
+            resp.__exit__ = lambda s, *a: None
+            return resp
+
+        adapter._media.upload_media = upload_media  # type: ignore[method-assign]
+        with (
+            patch("cccc.ports.im.adapters.dingtalk_media.urllib.request.urlopen", side_effect=mock_urlopen),
+            patch.object(adapter, "send_message", return_value=True) as send_message,
+            patch.object(adapter._media, "send_file_via_api", side_effect=AssertionError("API fallback should not run")),
+        ):
+            assert adapter.send_file(chat_id, file_path=file_path, filename="report.txt", caption="caption") is True
+
+        assert calls[0] == ("upload", (b"report", "report.txt", "file"))
+        assert calls[1][0] == "webhook"
+        body = json.loads(calls[1][1][1])
+        assert body == {"msgtype": "file", "file": {"mediaId": "media-1"}}
+        send_message.assert_called_once_with(chat_id, "caption", mention_user_ids=None)
 
     def test_cache_bounded(self, adapter: DingTalkAdapter) -> None:
         # Fill beyond limit

@@ -499,11 +499,18 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         adapter = _FileOkAdapter()
         bridge = IMBridge(group=fake_group, adapter=adapter)
 
-        # Simulate an active typing indicator awaiting outbound completion.
-        bridge._typing_indicators["chat_auth"] = ("chat_auth:1", "chat_auth:1:👀")
-
+        bridge._processing_lifecycle.start(chat_id="chat_auth", message_id="chat_auth:1")
         removed: list[str] = []
-        bridge._remove_typing_indicator = lambda chat_id: removed.append(str(chat_id))  # type: ignore[method-assign]
+
+        original_complete = bridge._processing_lifecycle.complete
+
+        def _complete(chat_id, outcome=None):  # type: ignore[no-untyped-def]
+            removed.append(str(chat_id))
+            if outcome is None:
+                return original_complete(chat_id)
+            return original_complete(chat_id, outcome)
+
+        bridge._processing_lifecycle.complete = _complete  # type: ignore[method-assign]
 
         bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
             {
@@ -599,9 +606,18 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         adapter = _MessageFailAdapter()
         bridge = IMBridge(group=fake_group, adapter=adapter)
 
-        bridge._typing_indicators["chat_auth"] = ("chat_auth:1", "chat_auth:1:👀")
+        bridge._processing_lifecycle.start(chat_id="chat_auth", message_id="chat_auth:1")
         removed: list[str] = []
-        bridge._remove_typing_indicator = lambda chat_id: removed.append(str(chat_id))  # type: ignore[method-assign]
+
+        original_complete = bridge._processing_lifecycle.complete
+
+        def _complete(chat_id, outcome=None):  # type: ignore[no-untyped-def]
+            removed.append(str(chat_id))
+            if outcome is None:
+                return original_complete(chat_id)
+            return original_complete(chat_id, outcome)
+
+        bridge._processing_lifecycle.complete = _complete  # type: ignore[method-assign]
 
         bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
             {

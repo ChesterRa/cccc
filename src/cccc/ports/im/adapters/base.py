@@ -5,6 +5,8 @@ Base class for IM platform adapters.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict
 
@@ -42,6 +44,24 @@ class OutboundStreamHandle(TypedDict):
 
     stream_id: str
     platform_handle: Any  # Platform-specific handle (e.g., DingTalk card instance ID)
+
+
+class IMProcessingOutcome(str, Enum):
+    """Result of processing an inbound IM message."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class IMProcessingContext:
+    """Platform context for best-effort processing feedback."""
+
+    chat_id: str
+    thread_id: int = 0
+    message_id: str = ""
+    platform: str = "unknown"
 
 
 class IMAdapter(ABC):
@@ -181,6 +201,30 @@ class IMAdapter(ABC):
         Default: no-op.
         """
         return False
+
+    def on_processing_start(self, context: IMProcessingContext) -> Optional[str]:
+        """Start platform feedback for an accepted inbound message."""
+        if context.message_id:
+            reaction_id = self.add_reaction(context.message_id, "👀")
+            if reaction_id:
+                return f"reaction:{reaction_id}"
+        if self.send_chat_action(context.chat_id, "typing"):
+            return "typing"
+        return None
+
+    def on_processing_complete(
+        self,
+        context: IMProcessingContext,
+        outcome: IMProcessingOutcome,
+        handle: Optional[str],
+    ) -> None:
+        """Complete platform feedback for a previously accepted inbound message."""
+        _ = outcome
+        if not handle or not handle.startswith("reaction:"):
+            return
+        reaction_id = handle.removeprefix("reaction:")
+        if context.message_id and reaction_id:
+            self.remove_reaction(context.message_id, reaction_id)
 
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
         """Download an inbound attachment to bytes (platform-specific)."""

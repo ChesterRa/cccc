@@ -32,4 +32,11 @@ describe("useChatTab request triggers", () => {
     expect(source).toContain("const to = toTokensSnapshot;");
     expect(source).not.toContain('const to = isCrossGroup ? ["@foreman"] : toTokensSnapshot;');
   });
+
+  it("does not restore the full composer after a partial multi-target cross-group send", () => {
+    expect(source).toContain("let crossGroupSuccessfulSendCount = 0;");
+    expect(source).toMatch(/resp = await api\.sendCrossGroupMessage[\s\S]*if \(!resp\.ok\) break;[\s\S]*crossGroupSuccessfulSendCount \+= 1;/);
+    expect(source).toContain("const shouldRestoreComposer = !sendsCrossGroup || crossGroupSuccessfulSendCount === 0;");
+    expect(source).toContain("if (shouldRestoreComposer) restoreComposerState();");
+  });
 });

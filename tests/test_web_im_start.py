@@ -149,6 +149,58 @@ class TestWebImStart(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_im_start_drops_inherited_ca_bundle_env(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        old_ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+        old_requests_ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE")
+        old_curl_ca_bundle = os.environ.get("CURL_CA_BUNDLE")
+        home, cleanup = self._with_home()
+        try:
+            os.environ["SSL_CERT_FILE"] = "/bad/emsdk/certifi/cacert.pem"
+            os.environ["REQUESTS_CA_BUNDLE"] = "/bad/requests.pem"
+            os.environ["CURL_CA_BUNDLE"] = "/bad/curl.pem"
+            gid = self._create_group("im-start-env")
+            with TestClient(create_app()) as client:
+                set_resp = client.post(
+                    "/api/im/set",
+                    json={
+                        "group_id": gid,
+                        "platform": "dingtalk",
+                        "dingtalk_app_key": "app-key",
+                        "dingtalk_app_secret": "app-secret",
+                        "dingtalk_robot_code": "robot-code",
+                    },
+                )
+                self.assertEqual(set_resp.status_code, 200)
+                self.assertTrue(bool(set_resp.json().get("ok")))
+
+                with patch("subprocess.Popen", return_value=_AliveProc()) as popen:
+                    start_resp = client.post("/api/im/start", json={"group_id": gid})
+
+                self.assertEqual(start_resp.status_code, 200)
+                self.assertTrue(bool(start_resp.json().get("ok")))
+
+            self.assertIsNotNone(popen.call_args)
+            child_env = dict(popen.call_args.kwargs).get("env") or {}
+            self.assertNotIn("SSL_CERT_FILE", child_env)
+            self.assertNotIn("REQUESTS_CA_BUNDLE", child_env)
+            self.assertNotIn("CURL_CA_BUNDLE", child_env)
+            self.assertEqual(child_env.get("DINGTALK_APP_KEY"), "app-key")
+            self.assertEqual(child_env.get("DINGTALK_APP_SECRET"), "app-secret")
+            self.assertEqual(child_env.get("DINGTALK_ROBOT_CODE"), "robot-code")
+        finally:
+            for key, value in (
+                ("SSL_CERT_FILE", old_ssl_cert_file),
+                ("REQUESTS_CA_BUNDLE", old_requests_ca_bundle),
+                ("CURL_CA_BUNDLE", old_curl_ca_bundle),
+            ):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            cleanup()
+
     def test_start_bridge_wecom_lock_uses_bot_id_identity(self) -> None:
         from cccc.ports.im.bridge import start_bridge
         from cccc.kernel.group import load_group

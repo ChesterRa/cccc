@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import mimetypes
 import os
 import re
 import shlex
@@ -20,16 +19,16 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from ...daemon.server import call_daemon
 from ...kernel.actors import list_actors, resolve_recipient_tokens
-from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
+from ...kernel.blobs import resolve_blob_attachment_path
 from ...kernel.group import Group, load_group
 from ...kernel.messaging import disabled_recipient_actor_ids, get_default_send_to
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
-from .adapters.base import IMAdapter, OutboundStreamHandle
+from .adapters.base import IMAdapter, IMProcessingOutcome, OutboundStreamHandle
 from .adapters.telegram import TelegramAdapter
 from .adapters.slack import SlackAdapter
 from .adapters.discord import DiscordAdapter
@@ -43,6 +42,8 @@ from .commands import (
 )
 from .config_schema import canonicalize_im_config
 from .auth import KeyManager
+from .inbound_content import prepare_inbound_content
+from .lifecycle import IMProcessingLifecycle
 from .subscribers import SubscriberManager
 
 from ...util.file_lock import LockUnavailableError, acquire_lockfile
@@ -57,140 +58,6 @@ def _is_env_var_name(value: str) -> bool:
 
 
 _PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
-_GENERIC_ATTACHMENT_FILENAMES = frozenset({"", "file", "unknown", "attachment"})
-_GENERIC_ATTACHMENT_BASENAME = "attachment"
-_UNINFORMATIVE_MIME_TYPES = frozenset({"application/octet-stream", "binary/octet-stream"})
-
-
-def _is_generic_attachment_filename(value: str) -> bool:
-    raw = str(value or "").strip().lower()
-    if not raw:
-        return True
-    stem = Path(raw).stem.strip().lower()
-    return raw in _GENERIC_ATTACHMENT_FILENAMES or stem in _GENERIC_ATTACHMENT_FILENAMES
-
-
-def _guess_extension_from_mime_type(mime_type: str) -> str:
-    normalized = str(mime_type or "").strip().lower()
-    if not normalized:
-        return ""
-    if normalized == "image/jpeg":
-        return ".jpg"
-    guessed = mimetypes.guess_extension(normalized) or ""
-    return guessed if guessed.startswith(".") else ""
-
-
-def _sniff_attachment_content_type(raw: bytes) -> Tuple[str, str]:
-    head = raw[:64]
-    if head.startswith(b"\x89PNG\r\n\x1a\n"):
-        return ("image/png", ".png")
-    if head.startswith(b"\xff\xd8\xff"):
-        return ("image/jpeg", ".jpg")
-    if head.startswith((b"GIF87a", b"GIF89a")):
-        return ("image/gif", ".gif")
-    if head.startswith(b"BM"):
-        return ("image/bmp", ".bmp")
-    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return ("image/webp", ".webp")
-    if head.startswith(b"%PDF-"):
-        return ("application/pdf", ".pdf")
-    if head.lstrip().startswith(b"{\\rtf"):
-        return ("application/rtf", ".rtf")
-    if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
-        sample = raw[:8192].lower()
-        if b"word/" in sample:
-            return (
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".docx",
-            )
-        if b"xl/" in sample:
-            return (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".xlsx",
-            )
-        if b"ppt/" in sample:
-            return (
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                ".pptx",
-            )
-        return ("application/zip", ".zip")
-    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
-        return ("application/x-7z-compressed", ".7z")
-    if head.startswith(b"Rar!\x1a\x07"):
-        return ("application/vnd.rar", ".rar")
-    if head.startswith(b"\x1f\x8b"):
-        return ("application/gzip", ".gz")
-    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        sample = raw[:8192].lower()
-        if b"worddocument" in sample:
-            return ("application/msword", ".doc")
-        if b"workbook" in sample:
-            return ("application/vnd.ms-excel", ".xls")
-        if b"powerpoint document" in sample:
-            return ("application/vnd.ms-powerpoint", ".ppt")
-        return ("application/vnd.ms-office", ".doc")
-
-    try:
-        text_head = raw[:512].decode("utf-8", errors="ignore").lstrip().lower()
-    except Exception:
-        text_head = ""
-    if text_head.startswith("<svg") or text_head.startswith("<?xml") and "<svg" in text_head:
-        return ("image/svg+xml", ".svg")
-    if text_head:
-        lines = [line.strip() for line in text_head.splitlines() if line.strip()]
-        if lines:
-            has_ini_header = any(line.startswith("[") and "]" in line for line in lines[:3])
-            has_key_value = any("=" in line for line in lines[:8])
-            if has_ini_header and has_key_value:
-                return ("text/plain", ".ini")
-            return ("text/plain", ".txt")
-    return ("", "")
-
-
-def _normalize_inbound_attachment_metadata(
-    *,
-    raw: bytes,
-    filename: str,
-    mime_type: str,
-    kind: str,
-) -> Tuple[str, str, str]:
-    raw_filename = str(filename or "").strip()
-    normalized_filename = raw_filename or "file"
-    normalized_mime_type = str(mime_type or "").strip().lower()
-    normalized_kind = str(kind or "").strip().lower() or "file"
-
-    sniffed_mime_type, sniffed_ext = _sniff_attachment_content_type(raw)
-
-    effective_mime_type = normalized_mime_type
-    if not effective_mime_type or effective_mime_type in _UNINFORMATIVE_MIME_TYPES:
-        effective_mime_type = sniffed_mime_type or effective_mime_type
-    effective_kind = normalized_kind
-    if effective_mime_type.startswith("image/"):
-        effective_kind = "image"
-    elif sniffed_mime_type.startswith("image/"):
-        effective_kind = "image"
-
-    if _is_generic_attachment_filename(normalized_filename):
-        inferred_ext = sniffed_ext or _guess_extension_from_mime_type(effective_mime_type)
-        normalized_filename = f"{_GENERIC_ATTACHMENT_BASENAME}{inferred_ext}" if inferred_ext else _GENERIC_ATTACHMENT_BASENAME
-
-    has_suffix = bool(Path(normalized_filename).suffix)
-    if effective_kind == "image" and not has_suffix and sniffed_ext:
-        normalized_filename = f"{normalized_filename}{sniffed_ext}"
-
-    return (normalized_filename, effective_mime_type, effective_kind)
-
-
-def _normalize_inbound_attachment_message_text(msg_text: str, stored_attachments: List[Dict[str, Any]]) -> str:
-    normalized_text = str(msg_text or "").strip()
-    if len(stored_attachments) != 1:
-        return normalized_text
-    title = str(stored_attachments[0].get("title") or "").strip() or "file"
-    if not normalized_text:
-        return f"[file] {title}"
-    if re.fullmatch(r"\[file(?::\s*(unknown|file))?\]", normalized_text, flags=re.IGNORECASE):
-        return f"[file] {title}"
-    return normalized_text
 
 
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
@@ -416,11 +283,7 @@ class IMBridge:
         # retry delivery or emit multiple events for the same message (e.g., edits).
         self._seen_inbound: Dict[str, float] = {}
 
-        # Typing indicator state: chat_id -> (message_id, reaction_id)
-        # Used to show a "processing" emoji on the user's message while agents work.
-        self._typing_indicators: Dict[str, Tuple[str, str]] = {}
-        # Telegram sendChatAction throttle: chat_id -> last_sent_timestamp
-        self._typing_action_ts: Dict[str, float] = {}
+        self._processing_lifecycle = IMProcessingLifecycle(adapter)
         # Active outbound streams: stream_id -> {target_key -> OutboundStreamHandle}
         # Two-level cache so each subscriber chat gets its own handle.
         self._active_streams: Dict[str, Dict[str, OutboundStreamHandle]] = {}
@@ -1232,35 +1095,13 @@ class IMBridge:
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
         self.adapter.send_message(chat_id, format_help(platform=platform), thread_id=thread_id)
 
-    def _add_typing_indicator(self, chat_id: str, message_id: str) -> None:
-        """Add a typing indicator (emoji reaction) to the user's message."""
-        if not message_id:
-            return
-        reaction_id = self.adapter.add_reaction(message_id)
-        if reaction_id:
-            self._typing_indicators[chat_id] = (message_id, reaction_id)
-
-    def _send_typing_action(self, chat_id: str) -> None:
-        """Send a Telegram 'typing' chat action, throttled to once per 4 seconds."""
-        now = time.time()
-        last = self._typing_action_ts.get(chat_id, 0.0)
-        if now - last < 4.0:
-            return
-        if self.adapter.send_chat_action(chat_id):
-            self._typing_action_ts[chat_id] = now
-
     def _refresh_typing_actions(self) -> None:
-        """Re-send 'typing' action for all active typing indicators."""
-        for chat_id in list(self._typing_indicators):
-            self._send_typing_action(chat_id)
+        """Refresh active platform processing indicators."""
+        self._processing_lifecycle.refresh()
 
     def _remove_typing_indicator(self, chat_id: str) -> None:
-        """Remove the typing indicator for a chat, if any."""
-        indicator = self._typing_indicators.pop(chat_id, None)
-        self._typing_action_ts.pop(chat_id, None)
-        if indicator:
-            message_id, reaction_id = indicator
-            self.adapter.remove_reaction(message_id, reaction_id)
+        """Complete the processing indicator for a chat, if any."""
+        self._processing_lifecycle.complete(chat_id, IMProcessingOutcome.SUCCESS)
 
     def _handle_message(
         self,
@@ -1390,61 +1231,15 @@ class IMBridge:
                 return
             self._log(f"[message] chat={chat_id} thread={thread_id} auto-wake candidates: {disabled_matches}")
 
-        # File settings (only after recipients are validated)
-        im_cfg = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
-        files_cfg = im_cfg.get("files") if isinstance(im_cfg.get("files"), dict) else {}
-        files_enabled = coerce_bool(files_cfg.get("enabled"), default=True)
-        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
-        default_max_mb = 20 if platform == "telegram" else 10 if platform == "discord" else 20
-        try:
-            max_mb = int(files_cfg.get("max_mb") or default_max_mb)
-        except Exception:
-            max_mb = default_max_mb
-        max_bytes = max(0, max_mb) * 1024 * 1024
-
-        stored_attachments: List[Dict[str, Any]] = []
-        if files_enabled and attachments:
-            for a in attachments:
-                if not isinstance(a, dict):
-                    continue
-                try:
-                    size = int(a.get("bytes") or 0)
-                except Exception:
-                    size = 0
-                if max_bytes and size and size > max_bytes:
-                    self.adapter.send_message(chat_id, f"⚠️ Ignored: file too large (> {max_mb}MB).", thread_id=thread_id)
-                    continue
-                try:
-                    raw = self.adapter.download_attachment(a)
-                except Exception as e:
-                    self.adapter.send_message(chat_id, f"❌ Failed to download attachment: {e}", thread_id=thread_id)
-                    continue
-                if max_bytes and len(raw) > max_bytes:
-                    self.adapter.send_message(chat_id, f"⚠️ Ignored: file too large (> {max_mb}MB).", thread_id=thread_id)
-                    continue
-                normalized_filename, normalized_mime_type, normalized_kind = _normalize_inbound_attachment_metadata(
-                    raw=raw,
-                    filename=str(a.get("file_name") or a.get("filename") or "file"),
-                    mime_type=str(a.get("mime_type") or a.get("content_type") or ""),
-                    kind=str(a.get("kind") or "file"),
-                )
-                stored_attachments.append(
-                    store_blob_bytes(
-                        group,
-                        data=raw,
-                        filename=normalized_filename,
-                        mime_type=normalized_mime_type,
-                        kind=normalized_kind,
-                    )
-                )
-
-        msg_text = _normalize_inbound_attachment_message_text(msg_text, stored_attachments)
-
-        if not msg_text and stored_attachments:
-            if len(stored_attachments) == 1:
-                msg_text = f"[file] {stored_attachments[0].get('title') or 'file'}"
-            else:
-                msg_text = f"[files] {len(stored_attachments)} attachments"
+        prepared = prepare_inbound_content(
+            group=group,
+            adapter=self.adapter,
+            text=msg_text,
+            attachments=attachments,
+            send_warning=lambda warning: self.adapter.send_message(chat_id, warning, thread_id=thread_id),
+        )
+        msg_text = prepared.text
+        stored_attachments = prepared.attachments
 
         if not msg_text and not stored_attachments:
             # Nothing left to send (all attachments were ignored / failed).
@@ -1480,8 +1275,7 @@ class IMBridge:
                 self.stop()
         else:
             # Add typing indicator to show that the message is being processed.
-            self._add_typing_indicator(chat_id, message_id)
-            self._send_typing_action(chat_id)
+            self._processing_lifecycle.start(chat_id=chat_id, thread_id=thread_id, message_id=message_id)
             self._log(
                 f"[message] chat={chat_id} thread={thread_id} from={from_user}({from_user_id}) to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
             )

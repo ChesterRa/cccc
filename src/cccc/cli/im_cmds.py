@@ -3,7 +3,7 @@ from __future__ import annotations
 """IM bridge related CLI command handlers."""
 
 from .common import *  # noqa: F401,F403
-from ..daemon.im.im_bridge_ops import read_live_im_bridge_pid
+from ..daemon.im.im_bridge_ops import read_live_im_bridge_pid, sanitize_im_bridge_env
 from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, resolve_background_python_argv, supervised_process_popen_kwargs
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "cmd_im_revoke",
     "cmd_im_logs",
 ]
+
 
 def cmd_im_set(args: argparse.Namespace) -> int:
     """Set IM bridge configuration for a group."""
@@ -323,7 +324,7 @@ def cmd_im_start(args: argparse.Namespace) -> int:
     platform = im_config.get("platform", "telegram")
 
     # Prepare environment
-    env = os.environ.copy()
+    env = sanitize_im_bridge_env(os.environ.copy())
     bot_token_env = str(im_config.get("bot_token_env") or "").strip()
     bot_token = str(im_config.get("bot_token") or "").strip()
     if bot_token and bot_token_env:
