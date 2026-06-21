@@ -13,43 +13,26 @@ function readJson(relPath: string): unknown {
 }
 
 describe("federation settings placement", () => {
-  it("connections is a recognized group settings tab and federation remains global legacy", () => {
-    expect(readSource("./types.ts")).toContain('| "federation"');
+  it("group bridges is a recognized group settings tab without a global federation tab", () => {
     expect(readSource("./types.ts")).toContain('| "connections"');
-    expect(readSource("./settingsLastLocation.ts")).toContain('"federation"');
+    expect(readSource("./types.ts")).not.toContain('| "federation"');
     expect(readSource("./settingsLastLocation.ts")).toContain('"connections"');
+    expect(readSource("./settingsLastLocation.ts")).not.toContain('"federation"');
   });
 
-  it("SettingsModal registers group Connections and keeps Global Federation separate", () => {
+  it("SettingsModal registers group Group Bridges without an empty Global Federation page", () => {
     const src = readSource("../../SettingsModal.tsx");
-    expect(src).toContain('id: "federation"');
     expect(src).toContain('id: "connections"');
-    expect(src).toContain('activeTab === "federation"');
     expect(src).toContain('activeTab === "connections"');
-    expect(src).toContain("FederationRegistrationSection");
+    expect(src).not.toContain('id: "federation"');
+    expect(src).not.toContain('activeTab === "federation"');
+    expect(src).not.toContain("FederationRegistrationSection");
     expect(src).toContain("FederationConnectionsSection");
   });
 
   it("WebAccessTab no longer embeds the federation form", () => {
     const src = readSource("./WebAccessTab.tsx");
     expect(src).not.toContain("FederationRegistrationSection");
-  });
-
-  it("FederationRegistrationSection does not expose direct registration fields", () => {
-    const src = readSource("./FederationRegistrationSection.tsx");
-    expect(src).not.toContain("Credential reference");
-    expect(src).not.toContain("Credential / token");
-    expect(src).not.toContain("Remote URL");
-    expect(src).not.toContain("registerFederation");
-  });
-
-  it("Global Federation only explains that session pairing is managed per group", () => {
-    const src = readSource("./FederationRegistrationSection.tsx");
-    expect(src).toContain('useTranslation("settings")');
-    expect(src).toContain('t("federation.sessionManagedPerGroup")');
-    expect(src).not.toContain("FederationHttpRegistrationSection");
-    expect(src).not.toContain("FederationSessionPairingSection");
-    expect(src).not.toContain("registerFederation");
   });
 
   it("group Connections owns federation session pairing and always filters by current group", () => {
@@ -230,8 +213,8 @@ describe("federation settings placement", () => {
       expect(locale.federation?.sessionTransport).toBeTruthy();
       expect(locale.federation?.sessionTransportManaged).toBeTruthy();
       expect(locale.federation?.legacyHttpTitle).toBeUndefined();
-      expect(locale.federation?.sessionManagedPerGroup).toBeTruthy();
       expect(locale.tabs?.connections).toBeTruthy();
+      expect(locale.tabs?.federation).toBeUndefined();
     }
   });
 });

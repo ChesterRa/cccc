@@ -17,6 +17,7 @@ import {
   isLocalIssuerEndpoint,
   isSameInstancePairingInput,
   isSessionConnectionInfoInput,
+  normalizeGroupBridgeAccessLevel,
   normalizeIssuerEndpoint,
   projectIncomingRequests,
   projectRecentOutbounds,
@@ -168,6 +169,15 @@ describe("federationPairingModel", () => {
       { trust_id: "t2", status: "revoked", remote_peer_id: "peer_b", remote_group_id: "g_b" },
     ] as FederationTrust[];
     expect(projectTrustedPeers(trusts).map((t) => t.trust_id)).toEqual(["t1"]);
+  });
+
+  it("normalizes group bridge access levels conservatively", () => {
+    expect(normalizeGroupBridgeAccessLevel("messages")).toBe("messages");
+    expect(normalizeGroupBridgeAccessLevel("read")).toBe("read");
+    expect(normalizeGroupBridgeAccessLevel("full")).toBe("full");
+    expect(normalizeGroupBridgeAccessLevel("READ")).toBe("read");
+    expect(normalizeGroupBridgeAccessLevel("unexpected")).toBe("messages");
+    expect(normalizeGroupBridgeAccessLevel(undefined)).toBe("messages");
   });
 
   it("shows only the latest sent request per remote issuer", () => {

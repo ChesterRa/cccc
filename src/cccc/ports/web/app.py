@@ -131,6 +131,7 @@ def _is_public_path(request: Request) -> bool:
         or path in _PUBLIC_API_PATHS
         or path.startswith("/api/v1/branding/assets/")
         or path.startswith("/mcp/web-model/")
+        or path.startswith("/mcp/group-bridge")
         or path.startswith("/nomcp/s/")
     )
 

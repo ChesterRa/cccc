@@ -38,7 +38,6 @@ const CapabilitiesTab = lazy(() => import("./modals/settings/CapabilitiesTab").t
 const ActorProfilesTab = lazy(() => import("./modals/settings/ActorProfilesTab").then((module) => ({ default: module.ActorProfilesTab })));
 const BrandingTab = lazy(() => import("./modals/settings/BrandingTab").then((module) => ({ default: module.BrandingTab })));
 const WebAccessTab = lazy(() => import("./modals/settings/WebAccessTab").then((module) => ({ default: module.WebAccessTab })));
-const FederationTab = lazy(() => import("./modals/settings/FederationRegistrationSection").then((module) => ({ default: module.FederationRegistrationSection })));
 const FederationConnectionsTab = lazy(() => import("./modals/settings/FederationConnectionsSection").then((module) => ({ default: module.FederationConnectionsSection })));
 const WebModelConnectorsTab = lazy(() =>
   import("./modals/settings/WebModelConnectorsTab").then((module) => ({ default: module.default }))
@@ -953,7 +952,6 @@ export function SettingsModal({
     ...(globalSettingsEnabled ? [
       { id: "branding" as const, label: t("tabs.branding") },
       { id: "webAccess" as const, label: t("tabs.webAccess") },
-      { id: "federation" as const, label: t("tabs.federation", { defaultValue: "Federation" }) },
       { id: "webModels" as const, label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }) },
       { id: "developer" as const, label: t("tabs.developer") },
     ] : []),
@@ -1296,13 +1294,6 @@ export function SettingsModal({
                 <WebAccessTab
                   isDark={isDark}
                   isActive={scope === "global" && activeTab === "webAccess"}
-                />
-              )}
-
-              {activeTab === "federation" && (
-                <FederationTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "federation"}
                 />
               )}
 

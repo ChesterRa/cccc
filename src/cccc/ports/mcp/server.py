@@ -88,6 +88,17 @@ from .handlers.cccc_federation import (  # noqa: F401
     remote_delivery_status,
     remote_send,
 )
+from .handlers.group_bridge_client import (  # noqa: F401
+    remote_access,
+    remote_apply_patch,
+    remote_context,
+    remote_exec_command,
+    remote_git,
+    remote_repo,
+    remote_repo_edit,
+    remote_shell,
+    remote_write_stdin,
+)
 from .handlers.cccc_repo import (  # noqa: F401
     apply_codex_patch_tool,
     exec_command_tool,
@@ -524,6 +535,42 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             registration_id=str(arguments.get("registration_id") or ""),
             idempotency_key=str(arguments.get("idempotency_key") or ""),
         )
+
+    if name == "cccc_remote_access":
+        gid = _resolve_group_id(arguments)
+        return remote_access(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_context":
+        gid = _resolve_group_id(arguments)
+        return remote_context(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_repo":
+        gid = _resolve_group_id(arguments)
+        return remote_repo(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_git":
+        gid = _resolve_group_id(arguments)
+        return remote_git(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_repo_edit":
+        gid = _resolve_group_id(arguments)
+        return remote_repo_edit(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_apply_patch":
+        gid = _resolve_group_id(arguments)
+        return remote_apply_patch(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_shell":
+        gid = _resolve_group_id(arguments)
+        return remote_shell(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_exec_command":
+        gid = _resolve_group_id(arguments)
+        return remote_exec_command(group_id=gid, arguments=arguments)
+
+    if name == "cccc_remote_write_stdin":
+        gid = _resolve_group_id(arguments)
+        return remote_write_stdin(group_id=gid, arguments=arguments)
 
     if name == "cccc_federation_identity":
         return federation_identity()

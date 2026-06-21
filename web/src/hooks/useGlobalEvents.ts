@@ -34,6 +34,7 @@ const FEDERATION_PAIRING_EVENT_KINDS = new Set([
   "federation.pairing.request_created",
   "federation.pairing.request_approved",
   "federation.pairing.request_rejected",
+  "federation.pairing.trust_access_updated",
   "federation.pairing.trust_revoked",
   "federation.pairing.outbound_changed",
   "federation.pairing.outbound_approved",

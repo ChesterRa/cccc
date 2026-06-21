@@ -383,6 +383,92 @@ def _list_dir_entries(
     return selected, start + limit < len(entries), len(entries)
 
 
+def repo_search_tool(
+    *,
+    group_id: str,
+    query: str,
+    path: str = "",
+    limit: Any = 100,
+    include_hidden: bool = False,
+    case_sensitive: bool = False,
+    max_file_bytes: Any = _DEFAULT_READ_BYTES,
+) -> Dict[str, Any]:
+    """Search text files under the group's active scope root."""
+    _group, root, scope_key = _repo_root(group_id)
+    needle = str(query or "")
+    if not needle:
+        raise MCPError(code="missing_query", message="query is required")
+    base = _resolve_under_root(root, path or ".")
+    if not base.exists():
+        raise MCPError(code="not_found", message=f"path not found: {base}")
+    match_limit = _coerce_int(limit, default=100, minimum=1, maximum=500)
+    file_limit = _coerce_int(max_file_bytes, default=_DEFAULT_READ_BYTES, minimum=1, maximum=_MAX_READ_BYTES)
+    needle_cmp = needle if bool(case_sensitive) else needle.lower()
+    matches: List[Dict[str, Any]] = []
+    scanned_files = 0
+    skipped_files = 0
+    truncated = False
+
+    if base.is_file():
+        candidates = [base]
+    elif base.is_dir():
+        candidates = []
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [
+                name
+                for name in sorted(dirnames)
+                if name not in _SKIP_DIRS and (include_hidden or not name.startswith("."))
+            ]
+            for name in sorted(filenames):
+                if not include_hidden and name.startswith("."):
+                    continue
+                candidates.append(Path(dirpath) / name)
+    else:
+        raise MCPError(code="invalid_path", message="path must be a file or directory")
+
+    for candidate in candidates:
+        if len(matches) >= match_limit:
+            truncated = True
+            break
+        try:
+            text, file_truncated, _size, _sha256 = _read_text(candidate, max_bytes=file_limit)
+        except MCPError as exc:
+            if exc.code in {"binary_file", "not_found"}:
+                skipped_files += 1
+                continue
+            raise
+        scanned_files += 1
+        if file_truncated:
+            skipped_files += 1
+            continue
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            haystack = line if bool(case_sensitive) else line.lower()
+            if needle_cmp not in haystack:
+                continue
+            matches.append(
+                {
+                    "path": _relative(root, candidate),
+                    "line_number": line_number,
+                    "line_text": line,
+                }
+            )
+            if len(matches) >= match_limit:
+                truncated = True
+                break
+
+    return {
+        "root_path": str(root),
+        "scope_key": scope_key,
+        "path": _relative(root, base),
+        "query": needle,
+        "case_sensitive": bool(case_sensitive),
+        "matches": matches,
+        "scanned_files": scanned_files,
+        "skipped_files": skipped_files,
+        "truncated": truncated,
+    }
+
+
 def _find_line_sequence(lines: List[str], needle: List[str]) -> int:
     if not needle:
         return len(lines)

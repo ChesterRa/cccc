@@ -17,9 +17,8 @@
     "branding": "ブランド",
     "developer": "開発者",
     "webAccess": "Web アクセス",
-    "federation": "フェデレーション",
     "webModels": "Web モデル",
-    "connections": "接続"
+    "connections": "グループブリッジ"
   },
   "navigation": {
     "targetScope": "対象範囲",
@@ -1680,10 +1679,8 @@
     "submitRequestFailed": "要求の送信に失敗しました",
     "approveFailed": "承認に失敗しました",
     "rejectFailed": "拒否に失敗しました",
-    "globalLead": "フェデレーションセッション接続は各グループで管理します。",
-    "sessionManagedPerGroup": "フェデレーションセッション接続は Settings > This group > Connections でグループごとに管理します。",
-    "connectRemoteCcccGroup": "このグループをリモート CCCC インスタンス / グループに接続",
-    "groupConnectionsLead": "{{group}} のクロスインスタンス接続を作成または承認します。これはリモート group-to-group の信頼フローで、信頼確立後は federation session が双方向配信を担います。",
+    "connectRemoteCcccGroup": "グループブリッジ",
+    "groupConnectionsLead": "{{group}} のリモートグループブリッジを作成または承認します。ブリッジはまず明示的なリモートメッセージを有効にし、ローカルリソースアクセスは下で別途許可します。",
     "createConnectionInfo": "ペアリング招待を生成",
     "createConnectionInfoHelp": "相手が承認リクエストを送れるように、一回限りのペアリング招待を生成します。承認用エントリポイントはこのペアリングフロー専用で、後続のメッセージ配信経路ではありません。",
     "issuerEndpoint": "承認エントリポイント",
@@ -1700,14 +1697,27 @@
     "pasteConnectionInfo": "ペアリング招待を貼り付け",
     "pasteConnectionInfoHelp": "別の CCCC インスタンスから受け取ったペアリング招待を貼り付けます。クロスインスタンス接続には完全な payload が必要で、生コードは通常経路ではありません。",
     "remotePayloadPlaceholder": "{ \"issuer_endpoint\": \"https://cccc.example.com\", \"code\": \"...\", \"nonce\": \"...\", \"integrity\": \"sha256:...\" }",
-    "remotePayloadDetected": "federation session ペアリング招待を検出しました",
-    "remotePayloadTarget": "このグループは {{endpoint}} 経由で {{group}} に承認を送信します。承認後のメッセージは federation session を使います。",
+    "remotePayloadDetected": "グループブリッジのペアリング招待を検出しました",
+    "remotePayloadTarget": "このグループは {{endpoint}} 経由で {{group}} に承認を送信します。承認後のメッセージはブリッジセッションを使います。",
     "sameInstanceFallbackDetected": "Same-instance コードを検出しました",
     "sameInstanceFallbackHelp": "生のペアリングコードは同じ CCCC インスタンス内の診断テスト専用です。クロスインスタンス接続には完全なペアリング招待を貼り付けてください。",
     "pairingCodeInvalidOrExpired": "このペアリングコードは無効、期限切れ、使用済み、またはこのフローに使用できません。発行元グループが作成した新しい接続情報を使用してください。",
     "trustedRemoteGroups": "信頼済みリモートグループ",
-    "trustedRemoteGroupsHelp": "ここには確立済みの信頼関係を表示します。実際の双方向配信は federation session の可用性に依存し、アクティブな session がない場合は相手の再接続を待ちます。",
+    "trustedRemoteGroupsHelp": "これらのブリッジは明示的なメッセージを交換できます。ここでのアクセス制御は、そのリモートグループが現在のグループ内で何をできるかを決めます。",
     "remoteCccc": "CCCC: {{endpoint}}",
-    "unknownCccc": "不明な CCCC"
+    "unknownCccc": "不明な CCCC",
+    "groupBridgeAccess": "このグループへのアクセス",
+    "groupBridgeAccessHelp": "このリモートグループが現在のグループで使用できる権限を選びます。",
+    "updateAccessFailed": "アクセス権限の更新に失敗しました",
+    "accessLevels": {
+      "messages": "メッセージ",
+      "read": "読み取り",
+      "full": "フル"
+    },
+    "accessDescriptions": {
+      "messages": "メッセージのみ: リモートグループは明示的なメッセージを送る必要があり、remote MCP でローカルリソースを読めません。",
+      "read": "読み取りアクセス: リモートグループは context、repo ファイル、検索結果、読み取り専用 git 状態を確認でき、ローカル actors は起動しません。",
+      "full": "フルアクセス: リモートグループはファイル変更とローカルコマンド実行ができます。信頼できるグループだけに許可してください。"
+    }
   }
 }

@@ -508,7 +508,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_federation_session_message_without_to_does_not_wake_local_foreman(self) -> None:
+    def test_reply_to_federation_session_message_without_to_is_rejected(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
@@ -589,14 +589,13 @@ class TestChatOps(unittest.TestCase):
                     },
                 )
 
-            self.assertTrue(reply.ok, getattr(reply, "error", None))
-            self.assertEqual(captured[0]["payload"]["to"], ["@foreman"])
+            self.assertFalse(reply.ok)
+            self.assertEqual(getattr(reply.error, "code", ""), "missing_remote_recipient")
+            self.assertEqual(captured, [])
             events = list(iter_events(group.ledger_path))  # type: ignore[union-attr]
             reply_events = [event for event in events if (event.get("data") or {}).get("reply_to") == inbound_event.get("id")]
-            self.assertEqual(len(reply_events), 1)
-            self.assertEqual((reply_events[0].get("data") or {}).get("to"), ["user"])
-            self.assertEqual(len(deliveries), 1)
-            self.assertEqual(deliveries[0]["effective_to"], ["user"])
+            self.assertEqual(reply_events, [])
+            self.assertEqual(deliveries, [])
         finally:
             cleanup()
 

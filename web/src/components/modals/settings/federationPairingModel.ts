@@ -4,9 +4,12 @@ import type {
   FederationPairingRequest,
   FederationRegistration,
   FederationTrust,
+  GroupBridgeAccessLevel,
 } from "../../../services/api/federation";
 
 export type DigestHex = (value: string) => Promise<string>;
+
+export const GROUP_BRIDGE_ACCESS_LEVELS: readonly GroupBridgeAccessLevel[] = ["messages", "read", "full"];
 
 type PeerLike = {
   remote_peer_id?: string;
@@ -124,6 +127,12 @@ export function projectIncomingRequests(
 
 export function projectTrustedPeers(trusts: FederationTrust[] | undefined | null): FederationTrust[] {
   return (trusts || []).filter((trust) => String(trust.status || "") === "active");
+}
+
+export function normalizeGroupBridgeAccessLevel(value: unknown): GroupBridgeAccessLevel {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "read" || normalized === "full") return normalized;
+  return "messages";
 }
 
 export function projectRecentOutbounds(outbounds: FederationPairingOutbound[] | undefined | null, limit = 3): FederationPairingOutbound[] {

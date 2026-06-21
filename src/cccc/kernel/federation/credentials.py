@@ -7,6 +7,7 @@ mapping from federation credential refs to raw bearer tokens used by transports.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -142,6 +143,21 @@ def resolve_pairing_remote_send_token(credential_ref: str, *, home: Optional[Pat
     if str(record.get("kind") or "") != "remote_send":
         return ""
     return str(record.get("token") or "").strip()
+
+
+def lookup_pairing_remote_send_credential(token: str, *, home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    raw_token = str(token or "").strip()
+    if not raw_token:
+        return None
+    for ref, record in _load(home).items():
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("kind") or "") != "remote_send":
+            continue
+        stored = str(record.get("token") or "").strip()
+        if stored and hmac.compare_digest(stored, raw_token):
+            return {**record, "credential_ref": str(record.get("credential_ref") or ref)}
+    return None
 
 
 def delete_federation_credential(credential_ref: str, *, home: Optional[Path] = None) -> bool:

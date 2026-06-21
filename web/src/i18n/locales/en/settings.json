@@ -17,9 +17,8 @@
     "branding": "Branding",
     "developer": "Developer",
     "webAccess": "Web Access",
-    "federation": "Federation",
     "webModels": "Web Models",
-    "connections": "Connections"
+    "connections": "Group Bridge"
   },
   "navigation": {
     "targetScope": "Target Scope",
@@ -1680,10 +1679,8 @@
     "submitRequestFailed": "Submit request failed",
     "approveFailed": "Approve failed",
     "rejectFailed": "Reject failed",
-    "globalLead": "Federation session connections are managed from each group.",
-    "sessionManagedPerGroup": "Federation session connections are managed per group from Settings > This group > Connections.",
-    "connectRemoteCcccGroup": "Connect this group to a remote CCCC instance/group",
-    "groupConnectionsLead": "Create or approve cross-instance connections for {{group}}. This is a remote group-to-group trust flow; once trusted, federation sessions handle two-way delivery.",
+    "connectRemoteCcccGroup": "Group Bridges",
+    "groupConnectionsLead": "Create or approve bridges for {{group}}. A bridge enables explicit remote messages first; local resource access is granted separately below.",
     "createConnectionInfo": "Generate pairing invitation",
     "createConnectionInfoHelp": "Generate a one-time pairing invitation so the other side can submit an approval request. The approval entrypoint is only for this pairing flow, not later message delivery.",
     "issuerEndpoint": "Approval entrypoint",
@@ -1700,14 +1697,27 @@
     "pasteConnectionInfo": "Paste pairing invitation",
     "pasteConnectionInfoHelp": "Paste the pairing invitation from another CCCC instance. Cross-instance connections require the full payload; raw codes are not the normal path.",
     "remotePayloadPlaceholder": "{ \"issuer_endpoint\": \"https://cccc.example.com\", \"code\": \"...\", \"nonce\": \"...\", \"integrity\": \"sha256:...\" }",
-    "remotePayloadDetected": "Federation session pairing invitation detected",
-    "remotePayloadTarget": "This group will submit approval to {{group}} through {{endpoint}}; approved messages use the federation session.",
+    "remotePayloadDetected": "Group Bridge pairing invitation detected",
+    "remotePayloadTarget": "This group will submit approval to {{group}} through {{endpoint}}; approved messages use the bridge session.",
     "sameInstanceFallbackDetected": "Same-instance code detected",
     "sameInstanceFallbackHelp": "Raw pairing codes are only for diagnostic tests inside the same CCCC instance. Paste the full pairing invitation for cross-instance connections.",
     "pairingCodeInvalidOrExpired": "This pairing code is invalid, expired, already used, or was not issued for this flow. Use a fresh connection info payload from the issuer group.",
     "trustedRemoteGroups": "Trusted remote groups",
-    "trustedRemoteGroupsHelp": "These are established trust relationships. Actual two-way delivery depends on federation session availability; without an active session, delivery waits for the peer to reconnect.",
+    "trustedRemoteGroupsHelp": "These bridges can exchange explicit messages. Access controls here decide what the remote group may do inside this group.",
     "remoteCccc": "CCCC: {{endpoint}}",
-    "unknownCccc": "Unknown CCCC"
+    "unknownCccc": "Unknown CCCC",
+    "groupBridgeAccess": "Access to this group",
+    "groupBridgeAccessHelp": "Choose what this remote group can do in the current group.",
+    "updateAccessFailed": "Failed to update access",
+    "accessLevels": {
+      "messages": "Messages",
+      "read": "Read",
+      "full": "Full"
+    },
+    "accessDescriptions": {
+      "messages": "Messages only: the remote group must send explicit messages and cannot read local resources through remote MCP.",
+      "read": "Read access: the remote group can inspect context, repo files, search results, and read-only git status without waking local actors.",
+      "full": "Full access: the remote group can change files and run local commands. Grant only to trusted groups."
+    }
   }
 }

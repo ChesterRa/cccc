@@ -41,6 +41,8 @@ export interface FederationIdentity {
   peer_id: string;
 }
 
+export type GroupBridgeAccessLevel = "messages" | "read" | "full";
+
 export interface FederationPairingInvite {
   invite_id: string;
   group_id: string;
@@ -77,6 +79,8 @@ export interface FederationTrust {
   remote_peer_id: string;
   transport: string;
   status: string;
+  access_level?: GroupBridgeAccessLevel | string;
+  access_updated_by?: string;
 }
 
 export interface FederationPairingOutbound {
@@ -229,6 +233,16 @@ export async function revokeFederationTrust(trustId: string, revokedBy = "") {
     {
       method: "POST",
       body: JSON.stringify({ revoked_by: revokedBy }),
+    },
+  );
+}
+
+export async function updateFederationTrustAccess(trustId: string, accessLevel: GroupBridgeAccessLevel, updatedBy = "") {
+  return apiJson<{ trust: FederationTrust }>(
+    `/api/federation/pairing/trusts/${encodeURIComponent(trustId)}/access`,
+    {
+      method: "POST",
+      body: JSON.stringify({ access_level: accessLevel, updated_by: updatedBy }),
     },
   );
 }

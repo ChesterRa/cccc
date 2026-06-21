@@ -32,6 +32,7 @@ from ....kernel.federation.pairing import (
     prepare_pairing_invite_for_connection_info,
     reject_pairing_request,
     revoke_trust,
+    update_trust_access_level,
     upsert_pairing_outbound,
 )
 from ....kernel.federation.pairing_remote import build_connection_payload, sync_remote_pairing_outbound, submit_remote_pairing_request
@@ -123,6 +124,11 @@ class PairingRejectRequest(BaseModel):
 
 class TrustRevokeRequest(BaseModel):
     revoked_by: str = ""
+
+
+class TrustAccessUpdateRequest(BaseModel):
+    access_level: str
+    updated_by: str = ""
 
 
 def _project_registration(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -364,6 +370,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
         return {"ok": True, "result": {"trust": revoked}}
+
+    @router.post("/pairing/trusts/{trust_id}/access")
+    async def federation_pairing_trust_access_update(request: Request, trust_id: str, req: TrustAccessUpdateRequest) -> Dict[str, Any]:
+        existing = list_trusts()
+        match = next((item for item in existing if str(item.get("trust_id") or "") == str(trust_id or "").strip()), None)
+        if not match:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "trust not found", "details": {}})
+        _require_group_or_403(request, str(match.get("group_id") or ""))
+        try:
+            updated = update_trust_access_level(trust_id, req.access_level, updated_by=req.updated_by)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
+        return {"ok": True, "result": {"trust": updated}}
 
     @router.get("/pairing/outbounds")
     async def federation_pairing_outbound_list(request: Request, group_id: str = "") -> Dict[str, Any]:

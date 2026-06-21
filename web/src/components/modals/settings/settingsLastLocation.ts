@@ -21,7 +21,6 @@ const globalTabIds = new Set<GlobalTabId>([
   "myProfiles",
   "branding",
   "webAccess",
-  "federation",
   "webModels",
   "developer",
 ]);

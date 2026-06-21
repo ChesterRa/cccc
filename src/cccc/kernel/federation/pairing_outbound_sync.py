@@ -56,6 +56,7 @@ def approve_outbound_from_remote_request(
             "remote_peer_id": issuer_pid,
             "multiaddrs": registration.get("multiaddrs") or [],
             "transport": str(registration.get("transport") or ""),
+            "access_level": str(raw_trust.get("access_level") or pairing.ACCESS_LEVEL_MESSAGES),
             "status": "active",
             "updated_at": now,
         })
@@ -75,6 +76,7 @@ def approve_outbound_from_remote_request(
             "remote_peer_id": issuer_pid,
             "multiaddrs": registration.get("multiaddrs") or [],
             "transport": str(registration.get("transport") or ""),
+            "access_level": pairing.ACCESS_LEVEL_MESSAGES,
             "status": "active",
             "created_at": now,
             "updated_at": now,

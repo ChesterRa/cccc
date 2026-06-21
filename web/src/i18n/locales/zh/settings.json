@@ -17,9 +17,8 @@
     "branding": "品牌",
     "developer": "开发者",
     "webAccess": "Web 访问",
-    "federation": "联邦",
     "webModels": "Web 模型",
-    "connections": "连接"
+    "connections": "工作组桥接"
   },
   "navigation": {
     "targetScope": "目标范围",
@@ -1680,10 +1679,8 @@
     "submitRequestFailed": "提交请求失败",
     "approveFailed": "批准失败",
     "rejectFailed": "拒绝失败",
-    "globalLead": "联邦会话连接在每个工作组内管理。",
-    "sessionManagedPerGroup": "联邦会话连接请在“设置 > 当前工作组 > 连接”中按组管理。",
-    "connectRemoteCcccGroup": "把当前工作组连接到远端 CCCC 实例 / 工作组",
-    "groupConnectionsLead": "为 {{group}} 创建或批准跨实例连接。这是远端 group-to-group 的信任流程；建立信任后由 federation session 负责双向投递。",
+    "connectRemoteCcccGroup": "工作组桥接",
+    "groupConnectionsLead": "为 {{group}} 创建或批准远端工作组桥接。桥接默认只启用显式远端消息；本组资源访问需要在下方单独授权。",
     "createConnectionInfo": "生成配对邀请",
     "createConnectionInfoHelp": "生成一次性配对邀请，用于让对方提交批准请求。审批入口只用于这次配对流程，不是后续消息通道。",
     "issuerEndpoint": "审批入口地址",
@@ -1700,14 +1697,27 @@
     "pasteConnectionInfo": "粘贴配对邀请",
     "pasteConnectionInfoHelp": "粘贴另一个 CCCC 实例给出的配对邀请。跨实例连接必须使用完整 payload；裸配对码不作为常规通道。",
     "remotePayloadPlaceholder": "{ \"issuer_endpoint\": \"https://cccc.example.com\", \"code\": \"...\", \"nonce\": \"...\", \"integrity\": \"sha256:...\" }",
-    "remotePayloadDetected": "已识别 federation session 配对邀请",
-    "remotePayloadTarget": "当前工作组会通过 {{endpoint}} 向 {{group}} 提交审批；批准后消息走 federation session。",
+    "remotePayloadDetected": "已识别工作组桥接配对邀请",
+    "remotePayloadTarget": "当前工作组会通过 {{endpoint}} 向 {{group}} 提交审批；批准后消息走桥接会话。",
     "sameInstanceFallbackDetected": "已识别同实例配对码",
     "sameInstanceFallbackHelp": "裸配对码只适合同一个 CCCC 实例内的诊断测试。跨实例连接请粘贴完整配对邀请。",
     "pairingCodeInvalidOrExpired": "这个配对码无效、已过期、已使用，或不适用于当前流程。请使用签发方工作组生成的最新连接信息。",
     "trustedRemoteGroups": "可信远端工作组",
-    "trustedRemoteGroupsHelp": "这里显示已建立的信任关系。实际双向投递由 federation session 在线状态决定；没有活跃会话时会等待对端重新连接。",
+    "trustedRemoteGroupsHelp": "这些桥接可以交换显式消息。这里的访问控制决定该远端工作组能在当前工作组里做什么。",
     "remoteCccc": "CCCC：{{endpoint}}",
-    "unknownCccc": "未知 CCCC"
+    "unknownCccc": "未知 CCCC",
+    "groupBridgeAccess": "访问当前工作组",
+    "groupBridgeAccessHelp": "选择这个远端工作组可以在当前工作组中使用的权限。",
+    "updateAccessFailed": "更新访问权限失败",
+    "accessLevels": {
+      "messages": "消息",
+      "read": "只读",
+      "full": "完整"
+    },
+    "accessDescriptions": {
+      "messages": "仅消息：远端工作组必须发送显式消息，不能通过 remote MCP 读取本地资源。",
+      "read": "只读访问：远端工作组可以查看上下文、repo 文件、搜索结果和只读 git 状态，不会唤醒本地 actors。",
+      "full": "完整访问：远端工作组可以修改文件并运行本地命令。只应授予可信工作组。"
+    }
   }
 }

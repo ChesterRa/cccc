@@ -44,6 +44,10 @@ _CODE_ALPHABET = string.ascii_uppercase + string.digits
 _DEFAULT_TTL_SECONDS = 600
 _INVITE_CODE_CACHE: Dict[str, str] = {}
 _PAIRING_TRANSPORTS = frozenset({"federation_session"})
+ACCESS_LEVEL_MESSAGES = "messages"
+ACCESS_LEVEL_READ = "read"
+ACCESS_LEVEL_FULL = "full"
+ACCESS_LEVELS = frozenset({ACCESS_LEVEL_MESSAGES, ACCESS_LEVEL_READ, ACCESS_LEVEL_FULL})
 
 
 def _identity_path(home: Optional[Path] = None) -> Path:
@@ -127,6 +131,22 @@ def _is_expired(invite: Dict[str, Any]) -> bool:
 
 def _clean_addrs(addrs: Optional[List[str]]) -> List[str]:
     return [str(addr or "").strip() for addr in (addrs or []) if str(addr or "").strip()]
+
+
+def normalize_access_level(value: Any) -> str:
+    level = str(value or "").strip().lower()
+    if level in {"message", "messaging"}:
+        level = ACCESS_LEVEL_MESSAGES
+    if level not in ACCESS_LEVELS:
+        raise ValueError("access_level must be one of: messages, read, full")
+    return level
+
+
+def _trust_access_level(trust: Dict[str, Any]) -> str:
+    try:
+        return normalize_access_level(trust.get("access_level") or ACCESS_LEVEL_MESSAGES)
+    except ValueError:
+        return ACCESS_LEVEL_MESSAGES
 
 
 def _publish_pairing_event(kind: str, data: Dict[str, Any]) -> None:
@@ -431,6 +451,7 @@ def approve_pairing_request(
         "remote_peer_id": registration["remote_peer_id"],
         "multiaddrs": registration.get("multiaddrs") or [],
         "transport": registration.get("transport") or "",
+        "access_level": ACCESS_LEVEL_MESSAGES,
         "status": "active",
         "created_at": now,
         "updated_at": now,
@@ -485,6 +506,60 @@ def list_trusts(*, group_id: str = "", home: Optional[Path] = None) -> List[Dict
         trusts = [t for t in trusts if str(t.get("group_id") or "") == gid]
     trusts.sort(key=lambda t: (str(t.get("created_at") or ""), str(t.get("trust_id") or "")))
     return [_project_trust(t) for t in trusts]
+
+
+def update_trust_access_level(
+    trust_id: str,
+    access_level: str,
+    *,
+    updated_by: str = "",
+    home: Optional[Path] = None,
+) -> Dict[str, Any]:
+    tid = str(trust_id or "").strip()
+    if not tid:
+        raise ValueError("trust_id is required")
+    level = normalize_access_level(access_level)
+    store = _load_store(home)
+    trust = store["trusts"].get(tid)
+    if not isinstance(trust, dict):
+        raise ValueError("trust not found")
+    if str(trust.get("status") or "") != "active":
+        raise ValueError("trust is not active")
+    trust["access_level"] = level
+    trust["access_updated_by"] = str(updated_by or "").strip()
+    trust["updated_at"] = utc_now_iso()
+    _save_store(store, home)
+    _publish_pairing_event("federation.pairing.trust_access_updated", {
+        "group_id": str(trust.get("group_id") or ""),
+        "trust_id": tid,
+        "access_level": level,
+    })
+    return _project_trust(_enrich_trust_display_fields(trust, store))
+
+
+def active_trust_for_remote_send_credential(credential: Dict[str, Any], *, home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    if not isinstance(credential, dict):
+        return None
+    group_id = str(credential.get("group_id") or "").strip()
+    remote_group_id = str(credential.get("remote_group_id") or "").strip()
+    remote_peer_id = str(credential.get("remote_peer_id") or "").strip()
+    request_id = str(credential.get("request_id") or "").strip()
+    if not group_id or not remote_group_id:
+        return None
+    store = _load_store(home)
+    for trust in store["trusts"].values():
+        if str(trust.get("status") or "") != "active":
+            continue
+        if str(trust.get("group_id") or "").strip() != group_id:
+            continue
+        if str(trust.get("remote_group_id") or "").strip() != remote_group_id:
+            continue
+        if remote_peer_id and str(trust.get("remote_peer_id") or "").strip() != remote_peer_id:
+            continue
+        if request_id and str(trust.get("request_id") or "").strip() != request_id:
+            continue
+        return _project_trust(_enrich_trust_display_fields(trust, store))
+    return None
 
 
 def _enrich_trust_display_fields(
@@ -812,11 +887,15 @@ def _project_trust(trust: Dict[str, Any]) -> Dict[str, Any]:
         "remote_peer_id",
         "multiaddrs",
         "transport",
+        "access_level",
+        "access_updated_by",
         "status",
         "created_at",
         "updated_at",
     )
-    return {field: trust.get(field) for field in fields if field in trust}
+    out = {field: trust.get(field) for field in fields if field in trust}
+    out["access_level"] = _trust_access_level(trust)
+    return out
 
 
 def _project_outbound(outbound: Dict[str, Any]) -> Dict[str, Any]:

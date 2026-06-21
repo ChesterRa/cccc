@@ -3,16 +3,18 @@ import { useTranslation } from "react-i18next";
 
 import { RefreshIcon } from "../../Icons";
 import * as api from "../../../services/api";
-import type { FederationIdentity, FederationPairingOutbound, FederationPairingRequest, FederationRegistration, FederationTrust } from "../../../services/api/federation";
+import type { FederationIdentity, FederationPairingOutbound, FederationPairingRequest, FederationRegistration, FederationTrust, GroupBridgeAccessLevel } from "../../../services/api/federation";
 import {
   canCreateInvite,
   canSubmitPairingRequest,
   filterFederationSessionRegistrations,
   formatPeerLabel,
   formatRemoteInstanceLabel,
+  GROUP_BRIDGE_ACCESS_LEVELS,
   isLocalIssuerEndpoint,
   isSameInstancePairingInput,
   isSessionConnectionInfoInput,
+  normalizeGroupBridgeAccessLevel,
   normalizeIssuerEndpoint,
   parseConnectionInfoInput,
   projectIncomingRequests,
@@ -50,6 +52,22 @@ function defaultIssuerEndpoint(): string {
   return typeof window !== "undefined" ? window.location.origin : "";
 }
 
+function accessButtonClass(level: GroupBridgeAccessLevel, selected: boolean): string {
+  const selectedClass = level === "full"
+    ? "border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-200"
+    : level === "read"
+      ? "border-sky-500/35 bg-sky-500/15 text-sky-700 dark:text-sky-200"
+      : "border-slate-500/25 bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]";
+  return [
+    "min-h-[32px] rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-all duration-150",
+    "focus:outline-none focus:ring-2 focus:ring-slate-500/15",
+    "disabled:cursor-not-allowed disabled:opacity-50",
+    selected
+      ? selectedClass
+      : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+  ].join(" ");
+}
+
 export function FederationSessionPairingSection({
   isDark,
   currentGroupId,
@@ -74,6 +92,7 @@ export function FederationSessionPairingSection({
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [revokeBusyId, setRevokeBusyId] = useState("");
   const [deleteOutboundBusyId, setDeleteOutboundBusyId] = useState("");
+  const [accessBusyTrustId, setAccessBusyTrustId] = useState("");
 
   const incomingRequests = useMemo(() => projectIncomingRequests(requests), [requests]);
   const trustedPeers = useMemo(() => projectTrustedPeers(trusts), [trusts]);
@@ -199,6 +218,21 @@ export function FederationSessionPairingSection({
       if (resp.ok) publishFederationPairingChanged(currentGroupId);
     } finally {
       setRevokeBusyId("");
+    }
+  }, [currentGroupId, refreshPairing, t]);
+
+  const updateTrustAccess = useCallback(async (trustId: string, accessLevel: GroupBridgeAccessLevel) => {
+    const tid = String(trustId || "").trim();
+    if (!tid) return;
+    setReviewError("");
+    setAccessBusyTrustId(tid);
+    try {
+      const resp = await api.updateFederationTrustAccess(tid, accessLevel);
+      if (!resp.ok) setReviewError(resp.error.message || t("federation.updateAccessFailed"));
+      await refreshPairing();
+      if (resp.ok) publishFederationPairingChanged(currentGroupId);
+    } finally {
+      setAccessBusyTrustId("");
     }
   }, [currentGroupId, refreshPairing, t]);
 
@@ -354,23 +388,56 @@ export function FederationSessionPairingSection({
         <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.trustedRemoteGroupsHelp")}</p>
         {trustedPeers.length === 0 && sessionRegistrations.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("federation.noneYet")}</p> : (
           <div className="mt-3 space-y-2">{trustedPeers.map((trust) => (
-            <div key={trust.trust_id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{formatPeerLabel(trust, t("federation.unknownPeer"))}</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("federation.trustedBadge")}</span>
-                  <span>{t("federation.remoteCccc", { endpoint: formatRemoteInstanceLabel(trust, t("federation.unknownCccc")) })}</span>
-                  <span>{t("federation.status", { status: trust.status })}</span>
+            <div key={trust.trust_id} className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{formatPeerLabel(trust, t("federation.unknownPeer"))}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("federation.trustedBadge")}</span>
+                    <span>{t("federation.remoteCccc", { endpoint: formatRemoteInstanceLabel(trust, t("federation.unknownCccc")) })}</span>
+                    <span>{t("federation.status", { status: trust.status })}</span>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  className={dangerButtonClass("sm")}
+                  disabled={busy || revokeBusyId === trust.trust_id}
+                  onClick={() => revokeTrustedPeer(trust.trust_id)}
+                >
+                  {revokeBusyId === trust.trust_id ? t("federation.revokingTrust") : t("federation.revokeTrust")}
+                </button>
               </div>
-              <button
-                type="button"
-                className={dangerButtonClass("sm")}
-                disabled={busy || revokeBusyId === trust.trust_id}
-                onClick={() => revokeTrustedPeer(trust.trust_id)}
-              >
-                {revokeBusyId === trust.trust_id ? t("federation.revokingTrust") : t("federation.revokeTrust")}
-              </button>
+              <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-[200px] flex-1">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.groupBridgeAccess")}</div>
+                    <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.groupBridgeAccessHelp")}</p>
+                  </div>
+                  <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
+                    {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
+                      const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
+                      const selected = currentAccessLevel === level;
+                      return (
+                        <button
+                          key={level}
+                          type="button"
+                          className={accessButtonClass(level, selected)}
+                          aria-pressed={selected}
+                          disabled={busy || accessBusyTrustId === trust.trust_id}
+                          onClick={() => {
+                            if (!selected) updateTrustAccess(trust.trust_id, level);
+                          }}
+                        >
+                          {t(`federation.accessLevels.${level}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                  {t(`federation.accessDescriptions.${normalizeGroupBridgeAccessLevel(trust.access_level)}`)}
+                </p>
+              </div>
             </div>
           ))}</div>
         )}
