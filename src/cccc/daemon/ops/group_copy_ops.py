@@ -306,6 +306,8 @@ def _should_exclude_group_relpath(rel: str, *, is_dir: bool = False) -> bool:
         return True
     if any(part in _SENSITIVE_FILE_PARTS for part in parts):
         return True
+    if parts[0] == "runtime":
+        return True
     if len(parts) >= 2 and parts[0] == "state":
         if parts[1] in _RUNTIME_DIR_PARTS:
             return True

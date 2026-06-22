@@ -195,6 +195,25 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_copy_preview_too_large_error_includes_limit_and_file_size(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with patch("cccc.ports.web.routes.groups.WEB_MAX_GROUP_COPY_PACKAGE_BYTES", 8):
+                with self._client() as client:
+                    resp = client.post(
+                        "/api/v1/groups/copy/preview_import",
+                        files={"file": ("group.zip", b"123456789", "application/zip")},
+                    )
+
+            self.assertEqual(resp.status_code, 413)
+            error = resp.json().get("error") or {}
+            self.assertEqual(error.get("code"), "copy_package_too_large")
+            message = str(error.get("message") or "")
+            self.assertIn("max 8 bytes", message)
+            self.assertIn("selected file is 9 bytes", message)
+        finally:
+            cleanup()
+
     def test_copy_export_content_disposition_supports_unicode_filename(self) -> None:
         from cccc.ports.web.routes.groups import _download_content_disposition
 

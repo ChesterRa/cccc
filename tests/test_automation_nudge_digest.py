@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from importlib import import_module
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -28,13 +29,13 @@ class TestAutomationNudgeDigest(unittest.TestCase):
 
                 with (
                     patch("cccc.daemon.automation.pty_runner.SUPERVISOR.actor_running", return_value=True),
-                    patch("cccc.daemon.automation.engine.iter_events", return_value=[]) as iter_events,
+                    patch.object(manager, "_load_nudge_candidate_events", return_value=([], [])) as load_events,
                 ):
                     manager._check_nudge(group, cfg, t0)
                     manager._check_nudge(group, cfg, t0 + timedelta(seconds=5))
                     manager._check_nudge(group, cfg, t0 + timedelta(seconds=35))
 
-                self.assertEqual(iter_events.call_count, 2)
+                self.assertEqual(load_events.call_count, 2)
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
@@ -131,6 +132,51 @@ class TestAutomationNudgeDigest(unittest.TestCase):
                         .get("count", 0)
                     )
                     self.assertEqual(count3, 2)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_nudge_candidate_loader_reuses_unchanged_source_cache(self) -> None:
+        from cccc.contracts.v1 import ChatMessageData
+        from cccc.daemon.automation import AutomationManager
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+
+                reg = load_registry()
+                group = create_group(reg, title="test")
+                add_actor(group, actor_id="peer1", runtime="codex", runner="pty", enabled=True)
+                append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data=ChatMessageData(text="hello", to=["peer1"]).model_dump(),
+                )
+
+                manager = AutomationManager()
+                engine_module = import_module("cccc.daemon.automation.engine")
+                with patch(
+                    "cccc.daemon.automation.engine.iter_source_lines",
+                    wraps=engine_module.iter_source_lines,
+                ) as iter_source_lines:
+                    all_first, chat_first = manager._load_nudge_candidate_events(group)
+                    all_second, chat_second = manager._load_nudge_candidate_events(group)
+
+                self.assertEqual(len(all_first), 1)
+                self.assertEqual(len(chat_first), 1)
+                self.assertEqual(len(all_second), 1)
+                self.assertEqual(len(chat_second), 1)
+                self.assertEqual(iter_source_lines.call_count, 1)
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

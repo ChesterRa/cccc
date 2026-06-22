@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
+import copy
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +19,10 @@ import yaml  # type: ignore
 from ..paths import ensure_home
 from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
+
+_SETTINGS_CACHE_LOCK = threading.Lock()
+_SETTINGS_CACHE_KEY: tuple[str, int, int] | None = None
+_SETTINGS_CACHE_DOC: Dict[str, Any] | None = None
 
 
 @dataclass
@@ -560,16 +566,42 @@ def _settings_path() -> Path:
     return ensure_home() / "settings.yaml"
 
 
+def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    return copy.deepcopy(settings)
+
+
+def _invalidate_settings_cache() -> None:
+    global _SETTINGS_CACHE_KEY, _SETTINGS_CACHE_DOC
+    with _SETTINGS_CACHE_LOCK:
+        _SETTINGS_CACHE_KEY = None
+        _SETTINGS_CACHE_DOC = None
+
+
 def load_settings() -> Dict[str, Any]:
     """Load global settings from ~/.cccc/settings.yaml."""
+    global _SETTINGS_CACHE_KEY, _SETTINGS_CACHE_DOC
     p = _settings_path()
     if not p.exists():
         return {}
     try:
+        stat = p.stat()
+        cache_key = (str(p), int(stat.st_mtime_ns), int(stat.st_size))
+    except Exception:
+        cache_key = None
+    if cache_key is not None:
+        with _SETTINGS_CACHE_LOCK:
+            if _SETTINGS_CACHE_KEY == cache_key and _SETTINGS_CACHE_DOC is not None:
+                return _clone_settings(_SETTINGS_CACHE_DOC)
+    try:
         doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        return doc if isinstance(doc, dict) else {}
+        out = doc if isinstance(doc, dict) else {}
     except Exception:
         return {}
+    if cache_key is not None:
+        with _SETTINGS_CACHE_LOCK:
+            _SETTINGS_CACHE_KEY = cache_key
+            _SETTINGS_CACHE_DOC = _clone_settings(out)
+    return out
 
 
 def save_settings(settings: Dict[str, Any]) -> None:
@@ -577,6 +609,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
     p = _settings_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(p, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
+    _invalidate_settings_cache()
 
 
 def get_runtime_pool() -> List[RuntimePoolEntry]:

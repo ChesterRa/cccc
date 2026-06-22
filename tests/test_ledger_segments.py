@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -39,6 +40,20 @@ class TestLedgerSegments(unittest.TestCase):
 
             open_source.assert_not_called()
             self.assertEqual([str(source.get("path") or "") for source in sources], [segment_rel, "ledger.jsonl"])
+
+    def test_ensure_ledger_layout_does_not_touch_existing_active_ledger(self) -> None:
+        from cccc.kernel.ledger_segments import active_ledger_path, ensure_ledger_layout
+
+        with tempfile.TemporaryDirectory() as td:
+            group_path = Path(td)
+            ensure_ledger_layout(group_path)
+            active = active_ledger_path(group_path)
+            fixed_ns = 1_700_000_000_123_456_789
+            os.utime(active, ns=(fixed_ns, fixed_ns))
+
+            ensure_ledger_layout(group_path)
+
+            self.assertEqual(active.stat().st_mtime_ns, fixed_ns)
 
 
 if __name__ == "__main__":

@@ -129,6 +129,11 @@ class TestGroupCopyOps(unittest.TestCase):
                 (group.path / "state" / "browser" / "session.json").write_text("secret", encoding="utf-8")
                 (group.path / "state" / "tokens").mkdir(parents=True, exist_ok=True)
                 (group.path / "state" / "tokens" / "provider.json").write_text("secret", encoding="utf-8")
+                (group.path / "runtime" / "codex" / "peer1" / ".tmp" / "plugins").mkdir(parents=True, exist_ok=True)
+                (group.path / "runtime" / "codex" / "peer1" / ".tmp" / "plugins" / "cache.pack").write_text(
+                    "runtime cache",
+                    encoding="utf-8",
+                )
 
                 package = self._package_bytes(group_id)
                 with zipfile.ZipFile(io.BytesIO(package), "r") as zf:
@@ -148,6 +153,7 @@ class TestGroupCopyOps(unittest.TestCase):
                     self.assertNotIn("group/state/notebooklm_auth/cookies.json", names)
                     self.assertNotIn("group/state/browser/session.json", names)
                     self.assertNotIn("group/state/tokens/provider.json", names)
+                    self.assertNotIn("group/runtime/codex/peer1/.tmp/plugins/cache.pack", names)
                     manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
                     self.assertEqual(manifest.get("kind"), "cccc.group_copy")
                     self.assertFalse(bool(manifest.get("workspace_included")))

@@ -146,7 +146,9 @@ def ensure_ledger_layout(group_path: Path) -> Dict[str, Any]:
     group_path.mkdir(parents=True, exist_ok=True)
     ledger_state_dir(group_path).mkdir(parents=True, exist_ok=True)
     ledger_segments_dir(group_path).mkdir(parents=True, exist_ok=True)
-    active_ledger_path(group_path).touch(exist_ok=True)
+    active = active_ledger_path(group_path)
+    if not active.exists():
+        active.touch()
     manifest_path = ledger_manifest_path(group_path)
     if manifest_path.exists():
         return load_ledger_manifest(group_path)

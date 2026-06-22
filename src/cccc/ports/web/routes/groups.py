@@ -150,6 +150,18 @@ _VOICE_PCM16_ACTIVE_THRESHOLD = 800
 WEB_MAX_GROUP_COPY_PACKAGE_BYTES = 100 * 1024 * 1024
 
 
+def _group_copy_too_large_error(actual_bytes: int) -> HTTPException:
+    max_bytes = int(WEB_MAX_GROUP_COPY_PACKAGE_BYTES)
+    return HTTPException(
+        status_code=413,
+        detail={
+            "code": "copy_package_too_large",
+            "message": f"group copy too large: max {max_bytes} bytes, selected file is {int(actual_bytes)} bytes",
+            "details": {"max_bytes": max_bytes, "actual_bytes": int(actual_bytes)},
+        },
+    )
+
+
 def _response_to_dict(resp: Any) -> Dict[str, Any]:
     if isinstance(resp, dict):
         return resp
@@ -1319,7 +1331,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def group_copy_preview_import(file: UploadFile = File(...)) -> Dict[str, Any]:
         raw = await file.read()
         if len(raw) > WEB_MAX_GROUP_COPY_PACKAGE_BYTES:
-            raise HTTPException(status_code=413, detail={"code": "copy_package_too_large", "message": "group copy too large"})
+            raise _group_copy_too_large_error(len(raw))
         package_b64 = base64.b64encode(raw).decode("ascii")
         resp = await run_in_threadpool(run_group_copy_preview_import, {"package_b64": package_b64})
         return _response_to_dict(resp)
@@ -1333,7 +1345,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     ) -> Dict[str, Any]:
         raw = await file.read()
         if len(raw) > WEB_MAX_GROUP_COPY_PACKAGE_BYTES:
-            raise HTTPException(status_code=413, detail={"code": "copy_package_too_large", "message": "group copy too large"})
+            raise _group_copy_too_large_error(len(raw))
         package_b64 = base64.b64encode(raw).decode("ascii")
         resp = await run_in_threadpool(
             run_group_copy_import,
@@ -2217,6 +2229,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         prompt_request_id: str = "",
         view: str = "",
     ) -> Dict[str, Any]:
+        view_mode = str(view or "").strip()
         return await ctx.daemon(
             {
                 "op": "assistant_state",
@@ -2224,7 +2237,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "group_id": group_id,
                     "assistant_id": str(assistant_id or "").strip(),
                     "prompt_request_id": str(prompt_request_id or "").strip(),
-                    "view": str(view or "").strip(),
+                    "view": view_mode,
+                    "suppress_retry_notify": view_mode in {"voice_status", "voice_workspace"},
                 },
             }
         )

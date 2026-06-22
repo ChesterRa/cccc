@@ -35,6 +35,7 @@ from ...kernel.group import (
 )
 from ...kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
 from ...kernel.ledger import append_event
+from ...kernel.ledger_segments import iter_source_lines, list_ledger_sources
 from ...kernel.terminal_transcript import get_terminal_transcript_settings
 from ...kernel.messaging import enabled_recipient_actor_ids
 from ...runners import pty as pty_runner
@@ -769,6 +770,8 @@ class AutomationManager:
         self._memory_auto_in_flight: set[str] = set()
         self._group_tick_at: dict[str, float] = {}
         self._nudge_scan_at: dict[str, float] = {}
+        self._nudge_source_cache: dict[tuple[str, str], tuple[tuple[str, int, int], List[Dict[str, Any]], List[Dict[str, Any]]]] = {}
+        self._nudge_group_sources: dict[str, set[str]] = {}
 
     def _group_tick_due(self, group_id: str, *, now_monotonic: float, min_interval_seconds: float) -> bool:
         gid = str(group_id or "").strip()
@@ -813,6 +816,60 @@ class AutomationManager:
                 return False
             self._nudge_scan_at[gid] = now_ts
             return True
+
+    def _load_nudge_candidate_events(self, group: Group) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Load chat/system events for nudge checks without reparsing stable segments."""
+        gid = str(group.group_id or "").strip()
+        all_events: List[Dict[str, Any]] = []
+        chat_events: List[Dict[str, Any]] = []
+        live_keys: set[str] = set()
+
+        for source in list_ledger_sources(group.path):
+            source_path = str(source.get("path") or "").strip()
+            abs_path = source.get("abs_path")
+            if not source_path or not isinstance(abs_path, Path) or not abs_path.exists():
+                continue
+            try:
+                st = abs_path.stat()
+                fingerprint = (source_path, max(0, int(st.st_size)), max(0, int(getattr(st, "st_mtime_ns", 0) or 0)))
+            except Exception:
+                fingerprint = (source_path, 0, 0)
+            cache_key = (gid, source_path)
+            live_keys.add(source_path)
+
+            cached = self._nudge_source_cache.get(cache_key)
+            if cached is not None and cached[0] == fingerprint:
+                source_all = cached[1]
+                source_chat = cached[2]
+            else:
+                source_all = []
+                source_chat = []
+                for raw_line in iter_source_lines(abs_path):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(ev, dict):
+                        continue
+                    kind = str(ev.get("kind") or "")
+                    if kind not in ("chat.message", "system.notify"):
+                        continue
+                    source_all.append(ev)
+                    if kind == "chat.message":
+                        source_chat.append(ev)
+                self._nudge_source_cache[cache_key] = (fingerprint, source_all, source_chat)
+
+            all_events.extend(source_all)
+            chat_events.extend(source_chat)
+
+        previous = self._nudge_group_sources.get(gid, set())
+        for stale_source_path in previous - live_keys:
+            self._nudge_source_cache.pop((gid, stale_source_path), None)
+        self._nudge_group_sources[gid] = live_keys
+        return all_events, chat_events
 
     def on_resume(self, group: Group) -> None:
         """Reset automation timers on resume (idle/paused -> active).
@@ -956,15 +1013,7 @@ class AutomationManager:
             return
 
         # Scan visible chat/system events once and compute obligation status in batch.
-        all_events: List[Dict[str, Any]] = []
-        chat_events: List[Dict[str, Any]] = []
-        for ev in iter_events(group.ledger_path):
-            kind = str(ev.get("kind") or "")
-            if kind not in ("chat.message", "system.notify"):
-                continue
-            all_events.append(ev)
-            if kind == "chat.message":
-                chat_events.append(ev)
+        all_events, chat_events = self._load_nudge_candidate_events(group)
 
         obligation_map = get_obligation_status_batch(group, chat_events)
 

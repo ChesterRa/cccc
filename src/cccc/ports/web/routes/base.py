@@ -1617,7 +1617,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         "is_dir": entry.is_dir(),
                     })
             except PermissionError:
-                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Permission denied: {path}"}}
+                return {
+                    "ok": True,
+                    "result": {
+                        "path": str(target),
+                        "parent": str(target.parent) if target.parent != target else None,
+                        "items": [],
+                        "readable": False,
+                    },
+                }
 
             return {
                 "ok": True,
@@ -1625,6 +1633,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "path": str(target),
                     "parent": str(target.parent) if target.parent != target else None,
                     "items": items[:100],  # Limit to 100 items
+                    "readable": True,
                 },
             }
         except Exception as e:
