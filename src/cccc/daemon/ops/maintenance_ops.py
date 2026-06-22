@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional, Tuple
+from uuid import uuid4
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ..federation.ops import handle_remote_send
+from ..federation.route_lookup import resolve_remote_group_route
 from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
 from ...kernel.ledger_retention import compact as compact_ledger
@@ -102,8 +105,9 @@ def handle_send_cross_group(
         dst_to_tokens = [str(item).strip() for item in to_raw if isinstance(item, str) and str(item).strip()]
 
     attachments_raw = args.get("attachments")
-    if attachments_raw:
-        return _error("attachments_not_supported", "attachments are not supported for cross-group messages yet")
+    if attachments_raw is not None and not isinstance(attachments_raw, list):
+        return _error("invalid_attachments", "attachments must be a list")
+    attachments = attachments_raw if isinstance(attachments_raw, list) else []
     refs_raw = args.get("refs")
     if isinstance(refs_raw, list) and any(isinstance(item, dict) for item in refs_raw):
         return _error("refs_not_supported", "quoted refs are not supported for cross-group messages yet")
@@ -119,9 +123,77 @@ def handle_send_cross_group(
     src_group = load_group(src_group_id)
     if src_group is None:
         return _error("group_not_found", f"group not found: {src_group_id}")
+
+    remote_route = resolve_remote_group_route(group_id=src_group_id, remote_group_id=dst_group_id)
+    if remote_route is not None:
+        dst_to_tokens = cross_group_recipient_tokens_or_default(dst_to_tokens)
+        if has_hash_recipient_token(dst_to_tokens):
+            return _error("invalid_recipient_syntax", CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
+        src_resp, _ = dispatch_send(
+            "send",
+            {
+                "group_id": src_group_id,
+                "text": text,
+                "by": by,
+                "to": ["user"],
+                "attachments": attachments,
+                "priority": priority,
+                "reply_required": reply_required,
+                "dst_group_id": dst_group_id,
+                "dst_to": dst_to_tokens,
+            },
+        )
+        if not src_resp.ok:
+            return src_resp
+
+        src_event = src_resp.result.get("event")
+        src_event_id = str((src_event or {}).get("id") or "").strip() if isinstance(src_event, dict) else ""
+        idempotency_key = f"webmsg_{src_event_id}" if src_event_id else f"webmsg_{uuid4().hex}"
+        remote_resp = handle_remote_send(
+            {
+                "group_id": src_group_id,
+                "registration_id": remote_route.registration_id,
+                "idempotency_key": idempotency_key,
+                "source_event_id": src_event_id,
+                "payload": {
+                    "text": text,
+                    "to": dst_to_tokens,
+                    "priority": priority,
+                    "reply_required": reply_required,
+                    "refs": [],
+                    "attachments": attachments,
+                },
+            }
+        )
+        if not remote_resp.ok:
+            return remote_resp
+        receipt = remote_resp.result.get("receipt") if isinstance(remote_resp.result, dict) else {}
+        if isinstance(receipt, dict) and str(receipt.get("status") or "").strip() == "failed":
+            error = receipt.get("error") if isinstance(receipt.get("error"), dict) else {}
+            return _error(
+                str(error.get("code") or "remote_send_failed"),
+                str(error.get("message") or "remote send failed"),
+                details={
+                    "remote_group_id": remote_route.remote_group_id,
+                    "registration_id": remote_route.registration_id,
+                    "idempotency_key": idempotency_key,
+                    "receipt_status": "failed",
+                },
+            )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "src_event": src_event,
+                "remote_group_id": remote_route.remote_group_id,
+                "remote_send": remote_resp.result,
+            },
+        )
+
     dst_group = load_group(dst_group_id)
     if dst_group is None:
         return _error("group_not_found", group_not_found_with_resolution_hint(dst_group_id))
+    if attachments:
+        return _error("attachments_not_supported", "attachments are only supported for remote Group Bridge messages")
 
     dst_to_tokens = cross_group_recipient_tokens_or_default(dst_to_tokens)
     if has_hash_recipient_token(dst_to_tokens):

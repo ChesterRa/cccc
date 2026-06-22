@@ -20,6 +20,8 @@ export type GroupMeta = {
   federation_remote_endpoint?: string;
   federation_remote_peer_id?: string;
   federation_trust_id?: string;
+  federation_registration_id?: string;
+  federation_access_level?: string;
   updated_at?: string;
   created_at?: string;
   running?: boolean;

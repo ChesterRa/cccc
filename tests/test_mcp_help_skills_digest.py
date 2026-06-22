@@ -299,7 +299,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("`cccc_git`", markdown)
         self.assertIn("Delivered CCCC attachments are blob references", markdown)
         self.assertIn("`cccc_file(action=\"read\", rel_path=...)`", markdown)
-        self.assertIn("`cccc_file(action=\"send\", path=..., text=...)`", markdown)
+        self.assertIn("`cccc_file(action=\"send\", path=..., text=..., dst_group_id=...)`", markdown)
         self.assertIn("`COMMON_WORK_LOOPS`", markdown)
         self.assertIn("`tool_names(\"repo\")`", markdown)
         self.assertIn("`list_tools(\"repo\")`", markdown)

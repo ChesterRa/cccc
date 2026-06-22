@@ -142,8 +142,11 @@ describe("buildComposerMentionSuggestions", () => {
         remote_group_title: "Remote Product",
         remote_peer_id: "peer_remote",
         remote_endpoint: "https://remote.example",
+        access_level: "full",
       },
     ]);
+
+    expect(remoteGroups[0]?.federation_access_level).toBeUndefined();
 
     const items = buildComposerMentionSuggestions({
       kind: "group",

@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
+from ....daemon.federation.route_lookup import resolve_remote_group_route
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ..schemas import (
@@ -117,7 +118,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         This creates a source chat.message in the current group and forwards a copy into the destination group
         with (src_group_id, src_event_id) set.
         """
-        check_group(request, req.dst_group_id)
+        if resolve_remote_group_route(group_id=group_id, remote_group_id=req.dst_group_id) is None:
+            check_group(request, req.dst_group_id)
         return await ctx.daemon(
             {
                 "op": "send_cross_group",
@@ -129,6 +131,58 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "to": list(req.to),
                     "priority": req.priority,
                     "reply_required": _normalize_reply_required(req.reply_required),
+                    "attachments": list(req.attachments),
+                },
+            }
+        )
+
+    @group_router.post("/send_cross_group_upload")
+    async def send_cross_group_upload(
+        request: Request,
+        group_id: str,
+        dst_group_id: str = Form(""),
+        by: str = Form("user"),
+        text: str = Form(""),
+        to_json: str = Form("[]"),
+        priority: str = Form("normal"),
+        reply_required: str = Form("false"),
+        files: list[UploadFile] = File(default_factory=list),
+    ) -> Dict[str, Any]:
+        """Send uploaded attachments to a trusted remote Group Bridge target."""
+        dst_gid = str(dst_group_id or "").strip()
+        if not dst_gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_dst_group_id", "message": "missing dst_group_id"})
+        if resolve_remote_group_route(group_id=group_id, remote_group_id=dst_gid) is None:
+            check_group(request, dst_gid)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "attachments_not_supported",
+                    "message": "attachments are only supported for remote Group Bridge messages",
+                },
+            )
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        try:
+            parsed_to = json.loads(to_json or "[]")
+        except Exception:
+            parsed_to = []
+        to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+        attachments = await _store_upload_attachments(group, files)
+        msg_text = _message_text_for_upload(text=text, attachments=attachments)
+        return await ctx.daemon(
+            {
+                "op": "send_cross_group",
+                "args": {
+                    "group_id": group_id,
+                    "dst_group_id": dst_gid,
+                    "text": msg_text,
+                    "by": by,
+                    "to": to_list,
+                    "priority": _normalize_priority(priority),
+                    "reply_required": _normalize_reply_required(reply_required),
+                    "attachments": attachments,
                 },
             }
         )

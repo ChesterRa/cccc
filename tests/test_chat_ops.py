@@ -1834,6 +1834,29 @@ class TestMCPToCoercion(unittest.TestCase):
 
         self.assertEqual(captured.get("to"), ["user"])
 
+    def test_mcp_file_send_handler_forwards_dst_group_id(self) -> None:
+        from cccc.ports.mcp.server import _handle_cccc_namespace
+        from unittest.mock import patch
+
+        captured = {}
+
+        def fake_file_send(**kwargs):
+            captured.update(kwargs)
+            return {"event": {}}
+
+        with patch("cccc.ports.mcp.server.file_send", side_effect=fake_file_send):
+            with patch("cccc.ports.mcp.server._resolve_group_id", return_value="g_test"):
+                with patch("cccc.ports.mcp.server._resolve_self_actor_id", return_value="peer1"):
+                    _handle_cccc_namespace("cccc_file", {
+                        "action": "send",
+                        "dst_group_id": "g_remote",
+                        "to": ["@foreman"],
+                        "path": "shot.png",
+                    })
+
+        self.assertEqual(captured.get("dst_group_id"), "g_remote")
+        self.assertEqual(captured.get("to"), ["@foreman"])
+
     def test_mcp_file_send_handler_none_to_is_none(self) -> None:
         """MCP cccc_file_send handler: missing `to` → None."""
         from cccc.ports.mcp.server import _handle_cccc_namespace

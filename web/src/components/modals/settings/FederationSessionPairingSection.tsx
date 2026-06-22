@@ -9,7 +9,7 @@ import {
   canSubmitPairingRequest,
   filterFederationSessionRegistrations,
   formatPeerLabel,
-  formatRemoteInstanceLabel,
+  formatRemoteGroupLabel,
   GROUP_BRIDGE_ACCESS_LEVELS,
   isLocalIssuerEndpoint,
   isSameInstancePairingInput,
@@ -35,6 +35,7 @@ import {
 } from "./types";
 import { publishFederationPairingChanged } from "../../../utils/federationPairingEvents";
 import { copyTextToClipboard } from "../../../utils/copy";
+import { formatRecipientIdentifier } from "../../../utils/recipientIdentifier";
 
 interface Props {
   isDark: boolean;
@@ -86,6 +87,7 @@ export function FederationSessionPairingSection({
   const [requestError, setRequestError] = useState("");
   const [reviewError, setReviewError] = useState("");
   const [copyNotice, setCopyNotice] = useState("");
+  const [trustCopyNotice, setTrustCopyNotice] = useState("");
   const [requestNotice, setRequestNotice] = useState("");
   const [issuerEndpoint, setIssuerEndpoint] = useState(defaultIssuerEndpoint);
   const [busy, setBusy] = useState(false);
@@ -151,6 +153,29 @@ export function FederationSessionPairingSection({
     const copied = await copyTextToClipboard(createdInfo);
     setCopyNotice(t(copied ? "federation.copyConnectionInfoDone" : "federation.copyConnectionInfoManual"));
   }, [createdInfo, t]);
+
+  const copyTrustValue = useCallback(async (value: string, label: string) => {
+    const text = String(value || "").trim();
+    if (!text) return;
+    const copied = await copyTextToClipboard(text);
+    setTrustCopyNotice(copied
+      ? t("federation.copyFieldDone", { field: label, defaultValue: "{{field}} copied." })
+      : t("federation.copyFieldManual", { field: label, defaultValue: "Copy is unavailable; select {{field}} manually." }));
+  }, [t]);
+
+  const copyTrustRecipientIdentifier = useCallback(async (trust: FederationTrust, displayName: string, accessLevel: GroupBridgeAccessLevel) => {
+    const remoteGroupId = String(trust.remote_group_id || "").trim();
+    if (!remoteGroupId) return;
+    const copied = await copyTextToClipboard(formatRecipientIdentifier({
+      kind: "remote_group",
+      label: displayName,
+      id: remoteGroupId,
+      accessLevel,
+    }));
+    setTrustCopyNotice(copied
+      ? t("federation.copyRecipientIdentifierDone", { defaultValue: "Recipient identifier copied." })
+      : t("federation.copyRecipientIdentifierManual", { defaultValue: "Copy is unavailable; select the recipient identifier manually." }));
+  }, [t]);
 
   const onCreateRequest = useCallback(async () => {
     setRequestError("");
@@ -386,60 +411,96 @@ export function FederationSessionPairingSection({
       <section className={settingsWorkspacePanelClass(isDark)}>
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.trustedRemoteGroups")}</div>
         <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.trustedRemoteGroupsHelp")}</p>
+        {trustCopyNotice && <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">{trustCopyNotice}</p>}
         {trustedPeers.length === 0 && sessionRegistrations.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("federation.noneYet")}</p> : (
-          <div className="mt-3 space-y-2">{trustedPeers.map((trust) => (
-            <div key={trust.trust_id} className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{formatPeerLabel(trust, t("federation.unknownPeer"))}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("federation.trustedBadge")}</span>
-                    <span>{t("federation.remoteCccc", { endpoint: formatRemoteInstanceLabel(trust, t("federation.unknownCccc")) })}</span>
-                    <span>{t("federation.status", { status: trust.status })}</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className={dangerButtonClass("sm")}
-                  disabled={busy || revokeBusyId === trust.trust_id}
-                  onClick={() => revokeTrustedPeer(trust.trust_id)}
-                >
-                  {revokeBusyId === trust.trust_id ? t("federation.revokingTrust") : t("federation.revokeTrust")}
-                </button>
-              </div>
-              <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-3">
+          <div className="mt-3 space-y-2">{trustedPeers.map((trust) => {
+            const remoteGroupLabel = formatRemoteGroupLabel(trust, t("federation.unknownRemoteGroup", { defaultValue: "Unknown remote group" }));
+            const remoteGroupId = String(trust.remote_group_id || "").trim();
+            const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
+            return (
+              <div key={trust.trust_id} className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-[200px] flex-1">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.groupBridgeAccess")}</div>
-                    <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.groupBridgeAccessHelp")}</p>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{remoteGroupLabel}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("federation.trustedBadge")}</span>
+                      <span>{t("federation.status", { status: trust.status })}</span>
+                      <span>{t("federation.accessSummary", { access: t(`federation.accessLevels.${currentAccessLevel}`), defaultValue: "access: {{access}}" })}</span>
+                    </div>
                   </div>
-                  <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
-                    {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
-                      const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
-                      const selected = currentAccessLevel === level;
-                      return (
+                  <button
+                    type="button"
+                    className={dangerButtonClass("sm")}
+                    disabled={busy || revokeBusyId === trust.trust_id}
+                    onClick={() => revokeTrustedPeer(trust.trust_id)}
+                  >
+                    {revokeBusyId === trust.trust_id ? t("federation.revokingTrust") : t("federation.revokeTrust")}
+                  </button>
+                </div>
+
+                <div className="mt-3">
+                  <div className={settingsWorkspaceSoftPanelClass(isDark)}>
+                    <div className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">{t("federation.remoteGroupId")}</div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <code className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-primary)]">{remoteGroupId || t("federation.notLoaded")}</code>
+                    </div>
+                    {remoteGroupId && (
+                      <div className="mt-2 flex flex-wrap gap-2">
                         <button
-                          key={level}
                           type="button"
-                          className={accessButtonClass(level, selected)}
-                          aria-pressed={selected}
-                          disabled={busy || accessBusyTrustId === trust.trust_id}
-                          onClick={() => {
-                            if (!selected) updateTrustAccess(trust.trust_id, level);
-                          }}
+                          className={secondaryButtonClass("sm")}
+                          onClick={() => copyTrustValue(remoteGroupId, t("federation.remoteGroupId"))}
                         >
-                          {t(`federation.accessLevels.${level}`)}
+                          {t("federation.copyShort", { defaultValue: "Copy" })}
                         </button>
-                      );
-                    })}
+                        <button
+                          type="button"
+                          className={secondaryButtonClass("sm")}
+                          onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, currentAccessLevel)}
+                        >
+                          {t("federation.copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
+                        </button>
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                      {t("federation.remoteGroupIdAgentHelp", { defaultValue: "Copy the identifier when asking an agent to message or inspect this remote group." })}
+                    </p>
                   </div>
                 </div>
-                <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-                  {t(`federation.accessDescriptions.${normalizeGroupBridgeAccessLevel(trust.access_level)}`)}
-                </p>
+
+                <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-[200px] flex-1">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.groupBridgeAccess")}</div>
+                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.groupBridgeAccessHelp")}</p>
+                    </div>
+                    <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
+                      {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
+                        const selected = currentAccessLevel === level;
+                        return (
+                          <button
+                            key={level}
+                            type="button"
+                            className={accessButtonClass(level, selected)}
+                            aria-pressed={selected}
+                            disabled={busy || accessBusyTrustId === trust.trust_id}
+                            onClick={() => {
+                              if (!selected) updateTrustAccess(trust.trust_id, level);
+                            }}
+                          >
+                            {t(`federation.accessLevels.${level}`)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                    {t(`federation.accessDescriptions.${currentAccessLevel}`)}
+                  </p>
+                </div>
               </div>
-            </div>
-          ))}</div>
+            );
+          })}</div>
         )}
       </section>
 

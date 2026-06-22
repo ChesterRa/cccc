@@ -24,8 +24,8 @@ describe("buildComposerSendPlanTargets", () => {
       groupMentionTokens: [first, second],
       groups,
     })).toEqual([
-      { groupId: "self-agent", isCrossGroup: true },
-      { groupId: "print", isCrossGroup: true },
+      { groupId: "self-agent", isCrossGroup: true, isRemote: false, source: "group_mention" },
+      { groupId: "print", isCrossGroup: true, isRemote: false, source: "group_mention" },
     ]);
   });
 
@@ -37,6 +37,44 @@ describe("buildComposerSendPlanTargets", () => {
       text: "copied #self-agent text",
       groupMentionTokens: [],
       groups,
-    })).toEqual([{ groupId: "g_local", isCrossGroup: false }]);
+    })).toEqual([{ groupId: "g_local", isCrossGroup: false, source: "selected_group" }]);
+  });
+
+  it("plans selected remote group chips as remote foreman sends", () => {
+    expect(buildComposerSendPlanTargets({
+      selectedGroupId: "g_local",
+      dstGroupId: "g_local",
+      isCrossGroup: false,
+      text: "check remote status",
+      groupMentionTokens: [],
+      groups: [
+        ...groups,
+        { group_id: "g_remote_a", title: "Remote A", federation_remote: true },
+        { group_id: "g_remote_b", title: "Remote B", federation_remote: true },
+      ] as GroupMeta[],
+      remoteGroupIds: ["g_remote_a", "g_remote_b"],
+    })).toEqual([
+      { groupId: "g_remote_a", isCrossGroup: true, isRemote: true, source: "remote_chip", recipientTokens: ["@foreman"] },
+      { groupId: "g_remote_b", isCrossGroup: true, isRemote: true, source: "remote_chip", recipientTokens: ["@foreman"] },
+    ]);
+  });
+
+  it("keeps an explicit local recipient when remote chips are selected", () => {
+    expect(buildComposerSendPlanTargets({
+      selectedGroupId: "g_local",
+      dstGroupId: "g_local",
+      isCrossGroup: false,
+      text: "also tell local foreman",
+      groupMentionTokens: [],
+      groups: [
+        ...groups,
+        { group_id: "g_remote_a", title: "Remote A", federation_remote: true },
+      ] as GroupMeta[],
+      remoteGroupIds: ["g_remote_a"],
+      includeSelectedGroup: true,
+    })).toEqual([
+      { groupId: "g_local", isCrossGroup: false, source: "selected_group" },
+      { groupId: "g_remote_a", isCrossGroup: true, isRemote: true, source: "remote_chip", recipientTokens: ["@foreman"] },
+    ]);
   });
 });

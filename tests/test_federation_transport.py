@@ -2,6 +2,8 @@ import unittest
 import os
 import tempfile
 import asyncio
+import base64
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -755,17 +757,55 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(fallback.call_args.kwargs["remote_group_id"], "g_remote")
         self.assertEqual(fallback.call_args.kwargs["remote_peer_id"], "peer-remote")
 
-    def test_federation_session_unsupported_attachments_and_refs_are_permanent(self) -> None:
+    def test_federation_session_transport_sends_attachment_payloads(self) -> None:
+        from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
+        from cccc.daemon.federation.ws_session import FederationWsSession, clear_sessions, register_session
+        from cccc.kernel.blobs import store_blob_bytes
+        from cccc.kernel.group import load_group
+
+        captured = {}
+
+        async def send_request(request, timeout):
+            _ = timeout
+            captured["request"] = dict(request)
+            return {"ok": True, "event_id": "remote-with-attachment"}
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            _write_local_group_with_federation_trust(home)
+            with _EnvPatch(CCCC_HOME=str(home)):
+                group = load_group("g_local")
+                self.assertIsNotNone(group)
+                attachment = store_blob_bytes(group, data=b"image-bytes", filename="shot.png", mime_type="image/png")
+                clear_sessions()
+                asyncio.run(
+                    register_session(
+                        FederationWsSession(
+                            target_group_id="g_local",
+                            src_group_id="g_remote",
+                            remote_peer_id="peer-remote",
+                            send_request=send_request,
+                        )
+                    )
+                )
+                try:
+                    result = FederationSessionTransport().deliver(self._session_envelope(attachments=[attachment]))
+                finally:
+                    clear_sessions()
+
+        self.assertTrue(result.ok, result)
+        payload = captured["request"]["payload"]
+        attachments = payload["attachments"]
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]["title"], "shot.png")
+        self.assertEqual(attachments[0]["mime_type"], "image/png")
+        self.assertEqual(attachments[0]["sha256"], hashlib.sha256(b"image-bytes").hexdigest())
+        self.assertEqual(base64.b64decode(attachments[0]["content_base64"].encode("ascii")), b"image-bytes")
+
+    def test_federation_session_unsupported_refs_are_permanent(self) -> None:
         from cccc.daemon.federation.transports.federation_session import FederationSessionTransport
 
-        t = FederationSessionTransport()
-
-        res_att = t.deliver(self._session_envelope(attachments=[{"path": "x"}]))
-        self.assertFalse(res_att.ok)
-        self.assertFalse(res_att.retriable)
-        self.assertEqual(res_att.error_code, "unsupported_attachments")
-
-        res_refs = t.deliver(self._session_envelope(refs=[{"kind": "url"}]))
+        res_refs = FederationSessionTransport().deliver(self._session_envelope(refs=[{"kind": "url"}]))
         self.assertFalse(res_refs.ok)
         self.assertFalse(res_refs.retriable)
         self.assertEqual(res_refs.error_code, "unsupported_refs")
@@ -828,6 +868,63 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(str(delivery["event"].get("id") or ""), first["event_id"])
         self.assertEqual(delivery["text"], "hello from remote")
         self.assertEqual(delivery["source_user_name"], "Remote Group")
+
+    def test_receive_remote_send_stores_attachments_as_local_blobs(self) -> None:
+        from cccc.daemon.federation.receiver import receive_remote_send
+        from cccc.kernel.blobs import resolve_blob_attachment_path
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import iter_events
+
+        raw = b"remote image bytes"
+        digest = hashlib.sha256(raw).hexdigest()
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_dir = _write_local_group_with_federation_trust(home)
+            deliveries = []
+
+            def capture_delivery(**kwargs):
+                deliveries.append(kwargs)
+
+            with (
+                _EnvPatch(CCCC_CHAT_POST_COMMIT_MODE="inline", CCCC_HOME=str(home)),
+                patch("cccc.daemon.federation.receiver.deliver_appended_chat_message", side_effect=capture_delivery),
+            ):
+                result = receive_remote_send(
+                    target_group_id="g_local",
+                    src_group_id="g_remote",
+                    remote_peer_id="peer_remote",
+                    payload={
+                        "text": "see attachment",
+                        "to": ["peer1"],
+                        "attachments": [
+                            {
+                                "kind": "image",
+                                "title": "remote.png",
+                                "mime_type": "image/png",
+                                "bytes": len(raw),
+                                "sha256": digest,
+                                "content_base64": base64.b64encode(raw).decode("ascii"),
+                            }
+                        ],
+                    },
+                    idempotency_key="remote-client-attachment-1",
+                    home=home,
+                )
+                group = load_group("g_local")
+
+            self.assertTrue(result["ok"], result)
+            events = [event for event in iter_events(group_dir / "ledger.jsonl") if event.get("kind") == "chat.message"]
+            self.assertEqual(len(events), 1)
+            attachments = ((events[0].get("data") or {}).get("attachments") or [])
+            self.assertEqual(len(attachments), 1)
+            self.assertEqual(attachments[0]["title"], "remote.png")
+            self.assertEqual(attachments[0]["sha256"], digest)
+            self.assertIsNotNone(group)
+            stored = resolve_blob_attachment_path(group, rel_path=attachments[0]["path"])
+            self.assertEqual(stored.read_bytes(), raw)
+            self.assertEqual(len(deliveries), 1)
+            self.assertEqual(deliveries[0]["attachments"], attachments)
 
     def test_receive_remote_send_requires_explicit_recipient(self) -> None:
         from cccc.daemon.federation.receiver import receive_remote_send

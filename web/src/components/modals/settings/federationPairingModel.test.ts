@@ -13,7 +13,7 @@ import {
   parseConnectionInfoInput,
   filterFederationSessionRegistrations,
   formatPeerLabel,
-  formatRemoteInstanceLabel,
+  formatRemoteGroupLabel,
   isLocalIssuerEndpoint,
   isSameInstancePairingInput,
   isSessionConnectionInfoInput,
@@ -145,8 +145,9 @@ describe("federationPairingModel", () => {
     expect(formatPeerLabel({ remote_peer_id: "", remote_group_id: "g_remote" })).toBe("g_remote");
     expect(formatPeerLabel({ remote_peer_id: "peer_remote", credential_ref: "sec_remote" })).not.toContain("sec_remote");
     expect(formatPeerLabel({}, "未知 peer")).toBe("未知 peer");
-    expect(formatRemoteInstanceLabel({ remote_endpoint: "https://remote.example" })).toBe("https://remote.example");
-    expect(formatRemoteInstanceLabel({}, "未知 CCCC")).toBe("未知 CCCC");
+    expect(formatRemoteGroupLabel({ remote_peer_id: "peer_remote", remote_group_id: "g_remote", remote_group_title: "Remote Group" })).toBe("Remote Group");
+    expect(formatRemoteGroupLabel({ remote_peer_id: "peer_remote", remote_group_id: "g_remote" })).toBe("g_remote");
+    expect(formatRemoteGroupLabel({}, "未知远端工作组")).toBe("未知远端工作组");
   });
 
   it("filters federation session registrations from mixed status data", () => {

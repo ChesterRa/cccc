@@ -29,6 +29,14 @@ def _inline_chat_post_commit_tasks():
 
 
 @pytest.fixture(autouse=True)
+def _disable_real_codex_app_sessions_in_unit_tests(monkeypatch):
+    monkeypatch.setattr(
+        "cccc.daemon.codex_app_sessions._codex_cli_available",
+        lambda _env: False,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _retry_temporary_directory_cleanup(monkeypatch):
     original_rmtree = tempfile.TemporaryDirectory._rmtree
 

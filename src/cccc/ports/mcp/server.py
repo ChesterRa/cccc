@@ -829,6 +829,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 actor_id=aid,
                 path=str(arguments.get("path") or ""),
                 text=str(arguments.get("text") or ""),
+                dst_group_id=str(arguments.get("dst_group_id") or ""),
                 to=to_val_file,
                 priority=str(arguments.get("priority") or "normal"),
                 reply_required=coerce_bool(arguments.get("reply_required"), default=False),

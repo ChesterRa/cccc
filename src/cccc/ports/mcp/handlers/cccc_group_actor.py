@@ -201,7 +201,12 @@ def group_resolve(*, token: str, group_id: str = "") -> Dict[str, Any]:
             return remote_match
         raise MCPError(
             code="not_found",
-            message=f'no group matches token: {raw}. Do not guess dst_group_id; inspect cccc_group(action="list") or ask the user.',
+            message=(
+                f"no group matches token: {raw}. Do not guess dst_group_id. "
+                'For local groups, inspect cccc_group(action="list"). '
+                'For trusted remote Group Bridge targets, inspect cccc_remote_access(action="list") '
+                "and use the returned remote_group_id."
+            ),
         )
     if len(matches) > 1:
         candidates = [{**group, "matched_by": matched_by} for group, matched_by in matches]

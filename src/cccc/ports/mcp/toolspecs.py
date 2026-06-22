@@ -111,12 +111,19 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_message_send",
-        "description": "Send a visible chat message. Choose `to` deliberately; use @all only when the whole group needs it.",
+        "description": (
+            "Send a visible chat message. Choose `to` deliberately; use @all only when the whole group needs it. "
+            "For a trusted remote Group Bridge target, get remote_group_id from cccc_remote_access(action=\"list\") "
+            "and send with dst_group_id=<remote_group_id>, to=[\"@foreman\"] unless a more specific remote recipient is known."
+        ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
-                "dst_group_id": {"type": "string"},
+                "dst_group_id": {
+                    "type": "string",
+                    "description": "Optional local or trusted remote group_id. For remote groups, use remote_group_id returned by cccc_remote_access(action=\"list\").",
+                },
                 "text": {"type": "string"},
                 "to": {
                     "anyOf": [
@@ -281,7 +288,7 @@ MCP_TOOLS = [
         "name": "cccc_file",
         "description": (
             "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; "
-            "use send to attach an active-scope local file back to the user or peers."
+            "use send to attach an active-scope local file back to the user, peers, or a trusted remote Group Bridge target."
         ),
         "inputSchema": _obj(
             {
@@ -289,13 +296,17 @@ MCP_TOOLS = [
                 **_COMMON_ACTOR,
                 "action": {"type": "string", "enum": ["send", "blob_path", "info", "read"], "default": "send"},
                 "path": {"type": "string", "description": "Required for action=send. Relative to the active scope, or an absolute path under that scope."},
+                "dst_group_id": {
+                    "type": "string",
+                    "description": "Optional trusted remote group_id for action=send. Use remote_group_id from cccc_remote_access(action=\"list\") to send this file through Group Bridge.",
+                },
                 "text": {"type": "string", "description": "Optional caption/message when action=send."},
                 "to": {
                     "anyOf": [
                         {"type": "string"},
                         {"type": "array", "items": {"type": "string"}},
                     ],
-                    "description": "Optional recipient or recipients for action=send. Omit for normal group routing.",
+                    "description": "Optional recipient or recipients for action=send. For remote Group Bridge file sends, use [\"@foreman\"] unless a more specific remote recipient is known.",
                 },
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},

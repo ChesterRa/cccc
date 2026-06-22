@@ -17,6 +17,7 @@ from ..messaging.chat_delivery_ops import deliver_appended_chat_message
 from ..messaging.post_commit import run_group_chat_post_commit
 from .peer_address_sync import sync_federation_peer_multiaddrs
 from .remote_dispatch import retry_remote_send_for_peer
+from .remote_attachments import store_remote_attachment_payloads
 
 
 def receive_address_announce(
@@ -135,11 +136,9 @@ def receive_remote_send(
         )
     except Exception:
         return _error("invalid_payload", "remote payload is invalid")
-    if msg.attachments:
-        return _error("unsupported_attachments", "attachments are not supported by federation sessions")
     if msg.refs:
         return _error("unsupported_refs", "refs are not supported by federation sessions")
-    if not msg.text.strip():
+    if not msg.text.strip() and not msg.attachments:
         return _error("empty_message", "message text cannot be empty")
     recipients = _explicit_remote_recipients(msg.to)
     if not recipients:
@@ -152,6 +151,10 @@ def receive_remote_send(
     existing = _find_existing_event(group.ledger_path, client_id=key)
     if existing is not None:
         return {"ok": True, "event_id": str(existing.get("id") or ""), "duplicate": True}
+    try:
+        attachments = store_remote_attachment_payloads(group, msg.attachments)
+    except ValueError as exc:
+        return _error("invalid_attachments", str(exc))
 
     event = append_event(
         group.ledger_path,
@@ -166,7 +169,7 @@ def receive_remote_send(
             reply_required=msg.reply_required,
             to=msg.to,
             refs=[],
-            attachments=[],
+            attachments=attachments,
             source_platform="federation_session",
             source_user_name=str(trust.get("remote_group_title") or src_gid),
             source_user_id=peer_id,
@@ -188,7 +191,7 @@ def receive_remote_send(
             priority=msg.priority,
             reply_required=msg.reply_required,
             refs=[],
-            attachments=[],
+            attachments=attachments,
             source_platform="federation_session",
             source_user_name=str(trust.get("remote_group_title") or src_gid),
             source_user_id=peer_id,

@@ -31,7 +31,7 @@ import {
 } from "../../utils/chatGptAppPermissionHint";
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
 import { buildLiveWorkCards } from "./liveWorkCards";
-import type { ComposerMentionKind } from "./chatMentionSuggestions";
+import { getGroupRouteDisplayName, type ComposerMentionKind } from "./chatMentionSuggestions";
 
 const PresentationRail = lazy(() =>
   import("../../components/presentation/PresentationRail").then((module) => ({ default: module.PresentationRail }))
@@ -222,6 +222,8 @@ export function ChatTab({
     clearQuotedPresentationRef,
     toTokens,
     toggleRecipient,
+    selectedRemoteGroupIds,
+    toggleRemoteGroupRecipient,
     clearRecipients,
     appendRecipientToken,
     priority,
@@ -265,6 +267,19 @@ export function ChatTab({
     chatAtBottomRef,
     scrollRef,
   });
+
+  const remoteRouteGroups = useMemo(
+    () => composerRouteGroups.filter((group) => group.federation_remote),
+    [composerRouteGroups],
+  );
+  const messageGroupLabelById = useMemo(() => {
+    const labels = { ...groupLabelById };
+    for (const group of remoteRouteGroups) {
+      const groupId = String(group.group_id || "").trim();
+      if (groupId) labels[groupId] = getGroupRouteDisplayName(group);
+    }
+    return labels;
+  }, [groupLabelById, remoteRouteGroups]);
 
   const { t } = useTranslation('chat');
   const groupPresentation = useGroupStore((state) => state.groupPresentation);
@@ -794,7 +809,7 @@ export function ChatTab({
                   isDark={isDark}
                   readOnly={readOnly}
                   groupId={selectedGroupId}
-                  groupLabelById={groupLabelById}
+                  groupLabelById={messageGroupLabelById}
                   webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
                   viewKey={chatViewKey}
                   initialScrollTargetId={chatInitialScrollTargetId}
@@ -971,6 +986,9 @@ export function ChatTab({
             onClearQuotedPresentationRef={clearQuotedPresentationRef}
             toTokens={toTokens}
             onToggleRecipient={toggleRecipient}
+            remoteGroups={remoteRouteGroups}
+            selectedRemoteGroupIds={selectedRemoteGroupIds}
+            onToggleRemoteGroup={toggleRemoteGroupRecipient}
             onClearRecipients={clearRecipients}
             composerFiles={composerFiles}
             onRemoveComposerFile={removeComposerFile}

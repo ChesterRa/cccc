@@ -896,6 +896,7 @@ export function useChatTab({
   const { t } = useTranslation(["chat", "common"]);
   const [forceStickToBottomToken, setForceStickToBottomToken] = useState(0);
   const [federationTrusts, setFederationTrusts] = useState<FederationTrust[]>([]);
+  const [selectedRemoteGroupIds, setSelectedRemoteGroupIds] = useState<string[]>([]);
   // ============ Stores ============
   const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
     useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
@@ -1079,9 +1080,20 @@ export function useChatTab({
     return subscribeFederationPairingChanged(gid, refreshFederationTrusts);
   }, [refreshFederationTrusts, selectedGroupId]);
 
+  const remoteRouteGroups = useMemo(() => buildFederationRouteGroups(federationTrusts), [federationTrusts]);
+
   const composerRouteGroups: GroupMeta[] = useMemo(() => (
-    mergeComposerRouteGroups(groups, buildFederationRouteGroups(federationTrusts))
-  ), [federationTrusts, groups]);
+    mergeComposerRouteGroups(groups, remoteRouteGroups)
+  ), [remoteRouteGroups, groups]);
+
+  useEffect(() => {
+    setSelectedRemoteGroupIds([]);
+  }, [selectedGroupId]);
+
+  useEffect(() => {
+    const validRemoteIds = new Set(remoteRouteGroups.map((group) => String(group.group_id || "").trim()).filter(Boolean));
+    setSelectedRemoteGroupIds((current) => current.filter((groupId) => validRemoteIds.has(groupId)));
+  }, [remoteRouteGroups]);
 
   // Message-body mentions: @ selects current-route recipients; # selects the destination group.
   const mentionSuggestions = useMemo(() => {
@@ -1367,9 +1379,19 @@ export function useChatTab({
     [toTokens, setToText]
   );
 
+  const toggleRemoteGroupRecipient = useCallback((groupId: string) => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    setSelectedRemoteGroupIds((current) => {
+      if (current.includes(gid)) return current.filter((item) => item !== gid);
+      return [...current, gid];
+    });
+  }, []);
+
   const clearRecipients = useCallback(() => {
     mentionRecipientTokensRef.current = new Set();
     setComposerAgentMentionTokens((tokens) => tokens.filter((token) => token.scope !== "selected"));
+    setSelectedRemoteGroupIds([]);
     setToText("");
   }, [setToText]);
 
@@ -1433,6 +1455,20 @@ export function useChatTab({
 
     const dstGroup = routingSnapshot.destGroupId;
     const isCrossGroup = routingSnapshot.isCrossGroup;
+    const selectedRemoteGroupIdsSnapshot = selectedRemoteGroupIds.slice();
+    const toTextSnapshot = composerStateSnapshot.toText;
+    const localToTokensSnapshot = buildComposerSendRecipientTokens({
+      toText: toTextSnapshot,
+      isCrossGroup: false,
+      validRecipientSet,
+      crossGroupValidRecipientSet,
+    });
+    const crossToTokensSnapshot = buildComposerSendRecipientTokens({
+      toText: toTextSnapshot,
+      isCrossGroup: true,
+      validRecipientSet,
+      crossGroupValidRecipientSet,
+    });
     const sendPlanTargets = buildComposerSendPlanTargets({
       selectedGroupId: originGroupId,
       dstGroupId: dstGroup,
@@ -1440,8 +1476,14 @@ export function useChatTab({
       text: composerStateSnapshot.composerText,
       groupMentionTokens: composerGroupMentionTokens,
       groups: composerRouteGroups,
+      remoteGroupIds: selectedRemoteGroupIdsSnapshot,
+      includeSelectedGroup: selectedRemoteGroupIdsSnapshot.length > 0 && localToTokensSnapshot.length > 0,
     });
     const sendsCrossGroup = sendPlanTargets.some((target) => target.isCrossGroup);
+    const sendsLocal = sendPlanTargets.some((target) => !target.isCrossGroup);
+    const slashGuardSendGroupId = sendsCrossGroup
+      ? (sendPlanTargets.find((target) => target.isCrossGroup)?.groupId || dstGroup)
+      : dstGroup;
     if (await tryExecuteSlashCommand({
       text: composerStateSnapshot.composerText,
       composerFilesCount: composerFilesSnapshot.length,
@@ -1449,7 +1491,7 @@ export function useChatTab({
       replyTarget: composerStateSnapshot.replyTarget,
       replyRequired: composerStateSnapshot.replyRequired,
       hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
-      sendGroupId: dstGroup,
+      sendGroupId: slashGuardSendGroupId,
     })) {
       return;
     }
@@ -1470,17 +1512,10 @@ export function useChatTab({
     ];
     const prioritySnapshot = composerStateSnapshot.priority;
     const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
-    const toTextSnapshot = composerStateSnapshot.toText;
     const groupMentionTokensSnapshot = composerGroupMentionTokens;
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
-    const toTokensSnapshot = buildComposerSendRecipientTokens({
-      toText: toTextSnapshot,
-      isCrossGroup: sendsCrossGroup,
-      validRecipientSet,
-      crossGroupValidRecipientSet,
-    });
     const prio = replyRequiredSnapshot ? "attention" : (prioritySnapshot || "normal");
-    const assistantTargets = !sendsCrossGroup ? resolveAssistantTargets(toTokensSnapshot) : [];
+    const assistantTargets = sendsLocal && !sendsCrossGroup ? resolveAssistantTargets(localToTokensSnapshot) : [];
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1548,6 +1583,7 @@ export function useChatTab({
       );
       setComposerGroupMentionTokens(groupMentionTokensSnapshot);
       setComposerAgentMentionTokens(agentMentionTokensSnapshot);
+      setSelectedRemoteGroupIds(selectedRemoteGroupIdsSnapshot);
     };
 
     const applyImmediateComposerFeedback = () => {
@@ -1560,6 +1596,7 @@ export function useChatTab({
       clearComposer();
       setComposerGroupMentionTokens([]);
       setComposerAgentMentionTokens([]);
+      setSelectedRemoteGroupIds([]);
       if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, !shouldLockBottom);
@@ -1580,14 +1617,15 @@ export function useChatTab({
       setDestGroupId(selectedGroupId);
       return;
     }
-    if (!replyTargetSnapshot && sendsCrossGroup && composerFilesSnapshot.length > 0) {
-      showError("Cross-group send does not support attachments yet.");
+    const localCrossGroupTargets = sendPlanTargets.filter((target) => target.isCrossGroup && !target.isRemote);
+    if (!replyTargetSnapshot && composerFilesSnapshot.length > 0 && localCrossGroupTargets.length > 0) {
+      showError("Local cross-group send does not support attachments yet. Use a remote Group Bridge target or send without attachments.");
       return;
     }
 
     // Optimistic: enqueue to outbox immediately for same-group sends.
     // If the request fails, we remove the pending entry and restore the composer.
-    if (!sendsCrossGroup) {
+    if (sendsLocal && !sendsCrossGroup) {
       const optimisticAttachments: OptimisticAttachment[] = composerFilesSnapshot.map((file) => ({
         kind: "file",
         path: "",
@@ -1604,7 +1642,7 @@ export function useChatTab({
         group_id: selectedGroupId,
         data: {
           text: txt,
-          to: toTokensSnapshot,
+          to: localToTokensSnapshot,
           priority: prio,
           reply_required: replyRequiredSnapshot,
           client_id: localId,
@@ -1622,15 +1660,14 @@ export function useChatTab({
 
     applyImmediateComposerFeedback();
     sendInFlightRef.current = true;
-    let crossGroupSuccessfulSendCount = 0;
+    let successfulSendCount = 0;
     try {
-      const to = toTokensSnapshot;
       let resp: SendMessageResponse | undefined;
       if (replyTargetSnapshot) {
         resp = await api.replyMessage(
           selectedGroupId,
           txt,
-          to,
+          localToTokensSnapshot,
           replyTargetSnapshot.eventId,
           composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
           prio,
@@ -1639,27 +1676,45 @@ export function useChatTab({
           refsSnapshot,
         );
       } else {
-        if (sendsCrossGroup) {
-          const crossGroupTargets = sendPlanTargets.filter((item) => item.isCrossGroup);
-          if (crossGroupTargets.length === 0) {
-            resp = { ok: false, error: { code: "missing_cross_group_target", message: "missing cross-group target" } };
-          }
-          for (const target of crossGroupTargets) {
-            resp = await api.sendCrossGroupMessage(selectedGroupId, target.groupId, txt, to, prio, replyRequiredSnapshot);
-            if (!resp.ok) break;
-            crossGroupSuccessfulSendCount += 1;
-          }
-        } else {
+        const localTargets = sendPlanTargets.filter((item) => !item.isCrossGroup);
+        for (const target of localTargets) {
+          void target;
           resp = await api.sendMessage(
             selectedGroupId,
             txt,
-            to,
+            localToTokensSnapshot,
             composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
             prio,
             replyRequiredSnapshot,
             localId,
             refsSnapshot,
           );
+          if (!resp.ok) break;
+          successfulSendCount += 1;
+        }
+        if (!resp || resp.ok) {
+          const crossGroupTargets = sendPlanTargets.filter((item) => item.isCrossGroup);
+          if (sendsCrossGroup && crossGroupTargets.length === 0) {
+            resp = { ok: false, error: { code: "missing_cross_group_target", message: "missing cross-group target" } };
+          }
+          for (const target of crossGroupTargets) {
+            const targetTo = Array.isArray(target.recipientTokens) && target.recipientTokens.length > 0
+              ? target.recipientTokens
+              : target.isRemote
+                ? ["@foreman"]
+                : crossToTokensSnapshot;
+            resp = await api.sendCrossGroupMessage(
+              selectedGroupId,
+              target.groupId,
+              txt,
+              targetTo,
+              prio,
+              replyRequiredSnapshot,
+              composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
+            );
+            if (!resp.ok) break;
+            successfulSendCount += 1;
+          }
         }
       }
       if (!resp) {
@@ -1669,7 +1724,7 @@ export function useChatTab({
         // Pending-only outbox: failed sends roll back to the composer.
         removeOutbox(selectedGroupId, localId);
         clearLocalAssistantPlaceholders();
-        const shouldRestoreComposer = !sendsCrossGroup || crossGroupSuccessfulSendCount === 0;
+        const shouldRestoreComposer = successfulSendCount === 0;
         if (shouldRestoreComposer) restoreComposerState();
         const sendError = resp.error || { code: "send_failed", message: "send failed" };
         showError(formatSendMessageError({
@@ -1681,7 +1736,7 @@ export function useChatTab({
         return;
       }
       const canonicalEvent =
-        !sendsCrossGroup && resp.result && typeof resp.result === "object" && "event" in resp.result
+        sendsLocal && !sendsCrossGroup && resp.result && typeof resp.result === "object" && "event" in resp.result
           ? (resp.result.event as LedgerEvent | null | undefined)
           : undefined;
 
@@ -1727,7 +1782,7 @@ export function useChatTab({
       // Pending-only outbox: failed sends roll back to the composer.
       removeOutbox(selectedGroupId, localId);
       clearLocalAssistantPlaceholders();
-      const shouldRestoreComposer = !sendsCrossGroup || crossGroupSuccessfulSendCount === 0;
+      const shouldRestoreComposer = successfulSendCount === 0;
       if (shouldRestoreComposer) restoreComposerState();
       showError(message);
     } finally {
@@ -1775,6 +1830,7 @@ export function useChatTab({
     composerGroupMentionTokens,
     composerAgentMentionTokens,
     composerRouteGroups,
+    selectedRemoteGroupIds,
   ]);
 
   const copyMessageLink = useCallback(
@@ -1976,6 +2032,8 @@ export function useChatTab({
     clearQuotedPresentationRef: () => setQuotedPresentationRef(null),
     toTokens,
     toggleRecipient,
+    selectedRemoteGroupIds,
+    toggleRemoteGroupRecipient,
     clearRecipients,
     appendRecipientToken,
     priority,

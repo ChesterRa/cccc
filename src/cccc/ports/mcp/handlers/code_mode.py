@@ -57,7 +57,7 @@ _COMMON_WORK_LOOPS = [
             "cccc_file(action='read', rel_path=...) for text blobs delivered by CCCC",
             "cccc_file(action='blob_path', rel_path=...) for binary/local inspection",
             "create output files under the active scope",
-            "cccc_file(action='send', path=..., text=...) to return files as CCCC attachments",
+            "cccc_file(action='send', path=..., text=..., dst_group_id=...) to return files as local or remote CCCC attachments",
         ],
     },
     {
@@ -99,7 +99,7 @@ _TOOL_HELP_COMPACT_NOTES = {
         "CCCC attachments are blob references, not browser uploads.",
         "Use cccc_file(action='read', rel_path=...) for UTF-8 text attachments.",
         "Use cccc_file(action='blob_path', rel_path=...) for binary/local inspection.",
-        "Use cccc_file(action='send', path=..., text=...) to return active-scope files as chat attachments.",
+        "Use cccc_file(action='send', path=..., text=..., dst_group_id=...) to return active-scope files as local or remote chat attachments.",
     ],
     "shell": [
         "Use cccc_shell for short one-shot commands.",

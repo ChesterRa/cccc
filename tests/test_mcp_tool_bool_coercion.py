@@ -164,6 +164,55 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             self.assertEqual(att.get("mime_type"), "text/markdown")
             self.assertTrue(str(att.get("path") or "").startswith("state/blobs/"))
 
+    def test_file_send_can_target_remote_group_bridge(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_messaging
+
+        class _FakeGroup:
+            def __init__(self, root: str, group_path: str) -> None:
+                self.group_id = "g_test"
+                self.path = Path(group_path)
+                self.doc = {
+                    "active_scope_key": "s1",
+                    "scopes": [{"scope_key": "s1", "url": root}],
+                }
+
+        with tempfile.TemporaryDirectory() as td:
+            scope_root = Path(td) / "scope"
+            group_path = Path(td) / "group"
+            scope_root.mkdir()
+            group_path.mkdir()
+            image_path = scope_root / "shot.png"
+            image_path.write_bytes(b"png")
+            captured: dict[str, object] = {}
+
+            def _fake_call(payload: dict[str, object]) -> dict[str, object]:
+                captured.update(payload)
+                return {"ok": True}
+
+            with patch.object(cccc_messaging, "load_group", return_value=_FakeGroup(str(scope_root), str(group_path))), patch.object(
+                cccc_messaging, "_call_daemon_or_raise", side_effect=_fake_call
+            ):
+                out = mcp_server.file_send(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    path="shot.png",
+                    text="remote screenshot",
+                    dst_group_id="g_remote",
+                    to=["@foreman"],
+                )
+
+            self.assertTrue(out.get("ok"))
+            self.assertEqual(captured.get("op"), "send_cross_group")
+            args = captured.get("args")
+            self.assertIsInstance(args, dict)
+            self.assertEqual(args.get("dst_group_id"), "g_remote")
+            self.assertEqual(args.get("to"), ["@foreman"])
+            attachments = args.get("attachments")
+            self.assertIsInstance(attachments, list)
+            self.assertEqual(len(attachments), 1)
+            self.assertEqual(attachments[0].get("title"), "shot.png")
+
     def test_blob_read_reads_blob_attachment_with_limit(self) -> None:
         from cccc.kernel.blobs import store_blob_bytes
         from cccc.ports.mcp.handlers import cccc_messaging

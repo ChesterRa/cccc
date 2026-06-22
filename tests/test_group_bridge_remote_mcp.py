@@ -329,6 +329,48 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_local_remote_access_list_exposes_message_and_access_hints(self) -> None:
+        from cccc.ports.mcp.handlers import group_bridge_client
+
+        target = {
+            "remote_group_id": "g_remote",
+            "display_name": "Remote Product",
+            "remote_group_title": "Remote Product",
+            "remote_peer_id": "peer_remote",
+            "registration_id": "reg_remote",
+            "trust_id": "ptrust_remote",
+            "bridge_status": "active",
+            "local_grant_access_level": "read",
+            "endpoint": "http://remote.example:8848",
+            "remote_mcp_available": False,
+            "recommended_message_send": {
+                "tool": "cccc_message_send",
+                "dst_group_id": "g_remote",
+                "to": ["@foreman"],
+                "note": "Use this shape to send a normal message to the remote group's foreman.",
+            },
+            "recommended_remote_access": {
+                "discover": 'cccc_remote_access(action="list")',
+                "read_tools": ["cccc_remote_context", "cccc_remote_repo", "cccc_remote_git"],
+                "full_tools": ["cccc_remote_shell"],
+                "note": "Remote MCP tools require remote_group_id and depend on the access level granted by the remote group.",
+            },
+            "_remote_send_token": "frs_hidden",
+        }
+
+        with patch.object(group_bridge_client, "_bridge_targets", return_value=[target]):
+            out = group_bridge_client.remote_access(group_id="g_local", arguments={"action": "list"})
+
+        self.assertEqual(len(out["targets"]), 1)
+        listed = out["targets"][0]
+        self.assertEqual(listed["display_name"], "Remote Product")
+        self.assertEqual(listed["remote_group_id"], "g_remote")
+        self.assertEqual(listed["recommended_message_send"]["tool"], "cccc_message_send")
+        self.assertEqual(listed["recommended_message_send"]["dst_group_id"], "g_remote")
+        self.assertEqual(listed["recommended_message_send"]["to"], ["@foreman"])
+        self.assertIn("cccc_remote_repo", listed["recommended_remote_access"]["read_tools"])
+        self.assertNotIn("_remote_send_token", listed)
+
     def test_local_wrapper_strips_local_fields_and_requires_remote_group(self) -> None:
         from cccc.ports.mcp.common import MCPError
         from cccc.ports.mcp.handlers import group_bridge_client

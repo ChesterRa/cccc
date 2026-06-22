@@ -151,6 +151,19 @@ describe("federation settings placement", () => {
     expect(src).toContain("<details");
   });
 
+  it("trusted remote groups expose agent target ids without default peer or endpoint noise", () => {
+    const src = readSource("./FederationSessionPairingSection.tsx");
+    expect(src).toContain('t("federation.remoteGroupId")');
+    expect(src).toContain('t("federation.remoteGroupIdAgentHelp"');
+    expect(src).toContain('t("federation.copyRecipientIdentifier"');
+    expect(src).toContain("formatRecipientIdentifier");
+    expect(src).toContain('t("federation.accessSummary"');
+    expect(src).not.toContain('t("federation.remoteCccc"');
+    expect(src).not.toContain('t("federation.unknownCccc"');
+    expect(src).not.toContain('t("federation.remotePeerId"');
+    expect(src).not.toContain('t("federation.remoteEndpoint"');
+  });
+
   it("federation session pairing puts workbench actions before local diagnostics", () => {
     const src = readSource("./FederationSessionPairingSection.tsx");
     expect(src).toContain('t("federation.localDiagnostics")');
@@ -207,6 +220,9 @@ describe("federation settings placement", () => {
       expect(locale.federation?.trustedPeers).toBeTruthy();
       expect(locale.federation?.pendingBadge).toBeTruthy();
       expect(locale.federation?.trustedBadge).toBeTruthy();
+      expect(locale.federation?.copyRecipientIdentifier).toBeTruthy();
+      expect(locale.federation?.copyRecipientIdentifierDone).toBeTruthy();
+      expect(locale.federation?.copyRecipientIdentifierManual).toBeTruthy();
       expect(locale.federation?.advancedInviteMetadata).toBeTruthy();
       expect(locale.federation?.localDiagnostics).toBeTruthy();
       expect(locale.federation?.localDiagnosticsHelp).toBeTruthy();

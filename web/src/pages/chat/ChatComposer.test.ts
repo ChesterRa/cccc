@@ -69,6 +69,45 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("actors.map((actor)");
   });
 
+  it("renders remote groups as first-class To chips without remote actor picking", () => {
+    expect(composerSource).toContain("remoteGroups?: GroupMeta[]");
+    expect(composerSource).toContain("selectedRemoteGroupIds?: string[]");
+    expect(composerSource).toContain("onToggleRemoteGroup?.(groupId)");
+    expect(composerSource).toContain("remoteGroupPopoverTarget(group)");
+    expect(composerSource).toContain("formatRecipientIdentifier");
+    expect(composerSource).toContain("copyRecipientIdentifier");
+    expect(composerSource).toContain("CopyIcon");
+    expect(composerSource).toContain("onMouseEnter={(event) => showRecipientPopover(popoverTarget, event.currentTarget as HTMLElement)}");
+    expect(composerSource).toContain('role="dialog"');
+    expect(composerSource).toContain("getGroupRouteDisplayName(group)");
+    expect(composerSource).toContain("remoteGroupSendsToForeman");
+    expect(composerSource).not.toContain("remoteActors.map");
+    expect(composerSource).not.toContain("remoteDetailsRef");
+    expect(composerSource).not.toContain("copyRemoteGroupId");
+    expect(composerSource).not.toContain("copyRemoteGroupAgentInfo");
+    expect(composerSource).not.toContain("formatGroupBridgeAgentInfo");
+    expect(composerSource).toContain("toTokens.length > 0 || selectedRemoteGroupIds.length > 0");
+  });
+
+  it("keeps attachment picker enabled for selected remote group chips", () => {
+    expect(composerSource).toContain('if (isCrossGroup) return t(\'crossGroupAttachment\');');
+    expect(composerSource).toContain('disabled={!selectedGroupId || busy === "send" || isCrossGroup}');
+    expect(composerSource).not.toContain('disabled={!selectedGroupId || busy === "send" || isCrossGroup || hasRemoteGroupSelection}');
+  });
+
+  it("does not display local bridge grants as remote access levels", () => {
+    expect(composerSource).toContain('const accessLevel = "messages";');
+    expect(composerSource).not.toContain('String(group.federation_access_level || "").trim() || "messages"');
+  });
+
+  it("lets all To recipients expose a compact copyable identifier", () => {
+    expect(composerSource).toContain("selectorPopoverTarget(tok)");
+    expect(composerSource).toContain("actorPopoverTarget(actor)");
+    expect(composerSource).toContain("remoteGroupPopoverTarget(group)");
+    expect(composerSource).toContain("recipientPopoverTarget.identifier");
+    expect(composerSource).toContain('t("copyRecipientIdentifier"');
+  });
+
   it("disables actor chips only while selected group actors are resolving", () => {
     expect(composerSource).toContain("const actorChipDisabled =");
     expect(composerSource).not.toContain("recipientChipActorsBusy");

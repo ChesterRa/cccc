@@ -650,7 +650,19 @@ export async function sendCrossGroupMessage(
   to: string[],
   priority: "normal" | "attention" = "normal",
   replyRequired = false,
+  files?: File[],
 ) {
+  if (files && files.length > 0) {
+    const form = new FormData();
+    form.append("by", "user");
+    form.append("text", text);
+    form.append("dst_group_id", dstGroupId);
+    form.append("to_json", JSON.stringify(to));
+    form.append("priority", priority);
+    form.append("reply_required", replyRequired ? "true" : "false");
+    for (const file of files) form.append("files", file);
+    return apiForm(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group_upload`, form);
+  }
   return apiJson(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group`, {
     method: "POST",
     body: JSON.stringify({

@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -254,6 +255,56 @@ class TestWebMessagingClientId(unittest.TestCase):
                 reply_upload_event = ((reply_upload_body.get("result") or {}).get("event")) or {}
                 self.assertEqual((((reply_upload_event.get("data") or {}).get("client_id")) or ""), "upload-reply-1")
                 self.assertEqual((((reply_upload_event.get("data") or {}).get("refs")) or [])[0].get("slot_id"), "slot-3")
+        finally:
+            cleanup()
+
+    def test_cross_group_upload_routes_remote_attachments_to_daemon(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        captured: list[dict] = []
+
+        def fake_call_daemon(req: dict):
+            captured.append(req)
+            return {"ok": True, "result": {"remote_send": {"status": "sent"}}}
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="remote-upload", topic="")
+            with (
+                patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon),
+                patch(
+                    "cccc.ports.web.routes.messaging.resolve_remote_group_route",
+                    return_value=SimpleNamespace(remote_group_id="g_remote", registration_id="reg_remote"),
+                ),
+            ):
+                client = self._client()
+                resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send_cross_group_upload",
+                    data={
+                        "by": "user",
+                        "text": "remote upload",
+                        "dst_group_id": "g_remote",
+                        "to_json": "[\"@foreman\"]",
+                    },
+                    files={"files": ("shot.png", BytesIO(b"png-bytes"), "image/png")},
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json().get("ok"))
+            sends = [item for item in captured if item.get("op") == "send_cross_group"]
+            self.assertEqual(len(sends), 1)
+            req = sends[0]
+            self.assertEqual(req.get("op"), "send_cross_group")
+            args = req.get("args") or {}
+            self.assertEqual(args.get("dst_group_id"), "g_remote")
+            self.assertEqual(args.get("to"), ["@foreman"])
+            attachments = args.get("attachments") or []
+            self.assertEqual(len(attachments), 1)
+            self.assertEqual(attachments[0].get("title"), "shot.png")
+            self.assertEqual(attachments[0].get("mime_type"), "image/png")
+            self.assertTrue(str(attachments[0].get("path") or "").startswith("state/blobs/"))
         finally:
             cleanup()
 

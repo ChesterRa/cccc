@@ -23,6 +23,7 @@ from ....ports.web.runtime_control import http_url, local_connect_host, read_web
 
 class FederationSessionTransport(RemoteSendTransport):
     transport = "federation_session"
+    capabilities = frozenset({"attachments"})
 
     def deliver(self, envelope: RemoteMessageEnvelope) -> RemoteSendResult:
         unsupported = self.unsupported_payload(envelope.payload)
@@ -34,6 +35,12 @@ class FederationSessionTransport(RemoteSendTransport):
             return permanent_result("missing_remote_peer_id", "remote_peer_id is required", transport=self.transport)
         if not target.remote_group_id:
             return permanent_result("missing_remote_group_id", "remote_group_id is required", transport=self.transport)
+        try:
+            payload = build_remote_chat_payload(envelope)
+        except ValueError as exc:
+            return permanent_result("invalid_attachments", str(exc), transport=self.transport)
+        except OSError as exc:
+            return permanent_result("attachment_read_failed", str(exc), transport=self.transport)
         parsed = _send_session_request(
             local_group_id=envelope.src_group_id,
             remote_group_id=target.remote_group_id,
@@ -44,7 +51,7 @@ class FederationSessionTransport(RemoteSendTransport):
                 "target_group_id": target.remote_group_id,
                 "remote_peer_id": target.remote_peer_id,
                 "idempotency_key": envelope.idempotency_key,
-                "payload": build_remote_chat_payload(envelope),
+                "payload": payload,
             },
         )
         if parsed is None:

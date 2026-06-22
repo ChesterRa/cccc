@@ -29,14 +29,29 @@ describe("useChatTab request triggers", () => {
   });
 
   it("keeps cross-group sends aligned with the composer recipient snapshot", () => {
-    expect(source).toContain("const to = toTokensSnapshot;");
+    expect(source).toContain("const crossToTokensSnapshot = buildComposerSendRecipientTokens({");
+    expect(source).toContain("const targetTo = Array.isArray(target.recipientTokens)");
+    expect(source).toContain('target.isRemote\n                ? ["@foreman"]');
     expect(source).not.toContain('const to = isCrossGroup ? ["@foreman"] : toTokensSnapshot;');
   });
 
+  it("treats remote group chips as cross-group for slash command guards", () => {
+    expect(source).toContain("const slashGuardSendGroupId = sendsCrossGroup");
+    expect(source).toContain("sendGroupId: slashGuardSendGroupId");
+    expect(source).not.toContain("sendGroupId: dstGroup,\n    }))");
+  });
+
   it("does not restore the full composer after a partial multi-target cross-group send", () => {
-    expect(source).toContain("let crossGroupSuccessfulSendCount = 0;");
-    expect(source).toMatch(/resp = await api\.sendCrossGroupMessage[\s\S]*if \(!resp\.ok\) break;[\s\S]*crossGroupSuccessfulSendCount \+= 1;/);
-    expect(source).toContain("const shouldRestoreComposer = !sendsCrossGroup || crossGroupSuccessfulSendCount === 0;");
+    expect(source).toContain("let successfulSendCount = 0;");
+    expect(source).toMatch(/resp = await api\.sendCrossGroupMessage[\s\S]*if \(!resp\.ok\) break;[\s\S]*successfulSendCount \+= 1;/);
+    expect(source).toContain("const shouldRestoreComposer = successfulSendCount === 0;");
     expect(source).toContain("if (shouldRestoreComposer) restoreComposerState();");
+  });
+
+  it("allows attachment sends to remote group chips while blocking local cross-group attachments", () => {
+    expect(source).toContain("const localCrossGroupTargets = sendPlanTargets.filter((target) => target.isCrossGroup && !target.isRemote);");
+    expect(source).toContain("Local cross-group send does not support attachments yet.");
+    expect(source).toContain("composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined");
+    expect(source).not.toContain("Cross-group send does not support attachments yet.");
   });
 });

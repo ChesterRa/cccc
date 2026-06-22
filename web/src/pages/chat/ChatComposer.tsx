@@ -1,12 +1,14 @@
 // ChatComposer renders the chat message composer.
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { CSSProperties, Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, SparklesIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, SparklesIcon, CopyIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
+import { useCopyFeedback } from "../../hooks/useCopyFeedback";
 import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import { useGroupStore } from "../../stores";
@@ -15,7 +17,7 @@ import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerA
 import { ComposerFilePreview } from "./ComposerFilePreview";
 import { getMentionMenuLeft, getMentionTriggerX } from "./mentionMenuPosition";
 import { ChatMentionMenu } from "./ChatMentionMenu";
-import { getComposerGroupMentionInsertToken, resolveComposerHashRouting, type ComposerMentionKind, type ComposerMentionSuggestion } from "./chatMentionSuggestions";
+import { getComposerGroupMentionInsertToken, getGroupRouteDisplayName, resolveComposerHashRouting, type ComposerMentionKind, type ComposerMentionSuggestion } from "./chatMentionSuggestions";
 import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "../../hooks/composerGroupMentions";
 import {
   createComposerAgentMentionToken,
@@ -30,9 +32,19 @@ import {
   latestSuggestedUserMessage,
   readConsumedSuggestedUserMessageIds,
 } from "../../utils/suggestedUserMessage";
+import { formatRecipientIdentifier } from "../../utils/recipientIdentifier";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 const MENTION_MENU_DESKTOP_WIDTH = 320;
+
+type RecipientPopoverTarget = {
+  key: string;
+  label: string;
+  detail: string;
+  identifier: string;
+  idLabel?: string;
+  idValue?: string;
+};
 
 function getAgentMentionDisplayToken(selected: ComposerMentionSuggestion): string {
   const label = String(selected.label || selected.value || "").trim();
@@ -85,6 +97,9 @@ export interface ChatComposerProps {
   // Recipients
   toTokens: string[];
   onToggleRecipient: (token: string) => void;
+  remoteGroups?: GroupMeta[];
+  selectedRemoteGroupIds?: string[];
+  onToggleRemoteGroup?: (groupId: string) => void;
   onClearRecipients: () => void;
 
   // Files
@@ -143,6 +158,9 @@ export function ChatComposer({
   onClearQuotedPresentationRef,
   toTokens,
   onToggleRecipient,
+  remoteGroups = [],
+  selectedRemoteGroupIds = [],
+  onToggleRemoteGroup,
   onClearRecipients,
   composerFiles,
   onRemoveComposerFile,
@@ -185,11 +203,23 @@ export function ChatComposer({
     () => new Set(),
   );
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
+  const recipientPopoverHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [recipientPopoverTarget, setRecipientPopoverTarget] = useState<RecipientPopoverTarget | null>(null);
+  const [recipientPopoverStyle, setRecipientPopoverStyle] = useState<CSSProperties | null>(null);
   const { t } = useTranslation('chat');
+  const copyWithFeedback = useCopyFeedback();
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const groups = useGroupStore((state) => state.groups);
   const routeGroups = composerRouteGroups.length > 0 ? composerRouteGroups : groups;
   const refreshSettings = useGroupStore((state) => state.refreshSettings);
+  const selectedRemoteGroupSet = useMemo(
+    () => new Set((selectedRemoteGroupIds || []).map((groupId) => String(groupId || "").trim()).filter(Boolean)),
+    [selectedRemoteGroupIds],
+  );
+  const availableRemoteGroups = useMemo(
+    () => (remoteGroups || []).filter((group) => String(group.group_id || "").trim() && group.federation_remote),
+    [remoteGroups],
+  );
 
   const readRootFontScale = () => {
     if (typeof document === "undefined") return 1;
@@ -283,6 +313,23 @@ export function ChatComposer({
     };
   }, [showModeMenu]);
 
+  useEffect(() => () => {
+    if (recipientPopoverHideTimerRef.current) {
+      clearTimeout(recipientPopoverHideTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!recipientPopoverTarget) return;
+    if (!recipientPopoverTarget.key.startsWith("remote:")) return;
+    const groupId = recipientPopoverTarget.key.slice("remote:".length);
+    const stillAvailable = availableRemoteGroups.some((group) => String(group.group_id || "").trim() === groupId);
+    if (!stillAvailable) {
+      setRecipientPopoverTarget(null);
+      setRecipientPopoverStyle(null);
+    }
+  }, [availableRemoteGroups, recipientPopoverTarget]);
+
   useEffect(() => {
     if (!selectedGroupId || groupSettings) return;
     void refreshSettings(selectedGroupId);
@@ -296,6 +343,96 @@ export function ChatComposer({
   const chipInactiveClass = isDark
     ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:bg-white/[0.1] hover:border-white/[0.14] hover:text-[var(--color-text-primary)]"
     : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)] border-transparent hover:bg-[rgb(237,237,237)] hover:border-black/5 hover:text-[rgb(20,20,22)]";
+  const remoteChipActiveClass = isDark
+    ? "border-sky-200 bg-sky-200 text-slate-950 shadow-none"
+    : "border-sky-700 bg-sky-700 text-white shadow-none";
+  const remoteChipInactiveClass = isDark
+    ? "border-sky-300/20 bg-sky-400/10 text-sky-100 hover:border-sky-300/35 hover:bg-sky-400/15"
+    : "border-sky-100 bg-sky-50 text-sky-950 hover:border-sky-200 hover:bg-sky-100";
+  const cancelRecipientPopoverHide = useCallback(() => {
+    if (recipientPopoverHideTimerRef.current) {
+      clearTimeout(recipientPopoverHideTimerRef.current);
+      recipientPopoverHideTimerRef.current = null;
+    }
+  }, []);
+  const showRecipientPopover = useCallback((target: RecipientPopoverTarget, node: HTMLElement) => {
+    cancelRecipientPopoverHide();
+    const rect = node.getBoundingClientRect();
+    const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+    const tooltipWidth = Math.min(300, Math.max(220, viewportWidth - 16));
+    const top = rect.bottom + 6;
+    if (isSmallScreen) {
+      setRecipientPopoverStyle({ top, left: 8, right: 8 });
+    } else {
+      setRecipientPopoverStyle({
+        top,
+        left: Math.min(Math.max(rect.left, 8), Math.max(8, viewportWidth - tooltipWidth - 8)),
+        width: tooltipWidth,
+      });
+    }
+    setRecipientPopoverTarget(target);
+  }, [cancelRecipientPopoverHide, isSmallScreen]);
+  const hideRecipientPopover = useCallback(() => {
+    cancelRecipientPopoverHide();
+    setRecipientPopoverTarget(null);
+    setRecipientPopoverStyle(null);
+  }, [cancelRecipientPopoverHide]);
+  const scheduleRecipientPopoverHide = useCallback(() => {
+    cancelRecipientPopoverHide();
+    recipientPopoverHideTimerRef.current = setTimeout(() => {
+      setRecipientPopoverTarget(null);
+      setRecipientPopoverStyle(null);
+      recipientPopoverHideTimerRef.current = null;
+    }, 120);
+  }, [cancelRecipientPopoverHide]);
+  const getRemoteGroupAccessLabel = useCallback((_accessLevel: string) => {
+    return t("remoteGroupMessagesOnly", { defaultValue: "Messages" });
+  }, [t]);
+  const copyRecipientIdentifier = useCallback(async (identifier: string) => {
+    const text = String(identifier || "").trim();
+    if (!text) return;
+    await copyWithFeedback(text, {
+      successMessage: t("recipientIdentifierCopied", { defaultValue: "Recipient identifier copied." }),
+      errorMessage: t("common:copyFailed", { defaultValue: "Copy failed." }),
+    });
+  }, [copyWithFeedback, t]);
+  const selectorPopoverTarget = useCallback((selector: string): RecipientPopoverTarget => ({
+    key: `selector:${selector}`,
+    label: selector,
+    detail: t("recipientSelectorDetail", { defaultValue: "Local selector" }),
+    identifier: formatRecipientIdentifier({ kind: "selector", selector }),
+  }), [t]);
+  const actorPopoverTarget = useCallback((actor: Actor): RecipientPopoverTarget => {
+    const id = String(actor.id || "").trim();
+    const label = String(actor.title || id || "actor").trim();
+    const role = String(actor.role || "").trim();
+    return {
+      key: `actor:${id || label}`,
+      label,
+      detail: role
+        ? t("recipientActorRoleDetail", { role, defaultValue: "Local {{role}} actor" })
+        : t("recipientActorDetail", { defaultValue: "Local actor" }),
+      identifier: formatRecipientIdentifier({ kind: "actor", label, id, role }),
+      idLabel: t("recipientActorId", { defaultValue: "Actor ID" }),
+      idValue: id,
+    };
+  }, [t]);
+  const remoteGroupPopoverTarget = useCallback((group: GroupMeta): RecipientPopoverTarget => {
+    const id = String(group.group_id || "").trim();
+    const label = getGroupRouteDisplayName(group);
+    const accessLevel = "messages";
+    return {
+      key: `remote:${id}`,
+      label,
+      detail: t("recipientRemoteGroupDetail", {
+        access: getRemoteGroupAccessLabel(accessLevel),
+        defaultValue: "Remote group · {{access}}",
+      }),
+      identifier: formatRecipientIdentifier({ kind: "remote_group", label, id, accessLevel }),
+      idLabel: t("remoteGroupId", { defaultValue: "Remote group ID" }),
+      idValue: id,
+    };
+  }, [getRemoteGroupAccessLabel, t]);
 
   // Get display name for reply target
   const replyByDisplayName = useMemo(() => {
@@ -704,6 +841,7 @@ export function ChatComposer({
   });
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
+  const hasRemoteGroupSelection = selectedRemoteGroupIds.length > 0;
   const actorChipDisabled = !selectedGroupId || busy === "send" || !!selectedGroupActorsHydrating;
   const actionVisibility = getComposerActionVisibility(isSmallScreen);
 
@@ -916,7 +1054,7 @@ export function ChatComposer({
             {/* Row 1 — Recipients */}
             <div
               className={classNames(
-                "flex items-center gap-1.5 border-b px-2.5 py-1",
+                "relative flex items-center gap-1.5 border-b px-2.5 py-1",
                 isDark ? "border-white/[0.04]" : "border-black/[0.04]",
               )}
             >
@@ -932,53 +1070,165 @@ export function ChatComposer({
                 <div
                   className={classNames(
                     "flex min-w-max items-center gap-1 transition-opacity",
-                    selectedGroupActorsHydrating ? "opacity-50 pointer-events-none" : "",
                   )}
                 >
-                  {["@all", "@foreman", "@peers"].map((tok) => {
-                    const active = toTokens.includes(tok);
+                  <div
+                    className={classNames(
+                      "flex items-center gap-1 transition-opacity",
+                      selectedGroupActorsHydrating ? "opacity-50 pointer-events-none" : "",
+                    )}
+                  >
+                    {["@all", "@foreman", "@peers"].map((tok) => {
+                      const active = toTokens.includes(tok);
+                      const popoverTarget = selectorPopoverTarget(tok);
+                      return (
+                        <button
+                          key={tok}
+                          className={classNames(
+                            chipBaseClass,
+                            active
+                              ? chipActiveClass
+                              : chipInactiveClass,
+                          )}
+                          onClick={() => onToggleRecipient(tok)}
+                          onMouseEnter={(event) => showRecipientPopover(popoverTarget, event.currentTarget)}
+                          onMouseLeave={scheduleRecipientPopoverHide}
+                          onFocus={(event) => showRecipientPopover(popoverTarget, event.currentTarget)}
+                          onBlur={scheduleRecipientPopoverHide}
+                          disabled={!selectedGroupId || busy === "send"}
+                          aria-pressed={active}
+                        >
+                          {renderRecipientChipContent(tok)}
+                        </button>
+                      );
+                    })}
+                    {actors.map((actor) => {
+                      const id = String(actor.id || "");
+                      if (!id) return null;
+                      const active = toTokens.includes(id);
+                      const popoverTarget = actorPopoverTarget(actor);
+                      return (
+                        <button
+                          key={id}
+                          className={classNames(
+                            chipBaseClass,
+                            active
+                              ? chipActiveClass
+                              : chipInactiveClass,
+                          )}
+                          onClick={() => onToggleRecipient(id)}
+                          onMouseEnter={(event) => showRecipientPopover(popoverTarget, event.currentTarget)}
+                          onMouseLeave={scheduleRecipientPopoverHide}
+                          onFocus={(event) => showRecipientPopover(popoverTarget, event.currentTarget)}
+                          onBlur={scheduleRecipientPopoverHide}
+                          disabled={actorChipDisabled}
+                          aria-pressed={active}
+                        >
+                          {renderRecipientChipContent(actor.title || id)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {availableRemoteGroups.length > 0 ? (
+                    <div className={classNames("mx-1 h-4 w-px flex-shrink-0", isDark ? "bg-white/10" : "bg-black/10")} aria-hidden="true" />
+                  ) : null}
+                  {availableRemoteGroups.map((group) => {
+                    const groupId = String(group.group_id || "").trim();
+                    const label = getGroupRouteDisplayName(group);
+                    const active = selectedRemoteGroupSet.has(groupId);
+                    const accessLevel = "messages";
+                    const accessLabel = getRemoteGroupAccessLabel(accessLevel);
+                    const popoverTarget = remoteGroupPopoverTarget(group);
+                    const title = [
+                      label,
+                      t("remoteGroupSendsToForeman", { defaultValue: "Sends to the remote foreman." }),
+                      groupId,
+                    ].filter(Boolean).join(" · ");
                     return (
-                      <button
-                        key={tok}
+                      <div
+                        key={groupId}
                         className={classNames(
-                          chipBaseClass,
-                          active
-                            ? chipActiveClass
-                            : chipInactiveClass,
+                          "flex h-6 flex-shrink-0 items-center overflow-hidden whitespace-nowrap rounded-lg border text-[10px] font-medium leading-none transition-all sm:text-[11px]",
+                          "max-w-[9rem] sm:max-w-[12rem]",
+                          active ? remoteChipActiveClass : remoteChipInactiveClass,
                         )}
-                        onClick={() => onToggleRecipient(tok)}
-                        disabled={!selectedGroupId || busy === "send"}
-                        aria-pressed={active}
+                        onMouseEnter={(event) => showRecipientPopover(popoverTarget, event.currentTarget as HTMLElement)}
+                        onMouseLeave={scheduleRecipientPopoverHide}
+                        data-remote-group-id={groupId}
+                        data-remote-group-access={accessLabel}
+                        title={title}
                       >
-                        {renderRecipientChipContent(tok)}
-                      </button>
-                    );
-                  })}
-                  {actors.map((actor) => {
-                    const id = String(actor.id || "");
-                    if (!id) return null;
-                    const active = toTokens.includes(id);
-                    return (
-                      <button
-                        key={id}
-                        className={classNames(
-                          chipBaseClass,
-                          active
-                            ? chipActiveClass
-                            : chipInactiveClass,
-                        )}
-                        onClick={() => onToggleRecipient(id)}
-                        disabled={actorChipDisabled}
-                        aria-pressed={active}
-                      >
-                        {renderRecipientChipContent(actor.title || id)}
-                      </button>
+                        <button
+                          type="button"
+                          className="flex h-full min-w-0 flex-1 items-center justify-center px-2 sm:px-2.5"
+                          onFocus={(event) => showRecipientPopover(popoverTarget, event.currentTarget)}
+                          onBlur={scheduleRecipientPopoverHide}
+                          onClick={() => onToggleRemoteGroup?.(groupId)}
+                          disabled={!selectedGroupId || busy === "send" || !onToggleRemoteGroup}
+                          aria-pressed={active}
+                          aria-label={t("remoteGroupChipLabel", { name: label, defaultValue: "Remote group {{name}}" })}
+                        >
+                          <span className="truncate">{label}</span>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
               </ScrollFade>
 
-              {toTokens.length > 0 && (
+              {typeof document !== "undefined" && recipientPopoverTarget && recipientPopoverStyle ? createPortal((
+                <div
+                  className={classNames(
+                    "fixed z-[1000] rounded-lg border px-3 py-2 text-xs shadow-xl backdrop-blur-xl",
+                    isDark
+                      ? "border-white/12 bg-[rgb(24,25,27)] text-slate-100"
+                      : "border-black/10 bg-white text-gray-900",
+                  )}
+                  style={recipientPopoverStyle}
+                  role="dialog"
+                  aria-label={t("recipientDetails", { name: recipientPopoverTarget.label, defaultValue: "Recipient details for {{name}}" })}
+                  onMouseEnter={cancelRecipientPopoverHide}
+                  onMouseLeave={scheduleRecipientPopoverHide}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold">{recipientPopoverTarget.label}</div>
+                      <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
+                        {recipientPopoverTarget.detail}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={classNames(
+                        "inline-flex h-7 flex-shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors",
+                        isDark ? "text-slate-300 hover:bg-white/10 hover:text-white" : "text-gray-500 hover:bg-black/5 hover:text-gray-800",
+                      )}
+                      onClick={() => {
+                        void copyRecipientIdentifier(recipientPopoverTarget.identifier);
+                        hideRecipientPopover();
+                      }}
+                      aria-label={t("copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
+                      title={t("copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
+                    >
+                      <CopyIcon size={13} aria-hidden="true" />
+                      <span>{t("copyRecipientIdentifier", { defaultValue: "Copy identifier" })}</span>
+                    </button>
+                  </div>
+                  <div className="mt-2 flex min-w-0 items-center gap-2">
+                    <code className={classNames("min-w-0 flex-1 truncate rounded-md px-2 py-1 font-mono text-[11px]", isDark ? "bg-white/[0.08] text-slate-200" : "bg-gray-100 text-gray-800")}>
+                      {recipientPopoverTarget.identifier}
+                    </code>
+                  </div>
+                  {recipientPopoverTarget.idValue ? (
+                    <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
+                      <span className="font-semibold uppercase tracking-wide">{recipientPopoverTarget.idLabel}</span>
+                      <span className="ml-2 font-mono">{recipientPopoverTarget.idValue}</span>
+                    </div>
+                  ) : null}
+                </div>
+              ), document.body) : null}
+
+              {(toTokens.length > 0 || selectedRemoteGroupIds.length > 0) && (
                 <button
                   className={classNames(
                     "flex-shrink-0 h-7 w-7 rounded-full flex items-center justify-center transition-colors opacity-50 hover:opacity-100",

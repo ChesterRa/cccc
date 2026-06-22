@@ -342,6 +342,7 @@ def file_send(
     actor_id: str,
     path: str,
     text: str = "",
+    dst_group_id: str = "",
     to: Optional[List[str]] = None,
     priority: str = "normal",
     reply_required: bool = False,
@@ -402,6 +403,25 @@ def file_send(
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
     reply_required_flag = coerce_bool(reply_required, default=False)
+    dst_gid = str(dst_group_id or "").strip()
+    if dst_gid and dst_gid != gid:
+        if has_hash_recipient_token(normalize_recipient_tokens(to)):
+            raise MCPError(code="invalid_recipient_syntax", message=CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
+        return _call_daemon_or_raise(
+            {
+                "op": "send_cross_group",
+                "args": {
+                    "group_id": gid,
+                    "dst_group_id": dst_gid,
+                    "text": msg,
+                    "by": actor_id,
+                    "to": to if to is not None else [],
+                    "attachments": [att],
+                    "priority": prio,
+                    "reply_required": reply_required_flag,
+                },
+            }
+        )
     return _call_daemon_or_raise(
         {
             "op": "send",

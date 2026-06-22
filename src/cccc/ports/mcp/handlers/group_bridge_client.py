@@ -62,11 +62,14 @@ def _bridge_targets(group_id: str) -> List[Dict[str, Any]]:
         if not remote_group_id:
             continue
         endpoint = _endpoint_from_trust(trust)
+        remote_group_title = str(trust.get("remote_group_title") or "").strip()
+        display_name = remote_group_title or endpoint or remote_group_id
         token = _approved_outbound_token(gid, remote_group_id)
         targets.append(
             {
                 "remote_group_id": remote_group_id,
-                "remote_group_title": str(trust.get("remote_group_title") or "").strip(),
+                "display_name": display_name,
+                "remote_group_title": remote_group_title,
                 "remote_peer_id": str(trust.get("remote_peer_id") or "").strip(),
                 "registration_id": str(trust.get("registration_id") or "").strip(),
                 "trust_id": str(trust.get("trust_id") or "").strip(),
@@ -75,6 +78,24 @@ def _bridge_targets(group_id: str) -> List[Dict[str, Any]]:
                 or pairing_kernel.ACCESS_LEVEL_MESSAGES,
                 "endpoint": endpoint,
                 "remote_mcp_available": bool(token and endpoint.startswith(("http://", "https://"))),
+                "recommended_message_send": {
+                    "tool": "cccc_message_send",
+                    "dst_group_id": remote_group_id,
+                    "to": ["@foreman"],
+                    "note": "Use this shape to send a normal message to the remote group's foreman.",
+                },
+                "recommended_remote_access": {
+                    "discover": 'cccc_remote_access(action="list")',
+                    "read_tools": ["cccc_remote_context", "cccc_remote_repo", "cccc_remote_git"],
+                    "full_tools": [
+                        "cccc_remote_repo_edit",
+                        "cccc_remote_apply_patch",
+                        "cccc_remote_shell",
+                        "cccc_remote_exec_command",
+                        "cccc_remote_write_stdin",
+                    ],
+                    "note": "Remote MCP tools require remote_group_id and depend on the access level granted by the remote group.",
+                },
                 "_remote_send_token": token,
             }
         )

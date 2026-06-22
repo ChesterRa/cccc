@@ -56,6 +56,7 @@ class SendCrossGroupRequest(BaseModel):
     to: list[str] = Field(default_factory=list)
     priority: Literal["normal", "attention"] = "normal"
     reply_required: bool = False
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DelegateContactRequest(BaseModel):

@@ -57,8 +57,10 @@ export function formatPeerLabel(peer: PeerLike, fallback = "Unknown peer"): stri
   return remotePeerId || remoteGroupId || fallback;
 }
 
-export function formatRemoteInstanceLabel(peer: PeerLike, fallback = "Unknown CCCC"): string {
-  return String(peer.remote_endpoint || "").trim() || fallback;
+export function formatRemoteGroupLabel(peer: PeerLike, fallback = "Unknown remote group"): string {
+  const remoteGroupTitle = String(peer.remote_group_title || "").trim();
+  const remoteGroupId = String(peer.remote_group_id || "").trim();
+  return remoteGroupTitle || remoteGroupId || fallback;
 }
 
 export function parseConnectionInfoInput(raw: string): {

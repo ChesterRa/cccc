@@ -12,6 +12,13 @@ export type ComposerMentionSuggestion = {
   keywords?: string[];
 };
 
+export function getGroupRouteDisplayName(group: GroupMeta): string {
+  const groupId = String(group.group_id || "").trim();
+  const title = String(group.title || "").trim();
+  const topic = String(group.topic || "").trim();
+  return title || topic || groupId;
+}
+
 export function getComposerGroupMentionInsertToken(selected: ComposerMentionSuggestion): string {
   const label = String(selected.label || "").trim();
   const value = String(selected.value || "").trim();
@@ -62,7 +69,7 @@ function buildGroupMentionSuggestions(groups: GroupMeta[], needle: string): Comp
       const groupId = String(group.group_id || "").trim();
       const title = String(group.title || "").trim();
       const topic = String(group.topic || "").trim();
-      const label = title || topic || groupId;
+      const label = getGroupRouteDisplayName(group);
       const remoteEndpoint = String(group.federation_remote_endpoint || "").trim();
       const remotePeerId = String(group.federation_remote_peer_id || "").trim();
       return {
@@ -106,6 +113,7 @@ export function buildFederationRouteGroups(trusts: FederationTrust[] | undefined
       federation_remote_endpoint: endpoint,
       federation_remote_peer_id: peerId,
       federation_trust_id: String(trust.trust_id || "").trim(),
+      federation_registration_id: String(trust.registration_id || "").trim(),
     });
   }
   return out;

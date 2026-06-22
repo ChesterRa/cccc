@@ -2,6 +2,8 @@ import os
 import shutil
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 class TestMaintenanceOps(unittest.TestCase):
@@ -196,6 +198,157 @@ class TestMaintenanceOps(unittest.TestCase):
             self.assertIn("dst_group_id must be the real group id", message)
             self.assertIn('cccc_group(action="resolve", token="cccc")', message)
             self.assertIn("Do not use #token/title as dst_group_id", message)
+        finally:
+            cleanup()
+
+    def test_send_cross_group_uses_remote_bridge_route(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        captured: dict[str, dict] = {}
+
+        def fake_dispatch(op: str, args: dict):
+            captured["dispatch"] = {"op": op, "args": args}
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": "evt_src",
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_remote_send(args: dict):
+            captured["remote_send"] = args
+            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "delivered"}})
+
+        with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
+             patch.object(
+                 maintenance_ops,
+                 "resolve_remote_group_route",
+                 return_value=SimpleNamespace(
+                     remote_group_id="g_remote",
+                     registration_id="reg_remote",
+                 ),
+             ), \
+             patch.object(maintenance_ops, "handle_remote_send", side_effect=fake_remote_send):
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_remote",
+                    "by": "user",
+                    "text": "remote ping",
+                    "attachments": [
+                        {
+                            "kind": "image",
+                            "path": "state/blobs/hash_shot.png",
+                            "title": "shot.png",
+                            "mime_type": "image/png",
+                            "bytes": 10,
+                            "sha256": "hash",
+                        }
+                    ],
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        self.assertEqual(captured["dispatch"]["op"], "send")
+        self.assertEqual(captured["dispatch"]["args"]["to"], ["user"])
+        self.assertEqual(captured["dispatch"]["args"]["dst_to"], ["@foreman"])
+        self.assertEqual(captured["remote_send"]["registration_id"], "reg_remote")
+        self.assertEqual(captured["remote_send"]["source_event_id"], "evt_src")
+        self.assertEqual(captured["remote_send"]["payload"]["text"], "remote ping")
+        self.assertEqual(captured["remote_send"]["payload"]["to"], ["@foreman"])
+        self.assertEqual(captured["remote_send"]["payload"]["attachments"][0]["title"], "shot.png")
+        self.assertEqual(captured["dispatch"]["args"]["attachments"][0]["title"], "shot.png")
+        self.assertEqual((resp.result or {}).get("remote_group_id"), "g_remote")
+        self.assertNotIn("dst_event", resp.result or {})
+
+    def test_send_cross_group_propagates_terminal_remote_failure(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        def fake_dispatch(op: str, args: dict):
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": "evt_src",
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_remote_send(args: dict):
+            _ = args
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "receipt": {
+                        "ok": False,
+                        "status": "failed",
+                        "error": {"code": "invalid_attachments", "message": "attachment hash mismatch"},
+                    }
+                },
+            )
+
+        with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
+             patch.object(
+                 maintenance_ops,
+                 "resolve_remote_group_route",
+                 return_value=SimpleNamespace(
+                     remote_group_id="g_remote",
+                     registration_id="reg_remote",
+                 ),
+             ), \
+             patch.object(maintenance_ops, "handle_remote_send", side_effect=fake_remote_send):
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_remote",
+                    "by": "user",
+                    "text": "remote ping",
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertFalse(resp.ok)
+        self.assertEqual(str(getattr(resp.error, "code", "") or ""), "invalid_attachments")
+        self.assertEqual(str(getattr(resp.error, "message", "") or ""), "attachment hash mismatch")
+        self.assertEqual((getattr(resp.error, "details", {}) or {}).get("remote_group_id"), "g_remote")
+
+    def test_send_cross_group_rejects_local_attachment_relay(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "relay ping",
+                    "to": ["@foreman"],
+                    "attachments": [{"path": "state/blobs/hash_file.png", "title": "file.png"}],
+                },
+            )
+            self.assertFalse(relay.ok)
+            self.assertEqual(str(getattr(relay.error, "code", "") or ""), "attachments_not_supported")
         finally:
             cleanup()
 
