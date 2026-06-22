@@ -429,8 +429,70 @@ class TestMediaCallbacks:
         assert calls[0] == ("upload", (b"report", "report.txt", "file"))
         assert calls[1][0] == "webhook"
         body = json.loads(calls[1][1][1])
-        assert body == {"msgtype": "file", "file": {"mediaId": "media-1"}}
+        assert body == {"msgtype": "file", "file": {"mediaId": "media-1", "fileType": "txt"}}
         send_message.assert_called_once_with(chat_id, "caption", mention_user_ids=None)
+
+    def test_image_webhook_uses_pic_url_payload(self, adapter: DingTalkAdapter) -> None:
+        calls: List[tuple[str, bytes]] = []
+
+        def upload_media(raw: bytes, filename: str, media_type: str = "file") -> str:
+            assert (raw, filename, media_type) == (b"png", "image.png", "image")
+            return "media-image-1"
+
+        def mock_urlopen(req, timeout=None):
+            calls.append((req.full_url, req.data))
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"errcode": 0}).encode()
+            resp.__enter__ = lambda s: resp
+            resp.__exit__ = lambda s, *a: None
+            return resp
+
+        adapter._media.upload_media = upload_media  # type: ignore[method-assign]
+        with patch("cccc.ports.im.adapters.dingtalk_media.urllib.request.urlopen", side_effect=mock_urlopen):
+            assert adapter._media.send_file_via_webhook("https://webhook", b"png", "image.png", True) is True
+
+        body = json.loads(calls[0][1])
+        assert body == {"msgtype": "image", "image": {"picURL": "media-image-1"}}
+
+    def test_file_webhook_includes_file_type(self, adapter: DingTalkAdapter) -> None:
+        calls: List[tuple[str, bytes]] = []
+
+        adapter._media.upload_media = lambda raw, filename, media_type="file": "media-file-1"  # type: ignore[method-assign]
+
+        def mock_urlopen(req, timeout=None):
+            calls.append((req.full_url, req.data))
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"errcode": 0}).encode()
+            resp.__enter__ = lambda s: resp
+            resp.__exit__ = lambda s, *a: None
+            return resp
+
+        with patch("cccc.ports.im.adapters.dingtalk_media.urllib.request.urlopen", side_effect=mock_urlopen):
+            assert adapter._media.send_file_via_webhook("https://webhook", b"txt", "report.txt", False) is True
+
+        body = json.loads(calls[0][1])
+        assert body == {"msgtype": "file", "file": {"mediaId": "media-file-1", "fileType": "txt"}}
+
+    def test_image_api_fallback_uses_uploaded_media_id_without_fake_photo_url(
+        self,
+        adapter: DingTalkAdapter,
+    ) -> None:
+        captured: Dict[str, Any] = {}
+
+        adapter._media.upload_media = lambda raw, filename, media_type="file": "media-image-2"  # type: ignore[method-assign]
+
+        def api_new(method: str, endpoint: str, body: Optional[Dict[str, Any]], timeout: int) -> Dict[str, Any]:
+            captured.update({"method": method, "endpoint": endpoint, "body": body, "timeout": timeout})
+            return {"processQueryKey": "proc-1"}
+
+        adapter._media._api_new = api_new
+
+        assert adapter._media.send_file_via_api("cid-group", b"png", "image.png", True) is True
+
+        msg_param = json.loads(captured["body"]["msgParam"])
+        assert captured["body"]["msgKey"] == "sampleImageMsg"
+        assert msg_param == {"photoURL": "media-image-2"}
+        assert not str(msg_param["photoURL"]).startswith("@lADPD")
 
     def test_cache_bounded(self, adapter: DingTalkAdapter) -> None:
         # Fill beyond limit

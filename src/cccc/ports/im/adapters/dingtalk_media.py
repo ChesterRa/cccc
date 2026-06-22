@@ -120,10 +120,7 @@ class DingTalkMediaService:
         if not media_id:
             return False
 
-        if is_image:
-            body = {"msgtype": "image", "image": {"mediaId": media_id}}
-        else:
-            body = {"msgtype": "file", "file": {"mediaId": media_id}}
+        body = _webhook_file_body(media_id=media_id, filename=filename, is_image=is_image)
 
         req = urllib.request.Request(
             webhook_url,
@@ -164,7 +161,7 @@ class DingTalkMediaService:
 
         if is_image:
             msg_key = "sampleImageMsg"
-            msg_param = json.dumps({"photoURL": f"@lADPD{media_id}"}, ensure_ascii=False)
+            msg_param = json.dumps({"photoURL": media_id}, ensure_ascii=False)
         else:
             msg_key = "sampleFile"
             msg_param = json.dumps({"mediaId": media_id, "fileName": filename}, ensure_ascii=False)
@@ -254,3 +251,20 @@ def _content_type_for(filename: str, media_type: str) -> str:
         ".bmp": "image/bmp",
         ".webp": "image/webp",
     }.get(ext, "application/octet-stream")
+
+
+def _webhook_file_body(*, media_id: str, filename: str, is_image: bool) -> Dict[str, Any]:
+    if is_image:
+        return {"msgtype": "image", "image": {"picURL": media_id}}
+    return {
+        "msgtype": "file",
+        "file": {
+            "mediaId": media_id,
+            "fileType": _file_type_for(filename),
+        },
+    }
+
+
+def _file_type_for(filename: str) -> str:
+    suffix = Path(filename or "").suffix.lower().lstrip(".")
+    return suffix or "file"
