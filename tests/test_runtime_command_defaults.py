@@ -8,6 +8,8 @@ class TestRuntimeCommandDefaults(unittest.TestCase):
     def test_kimi_runtime_uses_yolo_flags_for_launch(self) -> None:
         from cccc.kernel.runtime import get_runtime_command_with_flags
 
+        self.assertEqual(get_runtime_command_with_flags("devin"), ["devin", "--permission-mode", "dangerous"])
+        self.assertEqual(get_runtime_command_with_flags("kiro"), ["kiro-cli", "chat", "--trust-all-tools"])
         self.assertEqual(get_runtime_command_with_flags("kimi"), ["kimi", "--yolo"])
         self.assertEqual(get_runtime_command_with_flags("hermes"), ["hermes", "--tui", "--yolo"])
         self.assertEqual(get_runtime_command_with_flags("opencode"), ["opencode"])

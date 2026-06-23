@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -82,6 +83,47 @@ def _codex_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> b
     return _entry_command_matches_expected(
         entry.get("command", ""),
         entry.get("args", ""),
+        expected_cmd,
+        strict=sys.platform.startswith("win"),
+    )
+
+
+def _decode_debug_quoted_string(value: str) -> str:
+    raw = str(value or "")
+    try:
+        return str(json.loads(f'"{raw}"'))
+    except Exception:
+        return raw.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def _devin_debug_string_field(output: str, field: str) -> str:
+    match = re.search(rf"\b{re.escape(field)}:\s*\"((?:\\.|[^\"\\])*)\"", str(output or ""))
+    if not match:
+        return ""
+    return _decode_debug_quoted_string(match.group(1))
+
+
+def _devin_debug_args(output: str) -> list[str]:
+    match = re.search(r"\bargs:\s*\[(.*?)\]", str(output or ""), flags=re.S)
+    if not match:
+        return []
+    return [
+        _decode_debug_quoted_string(item)
+        for item in re.findall(r"\"((?:\\.|[^\"\\])*)\"", match.group(1))
+    ]
+
+
+def _devin_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> bool:
+    text = str(output or "")
+    if "stdio" not in text.lower():
+        return False
+    command = _devin_debug_string_field(text, "command")
+    if not command:
+        return False
+    args = _devin_debug_args(text)
+    return _entry_command_matches_expected(
+        command,
+        args,
         expected_cmd,
         strict=sys.platform.startswith("win"),
     )
@@ -191,6 +233,17 @@ def _kimi_share_dir(env: Dict[str, str] | None) -> Path:
     return _home_dir(env) / ".kimi"
 
 
+def _kiro_home_dir(env: Dict[str, str] | None) -> Path:
+    raw = ""
+    if isinstance(env, dict):
+        raw = str(env.get("KIRO_HOME") or "").strip()
+    if not raw:
+        raw = str(os.environ.get("KIRO_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return _home_dir(env) / ".kiro"
+
+
 _OPENCODE_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
 _CODEX_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
 
@@ -295,6 +348,16 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
         return ["claude", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd]
     if runtime == "codex":
         return ["codex", "mcp", "add", "cccc", "--", *cccc_cmd]
+    if runtime == "devin":
+        return ["devin", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd]
+    if runtime == "kiro":
+        command = cccc_cmd[0] if cccc_cmd else "cccc"
+        argv = ["kiro-cli", "mcp", "add", "--name", "cccc", "--scope", "global", "--command", command]
+        args = cccc_cmd[1:] if len(cccc_cmd) > 1 else ["mcp"]
+        for arg in args:
+            argv.append(f"--args={arg}")
+        argv.append("--force")
+        return argv
     if runtime == "droid":
         return ["droid", "mcp", "add", "--type", "stdio", "cccc", *cccc_cmd]
     if runtime == "amp":
@@ -322,6 +385,10 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
 def build_mcp_remove_command(runtime: str) -> list[str] | None:
     if runtime == "claude":
         return ["claude", "mcp", "remove", "cccc", "-s", "user"]
+    if runtime == "devin":
+        return ["devin", "mcp", "remove", "-s", "user", "cccc"]
+    if runtime == "kiro":
+        return ["kiro-cli", "mcp", "remove", "--name", "cccc", "--scope", "global"]
     if runtime == "droid":
         return ["droid", "mcp", "remove", "cccc"]
     if runtime == "grok":
@@ -356,23 +423,37 @@ def _run_cli(
     return subprocess.run(resolve_subprocess_argv(argv), **kwargs)
 
 
+def _json_mcp_entry_state(cfg_path: Path, expected_cmd: list[str]) -> str:
+    cfg = read_json(cfg_path)
+    servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
+    if not isinstance(servers, dict):
+        return "missing"
+    entry = servers.get("cccc")
+    if entry is None:
+        return "missing"
+    return "ready" if _json_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
+
+
 def _json_mcp_state(paths: tuple[Path, ...], expected_cmd: list[str]) -> str:
     state = "missing"
     for cfg_path in paths:
-        cfg = read_json(cfg_path)
-        servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
-        if not isinstance(servers, dict):
-            continue
-        entry = servers.get("cccc")
-        if entry is None:
-            continue
-        if _json_mcp_entry_matches_expected(entry, expected_cmd):
+        entry_state = _json_mcp_entry_state(cfg_path, expected_cmd)
+        if entry_state == "ready":
             return "ready"
-        state = "stale"
+        if entry_state == "stale":
+            state = "stale"
     return state
 
 
-def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> str:
+def _kiro_mcp_state(expected_cmd: list[str], *, cwd: Path | None = None, env: Dict[str, str] | None = None) -> str:
+    if cwd is not None:
+        local_state = _json_mcp_entry_state(Path(cwd) / ".kiro" / "settings" / "mcp.json", expected_cmd)
+        if local_state != "missing":
+            return local_state
+    return _json_mcp_state((_kiro_home_dir(env) / "settings" / "mcp.json",), expected_cmd)
+
+
+def _runtime_mcp_state(runtime: str, *, cwd: Path | None = None, env: Dict[str, str] | None = None) -> str:
     expected_cmd = _runtime_expected_cccc_command(runtime)
 
     if runtime == "claude":
@@ -387,6 +468,18 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         if result.returncode != 0:
             return "missing"
         return "ready" if _codex_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
+
+    if runtime == "devin":
+        kwargs: dict[str, Any] = {"timeout": 10, "env": env}
+        if cwd is not None:
+            kwargs["cwd"] = cwd
+        result = _run_cli(["devin", "mcp", "get", "cccc"], **kwargs)
+        if result.returncode != 0:
+            return "missing"
+        return "ready" if _devin_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
+
+    if runtime == "kiro":
+        return _kiro_mcp_state(expected_cmd, cwd=cwd, env=env)
 
     if runtime == "droid":
         home = _home_dir(env)
@@ -468,9 +561,9 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
     return "missing"
 
 
-def is_mcp_installed(runtime: str, *, env: Dict[str, str] | None = None) -> bool:
+def is_mcp_installed(runtime: str, *, cwd: Path | None = None, env: Dict[str, str] | None = None) -> bool:
     try:
-        return _runtime_mcp_state(runtime, env=env) == "ready"
+        return _runtime_mcp_state(runtime, cwd=cwd, env=env) == "ready"
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     except Exception:
@@ -503,7 +596,7 @@ def ensure_mcp_installed(
         except Exception:
             return False
     try:
-        state = _runtime_mcp_state(runtime, env=env)
+        state = _runtime_mcp_state(runtime, cwd=cwd, env=env)
         if state == "ready":
             return True
         add_cmd = build_mcp_add_command(runtime)
@@ -519,7 +612,7 @@ def ensure_mcp_installed(
 
         drop_env_keys = _CODEX_CONTEXT_ENV_KEYS if runtime == "codex" else ()
         result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env, drop_env_keys=drop_env_keys)
-        return result.returncode == 0 and is_mcp_installed(runtime, env=env)
+        return result.returncode == 0 and is_mcp_installed(runtime, cwd=cwd, env=env)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return False

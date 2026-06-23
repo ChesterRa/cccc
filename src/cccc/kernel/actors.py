@@ -404,6 +404,8 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             "auggie",
             "claude",
             "codex",
+            "devin",
+            "kiro",
             "droid",
             "grok",
             "hermes",

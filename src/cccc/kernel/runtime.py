@@ -55,6 +55,18 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
     },
+    "devin": {
+        "display_name": "Devin CLI",
+        "command": "devin",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "devin mcp add -s user {name} -- {cmd}",
+    },
+    "kiro": {
+        "display_name": "Kiro CLI",
+        "command": "kiro-cli",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "kiro-cli mcp add --name {name} --scope global --command {cmd}",
+    },
     "droid": {
         "display_name": "Droid CLI",
         "command": "droid",
@@ -103,6 +115,8 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
 PRIMARY_RUNTIMES = [
     "claude",
     "codex",
+    "devin",
+    "kiro",
     "droid",
     "amp",
     "auggie",
@@ -173,7 +187,7 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, grok, hermes, kimi, opencode).
+        primary_only: If True, only check first-class runtimes from PRIMARY_RUNTIMES.
                      If False, check all configured runtimes (including custom).
     
     Returns:
@@ -265,6 +279,8 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
+        "devin": ["devin", "--permission-mode", "dangerous"],
+        "kiro": ["kiro-cli", "chat", "--trust-all-tools"],
         "droid": ["droid", "--auto", "high"],
         "grok": ["grok"],
         "hermes": ["hermes", "--tui", "--yolo"],

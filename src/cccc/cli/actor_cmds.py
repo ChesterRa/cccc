@@ -126,6 +126,8 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             "auggie",
             "claude",
             "codex",
+            "devin",
+            "kiro",
             "droid",
             "grok",
             "hermes",

@@ -121,6 +121,313 @@ class TestMcpInstall(unittest.TestCase):
                 ],
             )
 
+    def test_build_mcp_add_command_devin_uses_user_scope_stdio(self) -> None:
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertEqual(
+                build_mcp_add_command("devin"),
+                ["devin", "mcp", "add", "-s", "user", "cccc", "--", "/abs/cccc", "mcp"],
+            )
+
+    def test_build_mcp_add_command_kiro_uses_global_stdio_config(self) -> None:
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertEqual(
+                build_mcp_add_command("kiro"),
+                [
+                    "kiro-cli",
+                    "mcp",
+                    "add",
+                    "--name",
+                    "cccc",
+                    "--scope",
+                    "global",
+                    "--command",
+                    "/abs/cccc",
+                    "--args=mcp",
+                    "--force",
+                ],
+            )
+
+    def test_build_mcp_add_command_kiro_handles_python_module_fallback_args(self) -> None:
+        with patch(
+            "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+            return_value=["/usr/bin/python", "-m", "cccc.ports.mcp.main"],
+        ):
+            self.assertEqual(
+                build_mcp_add_command("kiro"),
+                [
+                    "kiro-cli",
+                    "mcp",
+                    "add",
+                    "--name",
+                    "cccc",
+                    "--scope",
+                    "global",
+                    "--command",
+                    "/usr/bin/python",
+                    "--args=-m",
+                    "--args=cccc.ports.mcp.main",
+                    "--force",
+                ],
+            )
+
+    def test_is_mcp_installed_devin_parses_stdio_debug_output(self) -> None:
+        output = (
+            'Server: cccc\n'
+            'Stdio(McpServerStdio { name: "cccc", command: "/abs/cccc", args: ["mcp"], env: [], meta: None })\n'
+        )
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=output, stderr=""),
+        ) as mock_run:
+            self.assertTrue(is_mcp_installed("devin"))
+        mock_run.assert_called_once_with(["devin", "mcp", "get", "cccc"], timeout=10, env=None)
+
+    def test_is_mcp_installed_devin_rejects_wrong_stdio_command(self) -> None:
+        output = (
+            'Server: cccc\n'
+            'Stdio(McpServerStdio { name: "cccc", command: "/old/cccc", args: ["mcp"], env: [], meta: None })\n'
+        )
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=output, stderr=""),
+        ):
+            self.assertFalse(is_mcp_installed("devin"))
+
+    def test_is_mcp_installed_devin_rejects_missing_stdio_command(self) -> None:
+        output = (
+            "Server: cccc\n"
+            'Stdio(McpServerStdio { name: "cccc", args: ["mcp"], env: [], meta: None })\n'
+        )
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=output, stderr=""),
+        ):
+            self.assertFalse(is_mcp_installed("devin"))
+
+    def test_is_mcp_installed_devin_checks_actor_cwd_when_provided(self) -> None:
+        output = (
+            'Server: cccc\n'
+            'Stdio(McpServerStdio { name: "cccc", command: "/abs/cccc", args: ["mcp"], env: [], meta: None })\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install._run_cli",
+                return_value=Mock(returncode=0, stdout=output, stderr=""),
+            ) as mock_run:
+                self.assertTrue(is_mcp_installed("devin", cwd=cwd))
+        mock_run.assert_called_once_with(["devin", "mcp", "get", "cccc"], cwd=cwd, timeout=10, env=None)
+
+    def test_is_mcp_installed_kiro_reads_kiro_home_settings_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            kiro_home = Path(td) / "kiro-home"
+            config_path = kiro_home / "settings" / "mcp.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "cccc": {
+                                "command": "/abs/cccc",
+                                "args": ["mcp"],
+                                "env": {},
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertTrue(is_mcp_installed("kiro", env={"KIRO_HOME": str(kiro_home)}))
+
+    def test_is_mcp_installed_kiro_uses_process_kiro_home_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            kiro_home = Path(td) / "kiro-home"
+            config_path = kiro_home / "settings" / "mcp.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps({"mcpServers": {"cccc": {"command": "/abs/cccc", "args": ["mcp"], "env": {}}}}),
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {"KIRO_HOME": str(kiro_home)}, clear=False), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ):
+                self.assertTrue(is_mcp_installed("kiro"))
+
+    def test_is_mcp_installed_kiro_rejects_stale_command(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            kiro_home = Path(td) / "kiro-home"
+            config_path = kiro_home / "settings" / "mcp.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps({"mcpServers": {"cccc": {"command": "/old/cccc", "args": ["mcp"], "env": {}}}}),
+                encoding="utf-8",
+            )
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertFalse(is_mcp_installed("kiro", env={"KIRO_HOME": str(kiro_home)}))
+
+    def test_is_mcp_installed_kiro_prefers_local_stale_config_over_global_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cwd = root / "repo"
+            kiro_home = root / "kiro-home"
+            local_config_path = cwd / ".kiro" / "settings" / "mcp.json"
+            global_config_path = kiro_home / "settings" / "mcp.json"
+            local_config_path.parent.mkdir(parents=True, exist_ok=True)
+            global_config_path.parent.mkdir(parents=True, exist_ok=True)
+            local_config_path.write_text(
+                json.dumps({"mcpServers": {"cccc": {"command": "/old/cccc", "args": ["mcp"], "env": {}}}}),
+                encoding="utf-8",
+            )
+            global_config_path.write_text(
+                json.dumps({"mcpServers": {"cccc": {"command": "/abs/cccc", "args": ["mcp"], "env": {}}}}),
+                encoding="utf-8",
+            )
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertFalse(is_mcp_installed("kiro", cwd=cwd, env={"KIRO_HOME": str(kiro_home)}))
+
+    def test_is_mcp_installed_kiro_accepts_local_ready_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td) / "repo"
+            local_config_path = cwd / ".kiro" / "settings" / "mcp.json"
+            local_config_path.parent.mkdir(parents=True, exist_ok=True)
+            local_config_path.write_text(
+                json.dumps({"mcpServers": {"cccc": {"command": "/abs/cccc", "args": ["mcp"], "env": {}}}}),
+                encoding="utf-8",
+            )
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertTrue(is_mcp_installed("kiro", cwd=cwd, env={"KIRO_HOME": str(Path(td) / "kiro-home")}))
+
+    def test_ensure_mcp_installed_devin_adds_cccc_stdio(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["missing", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("devin", cwd, auto_mcp_runtimes=("devin",))
+                    self.assertTrue(ok)
+                    mock_run.assert_called_once_with(
+                        ["devin", "mcp", "add", "-s", "user", "cccc", "--", "/abs/cccc", "mcp"],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(cwd),
+                        timeout=30,
+                    )
+
+    def test_ensure_mcp_installed_kiro_adds_cccc_stdio(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["missing", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("kiro", cwd, auto_mcp_runtimes=("kiro",))
+                    self.assertTrue(ok)
+                    mock_run.assert_called_once_with(
+                        [
+                            "kiro-cli",
+                            "mcp",
+                            "add",
+                            "--name",
+                            "cccc",
+                            "--scope",
+                            "global",
+                            "--command",
+                            "/abs/cccc",
+                            "--args=mcp",
+                            "--force",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(cwd),
+                        timeout=30,
+                    )
+
+    def test_ensure_mcp_installed_kiro_repairs_stale_global_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["stale", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("kiro", cwd, auto_mcp_runtimes=("kiro",))
+                    self.assertTrue(ok)
+                    self.assertEqual(
+                        mock_run.call_args_list,
+                        [
+                            call(
+                                ["kiro-cli", "mcp", "remove", "--name", "cccc", "--scope", "global"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                            call(
+                                [
+                                    "kiro-cli",
+                                    "mcp",
+                                    "add",
+                                    "--name",
+                                    "cccc",
+                                    "--scope",
+                                    "global",
+                                    "--command",
+                                    "/abs/cccc",
+                                    "--args=mcp",
+                                    "--force",
+                                ],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                        ],
+                    )
+
+    def test_ensure_mcp_installed_devin_repairs_stale_user_scope_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["stale", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("devin", cwd, auto_mcp_runtimes=("devin",))
+                    self.assertTrue(ok)
+                    self.assertEqual(
+                        mock_run.call_args_list,
+                        [
+                            call(
+                                ["devin", "mcp", "remove", "-s", "user", "cccc"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                            call(
+                                ["devin", "mcp", "add", "-s", "user", "cccc", "--", "/abs/cccc", "mcp"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                        ],
+                    )
+
     def test_is_mcp_installed_grok_reads_json_list_and_validates_env(self) -> None:
         payload = [
             {

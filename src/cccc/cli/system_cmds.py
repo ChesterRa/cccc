@@ -366,7 +366,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print()
     if available_count == 0:
         print("No agent runtimes detected.")
-        print("First-class supported runtimes: claude, codex, droid, amp, auggie, grok, hermes, kimi, opencode")
+        print("First-class supported runtimes: claude, codex, devin, kiro, droid, amp, auggie, grok, hermes, kimi, opencode")
         print("Manual fallback: custom (bring your own command and MCP wiring)")
     else:
         print(f"{available_count} runtime(s) available.")
@@ -412,12 +412,14 @@ def cmd_setup(args: argparse.Namespace) -> int:
     project_path = Path(args.path or ".").resolve()
 
     # Supported runtimes
-    # - claude/codex/droid/amp/auggie/grok/hermes/kimi: MCP setup can be automated via their CLIs
+    # - claude/codex/devin/kiro/droid/amp/auggie/grok/hermes/kimi: MCP setup can be automated via their CLIs
     # - opencode: MCP setup is injected into the actor process through OPENCODE_CONFIG_CONTENT
     # - custom: user-provided runtime; MCP setup is manual (generic guidance only)
     SUPPORTED_RUNTIMES = [
         "claude",
         "codex",
+        "devin",
+        "kiro",
         "droid",
         "amp",
         "auggie",
@@ -472,7 +474,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 results["notes"].append("opencode: CLI not found; install OpenCode before starting an opencode actor")
             return
         runtime_info = detect_runtime(rt)
-        was_ready = is_mcp_installed(rt) if runtime_info.available else False
+        was_ready = is_mcp_installed(rt, cwd=project_path) if runtime_info.available else False
         if ensure_mcp_installed(rt, project_path, auto_mcp_runtimes=auto_mcp_runtimes):
             results["mcp"][rt] = {"mode": "auto", "status": "present" if was_ready else "added"}
             return

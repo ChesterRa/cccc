@@ -30,6 +30,8 @@ class TestSystemCmdsSetup(unittest.TestCase):
             auto_mcp_runtimes=(
                 "claude",
                 "codex",
+                "devin",
+                "kiro",
                 "droid",
                 "amp",
                 "auggie",

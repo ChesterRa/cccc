@@ -1409,6 +1409,8 @@ export type PresentationWorkspaceListing = {
 export const SUPPORTED_RUNTIMES = [
   "claude",
   "codex",
+  "devin",
+  "kiro",
   "droid",
   "amp",
   "auggie",
@@ -1427,6 +1429,8 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   auggie: { label: "Auggie (Augment)", desc: "" },
   claude: { label: "Claude Code", desc: "" },
   codex: { label: "Codex CLI", desc: "" },
+  devin: { label: "Devin CLI", desc: "Uses Devin MCP CLI setup with the PTY runner" },
+  kiro: { label: "Kiro CLI", desc: "Uses Kiro MCP CLI setup with the PTY runner" },
   droid: { label: "Droid", desc: "" },
   grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
@@ -1466,6 +1470,14 @@ export const RUNTIME_COLORS: Record<string, {
   codex: { 
     bg: "bg-emerald-900/30", text: "text-emerald-300", border: "border-emerald-600/50", dot: "bg-emerald-400",
     bgLight: "bg-emerald-50", textLight: "text-emerald-700", borderLight: "border-emerald-300", dotLight: "bg-emerald-500"
+  },
+  devin: {
+    bg: "bg-sky-900/30", text: "text-sky-300", border: "border-sky-600/50", dot: "bg-sky-400",
+    bgLight: "bg-sky-50", textLight: "text-sky-700", borderLight: "border-sky-300", dotLight: "bg-sky-500"
+  },
+  kiro: {
+    bg: "bg-purple-900/30", text: "text-purple-300", border: "border-purple-600/50", dot: "bg-purple-400",
+    bgLight: "bg-purple-50", textLight: "text-purple-700", borderLight: "border-purple-300", dotLight: "bg-purple-500"
   },
   droid: { 
     bg: "bg-violet-900/30", text: "text-violet-300", border: "border-violet-600/50", dot: "bg-violet-400",

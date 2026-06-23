@@ -65,6 +65,8 @@ _RUNTIME_DIR_PARTS = {
     "chrome_profile",
     "claude",
     "codex",
+    "devin",
+    "kiro",
     "grok",
     "headless",
     "hermes",

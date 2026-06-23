@@ -152,15 +152,6 @@ export function GroupBridgePairingSection({
     setCopyNotice(t(copied ? "group_bridge.copyConnectionInfoDone" : "group_bridge.copyConnectionInfoManual"));
   }, [createdInfo, t]);
 
-  const copyTrustValue = useCallback(async (value: string, label: string) => {
-    const text = String(value || "").trim();
-    if (!text) return;
-    const copied = await copyTextToClipboard(text);
-    setTrustCopyNotice(copied
-      ? t("group_bridge.copyFieldDone", { field: label, defaultValue: "{{field}} copied." })
-      : t("group_bridge.copyFieldManual", { field: label, defaultValue: "Copy is unavailable; select {{field}} manually." }));
-  }, [t]);
-
   const copyTrustRecipientIdentifier = useCallback(async (trust: GroupBridgeTrust, displayName: string, accessLevel: string) => {
     const remoteGroupId = String(trust.remote_group_id || "").trim();
     if (!remoteGroupId) return;
@@ -323,22 +314,13 @@ export function GroupBridgePairingSection({
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {remoteGroupId && (
-                    <>
-                      <button
-                        type="button"
-                        className={secondaryButtonClass("sm")}
-                        onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, remoteAccessKnown ? remoteAccessLevel : "unknown")}
-                      >
-                        {t("group_bridge.copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
-                      </button>
-                      <button
-                        type="button"
-                        className={secondaryButtonClass("sm")}
-                        onClick={() => copyTrustValue(remoteGroupId, t("group_bridge.remoteGroupId"))}
-                      >
-                        {t("group_bridge.copyShort", { defaultValue: "Copy" })}
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      className={secondaryButtonClass("sm")}
+                      onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, remoteAccessKnown ? remoteAccessLevel : "unknown")}
+                    >
+                      {t("group_bridge.copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
+                    </button>
                   )}
                   <button
                     type="button"

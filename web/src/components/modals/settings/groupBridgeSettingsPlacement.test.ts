@@ -154,7 +154,6 @@ describe("group_bridge settings placement", () => {
 
   it("trusted remote groups expose agent target ids without default peer or endpoint noise", () => {
     const src = readSource("./GroupBridgePairingSection.tsx");
-    expect(src).toContain('t("group_bridge.remoteGroupId")');
     expect(src).toContain('t("group_bridge.copyRecipientIdentifier"');
     expect(src).toContain("formatRecipientIdentifier");
     expect(src).toContain('t("group_bridge.remoteAccessToThisGroup"');

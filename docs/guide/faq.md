@@ -79,6 +79,8 @@ This checks Python version, available runtimes, and daemon status.
 
 - Claude Code (`claude`)
 - Codex CLI (`codex`)
+- Devin CLI (`devin`)
+- Kiro CLI (`kiro-cli`)
 - Droid (`droid`)
 - Grok Build (`grok`)
 - Hermes Agent (`hermes`)

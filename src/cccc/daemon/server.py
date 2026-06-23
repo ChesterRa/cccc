@@ -297,6 +297,8 @@ SUPPORTED_RUNTIMES = (
     "auggie",
     "claude",
     "codex",
+    "devin",
+    "kiro",
     "droid",
     "grok",
     "hermes",
@@ -309,6 +311,8 @@ SUPPORTED_RUNTIMES = (
 AUTO_MCP_RUNTIMES = (
     "claude",
     "codex",
+    "devin",
+    "kiro",
     "droid",
     "amp",
     "auggie",

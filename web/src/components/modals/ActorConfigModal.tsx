@@ -128,6 +128,14 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: "# Configure OpenAI-compatible Codex providers with Codex config or command -c overrides.",
     unset: "",
   },
+  devin: {
+    set: "# Configure Devin auth and providers through Devin CLI setup.",
+    unset: "",
+  },
+  kiro: {
+    set: "# Configure Kiro auth with kiro-cli login and providers through Kiro CLI setup.",
+    unset: "",
+  },
   grok: {
     set: "# Configure Grok providers and auth through Grok config or environment variables.",
     unset: "",

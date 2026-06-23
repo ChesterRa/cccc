@@ -311,6 +311,8 @@ Recommended options:
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
 | codex | `codex` | Codex CLI |
+| devin | `devin --permission-mode dangerous` | Devin CLI |
+| kiro | `kiro-cli chat --trust-all-tools` | Kiro CLI |
 | droid | `droid` | Droid |
 | grok | `grok` | Grok Build |
 | hermes | `hermes --tui --yolo` | Hermes Agent |
