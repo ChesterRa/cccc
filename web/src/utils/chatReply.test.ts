@@ -4,15 +4,15 @@ import { buildReplyComposerState } from "./chatReply";
 import type { LedgerEvent } from "../types";
 
 describe("buildReplyComposerState", () => {
-  it("does not prefill local recipients when replying to federation messages", () => {
+  it("does not prefill local recipients when replying to group_bridge messages", () => {
     const event: LedgerEvent = {
       id: "evt_local",
       kind: "chat.message",
-      by: "federation:peer_remote",
+      by: "group_bridge:peer_remote",
       data: {
         text: "hello from remote",
         to: ["@foreman"],
-        source_platform: "federation_session",
+        source_platform: "group_bridge_session",
         source_user_id: "peer_remote",
         src_group_id: "g_remote",
         src_event_id: "evt_remote",

@@ -76,15 +76,15 @@ class TestMcpGroupResolve(unittest.TestCase):
             ["g_one", "g_two"],
         )
 
-    def test_group_resolve_returns_current_group_federation_remote_title(self) -> None:
-        from cccc.kernel.federation import pairing as pairing_kernel
+    def test_group_resolve_returns_current_group_group_bridge_remote_title(self) -> None:
+        from cccc.kernel.group_bridge import pairing as pairing_kernel
         from cccc.ports.mcp.common import runtime_context_override
         from cccc.ports.mcp import common as mcp_common
         from cccc.ports.mcp import server as mcp_server
 
         with tempfile.TemporaryDirectory() as td, \
              patch.dict(os.environ, _CLEAN_ENV, clear=False), \
-             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch("cccc.kernel.group_bridge.pairing.ensure_home", return_value=Path(td)), \
              patch.object(mcp_common, "call_daemon", return_value={"ok": True, "result": {"groups": []}}), \
              runtime_context_override(home=td, group_id="g_local", actor_id="test-peer"):
             request = pairing_kernel.create_pairing_request(
@@ -103,19 +103,19 @@ class TestMcpGroupResolve(unittest.TestCase):
 
         self.assertEqual(out.get("group_id"), "g_remote")
         self.assertEqual(out.get("title"), "CCCC Cross Test")
-        self.assertEqual(out.get("matched_by"), "federation_remote_group_title")
+        self.assertEqual(out.get("matched_by"), "group_bridge_remote_group_title")
         self.assertEqual(out.get("registration_id"), approved["registration"]["registration_id"])
-        self.assertEqual(out.get("federation"), True)
+        self.assertEqual(out.get("group_bridge"), True)
 
-    def test_group_resolve_ignores_revoked_federation_remote_title(self) -> None:
-        from cccc.kernel.federation import pairing as pairing_kernel
+    def test_group_resolve_ignores_revoked_group_bridge_remote_title(self) -> None:
+        from cccc.kernel.group_bridge import pairing as pairing_kernel
         from cccc.ports.mcp.common import runtime_context_override
         from cccc.ports.mcp import common as mcp_common
         from cccc.ports.mcp import server as mcp_server
 
         with tempfile.TemporaryDirectory() as td, \
              patch.dict(os.environ, _CLEAN_ENV, clear=False), \
-             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch("cccc.kernel.group_bridge.pairing.ensure_home", return_value=Path(td)), \
              patch.object(mcp_common, "call_daemon", return_value={"ok": True, "result": {"groups": []}}), \
              runtime_context_override(home=td, group_id="g_local", actor_id="test-peer"):
             request = pairing_kernel.create_pairing_request(

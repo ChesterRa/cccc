@@ -97,7 +97,7 @@ describe("ChatComposer destination group boundaries", () => {
 
   it("does not display local bridge grants as remote access levels", () => {
     expect(composerSource).toContain('const accessLevel = "messages";');
-    expect(composerSource).not.toContain('String(group.federation_access_level || "").trim() || "messages"');
+    expect(composerSource).not.toContain('String(group.group_bridge_access_level || "").trim() || "messages"');
   });
 
   it("lets all To recipients expose a compact copyable identifier", () => {

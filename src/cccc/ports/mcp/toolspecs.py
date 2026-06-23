@@ -133,7 +133,7 @@ MCP_TOOLS = [
                 },
                 "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
-                "idempotency_key": {"type": "string", "description": "Stable caller retry key; used for federation remote delivery when dst_group_id targets a trusted remote group"},
+                "idempotency_key": {"type": "string", "description": "Stable caller retry key; used for Group Bridge remote delivery when dst_group_id targets a trusted remote group"},
                 "refs": {"type": "array", "items": {"type": "object"}},
                 "suggested_user_message": {
                     "type": "string",
@@ -1492,14 +1492,14 @@ MCP_TOOLS = [
         ),
     },
     {
-        "name": "cccc_federation_identity",
-        "description": "Return this runtime's stable public federation identity (node_id/peer_id). No secret material is returned.",
+        "name": "cccc_group_bridge_identity",
+        "description": "Return this runtime's stable public Group Bridge identity (node_id/peer_id). No secret material is returned.",
         "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({}),
     },
     {
         "name": "cccc_pairing_invite_create",
-        "description": "Create a short-lived federation session pairing invite. The plaintext pairing_code is returned once; only a hash is persisted.",
+        "description": "Create a short-lived Group Bridge session pairing invite. The plaintext pairing_code is returned once; only a hash is persisted.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -1527,13 +1527,13 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_pairing_request_list",
-        "description": "List federation session pairing requests, optionally scoped to group_id.",
+        "description": "List Group Bridge session pairing requests, optionally scoped to group_id.",
         "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({**_COMMON_GROUP}),
     },
     {
         "name": "cccc_pairing_approve",
-        "description": "Approve a pending pairing request and create/replay the active federation session registration and trust record.",
+        "description": "Approve a pending pairing request and create/replay the active Group Bridge session registration and trust record.",
         "inputSchema": _obj(
             {
                 "request_id": {"type": "string"},
@@ -1556,7 +1556,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_pairing_trust_list",
-        "description": "List approved federation session trust records, optionally scoped to group_id.",
+        "description": "List approved Group Bridge session trust records, optionally scoped to group_id.",
         "annotations": {"readOnlyHint": True},
         "inputSchema": _obj({**_COMMON_GROUP}),
     },

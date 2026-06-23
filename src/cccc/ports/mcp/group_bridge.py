@@ -1,7 +1,7 @@
 """Group Bridge remote MCP endpoint tools.
 
 This module is intentionally separate from the normal MCP dispatcher. Group
-Bridge calls are authorized by a federation trust grant, not by a Web Model
+Bridge calls are authorized by a group_bridge trust grant, not by a Web Model
 actor identity, so local-power operations call the lower-level handlers after
 their bridge access check passes.
 """
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from ... import __version__
-from ...kernel.federation import pairing as pairing_kernel
+from ...kernel.group_bridge import pairing as pairing_kernel
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...util.conv import coerce_bool

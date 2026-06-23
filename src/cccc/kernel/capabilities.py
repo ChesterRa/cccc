@@ -112,11 +112,11 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         ),
         "tags": ("im", "bind"),
     },
-    "pack:federation": {
+    "pack:group_bridge": {
         "title": "Group Bridge Remote Access",
         "description": "Group Bridge pairing, explicit remote messaging, delivery status lookup, and remote read/full access tools.",
         "tool_names": (
-            "cccc_federation_identity",
+            "cccc_group_bridge_identity",
             "cccc_pairing_invite_create",
             "cccc_pairing_request_create",
             "cccc_pairing_request_list",

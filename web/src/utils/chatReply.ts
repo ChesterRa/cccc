@@ -48,14 +48,14 @@ export function buildReplyComposerState(
   const text = quoteText || messageText;
   const by = String(event.by || "").trim();
   const sourcePlatform = data && typeof data.source_platform === "string" ? String(data.source_platform || "").trim() : "";
-  const isFederationMessage = by.startsWith("federation:") || sourcePlatform === "federation_session";
+  const isGroupBridgeMessage = by.startsWith("group_bridge:") || sourcePlatform === "group_bridge_session";
   const authorIsActor = by && by !== "user" && actors.some((actor) => String(actor.id || "") === by);
   const originalTo = Array.isArray(data?.to)
     ? data.to.map((token: string) => String(token || "").trim()).filter(Boolean)
     : [];
   const policy = groupSettings?.default_send_to || "foreman";
   const defaultTo =
-    isFederationMessage
+    isGroupBridgeMessage
       ? []
       : authorIsActor
       ? [by]

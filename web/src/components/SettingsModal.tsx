@@ -38,7 +38,7 @@ const CapabilitiesTab = lazy(() => import("./modals/settings/CapabilitiesTab").t
 const ActorProfilesTab = lazy(() => import("./modals/settings/ActorProfilesTab").then((module) => ({ default: module.ActorProfilesTab })));
 const BrandingTab = lazy(() => import("./modals/settings/BrandingTab").then((module) => ({ default: module.BrandingTab })));
 const WebAccessTab = lazy(() => import("./modals/settings/WebAccessTab").then((module) => ({ default: module.WebAccessTab })));
-const FederationConnectionsTab = lazy(() => import("./modals/settings/FederationConnectionsSection").then((module) => ({ default: module.FederationConnectionsSection })));
+const GroupBridgeConnectionsTab = lazy(() => import("./modals/settings/GroupBridgeConnectionsSection").then((module) => ({ default: module.GroupBridgeConnectionsSection })));
 const WebModelConnectorsTab = lazy(() =>
   import("./modals/settings/WebModelConnectorsTab").then((module) => ({ default: module.default }))
 );
@@ -1251,7 +1251,7 @@ export function SettingsModal({
               {activeTab === "copyGroups" && <CopyGroupsTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
 
               {activeTab === "connections" && (
-                <FederationConnectionsTab
+                <GroupBridgeConnectionsTab
                   isDark={isDark}
                   isActive={scope === "group" && activeTab === "connections"}
                   groupId={groupId || ""}

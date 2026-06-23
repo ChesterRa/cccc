@@ -42,7 +42,7 @@ from .actors.runner_ops import try_handle_headless_op
 from .actors.web_model_runtime_ops import try_handle_web_model_runtime_op
 from .actors.web_model_browser_ops import try_handle_web_model_browser_op
 from .memory.memory_ops import try_handle_memory_op
-from .federation.ops import try_handle_remote_send_op
+from .group_bridge.ops import try_handle_remote_send_op
 
 
 @dataclass(frozen=True)

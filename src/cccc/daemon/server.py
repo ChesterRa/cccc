@@ -122,7 +122,7 @@ from .serve_ops import (
     start_bootstrap_thread,
     cleanup_after_stop,
 )
-from .federation.ws_manager import start_federation_session_manager_thread
+from .group_bridge.ws_manager import start_group_bridge_session_manager_thread
 from .space.group_space_memory_sync import process_due_memory_space_syncs
 from .space.group_space_runtime import process_due_space_jobs
 from .space.group_space_sync import process_due_space_syncs, sync_group_space_files
@@ -1023,7 +1023,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         interval_seconds=1.0,
     )
 
-    start_federation_session_manager_thread(
+    start_group_bridge_session_manager_thread(
         home=p.home,
         stop_event=stop_event,
         interval_seconds=10.0,

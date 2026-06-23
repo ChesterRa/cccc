@@ -111,10 +111,10 @@ _PUBLIC_API_PATHS = frozenset({
     "/api/v1/health",
     "/api/v1/ready",
     "/api/v1/branding",
-    "/api/federation/pairing/requests/remote",
-    "/api/federation/pairing/requests/remote/status",
-    "/api/federation/session/ws",
-    "/api/federation/session/send",
+    "/api/group-bridge/pairing/requests/remote",
+    "/api/group-bridge/pairing/requests/remote/status",
+    "/api/group-bridge/session/ws",
+    "/api/group-bridge/session/send",
 })
 
 
@@ -270,14 +270,14 @@ def create_app() -> FastAPI:
             )
             supervisor_watchdog_thread.start()
 
-        if not _is_truthy_env(str(os.environ.get("CCCC_FEDERATION_OUTBOX_WORKER_DISABLED") or "")):
+        if not _is_truthy_env(str(os.environ.get("CCCC_GROUP_BRIDGE_OUTBOX_WORKER_DISABLED") or "")):
             try:
-                from ...daemon.federation.remote_outbox_worker import RemoteOutboxWorker
+                from ...daemon.group_bridge.remote_outbox_worker import RemoteOutboxWorker
 
                 remote_outbox_worker = RemoteOutboxWorker(home=home)
                 remote_outbox_worker.start()
             except Exception:
-                logger.exception("failed to start federation remote outbox worker")
+                logger.exception("failed to start Group Bridge remote outbox worker")
 
         try:
             yield
@@ -497,7 +497,7 @@ def create_app() -> FastAPI:
     from .routes.actors import create_routers as create_actor_routers
     from .routes.im import register_im_routes
     from .routes.access_tokens import create_routers as create_access_token_routers
-    from .routes.federation import create_routers as create_federation_routers
+    from .routes.group_bridge import create_routers as create_group_bridge_routers
     from .routes.nomcp import create_routers as create_nomcp_routers
 
     route_ctx = RouteContext(
@@ -524,7 +524,7 @@ def create_app() -> FastAPI:
     register_im_routes(app, ctx=route_ctx)
     for router in create_access_token_routers(route_ctx):
         app.include_router(router)
-    for router in create_federation_routers(route_ctx):
+    for router in create_group_bridge_routers(route_ctx):
         app.include_router(router)
     for router in create_nomcp_routers(route_ctx):
         app.include_router(router)

@@ -217,7 +217,7 @@ export function ChatComposer({
     [selectedRemoteGroupIds],
   );
   const availableRemoteGroups = useMemo(
-    () => (remoteGroups || []).filter((group) => String(group.group_id || "").trim() && group.federation_remote),
+    () => (remoteGroups || []).filter((group) => String(group.group_id || "").trim() && group.group_bridge_remote),
     [remoteGroups],
   );
   const visibleRecipientPopoverTarget = useMemo(() => {

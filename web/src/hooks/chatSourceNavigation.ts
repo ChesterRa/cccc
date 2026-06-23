@@ -5,6 +5,6 @@ export function canOpenSourceMessageLocally(groups: GroupMeta[], srcGroupId: str
   if (!gid) return false;
   return (groups || []).some((group) => {
     if (String(group?.group_id || "").trim() !== gid) return false;
-    return !group.federation_remote;
+    return !group.group_bridge_remote;
   });
 }

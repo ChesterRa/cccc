@@ -195,7 +195,7 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
             cleanup()
 
     def test_bridge_access_grant_is_directional(self) -> None:
-        from cccc.kernel.federation.pairing import (
+        from cccc.kernel.group_bridge.pairing import (
             approve_pairing_request,
             create_pairing_invite,
             create_pairing_request,
@@ -256,9 +256,9 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_web_group_bridge_endpoint_uses_federation_token_and_access_update(self) -> None:
+    def test_web_group_bridge_endpoint_uses_group_bridge_token_and_access_update(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
-        from cccc.kernel.federation.pairing import (
+        from cccc.kernel.group_bridge.pairing import (
             approve_pairing_request,
             create_pairing_invite,
             create_pairing_request,
@@ -313,7 +313,7 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
             trust = list_trusts(group_id=group.group_id)[0]
             admin = create_access_token("admin", is_admin=True)["token"]
             updated = client.post(
-                f"/api/federation/pairing/trusts/{trust['trust_id']}/access",
+                f"/api/group-bridge/pairing/trusts/{trust['trust_id']}/access",
                 headers={"Authorization": f"Bearer {admin}"},
                 json={"access_level": "read", "updated_by": "user-a"},
             )

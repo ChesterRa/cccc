@@ -6,8 +6,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from uuid import uuid4
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ..federation.ops import handle_remote_send
-from ..federation.route_lookup import resolve_remote_group_route
+from ..group_bridge.ops import handle_remote_send
+from ..group_bridge.route_lookup import resolve_remote_group_route
 from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
 from ...kernel.ledger_retention import compact as compact_ledger

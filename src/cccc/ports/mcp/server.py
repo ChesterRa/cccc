@@ -77,8 +77,8 @@ from .handlers.cccc_messaging import (  # noqa: F401
     message_send,
     tracked_send,
 )
-from .handlers.cccc_federation import (  # noqa: F401
-    federation_identity,
+from .handlers.cccc_group_bridge import (  # noqa: F401
+    group_bridge_identity,
     pairing_approve,
     pairing_invite_create,
     pairing_reject,
@@ -572,8 +572,8 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         return remote_write_stdin(group_id=gid, arguments=arguments)
 
-    if name == "cccc_federation_identity":
-        return federation_identity()
+    if name == "cccc_group_bridge_identity":
+        return group_bridge_identity()
 
     if name == "cccc_pairing_invite_create":
         gid = _resolve_group_id(arguments)

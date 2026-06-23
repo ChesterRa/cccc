@@ -1,5 +1,5 @@
 import type { Actor, GroupMeta } from "../../types";
-import type { FederationTrust } from "../../services/api/federation";
+import type { GroupBridgeTrust } from "../../services/api/groupBridge";
 
 export type ComposerMentionKind = "agent" | "group";
 
@@ -70,14 +70,14 @@ function buildGroupMentionSuggestions(groups: GroupMeta[], needle: string): Comp
       const title = String(group.title || "").trim();
       const topic = String(group.topic || "").trim();
       const label = getGroupRouteDisplayName(group);
-      const remoteEndpoint = String(group.federation_remote_endpoint || "").trim();
-      const remotePeerId = String(group.federation_remote_peer_id || "").trim();
+      const remoteEndpoint = String(group.group_bridge_remote_endpoint || "").trim();
+      const remotePeerId = String(group.group_bridge_remote_peer_id || "").trim();
       return {
         kind: "group" as const,
         value: groupId,
         label,
-        description: group.federation_remote ? groupId : (remoteEndpoint || topic || undefined),
-        meta: group.federation_remote ? (remotePeerId || undefined) : (label !== groupId ? groupId : undefined),
+        description: group.group_bridge_remote ? groupId : (remoteEndpoint || topic || undefined),
+        meta: group.group_bridge_remote ? (remotePeerId || undefined) : (label !== groupId ? groupId : undefined),
         keywords: [groupId, title, topic, remoteEndpoint, remotePeerId].filter(Boolean),
       };
     })
@@ -94,7 +94,7 @@ function endpointDisplayName(endpoint: string): string {
   }
 }
 
-export function buildFederationRouteGroups(trusts: FederationTrust[] | undefined | null): GroupMeta[] {
+export function buildGroupBridgeRouteGroups(trusts: GroupBridgeTrust[] | undefined | null): GroupMeta[] {
   const out: GroupMeta[] = [];
   for (const trust of trusts || []) {
     if (String(trust.status || "").trim() !== "active") continue;
@@ -108,24 +108,24 @@ export function buildFederationRouteGroups(trusts: FederationTrust[] | undefined
       group_id: groupId,
       title: title || endpointName || "Remote CCCC group",
       topic: groupId,
-      federation_remote: true,
-      federation_local_group_id: String(trust.group_id || "").trim(),
-      federation_remote_endpoint: endpoint,
-      federation_remote_peer_id: peerId,
-      federation_trust_id: String(trust.trust_id || "").trim(),
-      federation_registration_id: String(trust.registration_id || "").trim(),
+      group_bridge_remote: true,
+      group_bridge_local_group_id: String(trust.group_id || "").trim(),
+      group_bridge_remote_endpoint: endpoint,
+      group_bridge_remote_peer_id: peerId,
+      group_bridge_trust_id: String(trust.trust_id || "").trim(),
+      group_bridge_registration_id: String(trust.registration_id || "").trim(),
     });
   }
   return out;
 }
 
-export function mergeComposerRouteGroups(localGroups: GroupMeta[], federationGroups: GroupMeta[]): GroupMeta[] {
+export function mergeComposerRouteGroups(localGroups: GroupMeta[], group_bridgeGroups: GroupMeta[]): GroupMeta[] {
   const byId = new Map<string, GroupMeta>();
   for (const group of localGroups || []) {
     const groupId = String(group.group_id || "").trim();
     if (groupId) byId.set(groupId, group);
   }
-  for (const group of federationGroups || []) {
+  for (const group of group_bridgeGroups || []) {
     const groupId = String(group.group_id || "").trim();
     if (groupId && !byId.has(groupId)) byId.set(groupId, group);
   }

@@ -269,7 +269,7 @@ export function ChatTab({
   });
 
   const remoteRouteGroups = useMemo(
-    () => composerRouteGroups.filter((group) => group.federation_remote),
+    () => composerRouteGroups.filter((group) => group.group_bridge_remote),
     [composerRouteGroups],
   );
   const messageGroupLabelById = useMemo(() => {

@@ -35,7 +35,7 @@ def _presentation_slot_label(slot_id: str, label: str) -> str:
     return slot_id or "Presentation"
 
 
-def render_federation_route_ref(ref: dict[str, Any]) -> list[str]:
+def render_group_bridge_route_ref(ref: dict[str, Any]) -> list[str]:
     remote_group_id = compact_delivery_text(ref.get("remote_group_id"), limit=48)
     if not remote_group_id:
         return []
@@ -46,7 +46,7 @@ def render_federation_route_ref(ref: dict[str, Any]) -> list[str]:
     token = compact_delivery_text(ref.get("token"), limit=72)
     label = remote_group_title or token or remote_group_id
 
-    lines = [f"- Federation route {label} (remote_group_id={remote_group_id})"]
+    lines = [f"- Group Bridge route {label} (remote_group_id={remote_group_id})"]
     if remote_endpoint:
         lines.append(f"  endpoint: {remote_endpoint}")
     if remote_peer_id:
@@ -139,8 +139,8 @@ def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
                 break
             continue
 
-        if kind == "federation_route":
-            route_lines = render_federation_route_ref(ref)
+        if kind == "group_bridge_route":
+            route_lines = render_group_bridge_route_ref(ref)
             if route_lines:
                 lines.extend(route_lines)
                 rendered += 1

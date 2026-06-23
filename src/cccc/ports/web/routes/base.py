@@ -23,8 +23,8 @@ from ....kernel.web_model_connectors import (
     revoke_web_model_connector,
     verify_web_model_connector_secret,
 )
-from ....kernel.federation.credentials import lookup_pairing_remote_send_credential
-from ....kernel.federation.pairing import active_trust_for_remote_send_credential
+from ....kernel.group_bridge.credentials import lookup_pairing_remote_send_credential
+from ....kernel.group_bridge.pairing import active_trust_for_remote_send_credential
 from ....daemon.actors.web_model_actor_policy import require_no_other_chatgpt_web_model_actor
 from ....daemon.runner_state_ops import headless_state_running
 from ....util.conv import coerce_bool

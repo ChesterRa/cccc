@@ -32,10 +32,10 @@ from ...kernel.messaging import (
 from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
 from ...util.time import utc_now_iso
-from ..federation.reply_relay import (
-    can_relay_federation_reply,
-    default_federation_reply_recipients,
-    relay_federation_reply,
+from ..group_bridge.reply_relay import (
+    can_relay_group_bridge_reply,
+    default_group_bridge_reply_recipients,
+    relay_group_bridge_reply,
 )
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -338,9 +338,9 @@ def handle_send(
         return diag.finish_response(resp)
     if source_multiaddrs and src_group_id and source_user_id:
         try:
-            from ..federation.peer_address_sync import sync_federation_peer_multiaddrs
+            from ..group_bridge.peer_address_sync import sync_group_bridge_peer_multiaddrs
 
-            sync_federation_peer_multiaddrs(
+            sync_group_bridge_peer_multiaddrs(
                 group_id=group.group_id,
                 remote_group_id=src_group_id,
                 remote_peer_id=source_user_id,
@@ -348,7 +348,7 @@ def handle_send(
             )
         except Exception:
             logger.exception(
-                "[federation] failed to sync source multiaddrs group=%s remote_group=%s peer=%s",
+                "[group_bridge] failed to sync source multiaddrs group=%s remote_group=%s peer=%s",
                 group.group_id,
                 src_group_id,
                 source_user_id,
@@ -819,12 +819,12 @@ def handle_reply(
         if isinstance(original_mention_user_ids_raw, list)
         else []
     )
-    relayable_federation_reply = can_relay_federation_reply(group_id=group.group_id, original_data=original_data)
-    federation_reply_to = default_federation_reply_recipients(original_data) if relayable_federation_reply else []
+    relayable_group_bridge_reply = can_relay_group_bridge_reply(group_id=group.group_id, original_data=original_data)
+    group_bridge_reply_to = default_group_bridge_reply_recipients(original_data) if relayable_group_bridge_reply else []
 
     if not to_tokens:
-        if relayable_federation_reply:
-            if federation_reply_to:
+        if relayable_group_bridge_reply:
+            if group_bridge_reply_to:
                 # Keep the local reply visible to the human operator; the relay
                 # uses the preserved remote target stored on the original event.
                 to_tokens = ["user"]
@@ -832,7 +832,7 @@ def handle_reply(
                 return diag.finish_response(
                     _error(
                         "missing_remote_recipient",
-                        "Federation replies require an explicit recipient. Please pass to=['user'], to=['@foreman'], or another recipient.",
+                        "Group Bridge replies require an explicit recipient. Please pass to=['user'], to=['@foreman'], or another recipient.",
                     )
                 )
         else:
@@ -852,7 +852,7 @@ def handle_reply(
         woken = auto_wake_recipients(group, to, by)
         diag.mark("auto_wake")
         if not matched_enabled:
-            if not woken and not relayable_federation_reply:
+            if not woken and not relayable_group_bridge_reply:
                 wanted = " ".join(to) if to else "@all"
                 return diag.finish_response(
                     _error(
@@ -901,7 +901,7 @@ def handle_reply(
         ).model_dump(),
     )
     diag.mark("append_event")
-    federation_reply_result = relay_federation_reply(
+    group_bridge_reply_result = relay_group_bridge_reply(
         group_id=group.group_id,
         original_data=original_data,
         reply_event_id=str(event.get("id") or ""),
@@ -913,7 +913,7 @@ def handle_reply(
         refs=refs,
         to_was_explicit=to_explicitly_set,
     )
-    diag.mark("federation_reply")
+    diag.mark("group_bridge_reply")
 
     ack_event: Optional[dict[str, Any]] = None
     try:
@@ -970,9 +970,9 @@ def handle_reply(
     diag.mark("schedule_side_effects")
 
     result: Dict[str, Any] = {"event": event, "ack_event": ack_event}
-    if federation_reply_result is not None:
-        result["federation_reply"] = federation_reply_result.result if federation_reply_result.ok else {
-            "error": federation_reply_result.error.model_dump() if federation_reply_result.error is not None else None
+    if group_bridge_reply_result is not None:
+        result["group_bridge_reply"] = group_bridge_reply_result.result if group_bridge_reply_result.ok else {
+            "error": group_bridge_reply_result.error.model_dump() if group_bridge_reply_result.error is not None else None
         }
     return diag.finish_response(DaemonResponse(ok=True, result=result))
 

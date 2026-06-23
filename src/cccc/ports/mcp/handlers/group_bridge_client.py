@@ -8,8 +8,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from ....kernel.federation import pairing as pairing_kernel
-from ....kernel.federation.registration import get_registration
+from ....kernel.group_bridge import pairing as pairing_kernel
+from ....kernel.group_bridge.registration import get_registration
 from ..common import MCPError
 
 _REMOTE_MCP_TIMEOUT_SECONDS = 8.0

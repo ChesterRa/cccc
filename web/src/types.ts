@@ -15,13 +15,13 @@ export type GroupMeta = {
   group_id: string;
   title?: string;
   topic?: string;
-  federation_remote?: boolean;
-  federation_local_group_id?: string;
-  federation_remote_endpoint?: string;
-  federation_remote_peer_id?: string;
-  federation_trust_id?: string;
-  federation_registration_id?: string;
-  federation_access_level?: string;
+  group_bridge_remote?: boolean;
+  group_bridge_local_group_id?: string;
+  group_bridge_remote_endpoint?: string;
+  group_bridge_remote_peer_id?: string;
+  group_bridge_trust_id?: string;
+  group_bridge_registration_id?: string;
+  group_bridge_access_level?: string;
   updated_at?: string;
   created_at?: string;
   running?: boolean;
@@ -104,8 +104,8 @@ export type TaskMessageRef = MessageRef & {
   handoff_to?: string | null;
 };
 
-export type FederationRouteMessageRef = MessageRef & {
-  kind: "federation_route";
+export type GroupBridgeRouteMessageRef = MessageRef & {
+  kind: "group_bridge_route";
   local_group_id?: string;
   remote_group_id: string;
   remote_group_title?: string;

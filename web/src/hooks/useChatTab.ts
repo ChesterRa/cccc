@@ -40,20 +40,20 @@ import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "./composerGroupMentions";
 import {
-  buildComposerFederationRouteRefs,
+  buildComposerGroupBridgeRouteRefs,
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
 } from "./composerGroupMentions";
 import { buildComposerSendPlanTargets } from "./composerSendPlan";
 import {
   buildComposerMentionSuggestions,
-  buildFederationRouteGroups,
+  buildGroupBridgeRouteGroups,
   mergeComposerRouteGroups,
   type ComposerMentionKind,
 } from "../pages/chat/chatMentionSuggestions";
-import type { FederationTrust } from "../services/api/federation";
+import type { GroupBridgeTrust } from "../services/api/groupBridge";
 import { isDelegationSourceOutboundEvent } from "../components/messageBubbleDelegation";
-import { subscribeFederationPairingChanged } from "../utils/federationPairingEvents";
+import { subscribeGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
 import { canOpenSourceMessageLocally } from "./chatSourceNavigation";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
@@ -895,7 +895,7 @@ export function useChatTab({
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
   const [forceStickToBottomToken, setForceStickToBottomToken] = useState(0);
-  const [federationTrusts, setFederationTrusts] = useState<FederationTrust[]>([]);
+  const [group_bridgeTrusts, setGroupBridgeTrusts] = useState<GroupBridgeTrust[]>([]);
   const [selectedRemoteGroupIds, setSelectedRemoteGroupIds] = useState<string[]>([]);
   // ============ Stores ============
   const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
@@ -1056,31 +1056,31 @@ export function useChatTab({
     });
   }, [crossGroupValidRecipientSet, sendGroupId, selectedGroupId, toText, validRecipientSet]);
 
-  const refreshFederationTrusts = useCallback(() => {
+  const refreshGroupBridgeTrusts = useCallback(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) {
-      setFederationTrusts([]);
+      setGroupBridgeTrusts([]);
       return;
     }
     let cancelled = false;
-    void api.fetchFederationTrusts(buildComposerTrustFetchGroupId(gid)).then((resp) => {
+    void api.fetchGroupBridgeTrusts(buildComposerTrustFetchGroupId(gid)).then((resp) => {
       if (cancelled) return;
-      setFederationTrusts(resp.ok ? (resp.result.trusts || []) : []);
+      setGroupBridgeTrusts(resp.ok ? (resp.result.trusts || []) : []);
     });
     return () => {
       cancelled = true;
     };
   }, [selectedGroupId]);
 
-  useEffect(() => refreshFederationTrusts(), [refreshFederationTrusts]);
+  useEffect(() => refreshGroupBridgeTrusts(), [refreshGroupBridgeTrusts]);
 
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
-    return subscribeFederationPairingChanged(gid, refreshFederationTrusts);
-  }, [refreshFederationTrusts, selectedGroupId]);
+    return subscribeGroupBridgePairingChanged(gid, refreshGroupBridgeTrusts);
+  }, [refreshGroupBridgeTrusts, selectedGroupId]);
 
-  const remoteRouteGroups = useMemo(() => buildFederationRouteGroups(federationTrusts), [federationTrusts]);
+  const remoteRouteGroups = useMemo(() => buildGroupBridgeRouteGroups(group_bridgeTrusts), [group_bridgeTrusts]);
 
   const composerRouteGroups: GroupMeta[] = useMemo(() => (
     mergeComposerRouteGroups(groups, remoteRouteGroups)
@@ -1504,7 +1504,7 @@ export function useChatTab({
     const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
     const refsSnapshot: MessageRef[] = [
       ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
-      ...buildComposerFederationRouteRefs({
+      ...buildComposerGroupBridgeRouteRefs({
         text: composerStateSnapshot.composerText,
         tokens: composerGroupMentionTokens,
         groups: composerRouteGroups,

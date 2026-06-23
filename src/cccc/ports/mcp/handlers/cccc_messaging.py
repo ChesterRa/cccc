@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ....daemon.federation.route_lookup import resolve_remote_group_route
+from ....daemon.group_bridge.route_lookup import resolve_remote_group_route
 from ....kernel.actors import find_actor
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
@@ -107,13 +107,13 @@ def message_send(
             )
         if has_hash_recipient_token(normalize_recipient_tokens(to)):
             raise MCPError(code="invalid_recipient_syntax", message=CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
-        federation_route = resolve_remote_group_route(group_id=group_id, remote_group_id=dst_gid)
-        if federation_route is not None:
+        group_bridge_route = resolve_remote_group_route(group_id=group_id, remote_group_id=dst_gid)
+        if group_bridge_route is not None:
             remote_to = normalize_recipient_tokens(to)
             if not remote_to:
                 raise MCPError(
                     code="missing_remote_recipient",
-                    message="remote messages require explicit to across federation; use '@foreman', '@all', or a target actor",
+                    message="remote messages require explicit to across Group Bridge; use '@foreman', '@all', or a target actor",
                 )
             return _call_daemon_or_raise(
                 {
@@ -121,7 +121,7 @@ def message_send(
                     "args": {
                         "group_id": group_id,
                         "by": actor_id,
-                        "registration_id": federation_route.registration_id,
+                        "registration_id": group_bridge_route.registration_id,
                         "idempotency_key": _remote_message_idempotency_key(idempotency_key),
                         "payload": {
                             "text": text,

@@ -7,7 +7,7 @@ describe("canOpenSourceMessageLocally", () => {
   it("allows source navigation only for local groups", () => {
     const groups: GroupMeta[] = [
       { group_id: "g_local", title: "Local" },
-      { group_id: "g_remote", title: "Remote", federation_remote: true },
+      { group_id: "g_remote", title: "Remote", group_bridge_remote: true },
     ];
 
     expect(canOpenSourceMessageLocally(groups, "g_local")).toBe(true);

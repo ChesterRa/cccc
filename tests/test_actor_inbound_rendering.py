@@ -1,5 +1,5 @@
 from cccc.daemon.messaging.chat_ops import _build_headless_delivery_text
-from cccc.daemon.messaging.actor_turn_rendering import build_actor_delivery_text, render_federation_route_ref
+from cccc.daemon.messaging.actor_turn_rendering import build_actor_delivery_text, render_group_bridge_route_ref
 from cccc.daemon.messaging.delivery import PendingMessage, render_single_message
 from cccc.daemon.messaging.inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 
@@ -119,7 +119,7 @@ def test_actor_delivery_text_points_attachments_to_file_read_tools() -> None:
     assert "- notes.txt (12 bytes) [state/blobs/sha256_notes.txt]" in text
 
 
-def test_actor_delivery_text_renders_federation_route_refs() -> None:
+def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
     text = build_actor_delivery_text(
         text="please send to #Remote Product",
         priority="normal",
@@ -127,7 +127,7 @@ def test_actor_delivery_text_renders_federation_route_refs() -> None:
         event_id="evt-1",
         refs=[
             {
-                "kind": "federation_route",
+                "kind": "group_bridge_route",
                 "remote_group_id": "g_remote",
                 "remote_group_title": "Remote Product",
                 "remote_endpoint": "https://remote.example",
@@ -139,11 +139,11 @@ def test_actor_delivery_text_renders_federation_route_refs() -> None:
         attachments=[],
     )
 
-    assert "- Federation route Remote Product (remote_group_id=g_remote)" in text
+    assert "- Group Bridge route Remote Product (remote_group_id=g_remote)" in text
     assert "endpoint: https://remote.example" in text
     assert "peer_id: peer_remote" in text
     assert "trust_id: ptrust_1" in text
 
 
-def test_federation_route_ref_renderer_ignores_refs_without_group_id() -> None:
-    assert render_federation_route_ref({"kind": "federation_route", "remote_group_title": "Remote"}) == []
+def test_group_bridge_route_ref_renderer_ignores_refs_without_group_id() -> None:
+    assert render_group_bridge_route_ref({"kind": "group_bridge_route", "remote_group_title": "Remote"}) == []

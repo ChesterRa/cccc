@@ -49,8 +49,8 @@ describe("buildComposerSendPlanTargets", () => {
       groupMentionTokens: [],
       groups: [
         ...groups,
-        { group_id: "g_remote_a", title: "Remote A", federation_remote: true },
-        { group_id: "g_remote_b", title: "Remote B", federation_remote: true },
+        { group_id: "g_remote_a", title: "Remote A", group_bridge_remote: true },
+        { group_id: "g_remote_b", title: "Remote B", group_bridge_remote: true },
       ] as GroupMeta[],
       remoteGroupIds: ["g_remote_a", "g_remote_b"],
     })).toEqual([
@@ -68,7 +68,7 @@ describe("buildComposerSendPlanTargets", () => {
       groupMentionTokens: [],
       groups: [
         ...groups,
-        { group_id: "g_remote_a", title: "Remote A", federation_remote: true },
+        { group_id: "g_remote_a", title: "Remote A", group_bridge_remote: true },
       ] as GroupMeta[],
       remoteGroupIds: ["g_remote_a"],
       includeSelectedGroup: true,

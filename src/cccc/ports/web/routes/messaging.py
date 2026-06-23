@@ -6,7 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ....daemon.federation.route_lookup import resolve_remote_group_route
+from ....daemon.group_bridge.route_lookup import resolve_remote_group_route
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ..schemas import (
@@ -379,7 +379,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         from ....kernel.actors import resolve_recipient_tokens
         from ....kernel.inbox import find_event
         from ....kernel.messaging import default_reply_recipients
-        from ....daemon.federation.reply_relay import can_relay_federation_reply, default_federation_reply_recipients
+        from ....daemon.group_bridge.reply_relay import can_relay_group_bridge_reply, default_group_bridge_reply_recipients
 
         original = find_event(group, reply_to_id)
         if original is None:
@@ -395,15 +395,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         if not canonical_to and not to_list:
             try:
-                relayable_federation_reply = can_relay_federation_reply(group_id=group.group_id, original_data=original_data)
-                if relayable_federation_reply:
-                    federation_reply_to = default_federation_reply_recipients(original_data)
-                    if not federation_reply_to:
+                relayable_group_bridge_reply = can_relay_group_bridge_reply(group_id=group.group_id, original_data=original_data)
+                if relayable_group_bridge_reply:
+                    group_bridge_reply_to = default_group_bridge_reply_recipients(original_data)
+                    if not group_bridge_reply_to:
                         raise HTTPException(
                             status_code=400,
                             detail={
                                 "code": "missing_remote_recipient",
-                                "message": "Federation replies require an explicit recipient.",
+                                "message": "Group Bridge replies require an explicit recipient.",
                             },
                         )
                     canonical_to = resolve_recipient_tokens(group, ["user"])

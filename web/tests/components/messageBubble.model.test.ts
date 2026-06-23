@@ -39,12 +39,12 @@ describe("messageBubble model", () => {
     } as any)).toBe("架构设计专家");
   });
 
-  it("uses federation source name instead of peer id for remote messages", () => {
+  it("uses Group Bridge source name instead of peer id for remote messages", () => {
     expect(getSenderDisplayName({
-      senderId: "federation:12D3KooWAXEk8Zw3BMLku6AGNrctVsC9beZsAAEttE798N5HYf1a",
+      senderId: "group_bridge:12D3KooWAXEk8Zw3BMLku6AGNrctVsC9beZsAAEttE798N5HYf1a",
       senderActor: null,
       senderTitle: "",
-      federationSourceName: "CCCC Cross Test",
+      group_bridgeSourceName: "CCCC Cross Test",
       displayNameMap: new Map(),
     })).toBe("CCCC Cross Test");
   });

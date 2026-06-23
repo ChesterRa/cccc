@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildComposerMentionSuggestions,
-  buildFederationRouteGroups,
+  buildGroupBridgeRouteGroups,
   getComposerGroupMentionInsertToken,
   extractSegmentTargetActor,
   getComposerGroupRouteDestination,
@@ -132,8 +132,8 @@ describe("buildComposerMentionSuggestions", () => {
     ]);
   });
 
-  it("builds group suggestions for trusted remote federation groups", () => {
-    const remoteGroups = buildFederationRouteGroups([
+  it("builds group suggestions for trusted remote group_bridge groups", () => {
+    const remoteGroups = buildGroupBridgeRouteGroups([
       {
         trust_id: "ptrust_1",
         status: "active",
@@ -146,7 +146,7 @@ describe("buildComposerMentionSuggestions", () => {
       },
     ]);
 
-    expect(remoteGroups[0]?.federation_access_level).toBeUndefined();
+    expect(remoteGroups[0]?.group_bridge_access_level).toBeUndefined();
 
     const items = buildComposerMentionSuggestions({
       kind: "group",
@@ -166,14 +166,14 @@ describe("buildComposerMentionSuggestions", () => {
     ]);
   });
 
-  it("builds group suggestions for active federation session routes", () => {
-    const remoteGroups = buildFederationRouteGroups([
+  it("builds group suggestions for active Group Bridge session routes", () => {
+    const remoteGroups = buildGroupBridgeRouteGroups([
       {
         trust_id: "ptrust_9263feebd4920ad3",
         request_id: "preq_1",
         registration_id: "reg_81761c7e6e309356",
         status: "active",
-        transport: "federation_session",
+        transport: "group_bridge_session",
         group_id: "g_owner",
         remote_group_id: "g_0fb5f39478cc",
         remote_group_title: "CCCC Cross Test",
@@ -201,8 +201,8 @@ describe("buildComposerMentionSuggestions", () => {
     ]);
   });
 
-  it("excludes revoked federation routes from # suggestions", () => {
-    const remoteGroups = buildFederationRouteGroups([
+  it("excludes revoked Group Bridge routes from # suggestions", () => {
+    const remoteGroups = buildGroupBridgeRouteGroups([
       {
         trust_id: "ptrust_revoked",
         status: "revoked",
@@ -226,7 +226,7 @@ describe("buildComposerMentionSuggestions", () => {
   });
 
   it("does not use opaque remote group ids as the primary # suggestion label", () => {
-    const remoteGroups = buildFederationRouteGroups([
+    const remoteGroups = buildGroupBridgeRouteGroups([
       {
         trust_id: "ptrust_1",
         status: "active",
@@ -250,8 +250,8 @@ describe("buildComposerMentionSuggestions", () => {
     }));
   });
 
-  it("inserts the readable remote group label for federation # suggestions", () => {
-    const [remoteGroup] = buildFederationRouteGroups([
+  it("inserts the readable remote group label for Group Bridge # suggestions", () => {
+    const [remoteGroup] = buildGroupBridgeRouteGroups([
       {
         trust_id: "ptrust_1",
         status: "active",

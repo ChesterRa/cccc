@@ -77,8 +77,8 @@ class TestWebManifestStatic(unittest.TestCase):
         text = "\n".join(bundle.read_text(encoding="utf-8") for bundle in bundles)
 
         self.assertIn("issuer_endpoint", text)
-        self.assertIn("federation_session", text)
-        self.assertIn("/api/federation/pairing/remote-requests", text)
+        self.assertIn("group_bridge_session", text)
+        self.assertIn("/api/group-bridge/pairing/remote-requests", text)
         self.assertNotIn("cccc.libp2p.connection_info", text)
         self.assertNotIn("libp2p_cccc", text)
 

@@ -4,7 +4,7 @@
 import { useEffect, useRef } from "react";
 import * as api from "../services/api";
 import { publishCapabilityChanged } from "../utils/capabilityEvents";
-import { publishFederationPairingChanged } from "../utils/federationPairingEvents";
+import { publishGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
 
 const GLOBAL_REFRESH_EVENT_KINDS = new Set([
   "group.created",
@@ -29,22 +29,22 @@ const CAPABILITY_REFRESH_EVENT_KINDS = new Set([
   "capability.changed",
 ]);
 
-const FEDERATION_PAIRING_EVENT_KINDS = new Set([
-  "federation.pairing.invite_created",
-  "federation.pairing.request_created",
-  "federation.pairing.request_approved",
-  "federation.pairing.request_rejected",
-  "federation.pairing.trust_access_updated",
-  "federation.pairing.trust_revoked",
-  "federation.pairing.outbound_changed",
-  "federation.pairing.outbound_approved",
+const GROUP_BRIDGE_PAIRING_EVENT_KINDS = new Set([
+  "group_bridge.pairing.invite_created",
+  "group_bridge.pairing.request_created",
+  "group_bridge.pairing.request_approved",
+  "group_bridge.pairing.request_rejected",
+  "group_bridge.pairing.trust_access_updated",
+  "group_bridge.pairing.trust_revoked",
+  "group_bridge.pairing.outbound_changed",
+  "group_bridge.pairing.outbound_approved",
 ]);
 
 export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: boolean): boolean {
   return true;
 }
 
-export function shouldRefreshFederationPairingAfterGlobalEventsOpen(_hasConnectedOnce: boolean): boolean {
+export function shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(_hasConnectedOnce: boolean): boolean {
   return true;
 }
 
@@ -79,10 +79,10 @@ export function shouldRefreshCapabilitiesAfterGlobalEvent(ev: unknown, selectedG
   return getGlobalEventGroupId(ev) === selected;
 }
 
-export function shouldRefreshFederationPairingAfterGlobalEvent(ev: unknown, selectedGroupId: string): boolean {
+export function shouldRefreshGroupBridgePairingAfterGlobalEvent(ev: unknown, selectedGroupId: string): boolean {
   if (!ev || typeof ev !== "object") return false;
   const kind = String((ev as { kind?: unknown }).kind || "").trim();
-  if (!FEDERATION_PAIRING_EVENT_KINDS.has(kind)) return false;
+  if (!GROUP_BRIDGE_PAIRING_EVENT_KINDS.has(kind)) return false;
   const selected = String(selectedGroupId || "").trim();
   if (!selected) return false;
   return getGlobalEventGroupId(ev) === selected;
@@ -165,10 +165,10 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId,
       publishCapabilityChanged(gid);
     }
 
-    function refreshSelectedFederationPairing() {
+    function refreshSelectedGroupBridgePairing() {
       const gid = String(selectedGroupIdRef.current || "").trim();
       if (!gid) return;
-      publishFederationPairingChanged(gid);
+      publishGroupBridgePairingChanged(gid);
     }
 
     function scheduleFallbackPoll() {
@@ -209,8 +209,8 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId,
           if (shouldRefreshCapabilitiesAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
             refreshSelectedCapabilities();
           }
-          if (shouldRefreshFederationPairingAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
-            refreshSelectedFederationPairing();
+          if (shouldRefreshGroupBridgePairingAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
+            refreshSelectedGroupBridgePairing();
           }
         } catch {
           /* ignore parse errors */
@@ -218,7 +218,7 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId,
       });
       es.onopen = () => {
         const shouldRefresh = shouldRefreshGroupsAfterGlobalEventsOpen(hasConnectedOnceRef.current);
-        const shouldRefreshFederationPairing = shouldRefreshFederationPairingAfterGlobalEventsOpen(hasConnectedOnceRef.current);
+        const shouldRefreshGroupBridgePairing = shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(hasConnectedOnceRef.current);
         errorCount = 0; // Reset on successful connection
         fallbackDelayMs = 10000;
         clearFallbackTimer();
@@ -229,8 +229,8 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId,
           invalidateAndRefreshGroups();
           refreshSelectedActors();
         }
-        if (shouldRefreshFederationPairing) {
-          refreshSelectedFederationPairing();
+        if (shouldRefreshGroupBridgePairing) {
+          refreshSelectedGroupBridgePairing();
         }
       };
       es.onerror = () => {

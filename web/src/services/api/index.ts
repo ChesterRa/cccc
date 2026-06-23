@@ -10,4 +10,4 @@ export * from "./webAccess";
 export * from "./webModel";
 export * from "./groupSpace";
 export * from "./diagnostics";
-export * from "./federation";
+export * from "./groupBridge";

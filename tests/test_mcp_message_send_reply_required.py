@@ -137,8 +137,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("dst_group_id"), "g_selected")
         self.assertEqual(args.get("to"), ["@foreman"])
 
-    def test_message_send_routes_federation_remote_destination_to_remote_send(self) -> None:
-        from cccc.kernel.federation import pairing as pairing_kernel
+    def test_message_send_routes_group_bridge_remote_destination_to_remote_send(self) -> None:
+        from cccc.kernel.group_bridge import pairing as pairing_kernel
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
 
@@ -151,7 +151,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, \
              _isolated_runtime_context(), \
              patch.dict(os.environ, _CLEAN_ENV, clear=False), \
-             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch("cccc.kernel.group_bridge.pairing.ensure_home", return_value=Path(td)), \
              patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
             request = pairing_kernel.create_pairing_request(
                 pairing_kernel.create_pairing_invite(group_id="g_runtime")["pairing_code"],
@@ -191,15 +191,15 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(payload.get("reply_required"), True)
         self.assertEqual(payload.get("refs"), [{"kind": "note", "id": "ref-1"}])
 
-    def test_message_send_requires_explicit_recipient_for_federation_remote_destination(self) -> None:
-        from cccc.kernel.federation import pairing as pairing_kernel
+    def test_message_send_requires_explicit_recipient_for_group_bridge_remote_destination(self) -> None:
+        from cccc.kernel.group_bridge import pairing as pairing_kernel
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
 
         with tempfile.TemporaryDirectory() as td, \
              _isolated_runtime_context(), \
              patch.dict(os.environ, _CLEAN_ENV, clear=False), \
-             patch("cccc.kernel.federation.pairing.ensure_home", return_value=Path(td)), \
+             patch("cccc.kernel.group_bridge.pairing.ensure_home", return_value=Path(td)), \
              patch.object(mcp_common, "call_daemon") as call_daemon:
             request = pairing_kernel.create_pairing_request(
                 pairing_kernel.create_pairing_invite(group_id="g_runtime")["pairing_code"],

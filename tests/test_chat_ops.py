@@ -220,12 +220,12 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_federation_session_message_relays_over_remote_send(self) -> None:
+    def test_reply_to_group_bridge_session_message_relays_over_remote_send(self) -> None:
         _, cleanup = self._with_home()
         try:
-            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group_bridge.pairing import _save_store
 
-            create, _ = self._call("group_create", {"title": "chat-federation-reply", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-group_bridge-reply", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -242,7 +242,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_old",
                             "registration_id": "reg_old",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://old.example:8848",
                             "status": "active",
                             "created_at": "2025-01-01T00:00:00Z",
@@ -254,7 +254,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -275,11 +275,11 @@ class TestChatOps(unittest.TestCase):
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
                     text="hello from remote",
                     to=["@foreman"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                 ).model_dump(),
@@ -293,14 +293,14 @@ class TestChatOps(unittest.TestCase):
 
                 return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
 
-            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+            with patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=fake_remote_send):
                 reply, _ = self._call(
                     "reply",
                     {
                         "group_id": group_id,
                         "by": "peer1",
                         "reply_to": str(inbound_event.get("id") or ""),
-                        "text": "reply over federation",
+                        "text": "reply over group_bridge",
                         "to": ["user"],
                         "priority": "attention",
                     },
@@ -315,7 +315,7 @@ class TestChatOps(unittest.TestCase):
             self.assertEqual(
                 captured[0]["payload"],
                 {
-                    "text": "reply over federation",
+                    "text": "reply over group_bridge",
                     "to": ["user"],
                     "priority": "attention",
                     "reply_required": False,
@@ -325,15 +325,15 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_federation_session_message_from_remote_user_defaults_to_remote_user(self) -> None:
+    def test_reply_to_group_bridge_session_message_from_remote_user_defaults_to_remote_user(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
-            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group_bridge.pairing import _save_store
             from cccc.kernel.group import load_group
             from cccc.kernel.ledger import append_event
 
-            create, _ = self._call("group_create", {"title": "chat-federation-reply-user", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-group_bridge-reply-user", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -350,7 +350,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -367,11 +367,11 @@ class TestChatOps(unittest.TestCase):
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
                     text="hello from remote user",
                     to=["@foreman"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                     src_event_id="remote-event-1",
@@ -388,7 +388,7 @@ class TestChatOps(unittest.TestCase):
 
                 return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
 
-            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+            with patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=fake_remote_send):
                 reply, _ = self._call(
                     "reply",
                     {
@@ -410,15 +410,15 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_federation_session_message_relays_before_local_self_recipient_rejection(self) -> None:
+    def test_reply_to_group_bridge_session_message_relays_before_local_self_recipient_rejection(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
-            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group_bridge.pairing import _save_store
             from cccc.kernel.group import load_group
             from cccc.kernel.ledger import append_event
 
-            create, _ = self._call("group_create", {"title": "chat-federation-single-actor", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-group_bridge-single-actor", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -449,7 +449,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -466,11 +466,11 @@ class TestChatOps(unittest.TestCase):
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
                     text="hello from remote foreman",
                     to=["codex-1"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                 ).model_dump(),
@@ -489,7 +489,7 @@ class TestChatOps(unittest.TestCase):
                 deliveries.append(dict(kwargs))
 
             with (
-                patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send),
+                patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=fake_remote_send),
                 patch("cccc.daemon.messaging.chat_ops.deliver_appended_chat_message", side_effect=capture_delivery),
             ):
                 reply, _ = self._call(
@@ -511,15 +511,15 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_federation_session_message_relays_over_remote_send_route(self) -> None:
+    def test_reply_to_group_bridge_session_message_relays_over_remote_send_route(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
-            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group_bridge.pairing import _save_store
             from cccc.kernel.group import load_group
             from cccc.kernel.ledger import append_event
 
-            create, _ = self._call("group_create", {"title": "chat-federation-session-reply", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-group-bridge-session-reply", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -536,7 +536,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_session",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -553,11 +553,11 @@ class TestChatOps(unittest.TestCase):
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
-                    text="hello via federation session",
+                    text="hello via Group Bridge session",
                     to=["@foreman"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                     src_event_id="remote-event-1",
@@ -572,14 +572,14 @@ class TestChatOps(unittest.TestCase):
 
                 return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
 
-            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+            with patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=fake_remote_send):
                 reply, _ = self._call(
                     "reply",
                     {
                         "group_id": group_id,
                         "by": "user",
                         "reply_to": str(inbound_event.get("id") or ""),
-                        "text": "reply via federation session",
+                        "text": "reply via Group Bridge session",
                         "to": ["@foreman"],
                     },
                 )
@@ -592,20 +592,20 @@ class TestChatOps(unittest.TestCase):
             self.assertNotEqual(captured[0]["idempotency_key"], captured[0].get("source_event_id"))
             self.assertTrue(str(captured[0].get("source_event_id") or "").strip())
             self.assertEqual(captured[0].get("reply_to_remote_event_id"), "remote-event-1")
-            self.assertEqual(captured[0]["payload"]["text"], "reply via federation session")
+            self.assertEqual(captured[0]["payload"]["text"], "reply via Group Bridge session")
         finally:
             cleanup()
 
-    def test_reply_to_federation_session_message_without_to_is_rejected(self) -> None:
+    def test_reply_to_group_bridge_session_message_without_to_is_rejected(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
-            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group_bridge.pairing import _save_store
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import iter_events
             from cccc.kernel.ledger import append_event
 
-            create, _ = self._call("group_create", {"title": "chat-federation-session-reply-no-local", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-group-bridge-session-reply-no-local", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -622,7 +622,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_session",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -639,11 +639,11 @@ class TestChatOps(unittest.TestCase):
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
-                    text="hello via federation session",
+                    text="hello via Group Bridge session",
                     to=["@foreman"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                     src_event_id="remote-event-1",
@@ -663,7 +663,7 @@ class TestChatOps(unittest.TestCase):
                 deliveries.append(dict(kwargs))
 
             with (
-                patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=fake_remote_send),
+                patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=fake_remote_send),
                 patch("cccc.daemon.messaging.chat_ops.deliver_appended_chat_message", side_effect=capture_delivery),
             ):
                 reply, _ = self._call(
@@ -672,7 +672,7 @@ class TestChatOps(unittest.TestCase):
                         "group_id": group_id,
                         "by": "user",
                         "reply_to": str(inbound_event.get("id") or ""),
-                        "text": "reply via federation session",
+                        "text": "reply via Group Bridge session",
                         "to": [],
                     },
                 )
@@ -687,15 +687,15 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_federation_reply_relay_exception_does_not_fail_local_reply(self) -> None:
+    def test_group_bridge_reply_relay_exception_does_not_fail_local_reply(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.contracts.v1.message import ChatMessageData
-            from cccc.kernel.federation.pairing import _save_store
+            from cccc.kernel.group_bridge.pairing import _save_store
             from cccc.kernel.group import load_group
             from cccc.kernel.ledger import append_event
 
-            create, _ = self._call("group_create", {"title": "chat-federation-reply-error", "topic": "", "by": "user"})
+            create, _ = self._call("group_create", {"title": "chat-group_bridge-reply-error", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -712,7 +712,7 @@ class TestChatOps(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -729,17 +729,17 @@ class TestChatOps(unittest.TestCase):
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
                     text="hello from remote",
                     to=["@foreman"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                 ).model_dump(),
             )
 
-            with patch("cccc.daemon.federation.reply_relay.handle_remote_send", side_effect=RuntimeError("relay boom")):
+            with patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=RuntimeError("relay boom")):
                 reply, _ = self._call(
                     "reply",
                     {
@@ -754,9 +754,9 @@ class TestChatOps(unittest.TestCase):
             self.assertTrue(reply.ok, getattr(reply, "error", None))
             result = reply.result or {}
             self.assertIn("event", result)
-            federation_reply = result.get("federation_reply")
-            self.assertIsInstance(federation_reply, dict)
-            self.assertEqual(federation_reply.get("error", {}).get("code"), "federation_reply_failed")
+            group_bridge_reply = result.get("group_bridge_reply")
+            self.assertIsInstance(group_bridge_reply, dict)
+            self.assertEqual(group_bridge_reply.get("error", {}).get("code"), "group_bridge_reply_failed")
         finally:
             cleanup()
 

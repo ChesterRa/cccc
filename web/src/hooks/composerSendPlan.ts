@@ -60,7 +60,7 @@ export function buildComposerSendPlanTargets({
     addTarget({
       groupId: dst,
       isCrossGroup: true,
-      isRemote: Boolean(group?.federation_remote),
+      isRemote: Boolean(group?.group_bridge_remote),
       source: "selected_group",
     });
     return targets;
@@ -77,7 +77,7 @@ export function buildComposerSendPlanTargets({
     addTarget({
       groupId: target.groupId,
       isCrossGroup: true,
-      isRemote: Boolean(group?.federation_remote),
+      isRemote: Boolean(group?.group_bridge_remote),
       source: "group_mention",
     });
   }
@@ -86,7 +86,7 @@ export function buildComposerSendPlanTargets({
     const groupId = String(remoteGroupId || "").trim();
     if (!groupId || groupId === selected) continue;
     const group = groupsById.get(groupId);
-    if (!group?.federation_remote) continue;
+    if (!group?.group_bridge_remote) continue;
     addTarget({
       groupId,
       isCrossGroup: true,

@@ -26,18 +26,18 @@ export function getSenderDisplayName({
     senderId,
     senderActor,
     senderTitle,
-    federationSourceName,
+    group_bridgeSourceName,
     displayNameMap,
 }: {
     senderId: string;
     senderActor: Actor | null;
     senderTitle?: string;
-    federationSourceName?: string;
+    group_bridgeSourceName?: string;
     displayNameMap: Map<string, string>;
 }): string {
     if (!senderId || senderId === "user") return senderId;
-    const sourceName = String(federationSourceName || "").trim();
-    if (senderId.startsWith("federation:") && sourceName) return sourceName;
+    const sourceName = String(group_bridgeSourceName || "").trim();
+    if (senderId.startsWith("group_bridge:") && sourceName) return sourceName;
     return String(senderTitle || "").trim() || String(senderActor?.title || "").trim() || displayNameMap.get(senderId) || senderId;
 }
 

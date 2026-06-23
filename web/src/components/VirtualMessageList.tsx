@@ -24,7 +24,7 @@ import {
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
-import { buildFederationDisplayNameMap } from "./virtualMessageListFederation";
+import { buildGroupBridgeDisplayNameMap } from "./virtualMessageListGroupBridge";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
   if (!previousMessage || !message) return false;
@@ -298,7 +298,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const actorDisplayNameMap = useActorDisplayNameMap(actors);
   const displayNameMap = useMemo(() => {
     const map = new Map(actorDisplayNameMap);
-    for (const [id, name] of buildFederationDisplayNameMap(displayMessages)) {
+    for (const [id, name] of buildGroupBridgeDisplayNameMap(displayMessages)) {
       map.set(id, name);
     }
     return map;

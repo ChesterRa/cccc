@@ -101,23 +101,23 @@ class TestWebMessagingClientId(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_preserves_federation_provenance_fields(self) -> None:
+    def test_send_preserves_group_bridge_provenance_fields(self) -> None:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
 
         _, cleanup = self._with_home()
         try:
             reg = load_registry()
-            group = create_group(reg, title="federation-provenance", topic="")
+            group = create_group(reg, title="group_bridge-provenance", topic="")
             with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
                 client = self._client()
                 resp = client.post(
                     f"/api/v1/groups/{group.group_id}/send",
                     json={
                         "text": "hello from peer",
-                        "by": "federation:peer_a",
+                        "by": "group_bridge:peer_a",
                         "to": ["user"],
-                        "source_platform": "federation_session",
+                        "source_platform": "group_bridge_session",
                         "source_user_id": "peer_a",
                         "source_user_name": "Remote Group",
                         "src_group_id": "g_remote",
@@ -129,7 +129,7 @@ class TestWebMessagingClientId(unittest.TestCase):
             body = resp.json()
             self.assertTrue(bool(body.get("ok")))
             data = (((body.get("result") or {}).get("event") or {}).get("data")) or {}
-            self.assertEqual(data.get("source_platform"), "federation_session")
+            self.assertEqual(data.get("source_platform"), "group_bridge_session")
             self.assertEqual(data.get("source_user_id"), "peer_a")
             self.assertEqual(data.get("source_user_name"), "Remote Group")
             self.assertEqual(data.get("src_group_id"), "g_remote")
@@ -346,9 +346,9 @@ class TestWebMessagingClientId(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_upload_rejects_legacy_federation_reply_before_storing_blob(self) -> None:
+    def test_reply_upload_rejects_legacy_group_bridge_reply_before_storing_blob(self) -> None:
         from cccc.contracts.v1.message import ChatMessageData
-        from cccc.kernel.federation.pairing import _save_store
+        from cccc.kernel.group_bridge.pairing import _save_store
         from cccc.kernel.group import create_group
         from cccc.kernel.ledger import append_event
         from cccc.kernel.registry import load_registry
@@ -356,7 +356,7 @@ class TestWebMessagingClientId(unittest.TestCase):
         home, cleanup = self._with_home()
         try:
             reg = load_registry()
-            group = create_group(reg, title="reply-upload-legacy-federation", topic="")
+            group = create_group(reg, title="reply-upload-legacy-group_bridge", topic="")
             _save_store(
                 {
                     "invites": {},
@@ -369,7 +369,7 @@ class TestWebMessagingClientId(unittest.TestCase):
                             "remote_group_id": "g_remote",
                             "remote_peer_id": "peer_remote",
                             "registration_id": "reg_remote",
-                            "transport": "federation_session",
+                            "transport": "group_bridge_session",
                             "remote_endpoint": "http://remote.example:8848",
                             "status": "active",
                             "created_at": "2026-01-01T00:00:00Z",
@@ -383,11 +383,11 @@ class TestWebMessagingClientId(unittest.TestCase):
                 kind="chat.message",
                 group_id=group.group_id,
                 scope_key=str(group.doc.get("active_scope_key") or ""),
-                by="federation:peer_remote",
+                by="group_bridge:peer_remote",
                 data=ChatMessageData(
                     text="legacy remote message",
                     to=["@foreman"],
-                    source_platform="federation_session",
+                    source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
                     src_event_id="remote-event-1",
