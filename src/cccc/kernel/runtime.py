@@ -1,6 +1,7 @@
 """Runtime detection and configuration for agent CLIs."""
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from dataclasses import dataclass
@@ -37,6 +38,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "amp mcp add {name} {cmd}",
     },
+    "antigravity": {
+        "display_name": "Antigravity CLI",
+        "command": "agy",
+        "capabilities": "MCP; MCP setup: prompt-assisted",
+        "mcp_add_pattern": None,
+    },
     "auggie": {
         "display_name": "Auggie (Augment)",
         "command": "auggie",
@@ -61,6 +68,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "copilot mcp add {name} -- {cmd}",
     },
+    "cursor": {
+        "display_name": "Cursor CLI",
+        "command": "cursor-agent",
+        "capabilities": "MCP; MCP setup: prompt-assisted",
+        "mcp_add_pattern": None,
+    },
     "devin": {
         "display_name": "Devin CLI",
         "command": "devin",
@@ -72,6 +85,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "command": "kiro-cli",
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "kiro-cli mcp add --name {name} --scope global --command {cmd}",
+    },
+    "kilo": {
+        "display_name": "Kilo Code CLI",
+        "command": "kilo",
+        "capabilities": "MCP; MCP setup: prompt-assisted",
+        "mcp_add_pattern": None,
     },
     "droid": {
         "display_name": "Droid CLI",
@@ -122,8 +141,11 @@ PRIMARY_RUNTIMES = [
     "claude",
     "codex",
     "copilot",
+    "cursor",
     "devin",
     "kiro",
+    "kilo",
+    "antigravity",
     "droid",
     "amp",
     "auggie",
@@ -133,6 +155,14 @@ PRIMARY_RUNTIMES = [
     "opencode",
     "web_model",
 ]
+
+PROMPT_ASSISTED_MCP_RUNTIMES = frozenset({"antigravity", "cursor", "kilo"})
+
+
+def runtime_uses_prompt_assisted_mcp_setup(runtime: str) -> bool:
+    return str(runtime or "").strip().lower() in PROMPT_ASSISTED_MCP_RUNTIMES
+
+
 def detect_runtime(name: str) -> RuntimeInfo:
     """Detect if a specific runtime is available on the system."""
     config = KNOWN_RUNTIMES.get(name)
@@ -277,18 +307,50 @@ def get_cccc_mcp_stdio_command() -> List[str]:
     return [sys.executable, "-m", "cccc.ports.mcp.main"]
 
 
+def build_prompt_assisted_mcp_setup_contract() -> Dict[str, Any]:
+    cmd = get_cccc_mcp_stdio_command()
+    command = str(cmd[0]) if cmd else "cccc"
+    args = [str(part) for part in cmd[1:]] if len(cmd) > 1 else ["mcp"]
+    return {
+        "name": "cccc",
+        "transport": "stdio",
+        "command": command,
+        "args": args,
+    }
+
+
+def build_prompt_assisted_mcp_setup_prompt(runtime: str) -> str:
+    runtime_label = str(KNOWN_RUNTIMES.get(str(runtime or "").strip().lower(), {}).get("display_name") or runtime or "this runtime")
+    contract = build_prompt_assisted_mcp_setup_contract()
+    contract_text = json.dumps(contract, ensure_ascii=False, indent=2)
+    return (
+        "[CCCC] MCP setup request\n"
+        f"You are running inside {runtime_label}. Before normal CCCC work, make sure this runtime has a CCCC MCP server available.\n\n"
+        "Idempotency requirement:\n"
+        "- If an MCP server named \"cccc\" is missing or points to different details, create or update only that entry using this runtime's normal user/global MCP configuration method.\n"
+        "- If \"cccc\" is already installed with equivalent details, leave it unchanged.\n"
+        "- Do not modify unrelated MCP servers.\n\n"
+        "CCCC MCP server details:\n"
+        f"{contract_text}\n\n"
+        "After setup, continue with the CCCC session bootstrap below. If this runtime requires a restart before new MCP tools appear, say so clearly in the terminal."
+    ).strip()
+
+
 def get_runtime_command_with_flags(name: str) -> List[str]:
     """Get the command with recommended flags for autonomous operation."""
     commands = {
         "amp": ["amp"],
+        "antigravity": ["agy"],
         "auggie": ["auggie"],
         "claude": ["claude", "--dangerously-skip-permissions"],
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
         "copilot": ["copilot", "--allow-all"],
+        "cursor": ["cursor-agent", "--yolo", "--approve-mcps"],
         "devin": ["devin", "--permission-mode", "dangerous"],
         "kiro": ["kiro-cli", "chat", "--trust-all-tools"],
+        "kilo": ["kilo"],
         "droid": ["droid", "--auto", "high"],
         "grok": ["grok"],
         "hermes": ["hermes", "--tui", "--yolo"],

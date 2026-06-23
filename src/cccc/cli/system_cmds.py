@@ -366,7 +366,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print()
     if available_count == 0:
         print("No agent runtimes detected.")
-        print("First-class supported runtimes: claude, codex, devin, kiro, droid, amp, auggie, grok, hermes, kimi, opencode")
+        print(
+            "First-class supported runtimes: claude, codex, copilot, cursor, devin, kiro, kilo, "
+            "antigravity, droid, amp, auggie, grok, hermes, kimi, opencode"
+        )
         print("Manual fallback: custom (bring your own command and MCP wiring)")
     else:
         print(f"{available_count} runtime(s) available.")
@@ -405,8 +408,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 def cmd_setup(args: argparse.Namespace) -> int:
     """Setup CCCC MCP for agent runtimes (configure MCP, print guidance)."""
     from ..daemon.mcp_install import build_mcp_add_command, ensure_mcp_installed, is_mcp_installed
-    from ..kernel.runtime import detect_runtime
-    from ..kernel.runtime import get_cccc_mcp_stdio_command
+    from ..kernel.runtime import build_prompt_assisted_mcp_setup_contract, detect_runtime, get_cccc_mcp_stdio_command
 
     runtime = str(args.runtime or "").strip()
     project_path = Path(args.path or ".").resolve()
@@ -414,13 +416,17 @@ def cmd_setup(args: argparse.Namespace) -> int:
     # Supported runtimes
     # - claude/codex/copilot/devin/kiro/droid/amp/auggie/grok/hermes/kimi: MCP setup can be automated via their CLIs
     # - opencode: MCP setup is injected into the actor process through OPENCODE_CONFIG_CONTENT
+    # - antigravity/cursor/kilo: MCP setup is prompt-assisted inside the runtime agent; CCCC does not edit their config
     # - custom: user-provided runtime; MCP setup is manual (generic guidance only)
     SUPPORTED_RUNTIMES = [
         "claude",
         "codex",
         "copilot",
+        "cursor",
         "devin",
         "kiro",
+        "kilo",
+        "antigravity",
         "droid",
         "amp",
         "auggie",
@@ -444,7 +450,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
     results: dict[str, Any] = {"mcp": {}, "notes": []}
 
     cccc_cmd = get_cccc_mcp_stdio_command()
-    auto_mcp_runtimes = tuple(name for name in SUPPORTED_RUNTIMES if name != "custom")
+    prompt_assisted_runtimes = ("antigravity", "cursor", "kilo")
+    auto_mcp_runtimes = tuple(name for name in SUPPORTED_RUNTIMES if name not in {"custom", *prompt_assisted_runtimes})
 
     def _cmd_line(parts: list[str]) -> str:
         return " ".join(shlex.quote(p) for p in parts)
@@ -487,6 +494,17 @@ def cmd_setup(args: argparse.Namespace) -> int:
     for rt in runtimes_to_setup:
         if rt in auto_mcp_runtimes:
             _auto_setup(rt)
+
+        elif rt in prompt_assisted_runtimes:
+            runtime_info = detect_runtime(rt)
+            results["mcp"][rt] = {
+                "mode": "prompt_assisted",
+                "status": "runtime_prompt",
+                "contract": build_prompt_assisted_mcp_setup_contract(),
+                "hint": "CCCC includes this idempotent MCP setup request in the actor startup prompt; the runtime agent owns installation and validation.",
+            }
+            if not runtime_info.available:
+                results["notes"].append(f"{rt}: CLI not found; install the runtime before starting this actor")
 
         elif rt == "custom":
             results["mcp"]["custom"] = {

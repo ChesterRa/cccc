@@ -109,6 +109,105 @@ class TestDeliveryStateBehavior(unittest.TestCase):
                 os.environ["CCCC_HOME"] = old_home
             td_ctx.__exit__(None, None, None)
 
+    def test_antigravity_preamble_includes_idempotent_prompt_assisted_mcp_setup(self) -> None:
+        from cccc.daemon.messaging import delivery
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="delivery-antigravity")
+            actor = add_actor(group, actor_id="agy1", runtime="antigravity", submit="enter")
+
+            with patch("cccc.kernel.runtime.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                first_prompt = delivery._render_delivery_preamble(group, actor)
+                self.assertIn("[CCCC] MCP setup request", first_prompt)
+                self.assertIn("create or update only that entry", first_prompt)
+                self.assertIn('"name": "cccc"', first_prompt)
+                self.assertIn('"command": "/abs/cccc"', first_prompt)
+                self.assertNotIn('"env"', first_prompt)
+                self.assertNotIn('"CCCC_GROUP_ID"', first_prompt)
+                self.assertIn("[CCCC] You are agy1", first_prompt)
+
+                second_prompt = delivery._render_delivery_preamble(group, actor)
+                self.assertIn("[CCCC] MCP setup request", second_prompt)
+                self.assertIn('"command": "/abs/cccc"', second_prompt)
+                self.assertNotIn('"env"', second_prompt)
+                self.assertNotIn('"CCCC_GROUP_ID"', second_prompt)
+                self.assertIn("[CCCC] You are agy1", second_prompt)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
+    def test_kilo_preamble_includes_idempotent_prompt_assisted_mcp_setup(self) -> None:
+        from cccc.daemon.messaging import delivery
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="delivery-kilo")
+            actor = add_actor(group, actor_id="kilo1", runtime="kilo", submit="enter")
+
+            with patch("cccc.kernel.runtime.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                prompt = delivery._render_delivery_preamble(group, actor)
+                self.assertIn("[CCCC] MCP setup request", prompt)
+                self.assertIn("Kilo Code CLI", prompt)
+                self.assertIn("create or update only that entry", prompt)
+                self.assertIn('"name": "cccc"', prompt)
+                self.assertIn('"command": "/abs/cccc"', prompt)
+                self.assertNotIn('"env"', prompt)
+                self.assertNotIn('"CCCC_GROUP_ID"', prompt)
+                self.assertIn("[CCCC] You are kilo1", prompt)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
+    def test_cursor_preamble_includes_idempotent_prompt_assisted_mcp_setup(self) -> None:
+        from cccc.daemon.messaging import delivery
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="delivery-cursor")
+            actor = add_actor(group, actor_id="cursor1", runtime="cursor", submit="enter")
+
+            with patch("cccc.kernel.runtime.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                prompt = delivery._render_delivery_preamble(group, actor)
+                self.assertIn("[CCCC] MCP setup request", prompt)
+                self.assertIn("Cursor CLI", prompt)
+                self.assertIn("create or update only that entry", prompt)
+                self.assertIn('"name": "cccc"', prompt)
+                self.assertIn('"command": "/abs/cccc"', prompt)
+                self.assertNotIn('"env"', prompt)
+                self.assertNotIn('"CCCC_GROUP_ID"', prompt)
+                self.assertIn("[CCCC] You are cursor1", prompt)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
 
 if __name__ == "__main__":
     unittest.main()

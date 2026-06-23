@@ -40,20 +40,9 @@ def render_group_bridge_route_ref(ref: dict[str, Any]) -> list[str]:
     if not remote_group_id:
         return []
     remote_group_title = compact_delivery_text(ref.get("remote_group_title"), limit=72)
-    remote_endpoint = compact_delivery_text(ref.get("remote_endpoint"), limit=120)
-    remote_peer_id = compact_delivery_text(ref.get("remote_peer_id"), limit=64)
-    trust_id = compact_delivery_text(ref.get("trust_id"), limit=48)
     token = compact_delivery_text(ref.get("token"), limit=72)
     label = remote_group_title or token or remote_group_id
-
-    lines = [f"- Group Bridge route {label} (remote_group_id={remote_group_id})"]
-    if remote_endpoint:
-        lines.append(f"  endpoint: {remote_endpoint}")
-    if remote_peer_id:
-        lines.append(f"  peer_id: {remote_peer_id}")
-    if trust_id:
-        lines.append(f"  trust_id: {trust_id}")
-    return lines
+    return [f"- Group Bridge route {label} (remote_group_id={remote_group_id})"]
 
 
 def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:

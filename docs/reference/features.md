@@ -311,8 +311,12 @@ Recommended options:
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
 | codex | `codex` | Codex CLI |
+| copilot | `copilot --allow-all` | GitHub Copilot CLI |
+| cursor | `cursor-agent --yolo --approve-mcps` | Cursor CLI |
 | devin | `devin --permission-mode dangerous` | Devin CLI |
 | kiro | `kiro-cli chat --trust-all-tools` | Kiro CLI |
+| kilo | `kilo` | Kilo Code CLI |
+| antigravity | `agy` | Antigravity CLI |
 | droid | `droid` | Droid |
 | grok | `grok` | Grok Build |
 | hermes | `hermes --tui --yolo` | Hermes Agent |
@@ -335,6 +339,9 @@ cccc setup --runtime grok
 cccc setup --runtime hermes
 cccc setup --runtime kimi
 cccc setup --runtime opencode
+cccc setup --runtime cursor       # Prompt-assisted setup inside Cursor CLI
+cccc setup --runtime kilo         # Prompt-assisted setup inside Kilo Code CLI
+cccc setup --runtime antigravity  # Prompt-assisted setup inside Antigravity
 cccc setup --runtime custom
 ```
 

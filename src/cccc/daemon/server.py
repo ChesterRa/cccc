@@ -294,12 +294,15 @@ def _can_read_terminal_transcript(group: Any, *, by: str, target_actor_id: str) 
 
 SUPPORTED_RUNTIMES = (
     "amp",
+    "antigravity",
     "auggie",
     "claude",
     "codex",
     "copilot",
+    "cursor",
     "devin",
     "kiro",
+    "kilo",
     "droid",
     "grok",
     "hermes",

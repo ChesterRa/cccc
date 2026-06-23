@@ -15,11 +15,11 @@ class TestCliMain(unittest.TestCase):
         self.assertEqual(parser.parse_args(["actor", "update", "peer", "--runtime", "copilot"]).runtime, "copilot")
         self.assertEqual(parser.parse_args(["setup", "--runtime", "copilot"]).runtime, "copilot")
 
-    def test_parser_still_accepts_devin_and_kiro_runtime_choices(self) -> None:
+    def test_parser_still_accepts_devin_kiro_kilo_antigravity_and_cursor_runtime_choices(self) -> None:
         cli_main = importlib.import_module("cccc.cli.main")
 
         parser = cli_main.build_parser()
-        for runtime in ("devin", "kiro"):
+        for runtime in ("devin", "kiro", "kilo", "antigravity", "cursor"):
             self.assertEqual(parser.parse_args(["actor", "add", "peer", "--runtime", runtime]).runtime, runtime)
             self.assertEqual(parser.parse_args(["actor", "update", "peer", "--runtime", runtime]).runtime, runtime)
             self.assertEqual(parser.parse_args(["setup", "--runtime", runtime]).runtime, runtime)

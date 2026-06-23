@@ -36,9 +36,11 @@ from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ...kernel.group import Group, get_group_state, load_group, set_group_state
 from ...kernel.inbox import get_cursor, is_message_for_actor, set_cursor
 from ...kernel.ledger import append_event
-from ...kernel.recipient_syntax import CROSS_GROUP_RESOLVE_HINT
+from ...kernel.runtime import (
+    build_prompt_assisted_mcp_setup_prompt,
+    runtime_uses_prompt_assisted_mcp_setup,
+)
 from ...kernel.system_prompt import render_system_prompt
-from ...paths import ensure_home
 from ...runners import pty as pty_runner
 from ...runners import headless as headless_runner
 from ...util.fs import atomic_write_text, read_json
@@ -191,6 +193,26 @@ def _save_preamble_sent(group: Group, state: Dict[str, str]) -> None:
         atomic_write_text(p, json.dumps(state, ensure_ascii=False, indent=2))
     except Exception:
         pass
+
+
+def _prompt_assisted_mcp_setup_runtime(actor: Dict[str, Any]) -> Optional[str]:
+    actor_id = str(actor.get("id") or "").strip()
+    runtime = str(actor.get("runtime") or "").strip().lower()
+    runner = str(actor.get("runner") or "pty").strip().lower() or "pty"
+    if not actor_id or runner != "pty" or not runtime_uses_prompt_assisted_mcp_setup(runtime):
+        return None
+    return runtime
+
+
+def _render_delivery_preamble(group: Group, actor: Dict[str, Any]) -> str:
+    prompt = render_system_prompt(group=group, actor=actor)
+    runtime = _prompt_assisted_mcp_setup_runtime(actor)
+    if not runtime:
+        return prompt
+    setup_prompt = build_prompt_assisted_mcp_setup_prompt(runtime)
+    if not setup_prompt:
+        return prompt
+    return f"{setup_prompt}\n\n---\n\n{prompt}".rstrip() + "\n"
 
 
 def _current_preamble_session_key(group: Group, actor_id: str) -> Optional[str]:
@@ -551,9 +573,6 @@ REMINDER_EVERY_N_MESSAGES = 1
 MCP_REMINDER_LINE = (
     "[cccc] If you respond: use MCP (cccc_message_send / cccc_message_reply); "
     "terminal output isn't delivered. Verify reply_to/to; avoid routine @all. "
-    "For natural #group requests, "
-    f"{CROSS_GROUP_RESOLVE_HINT} Then use cccc_message_send with dst_group_id=<g_...>, "
-    "to='@foreman' or target actor, and your own natural text; never put #group in to or forward a template. "
     "A reply handles the communication obligation, not the whole job; "
     "resume active work unless priority changed. If unsure, use MCP tool cccc_help."
 )
@@ -847,7 +866,7 @@ def deliver_message_with_preamble(
     # Deliver system prompt first (lazy preamble) when needed.
     if not is_preamble_sent(group, aid):
         try:
-            prompt = render_system_prompt(group=group, actor=actor)
+            prompt = _render_delivery_preamble(group, actor)
             if prompt and prompt.strip():
                 if pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True, wait_for_submit=True):
                     mark_preamble_sent(group, aid)
@@ -1198,7 +1217,7 @@ def _start_async_first_delivery(
 
     def worker() -> None:
         try:
-            prompt = render_system_prompt(group=group, actor=actor)
+            prompt = _render_delivery_preamble(group, actor)
             if prompt and prompt.strip():
                 preamble_ok = pty_submit_text(group, actor_id=aid, text=prompt.strip(), wait_for_submit=True)
                 if not preamble_ok:

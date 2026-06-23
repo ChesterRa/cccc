@@ -140,9 +140,9 @@ def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
     )
 
     assert "- Group Bridge route Remote Product (remote_group_id=g_remote)" in text
-    assert "endpoint: https://remote.example" in text
-    assert "peer_id: peer_remote" in text
-    assert "trust_id: ptrust_1" in text
+    assert "endpoint: https://remote.example" not in text
+    assert "peer_id: peer_remote" not in text
+    assert "trust_id: ptrust_1" not in text
 
 
 def test_group_bridge_route_ref_renderer_ignores_refs_without_group_id() -> None:

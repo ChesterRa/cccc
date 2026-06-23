@@ -45,8 +45,12 @@ Both approaches require:
 - At least one AI agent CLI:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
   - [Codex CLI](https://github.com/openai/codex)
+  - [GitHub Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference)
+  - [Cursor CLI](https://cursor.com/docs/cli/overview)
   - [Devin CLI](https://docs.devin.ai/ja/cli)
   - [Kiro CLI](https://kiro.dev/docs/cli/)
+  - [Kilo Code CLI](https://kilo.ai/docs/code-with-ai/platforms/cli)
+  - [Antigravity CLI](https://antigravity.google/docs/cli-overview)
   - [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
 - Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
 - Or a custom runtime command if you wire MCP manually

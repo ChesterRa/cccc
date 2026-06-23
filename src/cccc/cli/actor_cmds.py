@@ -123,12 +123,15 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             raise ValueError("invalid runner (must be 'pty')")
         if runtime not in (
             "amp",
+            "antigravity",
             "auggie",
             "claude",
             "codex",
             "copilot",
+            "cursor",
             "devin",
             "kiro",
+            "kilo",
             "droid",
             "grok",
             "hermes",

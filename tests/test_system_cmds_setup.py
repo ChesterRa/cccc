@@ -134,6 +134,96 @@ class TestSystemCmdsSetup(unittest.TestCase):
         self.assertEqual(opencode.get("mode"), "auto")
         self.assertEqual(opencode.get("status"), "runtime_env")
 
+    def test_cmd_setup_antigravity_reports_prompt_assisted_contract_without_auto_install(self) -> None:
+        from cccc.cli import system_cmds
+
+        args = argparse.Namespace(runtime="antigravity", path=".")
+
+        with patch("cccc.kernel.runtime.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.kernel.runtime.detect_runtime",
+            return_value=SimpleNamespace(available=True, path="/usr/local/bin/agy"),
+        ), patch("cccc.daemon.mcp_install.ensure_mcp_installed") as mock_ensure, patch.object(
+            system_cmds,
+            "_print_json",
+        ) as mock_print:
+            rc = system_cmds.cmd_setup(args)
+
+        self.assertEqual(rc, 0)
+        mock_ensure.assert_not_called()
+        payload = mock_print.call_args.args[0]
+        self.assertTrue(bool(payload.get("ok")))
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        mcp = result.get("mcp") if isinstance(result.get("mcp"), dict) else {}
+        antigravity = mcp.get("antigravity") if isinstance(mcp.get("antigravity"), dict) else {}
+        self.assertEqual(antigravity.get("mode"), "prompt_assisted")
+        self.assertEqual(antigravity.get("status"), "runtime_prompt")
+        contract = antigravity.get("contract") if isinstance(antigravity.get("contract"), dict) else {}
+        self.assertEqual(contract.get("name"), "cccc")
+        self.assertEqual(contract.get("transport"), "stdio")
+        self.assertEqual(contract.get("command"), "/abs/cccc")
+        self.assertEqual(contract.get("args"), ["mcp"])
+        self.assertNotIn("env", contract)
+
+    def test_cmd_setup_kilo_reports_prompt_assisted_contract_without_auto_install(self) -> None:
+        from cccc.cli import system_cmds
+
+        args = argparse.Namespace(runtime="kilo", path=".")
+
+        with patch("cccc.kernel.runtime.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.kernel.runtime.detect_runtime",
+            return_value=SimpleNamespace(available=True, path="/usr/local/bin/kilo"),
+        ), patch("cccc.daemon.mcp_install.ensure_mcp_installed") as mock_ensure, patch.object(
+            system_cmds,
+            "_print_json",
+        ) as mock_print:
+            rc = system_cmds.cmd_setup(args)
+
+        self.assertEqual(rc, 0)
+        mock_ensure.assert_not_called()
+        payload = mock_print.call_args.args[0]
+        self.assertTrue(bool(payload.get("ok")))
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        mcp = result.get("mcp") if isinstance(result.get("mcp"), dict) else {}
+        kilo = mcp.get("kilo") if isinstance(mcp.get("kilo"), dict) else {}
+        self.assertEqual(kilo.get("mode"), "prompt_assisted")
+        self.assertEqual(kilo.get("status"), "runtime_prompt")
+        contract = kilo.get("contract") if isinstance(kilo.get("contract"), dict) else {}
+        self.assertEqual(contract.get("name"), "cccc")
+        self.assertEqual(contract.get("transport"), "stdio")
+        self.assertEqual(contract.get("command"), "/abs/cccc")
+        self.assertEqual(contract.get("args"), ["mcp"])
+        self.assertNotIn("env", contract)
+
+    def test_cmd_setup_cursor_reports_prompt_assisted_contract_without_auto_install(self) -> None:
+        from cccc.cli import system_cmds
+
+        args = argparse.Namespace(runtime="cursor", path=".")
+
+        with patch("cccc.kernel.runtime.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.kernel.runtime.detect_runtime",
+            return_value=SimpleNamespace(available=True, path="/usr/local/bin/cursor-agent"),
+        ), patch("cccc.daemon.mcp_install.ensure_mcp_installed") as mock_ensure, patch.object(
+            system_cmds,
+            "_print_json",
+        ) as mock_print:
+            rc = system_cmds.cmd_setup(args)
+
+        self.assertEqual(rc, 0)
+        mock_ensure.assert_not_called()
+        payload = mock_print.call_args.args[0]
+        self.assertTrue(bool(payload.get("ok")))
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        mcp = result.get("mcp") if isinstance(result.get("mcp"), dict) else {}
+        cursor = mcp.get("cursor") if isinstance(mcp.get("cursor"), dict) else {}
+        self.assertEqual(cursor.get("mode"), "prompt_assisted")
+        self.assertEqual(cursor.get("status"), "runtime_prompt")
+        contract = cursor.get("contract") if isinstance(cursor.get("contract"), dict) else {}
+        self.assertEqual(contract.get("name"), "cccc")
+        self.assertEqual(contract.get("transport"), "stdio")
+        self.assertEqual(contract.get("command"), "/abs/cccc")
+        self.assertEqual(contract.get("args"), ["mcp"])
+        self.assertNotIn("env", contract)
+
 
 if __name__ == "__main__":
     unittest.main()

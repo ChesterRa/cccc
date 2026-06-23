@@ -132,12 +132,24 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: "# Configure GitHub Copilot CLI auth with `copilot` before starting this actor.",
     unset: "",
   },
+  cursor: {
+    set: "# Configure Cursor CLI auth with `cursor-agent login` before starting this actor.",
+    unset: "",
+  },
   devin: {
     set: "# Configure Devin auth and providers through Devin CLI setup.",
     unset: "",
   },
   kiro: {
     set: "# Configure Kiro auth with kiro-cli login and providers through Kiro CLI setup.",
+    unset: "",
+  },
+  kilo: {
+    set: "# Configure Kilo Code CLI auth with `kilo` and `/connect` before starting this actor.",
+    unset: "",
+  },
+  antigravity: {
+    set: "# Configure Antigravity CLI auth with `agy` before starting this actor.",
     unset: "",
   },
   grok: {

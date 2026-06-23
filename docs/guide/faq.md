@@ -79,8 +79,12 @@ This checks Python version, available runtimes, and daemon status.
 
 - Claude Code (`claude`)
 - Codex CLI (`codex`)
+- GitHub Copilot CLI (`copilot`)
+- Cursor CLI (`cursor-agent`)
 - Devin CLI (`devin`)
 - Kiro CLI (`kiro-cli`)
+- Kilo Code CLI (`kilo`)
+- Antigravity CLI (`agy`)
 - Droid (`droid`)
 - Grok Build (`grok`)
 - Hermes Agent (`hermes`)

@@ -16,12 +16,15 @@ RunnerKind = Literal["pty", "headless"]
 RuntimeStateSource = Literal["terminal", "app_server"]
 AgentRuntime = Literal[
     "amp",
+    "antigravity",
     "auggie",
     "claude",
     "codex",
     "copilot",
+    "cursor",
     "devin",
     "kiro",
+    "kilo",
     "droid",
     "grok",
     "hermes",

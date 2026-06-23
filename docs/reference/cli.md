@@ -247,9 +247,13 @@ Configure MCP for an agent runtime.
 ```bash
 cccc setup --runtime claude        # Auto-configure for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
+cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
+cccc setup --runtime cursor        # Show prompt-assisted setup contract for Cursor CLI
 cccc setup --runtime devin         # Auto-configure for Devin CLI
 cccc setup --runtime kiro          # Auto-configure for Kiro CLI
 cccc setup --runtime kimi          # Auto-configure for Kimi CLI
+cccc setup --runtime kilo          # Show prompt-assisted setup contract for Kilo Code CLI
+cccc setup --runtime antigravity   # Show prompt-assisted setup contract for Antigravity CLI
 ```
 
 ### `cccc update`

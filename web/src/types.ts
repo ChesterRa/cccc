@@ -1410,8 +1410,11 @@ export const SUPPORTED_RUNTIMES = [
   "claude",
   "codex",
   "copilot",
+  "cursor",
   "devin",
   "kiro",
+  "kilo",
+  "antigravity",
   "droid",
   "amp",
   "auggie",
@@ -1431,8 +1434,11 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   claude: { label: "Claude Code", desc: "" },
   codex: { label: "Codex CLI", desc: "" },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
+  cursor: { label: "Cursor CLI", desc: "Uses an idempotent MCP setup prompt inside the PTY runner" },
   devin: { label: "Devin CLI", desc: "Uses Devin MCP CLI setup with the PTY runner" },
   kiro: { label: "Kiro CLI", desc: "Uses Kiro MCP CLI setup with the PTY runner" },
+  kilo: { label: "Kilo Code CLI", desc: "Uses an idempotent MCP setup prompt inside the PTY runner" },
+  antigravity: { label: "Antigravity CLI", desc: "Uses an idempotent MCP setup prompt inside the PTY runner" },
   droid: { label: "Droid", desc: "" },
   grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
@@ -1477,6 +1483,10 @@ export const RUNTIME_COLORS: Record<string, {
     bg: "bg-slate-900/40", text: "text-slate-200", border: "border-slate-500/60", dot: "bg-slate-300",
     bgLight: "bg-slate-100", textLight: "text-slate-800", borderLight: "border-slate-300", dotLight: "bg-slate-600"
   },
+  cursor: {
+    bg: "bg-zinc-900/40", text: "text-zinc-200", border: "border-zinc-500/60", dot: "bg-zinc-300",
+    bgLight: "bg-zinc-100", textLight: "text-zinc-800", borderLight: "border-zinc-300", dotLight: "bg-zinc-600"
+  },
   devin: {
     bg: "bg-sky-900/30", text: "text-sky-300", border: "border-sky-600/50", dot: "bg-sky-400",
     bgLight: "bg-sky-50", textLight: "text-sky-700", borderLight: "border-sky-300", dotLight: "bg-sky-500"
@@ -1484,6 +1494,14 @@ export const RUNTIME_COLORS: Record<string, {
   kiro: {
     bg: "bg-purple-900/30", text: "text-purple-300", border: "border-purple-600/50", dot: "bg-purple-400",
     bgLight: "bg-purple-50", textLight: "text-purple-700", borderLight: "border-purple-300", dotLight: "bg-purple-500"
+  },
+  kilo: {
+    bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
+    bgLight: "bg-lime-50", textLight: "text-lime-800", borderLight: "border-lime-300", dotLight: "bg-lime-500"
+  },
+  antigravity: {
+    bg: "bg-blue-900/30", text: "text-blue-300", border: "border-blue-600/50", dot: "bg-blue-400",
+    bgLight: "bg-blue-50", textLight: "text-blue-700", borderLight: "border-blue-300", dotLight: "bg-blue-500"
   },
   droid: { 
     bg: "bg-violet-900/30", text: "text-violet-300", border: "border-violet-600/50", dot: "bg-violet-400",

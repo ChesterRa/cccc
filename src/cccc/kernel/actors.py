@@ -401,11 +401,15 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             item["runtime"] = "codex"
         elif runtime in (
             "amp",
+            "antigravity",
             "auggie",
             "claude",
             "codex",
+            "copilot",
+            "cursor",
             "devin",
             "kiro",
+            "kilo",
             "droid",
             "grok",
             "hermes",
