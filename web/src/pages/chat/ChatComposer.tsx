@@ -381,7 +381,10 @@ export function ChatComposer({
       recipientPopoverHideTimerRef.current = null;
     }, 120);
   }, [cancelRecipientPopoverHide]);
-  const getRemoteGroupAccessLabel = useCallback((_accessLevel: string) => {
+  const getRemoteGroupAccessLabel = useCallback((accessLevel: string) => {
+    const level = String(accessLevel || "").trim().toLowerCase();
+    if (level === "read") return t("remoteGroupAccessRead", { defaultValue: "Read" });
+    if (level === "full") return t("remoteGroupAccessFull", { defaultValue: "Full" });
     return t("remoteGroupMessagesOnly", { defaultValue: "Messages" });
   }, [t]);
   const copyRecipientIdentifier = useCallback(async (identifier: string) => {
@@ -416,7 +419,7 @@ export function ChatComposer({
   const remoteGroupPopoverTarget = useCallback((group: GroupMeta): RecipientPopoverTarget => {
     const id = String(group.group_id || "").trim();
     const label = getGroupRouteDisplayName(group);
-    const accessLevel = "messages";
+    const accessLevel = String(group.group_bridge_access_level || "").trim() || "messages";
     return {
       key: `remote:${id}`,
       label,
@@ -1131,7 +1134,7 @@ export function ChatComposer({
                     const groupId = String(group.group_id || "").trim();
                     const label = getGroupRouteDisplayName(group);
                     const active = selectedRemoteGroupSet.has(groupId);
-                    const accessLevel = "messages";
+                    const accessLevel = String(group.group_bridge_access_level || "").trim() || "messages";
                     const accessLabel = getRemoteGroupAccessLabel(accessLevel);
                     const popoverTarget = remoteGroupPopoverTarget(group);
                     const title = [

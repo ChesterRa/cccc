@@ -16,7 +16,14 @@ describe("formatRecipientIdentifier", () => {
       label: "SDK",
       id: "g_sdk",
       accessLevel: "read",
-    })).toBe("SDK (g_sdk remote/message only)");
+    })).toBe("SDK (g_sdk remote/read)");
+
+    expect(formatRecipientIdentifier({
+      kind: "remote_group",
+      label: "Ops",
+      id: "g_ops",
+      accessLevel: "full",
+    })).toBe("Ops (g_ops remote/full)");
   });
 
   it("formats local actors with role and id when useful", () => {

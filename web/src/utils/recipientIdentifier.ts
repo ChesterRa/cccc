@@ -25,7 +25,9 @@ function cleanRole(value: unknown): string {
 }
 
 function remoteAccessLabel(value: unknown): string {
-  void value;
+  const level = cleanValue(value).toLowerCase();
+  if (level === "read") return "read";
+  if (level === "full") return "full";
   return "message only";
 }
 

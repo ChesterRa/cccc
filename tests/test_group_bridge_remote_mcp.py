@@ -69,15 +69,20 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
             access_level=access_level,
         )
 
-    def test_group_bridge_tool_specs_are_layered_and_do_not_enter_web_model(self) -> None:
+    def test_group_bridge_tool_specs_are_stable_and_do_not_enter_web_model(self) -> None:
         from cccc.ports.mcp.group_bridge import group_bridge_tool_specs
         from cccc.ports.mcp.server import _WEB_MODEL_FOREMAN_ADVERTISED_TOOL_NAMES, _WEB_MODEL_PEER_ADVERTISED_TOOL_NAMES
 
-        self.assertEqual([item["name"] for item in group_bridge_tool_specs("messages")], ["cccc_remote_access"])
+        message_names = {item["name"] for item in group_bridge_tool_specs("messages")}
+        self.assertIn("cccc_remote_access", message_names)
+        self.assertIn("cccc_remote_repo", message_names)
+        self.assertIn("cccc_remote_shell", message_names)
         read_names = {item["name"] for item in group_bridge_tool_specs("read")}
         self.assertIn("cccc_remote_repo", read_names)
-        self.assertNotIn("cccc_remote_shell", read_names)
+        self.assertIn("cccc_remote_shell", read_names)
         full_names = {item["name"] for item in group_bridge_tool_specs("full")}
+        self.assertEqual(message_names, read_names)
+        self.assertEqual(read_names, full_names)
         self.assertIn("cccc_remote_exec_command", full_names)
         self.assertIn("cccc_remote_write_stdin", full_names)
 
@@ -87,7 +92,7 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
 
         git_spec = next(item for item in group_bridge_tool_specs("read") if item["name"] == "cccc_remote_git")
         git_actions = git_spec["inputSchema"]["properties"]["action"]["enum"]
-        self.assertEqual(git_actions, ["status", "diff", "log"])
+        self.assertEqual(git_actions, ["status", "diff", "log", "add", "commit"])
         full_git_spec = next(item for item in group_bridge_tool_specs("full") if item["name"] == "cccc_remote_git")
         full_git_actions = full_git_spec["inputSchema"]["properties"]["action"]["enum"]
         self.assertEqual(full_git_actions, ["status", "diff", "log", "add", "commit"])
@@ -308,7 +313,27 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
                 json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             )
             self.assertEqual(listed.status_code, 200, listed.text)
-            self.assertEqual([item["name"] for item in listed.json()["result"]["tools"]], ["cccc_remote_access"])
+            listed_names = [item["name"] for item in listed.json()["result"]["tools"]]
+            self.assertIn("cccc_remote_access", listed_names)
+            self.assertIn("cccc_remote_repo", listed_names)
+            self.assertIn("cccc_remote_shell", listed_names)
+
+            read_denied = client.post(
+                "/mcp/group-bridge",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 20,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_remote_repo",
+                        "arguments": {"remote_group_id": group.group_id, "action": "read", "path": "README.md"},
+                    },
+                },
+            )
+            self.assertEqual(read_denied.status_code, 200, read_denied.text)
+            denied_payload = self._tool_payload(read_denied.json())
+            self.assertEqual(denied_payload["error"]["code"], "bridge_read_not_granted")
 
             trust = list_trusts(group_id=group.group_id)[0]
             admin = create_access_token("admin", is_admin=True)["token"]

@@ -435,6 +435,7 @@ export function GroupBridgePairingSection({
       <section className={settingsWorkspacePanelClass(isDark)}>
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.trustedRemoteGroups")}</div>
         <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.trustedRemoteGroupsHelp")}</p>
+        <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.runtimeRestartHint")}</p>
         {trustCopyNotice && <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">{trustCopyNotice}</p>}
         {trustedPeers.length === 0 && sessionRegistrations.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("group_bridge.noneYet")}</p> : (
           <div className="mt-3 space-y-2">{trustedPeers.map((trust) => {
@@ -483,7 +484,7 @@ export function GroupBridgePairingSection({
                         <button
                           type="button"
                           className={secondaryButtonClass("sm")}
-                          onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, currentAccessLevel)}
+                          onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, remoteAccessLevel)}
                         >
                           {t("group_bridge.copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
                         </button>

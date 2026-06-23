@@ -1654,6 +1654,7 @@
     "noneYet": "None yet.",
     "trustedRemoteGroups": "Trusted remote groups",
     "trustedRemoteGroupsHelp": "These bridges can exchange explicit messages. Access controls here decide what the remote group may do inside this group.",
+    "runtimeRestartHint": "After the first bridge setup, restart any already-running actor runtime once if you want it to use remote read/full tools.",
     "unknownRemoteGroup": "Unknown remote group",
     "revokeTrust": "Delete connection",
     "revokingTrust": "Deleting...",

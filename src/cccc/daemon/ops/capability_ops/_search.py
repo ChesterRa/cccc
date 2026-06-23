@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ....contracts.v1 import DaemonError, DaemonResponse
 from ....kernel.actors import find_actor, get_effective_role, is_voice_secretary_actor
@@ -72,6 +72,25 @@ from ._install import (
 )
 from ._state_views import capability_state_view, is_slash_commands_view
 
+_GROUP_BRIDGE_PACK_ID = "pack:group_bridge"
+_GROUP_BRIDGE_REMOTE_ACCESS_TOOL = "cccc_remote_access"
+_GROUP_BRIDGE_REMOTE_READ_TOOLS = frozenset(
+    {
+        "cccc_remote_context",
+        "cccc_remote_repo",
+        "cccc_remote_git",
+    }
+)
+_GROUP_BRIDGE_REMOTE_FULL_TOOLS = frozenset(
+    {
+        "cccc_remote_repo_edit",
+        "cccc_remote_apply_patch",
+        "cccc_remote_shell",
+        "cccc_remote_exec_command",
+        "cccc_remote_write_stdin",
+    }
+)
+
 
 def _pkg():
     """Get parent package module for mock-compatible function lookups."""
@@ -86,6 +105,39 @@ def _resolve_actor_role(group: Any, actor_id: str) -> str:
         return str(get_effective_role(group, aid) or "").strip().lower()
     except Exception:
         return ""
+
+
+def _auto_group_bridge_visible_tool_names(
+    *,
+    group_id: str,
+    actor_is_voice_secretary: bool,
+    actor_is_web_model: bool,
+    blocked_caps: Dict[str, Any],
+) -> Set[str]:
+    gid = str(group_id or "").strip()
+    if not gid or actor_is_voice_secretary or actor_is_web_model:
+        return set()
+    if _GROUP_BRIDGE_PACK_ID in set(blocked_caps.keys()):
+        return set()
+    try:
+        from ....kernel.group_bridge import pairing as group_bridge_pairing
+
+        trusts = group_bridge_pairing.list_trusts(group_id=gid)
+    except Exception:
+        return set()
+
+    out: Set[str] = set()
+    for trust in trusts:
+        if not isinstance(trust, dict):
+            continue
+        if str(trust.get("status") or "").strip() != "active":
+            continue
+        if not str(trust.get("remote_group_id") or "").strip():
+            continue
+        out.add(_GROUP_BRIDGE_REMOTE_ACCESS_TOOL)
+        out.update(_GROUP_BRIDGE_REMOTE_READ_TOOLS)
+        out.update(_GROUP_BRIDGE_REMOTE_FULL_TOOLS)
+    return out
 
 
 def _effective_policy_level(
@@ -1430,6 +1482,12 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
         hidden_capabilities: List[Dict[str, Any]] = []
         visible_tools: List[str] = []
         if not slash_commands_view:
+            auto_group_bridge_tools = _auto_group_bridge_visible_tool_names(
+                group_id=group_id,
+                actor_is_voice_secretary=actor_is_voice_secretary,
+                actor_is_web_model=actor_is_web_model,
+                blocked_caps=blocked_caps,
+            )
             visible_tools = sorted(
                 set(
                     resolve_visible_tool_names(
@@ -1439,6 +1497,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                         is_web_model=actor_is_web_model,
                     )
                 )
+                | auto_group_bridge_tools
                 | {str(x.get("name") or "").strip() for x in dynamic_tools if isinstance(x, dict)}
             )
             for cap_id in all_builtin_pack_ids():

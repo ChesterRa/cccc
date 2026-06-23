@@ -108,7 +108,9 @@ def _remote_schema(
 
 
 def group_bridge_tool_specs(access_level: str) -> List[Dict[str, Any]]:
-    level = _normalize_access(access_level)
+    # Keep the schema stable for long-lived MCP clients. Actual read/full
+    # authority is checked again on every tool call.
+    level = pairing_kernel.ACCESS_LEVEL_FULL
     tools = [
         {
             "name": REMOTE_ACCESS_TOOL,

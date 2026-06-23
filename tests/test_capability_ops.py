@@ -139,6 +139,57 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertIn("cccc_capability_search", visible)
             self.assertIn("cccc_file", visible)
             self.assertNotIn("cccc_space", visible)
+            self.assertNotIn("cccc_remote_access", visible)
+            self.assertNotIn("cccc_remote_repo", visible)
+        finally:
+            cleanup()
+
+    def test_capability_state_exposes_stable_group_bridge_tools_for_active_bridge(self) -> None:
+        from cccc.kernel.group_bridge.pairing import (
+            approve_pairing_request,
+            create_pairing_invite,
+            create_pairing_request,
+            update_trust_remote_info,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            invite = create_pairing_invite(group_id=gid, ttl_seconds=600)
+            request = create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_remote",
+                requester_group_title="Remote Product",
+                requester_peer_id="peer_remote",
+            )
+            trust = approve_pairing_request(request["request_id"], approver_user_id="user")["trust"]
+
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            visible = set((state_resp.result or {}).get("visible_tools") or [])
+            self.assertIn("cccc_remote_access", visible)
+            self.assertIn("cccc_remote_context", visible)
+            self.assertIn("cccc_remote_repo", visible)
+            self.assertIn("cccc_remote_git", visible)
+            self.assertIn("cccc_remote_shell", visible)
+            self.assertIn("cccc_remote_exec_command", visible)
+            self.assertNotIn("cccc_pairing_invite_create", visible)
+
+            update_trust_remote_info(trust["trust_id"], remote_access_level="read")
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            visible = set((state_resp.result or {}).get("visible_tools") or [])
+            self.assertIn("cccc_remote_repo", visible)
+            self.assertIn("cccc_remote_shell", visible)
+
+            update_trust_remote_info(trust["trust_id"], remote_access_level="full")
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            visible = set((state_resp.result or {}).get("visible_tools") or [])
+            self.assertIn("cccc_remote_repo", visible)
+            self.assertIn("cccc_remote_shell", visible)
+            self.assertIn("cccc_remote_exec_command", visible)
         finally:
             cleanup()
 

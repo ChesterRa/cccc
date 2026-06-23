@@ -1654,6 +1654,7 @@
     "noneYet": "まだありません。",
     "trustedRemoteGroups": "信頼済みリモートグループ",
     "trustedRemoteGroupsHelp": "これらのブリッジは明示的なメッセージを交換できます。ここでのアクセス制御は、そのリモートグループが現在のグループ内で何をできるかを決めます。",
+    "runtimeRestartHint": "初回ブリッジ設定後、すでに実行中の actor にリモート読み取り/フルアクセスツールを使わせるには、その runtime を一度再起動してください。",
     "unknownRemoteGroup": "不明なリモートグループ",
     "revokeTrust": "接続を削除",
     "revokingTrust": "削除中...",

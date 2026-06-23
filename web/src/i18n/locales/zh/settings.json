@@ -1654,6 +1654,7 @@
     "noneYet": "暂无。",
     "trustedRemoteGroups": "可信远端工作组",
     "trustedRemoteGroupsHelp": "这些桥接可以交换显式消息。这里的访问控制决定该远端工作组能在当前工作组里做什么。",
+    "runtimeRestartHint": "首次配置桥接后，如果要让已经运行中的 actor 使用远端只读/完整工具，需要重启一次该 runtime。",
     "unknownRemoteGroup": "未知远端工作组",
     "revokeTrust": "删除连接",
     "revokingTrust": "删除中...",

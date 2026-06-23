@@ -143,10 +143,11 @@ describe("buildComposerMentionSuggestions", () => {
         remote_peer_id: "peer_remote",
         remote_endpoint: "https://remote.example",
         access_level: "full",
+        remote_access_level: "read",
       },
     ]);
 
-    expect(remoteGroups[0]?.group_bridge_access_level).toBeUndefined();
+    expect(remoteGroups[0]?.group_bridge_access_level).toBe("read");
 
     const items = buildComposerMentionSuggestions({
       kind: "group",

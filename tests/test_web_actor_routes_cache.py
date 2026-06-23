@@ -210,6 +210,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
             self._add_actor(group_id, runtime="claude")
             actor_list_reads = 0
             actor_list_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             def fake_call_daemon(req: dict):
@@ -223,6 +224,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
                     actor_list_reads += 1
                     current = actor_list_reads
                 if current == 1:
+                    first_read_started.set()
                     first_read_release.wait(timeout=2)
                     return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer stale"}]}}
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer fresh"}]}}
@@ -237,7 +239,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         stale_future = executor.submit(client.get, path)
-                        time.sleep(0.05)
+                        self.assertTrue(first_read_started.wait(timeout=2))
 
                         update_resp = client.post(update_path, json={"by": "user", "title": "Peer 1"})
                         self.assertEqual(update_resp.status_code, 200)
@@ -264,6 +266,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             actor_list_reads = 0
             actor_list_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             def fake_call_daemon(req: dict):
@@ -279,6 +282,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
                     actor_list_reads += 1
                     current = actor_list_reads
                 if current == 1:
+                    first_read_started.set()
                     first_read_release.wait(timeout=2)
                     return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": False}]}}
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": True}]}}
@@ -293,7 +297,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         stale_future = executor.submit(client.get, path)
-                        time.sleep(0.05)
+                        self.assertTrue(first_read_started.wait(timeout=2))
 
                         start_resp = client.post(start_path)
                         self.assertEqual(start_resp.status_code, 200)
@@ -318,6 +322,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             actor_list_reads = 0
             actor_list_lock = threading.Lock()
+            first_read_started = threading.Event()
             first_read_release = threading.Event()
 
             def fake_call_daemon(req: dict):
@@ -333,6 +338,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
                     actor_list_reads += 1
                     current = actor_list_reads
                 if current == 1:
+                    first_read_started.set()
                     first_read_release.wait(timeout=2)
                     return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": False}]}}
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": True}]}}
@@ -347,7 +353,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         stale_future = executor.submit(client.get, path)
-                        time.sleep(0.05)
+                        self.assertTrue(first_read_started.wait(timeout=2))
 
                         start_resp = client.post(start_path)
                         self.assertEqual(start_resp.status_code, 200)

@@ -94,6 +94,12 @@ function endpointDisplayName(endpoint: string): string {
   }
 }
 
+function normalizeGroupBridgeAccessLevel(value: unknown): "messages" | "read" | "full" {
+  const level = String(value || "").trim().toLowerCase();
+  if (level === "read" || level === "full") return level;
+  return "messages";
+}
+
 export function buildGroupBridgeRouteGroups(trusts: GroupBridgeTrust[] | undefined | null): GroupMeta[] {
   const out: GroupMeta[] = [];
   for (const trust of trusts || []) {
@@ -114,6 +120,7 @@ export function buildGroupBridgeRouteGroups(trusts: GroupBridgeTrust[] | undefin
       group_bridge_remote_peer_id: peerId,
       group_bridge_trust_id: String(trust.trust_id || "").trim(),
       group_bridge_registration_id: String(trust.registration_id || "").trim(),
+      group_bridge_access_level: normalizeGroupBridgeAccessLevel(trust.remote_access_level),
     });
   }
   return out;
