@@ -96,7 +96,8 @@ describe("ChatComposer destination group boundaries", () => {
   });
 
   it("does not display local bridge grants as remote access levels", () => {
-    expect(composerSource).toContain('String(group.group_bridge_access_level || "").trim() || "messages"');
+    expect(composerSource).toContain('String(group.group_bridge_access_level || "").trim() || "unknown"');
+    expect(composerSource).toContain('t("remoteGroupAccessUnknown"');
     expect(composerSource).not.toContain('const accessLevel = "messages";');
   });
 

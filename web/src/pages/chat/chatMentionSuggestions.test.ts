@@ -149,6 +149,16 @@ describe("buildComposerMentionSuggestions", () => {
 
     expect(remoteGroups[0]?.group_bridge_access_level).toBe("read");
 
+    const staleRemoteGroups = buildGroupBridgeRouteGroups([
+      {
+        trust_id: "ptrust_2",
+        status: "active",
+        group_id: "g_owner",
+        remote_group_id: "g_unknown",
+      },
+    ]);
+    expect(staleRemoteGroups[0]?.group_bridge_access_level).toBe("unknown");
+
     const items = buildComposerMentionSuggestions({
       kind: "group",
       filter: "remote",

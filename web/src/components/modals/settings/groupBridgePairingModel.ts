@@ -2,7 +2,6 @@ import type {
   GroupBridgeIdentity,
   GroupBridgePairingOutbound,
   GroupBridgePairingRequest,
-  GroupBridgeRegistration,
   GroupBridgeTrust,
   GroupBridgeAccessLevel,
 } from "../../../services/api/groupBridge";
@@ -115,10 +114,6 @@ function projectConnectionInfoPayload(parsed: Record<string, unknown>): {
     isRemote: Boolean(issuerEndpoint),
     payload: issuerEndpoint ? parsed : undefined,
   };
-}
-
-export function filterGroupBridgeSessionRegistrations(registrations: GroupBridgeRegistration[] | undefined | null): GroupBridgeRegistration[] {
-  return (registrations || []).filter((registration) => String(registration.transport || "") === "group_bridge_session");
 }
 
 export function projectIncomingRequests(

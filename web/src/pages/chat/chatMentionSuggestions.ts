@@ -94,10 +94,11 @@ function endpointDisplayName(endpoint: string): string {
   }
 }
 
-function normalizeGroupBridgeAccessLevel(value: unknown): "messages" | "read" | "full" {
+function normalizeGroupBridgeAccessLevel(value: unknown): "messages" | "read" | "full" | "unknown" {
   const level = String(value || "").trim().toLowerCase();
+  if (level === "messages") return "messages";
   if (level === "read" || level === "full") return level;
-  return "messages";
+  return "unknown";
 }
 
 export function buildGroupBridgeRouteGroups(trusts: GroupBridgeTrust[] | undefined | null): GroupMeta[] {

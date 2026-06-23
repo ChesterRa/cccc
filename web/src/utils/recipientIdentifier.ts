@@ -28,7 +28,10 @@ function remoteAccessLabel(value: unknown): string {
   const level = cleanValue(value).toLowerCase();
   if (level === "read") return "read";
   if (level === "full") return "full";
-  return "message only";
+  if (level === "messages") return "message only";
+  if (level === "message only") return "message only";
+  if (level === "unknown") return "unknown";
+  return "unknown";
 }
 
 export function formatRecipientIdentifier(input: RecipientIdentifierInput): string {

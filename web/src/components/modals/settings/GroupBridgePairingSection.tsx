@@ -3,11 +3,10 @@ import { useTranslation } from "react-i18next";
 
 import { RefreshIcon } from "../../Icons";
 import * as api from "../../../services/api";
-import type { GroupBridgeIdentity, GroupBridgePairingOutbound, GroupBridgePairingRequest, GroupBridgeRegistration, GroupBridgeTrust, GroupBridgeAccessLevel } from "../../../services/api/groupBridge";
+import type { GroupBridgeIdentity, GroupBridgePairingOutbound, GroupBridgePairingRequest, GroupBridgeTrust, GroupBridgeAccessLevel } from "../../../services/api/groupBridge";
 import {
   canCreateInvite,
   canSubmitPairingRequest,
-  filterGroupBridgeSessionRegistrations,
   formatPeerLabel,
   formatRemoteGroupLabel,
   GROUP_BRIDGE_ACCESS_LEVELS,
@@ -41,7 +40,6 @@ interface Props {
   isDark: boolean;
   currentGroupId: string;
   currentGroupTitle?: string;
-  registrations: GroupBridgeRegistration[];
   identity: GroupBridgeIdentity | null;
   requests: GroupBridgePairingRequest[];
   trusts: GroupBridgeTrust[];
@@ -73,7 +71,6 @@ export function GroupBridgePairingSection({
   isDark,
   currentGroupId,
   currentGroupTitle,
-  registrations,
   identity,
   requests,
   trusts,
@@ -101,7 +98,6 @@ export function GroupBridgePairingSection({
   const incomingRequests = useMemo(() => projectIncomingRequests(requests), [requests]);
   const trustedPeers = useMemo(() => projectTrustedPeers(trusts), [trusts]);
   const overview = useMemo(() => projectPairingOverview({ identity, requests, trusts }), [identity, requests, trusts]);
-  const sessionRegistrations = useMemo(() => filterGroupBridgeSessionRegistrations(registrations), [registrations]);
   const recentOutbounds = useMemo(() => projectRecentOutbounds(outbounds), [outbounds]);
   const parsed = useMemo(() => parseConnectionInfoInput(connectionInput), [connectionInput]);
   const localPeerId = identity?.peer_id || "";
@@ -165,7 +161,7 @@ export function GroupBridgePairingSection({
       : t("group_bridge.copyFieldManual", { field: label, defaultValue: "Copy is unavailable; select {{field}} manually." }));
   }, [t]);
 
-  const copyTrustRecipientIdentifier = useCallback(async (trust: GroupBridgeTrust, displayName: string, accessLevel: GroupBridgeAccessLevel) => {
+  const copyTrustRecipientIdentifier = useCallback(async (trust: GroupBridgeTrust, displayName: string, accessLevel: string) => {
     const remoteGroupId = String(trust.remote_group_id || "").trim();
     if (!remoteGroupId) return;
     const copied = await copyTextToClipboard(formatRecipientIdentifier({
@@ -299,6 +295,144 @@ export function GroupBridgePairingSection({
     }
   }, [refreshPairing, t]);
 
+  const hasTrustedRemoteGroups = trustedPeers.length > 0;
+  const trustedRemoteGroupsSection = (
+    <section className={settingsWorkspacePanelClass(isDark)}>
+      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.trustedRemoteGroups")}</div>
+      <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.trustedRemoteGroupsHelp")}</p>
+      {trustCopyNotice && <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">{trustCopyNotice}</p>}
+      {trustedPeers.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("group_bridge.noneYet")}</p> : (
+        <div className="mt-3 space-y-3">{trustedPeers.map((trust) => {
+          const remoteGroupLabel = formatRemoteGroupLabel(trust, t("group_bridge.unknownRemoteGroup", { defaultValue: "Unknown remote group" }));
+          const remoteGroupId = String(trust.remote_group_id || "").trim();
+          const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
+          const remoteAccessLevel = normalizeGroupBridgeAccessLevel(trust.remote_access_level);
+          const remoteAccessKnown = String(trust.remote_access_level || "").trim().length > 0;
+          const refreshError = remoteRefreshErrors[trust.trust_id] || "";
+          const remoteRefreshBusy = remoteRefreshBusyTrustId === trust.trust_id;
+          return (
+            <div key={trust.trust_id} className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{remoteGroupLabel}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("group_bridge.trustedBadge")}</span>
+                    <span>{t("group_bridge.status", { status: trust.status })}</span>
+                    {remoteGroupId && <code className="max-w-[18rem] truncate rounded-md bg-[var(--glass-panel-bg)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-primary)]">{remoteGroupId}</code>}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {remoteGroupId && (
+                    <>
+                      <button
+                        type="button"
+                        className={secondaryButtonClass("sm")}
+                        onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, remoteAccessKnown ? remoteAccessLevel : "unknown")}
+                      >
+                        {t("group_bridge.copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
+                      </button>
+                      <button
+                        type="button"
+                        className={secondaryButtonClass("sm")}
+                        onClick={() => copyTrustValue(remoteGroupId, t("group_bridge.remoteGroupId"))}
+                      >
+                        {t("group_bridge.copyShort", { defaultValue: "Copy" })}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="min-h-[32px] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-300"
+                    disabled={busy || revokeBusyId === trust.trust_id}
+                    onClick={() => revokeTrustedPeer(trust.trust_id)}
+                  >
+                    {revokeBusyId === trust.trust_id ? t("group_bridge.revokingTrust") : t("group_bridge.revokeTrust")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                <div className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2.5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-[180px] flex-1">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.remoteAccessToThisGroup")}</div>
+                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.remoteAccessToThisGroupHelp")}</p>
+                    </div>
+                    <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] p-1">
+                      {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
+                        const selected = currentAccessLevel === level;
+                        return (
+                          <button
+                            key={level}
+                            type="button"
+                            className={accessButtonClass(level, selected)}
+                            aria-pressed={selected}
+                            disabled={busy || accessBusyTrustId === trust.trust_id}
+                            onClick={() => {
+                              if (!selected) updateTrustAccess(trust.trust_id, level);
+                            }}
+                          >
+                            {t(`group_bridge.accessLevels.${level}`)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                    {t(`group_bridge.accessDescriptions.${currentAccessLevel}`)}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2.5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-[180px] flex-1">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.thisGroupAccessToRemote")}</div>
+                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.thisGroupAccessToRemoteHelp")}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className={secondaryButtonClass("sm")}
+                      disabled={busy || remoteRefreshBusy}
+                      onClick={() => refreshTrustRemoteInfo(trust.trust_id)}
+                    >
+                      <RefreshIcon size={14} className={remoteRefreshBusy ? "animate-spin" : ""} />
+                      {remoteRefreshBusy ? t("group_bridge.refreshingConnections") : t("group_bridge.refreshRemoteInfo")}
+                    </button>
+                  </div>
+                  <div className="mt-2 inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] p-1">
+                    {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
+                      const selected = remoteAccessKnown && remoteAccessLevel === level;
+                      return (
+                        <span key={level} className={accessButtonClass(level, selected)}>
+                          {t(`group_bridge.accessLevels.${level}`)}
+                        </span>
+                      );
+                    })}
+                    {!remoteAccessKnown && (
+                      <span className="min-h-[32px] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-muted)]">
+                        {t("group_bridge.unknownAccess", { defaultValue: "Unknown" })}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                    {t(`group_bridge.remoteAccessDescriptions.${remoteAccessKnown ? remoteAccessLevel : "unknown"}`)}
+                  </p>
+                  {refreshError && (
+                    <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">
+                      {refreshError}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.runtimeRestartHint")}</p>
+            </div>
+          );
+        })}</div>
+      )}
+    </section>
+  );
+
   return (
     <div className={settingsWorkspaceBodyClass}>
       <section className={settingsWorkspacePanelClass(isDark)}>
@@ -317,6 +451,8 @@ export function GroupBridgePairingSection({
           </div>
         </div>
       </section>
+
+      {hasTrustedRemoteGroups && trustedRemoteGroupsSection}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className={settingsWorkspacePanelClass(isDark)}>
@@ -432,147 +568,7 @@ export function GroupBridgePairingSection({
         </section>
       )}
 
-      <section className={settingsWorkspacePanelClass(isDark)}>
-        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.trustedRemoteGroups")}</div>
-        <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.trustedRemoteGroupsHelp")}</p>
-        <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.runtimeRestartHint")}</p>
-        {trustCopyNotice && <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">{trustCopyNotice}</p>}
-        {trustedPeers.length === 0 && sessionRegistrations.length === 0 ? <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("group_bridge.noneYet")}</p> : (
-          <div className="mt-3 space-y-2">{trustedPeers.map((trust) => {
-            const remoteGroupLabel = formatRemoteGroupLabel(trust, t("group_bridge.unknownRemoteGroup", { defaultValue: "Unknown remote group" }));
-            const remoteGroupId = String(trust.remote_group_id || "").trim();
-            const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
-            const remoteAccessLevel = normalizeGroupBridgeAccessLevel(trust.remote_access_level);
-            const remoteAccessKnown = String(trust.remote_access_level || "").trim().length > 0;
-            const refreshError = remoteRefreshErrors[trust.trust_id] || "";
-            const remoteRefreshBusy = remoteRefreshBusyTrustId === trust.trust_id;
-            return (
-              <div key={trust.trust_id} className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{remoteGroupLabel}</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("group_bridge.trustedBadge")}</span>
-                      <span>{t("group_bridge.status", { status: trust.status })}</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className={dangerButtonClass("sm")}
-                    disabled={busy || revokeBusyId === trust.trust_id}
-                    onClick={() => revokeTrustedPeer(trust.trust_id)}
-                  >
-                    {revokeBusyId === trust.trust_id ? t("group_bridge.revokingTrust") : t("group_bridge.revokeTrust")}
-                  </button>
-                </div>
-
-                <div className="mt-3">
-                  <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-                    <div className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">{t("group_bridge.remoteGroupId")}</div>
-                    <div className="mt-1 flex items-center gap-2">
-                      <code className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-primary)]">{remoteGroupId || t("group_bridge.notLoaded")}</code>
-                    </div>
-                    {remoteGroupId && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className={secondaryButtonClass("sm")}
-                          onClick={() => copyTrustValue(remoteGroupId, t("group_bridge.remoteGroupId"))}
-                        >
-                          {t("group_bridge.copyShort", { defaultValue: "Copy" })}
-                        </button>
-                        <button
-                          type="button"
-                          className={secondaryButtonClass("sm")}
-                          onClick={() => copyTrustRecipientIdentifier(trust, remoteGroupLabel, remoteAccessLevel)}
-                        >
-                          {t("group_bridge.copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
-                        </button>
-                      </div>
-                    )}
-                    <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-                      {t("group_bridge.remoteGroupIdAgentHelp", { defaultValue: "Copy the identifier when asking an agent to message or inspect this remote group." })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-3">
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="min-w-[200px] flex-1">
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.accessToThisGroup")}</div>
-                          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.groupBridgeAccessHelp")}</p>
-                        </div>
-                        <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
-                          {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
-                            const selected = currentAccessLevel === level;
-                            return (
-                              <button
-                                key={level}
-                                type="button"
-                                className={accessButtonClass(level, selected)}
-                                aria-pressed={selected}
-                                disabled={busy || accessBusyTrustId === trust.trust_id}
-                                onClick={() => {
-                                  if (!selected) updateTrustAccess(trust.trust_id, level);
-                                }}
-                              >
-                                {t(`group_bridge.accessLevels.${level}`)}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-                        {t(`group_bridge.accessDescriptions.${currentAccessLevel}`)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="min-w-[200px] flex-1">
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.accessOnRemoteGroup")}</div>
-                          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("group_bridge.accessOnRemoteGroupHelp")}</p>
-                        </div>
-                        <button
-                          type="button"
-                          className={secondaryButtonClass("sm")}
-                          disabled={busy || remoteRefreshBusy}
-                          onClick={() => refreshTrustRemoteInfo(trust.trust_id)}
-                        >
-                          <RefreshIcon size={14} className={remoteRefreshBusy ? "animate-spin" : ""} />
-                          {remoteRefreshBusy ? t("group_bridge.refreshingConnections") : t("group_bridge.refreshRemoteInfo")}
-                        </button>
-                      </div>
-                      <div className="mt-2 inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
-                        {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
-                          const selected = remoteAccessKnown && remoteAccessLevel === level;
-                          return (
-                            <span key={level} className={accessButtonClass(level, selected)}>
-                              {t(`group_bridge.accessLevels.${level}`)}
-                            </span>
-                          );
-                        })}
-                        {!remoteAccessKnown && (
-                          <span className="min-h-[32px] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-muted)]">
-                            {t("group_bridge.unknownAccess", { defaultValue: "Unknown" })}
-                          </span>
-                        )}
-                      </div>
-                      {refreshError && (
-                        <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">
-                          {refreshError}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}</div>
-        )}
-      </section>
+      {!hasTrustedRemoteGroups && trustedRemoteGroupsSection}
 
       <details className={settingsWorkspacePanelClass(isDark)}>
         <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("group_bridge.localDiagnostics")}</summary>

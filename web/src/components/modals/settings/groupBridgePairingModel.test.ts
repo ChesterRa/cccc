@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type {
   GroupBridgePairingOutbound,
   GroupBridgePairingRequest,
-  GroupBridgeRegistration,
   GroupBridgeTrust,
 } from "../../../services/api/groupBridge";
 import {
@@ -11,7 +10,6 @@ import {
   canCreateInvite,
   canSubmitPairingRequest,
   parseConnectionInfoInput,
-  filterGroupBridgeSessionRegistrations,
   formatPeerLabel,
   formatRemoteGroupLabel,
   isLocalIssuerEndpoint,
@@ -148,14 +146,6 @@ describe("groupBridgePairingModel", () => {
     expect(formatRemoteGroupLabel({ remote_peer_id: "peer_remote", remote_group_id: "g_remote", remote_group_title: "Remote Group" })).toBe("Remote Group");
     expect(formatRemoteGroupLabel({ remote_peer_id: "peer_remote", remote_group_id: "g_remote" })).toBe("g_remote");
     expect(formatRemoteGroupLabel({}, "未知远端工作组")).toBe("未知远端工作组");
-  });
-
-  it("filters Group Bridge session registrations from mixed status data", () => {
-    const regs = [
-      { registration_id: "r1", transport: "registry_hub" },
-      { registration_id: "r2", transport: "group_bridge_session" },
-    ] as GroupBridgeRegistration[];
-    expect(filterGroupBridgeSessionRegistrations(regs).map((r) => r.registration_id)).toEqual(["r2"]);
   });
 
   it("projects pending incoming requests and trusted peers", () => {

@@ -74,8 +74,8 @@ def test_processing_lifecycle_starts_and_completes_reaction() -> None:
     lifecycle.start(chat_id="chat-1", thread_id=0, message_id="msg-1")
     lifecycle.complete("chat-1", IMProcessingOutcome.SUCCESS)
 
-    assert adapter.reactions == [("msg-1", "👀")]
-    assert adapter.removed == [("msg-1", "msg-1:👀")]
+    assert adapter.reactions == [("msg-1", "")]
+    assert adapter.removed == [("msg-1", "msg-1:")]
 
 
 def test_processing_lifecycle_refreshes_typing_actions() -> None:

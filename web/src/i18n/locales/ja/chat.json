@@ -46,6 +46,7 @@
   "remoteGroupMessagesOnly": "メッセージ",
   "remoteGroupAccessRead": "読み取り",
   "remoteGroupAccessFull": "フル",
+  "remoteGroupAccessUnknown": "不明",
   "recipientDetails": "{{name}} の宛先詳細",
   "recipientSelectorDetail": "ローカルセレクター",
   "recipientActorDetail": "ローカル actor",

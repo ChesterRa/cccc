@@ -46,6 +46,7 @@
   "remoteGroupMessagesOnly": "消息",
   "remoteGroupAccessRead": "读取",
   "remoteGroupAccessFull": "完整",
+  "remoteGroupAccessUnknown": "未知",
   "recipientDetails": "{{name}} 的收件人详情",
   "recipientSelectorDetail": "本地选择器",
   "recipientActorDetail": "本地 actor",

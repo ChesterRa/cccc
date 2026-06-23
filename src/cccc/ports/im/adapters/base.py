@@ -205,7 +205,7 @@ class IMAdapter(ABC):
     def on_processing_start(self, context: IMProcessingContext) -> Optional[str]:
         """Start platform feedback for an accepted inbound message."""
         if context.message_id:
-            reaction_id = self.add_reaction(context.message_id, "👀")
+            reaction_id = self.add_reaction(context.message_id)
             if reaction_id:
                 return f"reaction:{reaction_id}"
         if self.send_chat_action(context.chat_id, "typing"):

@@ -5,7 +5,6 @@ import type {
   GroupBridgeIdentity,
   GroupBridgePairingOutbound,
   GroupBridgePairingRequest,
-  GroupBridgeRegistration,
   GroupBridgeTrust,
 } from "../../../services/api/groupBridge";
 import { GroupBridgePairingSection } from "./GroupBridgePairingSection";
@@ -25,7 +24,6 @@ export function GroupBridgeConnectionsSection({
   groupId,
   groupTitle,
 }: GroupBridgeConnectionsSectionProps) {
-  const [registrations, setRegistrations] = useState<GroupBridgeRegistration[]>([]);
   const [identity, setIdentity] = useState<GroupBridgeIdentity | null>(null);
   const [requests, setRequests] = useState<GroupBridgePairingRequest[]>([]);
   const [trusts, setTrusts] = useState<GroupBridgeTrust[]>([]);
@@ -48,29 +46,25 @@ export function GroupBridgeConnectionsSection({
     }
     refreshInFlightRef.current = true;
     try {
-      const [identityResp, initialRequestResp, initialTrustResp, initialStatusResp, initialOutboundResp] = await Promise.all([
+      const [identityResp, initialRequestResp, initialTrustResp, initialOutboundResp] = await Promise.all([
         api.fetchGroupBridgeIdentity(),
         api.fetchGroupBridgePairingRequests(groupId),
         api.fetchGroupBridgeTrusts(groupId),
-        api.fetchGroupBridgeStatus(groupId),
         api.fetchGroupBridgePairingOutbounds(groupId),
       ]);
       let requestResp = initialRequestResp;
       let trustResp = initialTrustResp;
-      let statusResp = initialStatusResp;
       let outboundResp = initialOutboundResp;
       if (outboundResp.ok && await syncSubmittedOutbounds(outboundResp.result.outbounds || [])) {
-        [requestResp, trustResp, statusResp, outboundResp] = await Promise.all([
+        [requestResp, trustResp, outboundResp] = await Promise.all([
           api.fetchGroupBridgePairingRequests(groupId),
           api.fetchGroupBridgeTrusts(groupId),
-          api.fetchGroupBridgeStatus(groupId),
           api.fetchGroupBridgePairingOutbounds(groupId),
         ]);
       }
       if (identityResp.ok) setIdentity(identityResp.result.identity);
       if (requestResp.ok) setRequests(requestResp.result.requests || []);
       if (trustResp.ok) setTrusts(trustResp.result.trusts || []);
-      if (statusResp.ok) setRegistrations(statusResp.result.registrations || []);
       if (outboundResp.ok) setOutbounds(outboundResp.result.outbounds || []);
     } finally {
       refreshInFlightRef.current = false;
@@ -101,7 +95,6 @@ export function GroupBridgeConnectionsSection({
       isDark={isDark}
       currentGroupId={groupId}
       currentGroupTitle={groupTitle}
-      registrations={registrations}
       identity={identity}
       requests={requests}
       trusts={trusts}

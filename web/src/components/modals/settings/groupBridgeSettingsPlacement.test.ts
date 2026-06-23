@@ -41,7 +41,8 @@ describe("group_bridge settings placement", () => {
     expect(src).toContain("groupId");
     expect(src).toContain("fetchGroupBridgePairingRequests(groupId)");
     expect(src).toContain("fetchGroupBridgeTrusts(groupId)");
-    expect(src).toContain("fetchGroupBridgeStatus(groupId)");
+    expect(src).toContain("fetchGroupBridgePairingOutbounds(groupId)");
+    expect(src).not.toContain("fetchGroupBridgeStatus(groupId)");
   });
 
   it("group Connections syncs submitted and pending outbound requests on refresh", () => {
@@ -154,13 +155,14 @@ describe("group_bridge settings placement", () => {
   it("trusted remote groups expose agent target ids without default peer or endpoint noise", () => {
     const src = readSource("./GroupBridgePairingSection.tsx");
     expect(src).toContain('t("group_bridge.remoteGroupId")');
-    expect(src).toContain('t("group_bridge.remoteGroupIdAgentHelp"');
     expect(src).toContain('t("group_bridge.copyRecipientIdentifier"');
     expect(src).toContain("formatRecipientIdentifier");
-    expect(src).toContain('t("group_bridge.accessToThisGroup"');
-    expect(src).toContain('t("group_bridge.accessOnRemoteGroup"');
+    expect(src).toContain('t("group_bridge.remoteAccessToThisGroup"');
+    expect(src).toContain('t("group_bridge.thisGroupAccessToRemote"');
     expect(src).toContain('t("group_bridge.refreshRemoteInfo"');
     expect(src).toContain('t("group_bridge.unknownAccess"');
+    expect(src).toContain("remoteAccessKnown");
+    expect(src).toContain("remoteAccessDescriptions");
     expect(src).not.toContain('t("group_bridge.remoteCccc"');
     expect(src).not.toContain('t("group_bridge.unknownCccc"');
     expect(src).not.toContain('t("group_bridge.remotePeerId"');
@@ -224,12 +226,14 @@ describe("group_bridge settings placement", () => {
       expect(locale.group_bridge?.copyRecipientIdentifier).toBeTruthy();
       expect(locale.group_bridge?.copyRecipientIdentifierDone).toBeTruthy();
       expect(locale.group_bridge?.copyRecipientIdentifierManual).toBeTruthy();
-      expect(locale.group_bridge?.accessToThisGroup).toBeTruthy();
-      expect(locale.group_bridge?.accessOnRemoteGroup).toBeTruthy();
-      expect(locale.group_bridge?.accessOnRemoteGroupHelp).toBeTruthy();
+      expect(locale.group_bridge?.remoteAccessToThisGroup).toBeTruthy();
+      expect(locale.group_bridge?.remoteAccessToThisGroupHelp).toBeTruthy();
+      expect(locale.group_bridge?.thisGroupAccessToRemote).toBeTruthy();
+      expect(locale.group_bridge?.thisGroupAccessToRemoteHelp).toBeTruthy();
       expect(locale.group_bridge?.refreshRemoteInfo).toBeTruthy();
       expect(locale.group_bridge?.refreshRemoteInfoFailed).toBeTruthy();
       expect(locale.group_bridge?.unknownAccess).toBeTruthy();
+      expect(locale.group_bridge?.remoteAccessDescriptions).toBeTruthy();
       expect(locale.group_bridge?.localDiagnostics).toBeTruthy();
       expect(locale.group_bridge?.localDiagnosticsHelp).toBeTruthy();
       expect(locale.group_bridge?.sessionTransport).toBeTruthy();

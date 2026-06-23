@@ -72,14 +72,8 @@ export function buildComposerSendPlanTargets({
     groups,
     tokens: groupMentionTokens,
   });
-  for (const target of mentionTargets) {
-    const group = groupsById.get(String(target.groupId || "").trim());
-    addTarget({
-      groupId: target.groupId,
-      isCrossGroup: true,
-      isRemote: Boolean(group?.group_bridge_remote),
-      source: "group_mention",
-    });
+  if (mentionTargets.length > 0 && selected) {
+    addTarget({ groupId: selected, isCrossGroup: false, source: "selected_group" });
   }
 
   for (const remoteGroupId of remoteGroupIds || []) {

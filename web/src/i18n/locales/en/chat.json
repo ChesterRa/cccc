@@ -46,6 +46,7 @@
   "remoteGroupMessagesOnly": "Messages",
   "remoteGroupAccessRead": "Read",
   "remoteGroupAccessFull": "Full",
+  "remoteGroupAccessUnknown": "Unknown",
   "recipientDetails": "Recipient details for {{name}}",
   "recipientSelectorDetail": "Local selector",
   "recipientActorDetail": "Local actor",

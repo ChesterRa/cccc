@@ -24,6 +24,12 @@ describe("formatRecipientIdentifier", () => {
       id: "g_ops",
       accessLevel: "full",
     })).toBe("Ops (g_ops remote/full)");
+
+    expect(formatRecipientIdentifier({
+      kind: "remote_group",
+      label: "Stale",
+      id: "g_stale",
+    })).toBe("Stale (g_stale remote/unknown)");
   });
 
   it("formats local actors with role and id when useful", () => {
