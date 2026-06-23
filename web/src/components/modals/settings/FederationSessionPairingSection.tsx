@@ -95,6 +95,8 @@ export function FederationSessionPairingSection({
   const [revokeBusyId, setRevokeBusyId] = useState("");
   const [deleteOutboundBusyId, setDeleteOutboundBusyId] = useState("");
   const [accessBusyTrustId, setAccessBusyTrustId] = useState("");
+  const [remoteRefreshBusyTrustId, setRemoteRefreshBusyTrustId] = useState("");
+  const [remoteRefreshErrors, setRemoteRefreshErrors] = useState<Record<string, string>>({});
 
   const incomingRequests = useMemo(() => projectIncomingRequests(requests), [requests]);
   const trustedPeers = useMemo(() => projectTrustedPeers(trusts), [trusts]);
@@ -261,6 +263,28 @@ export function FederationSessionPairingSection({
     }
   }, [currentGroupId, refreshPairing, t]);
 
+  const refreshTrustRemoteInfo = useCallback(async (trustId: string) => {
+    const tid = String(trustId || "").trim();
+    if (!tid) return;
+    setReviewError("");
+    setRemoteRefreshErrors((prev) => ({ ...prev, [tid]: "" }));
+    setRemoteRefreshBusyTrustId(tid);
+    try {
+      const resp = await api.refreshFederationTrustRemoteInfo(tid);
+      if (!resp.ok) {
+        setRemoteRefreshErrors((prev) => ({
+          ...prev,
+          [tid]: resp.error.message || t("federation.refreshRemoteInfoFailed", { defaultValue: "Could not refresh remote info." }),
+        }));
+        return;
+      }
+      await refreshPairing();
+      publishFederationPairingChanged(currentGroupId);
+    } finally {
+      setRemoteRefreshBusyTrustId("");
+    }
+  }, [currentGroupId, refreshPairing, t]);
+
   const deleteOutbound = useCallback(async (outboundId: string) => {
     const oid = String(outboundId || "").trim();
     if (!oid) return;
@@ -417,6 +441,10 @@ export function FederationSessionPairingSection({
             const remoteGroupLabel = formatRemoteGroupLabel(trust, t("federation.unknownRemoteGroup", { defaultValue: "Unknown remote group" }));
             const remoteGroupId = String(trust.remote_group_id || "").trim();
             const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
+            const remoteAccessLevel = normalizeGroupBridgeAccessLevel(trust.remote_access_level);
+            const remoteAccessKnown = String(trust.remote_access_level || "").trim().length > 0;
+            const refreshError = remoteRefreshErrors[trust.trust_id] || "";
+            const remoteRefreshBusy = remoteRefreshBusyTrustId === trust.trust_id;
             return (
               <div key={trust.trust_id} className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -425,7 +453,6 @@ export function FederationSessionPairingSection({
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">{t("federation.trustedBadge")}</span>
                       <span>{t("federation.status", { status: trust.status })}</span>
-                      <span>{t("federation.accessSummary", { access: t(`federation.accessLevels.${currentAccessLevel}`), defaultValue: "access: {{access}}" })}</span>
                     </div>
                   </div>
                   <button
@@ -469,34 +496,76 @@ export function FederationSessionPairingSection({
                 </div>
 
                 <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-[200px] flex-1">
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.groupBridgeAccess")}</div>
-                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.groupBridgeAccessHelp")}</p>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-[200px] flex-1">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.accessToThisGroup")}</div>
+                          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.groupBridgeAccessHelp")}</p>
+                        </div>
+                        <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
+                          {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
+                            const selected = currentAccessLevel === level;
+                            return (
+                              <button
+                                key={level}
+                                type="button"
+                                className={accessButtonClass(level, selected)}
+                                aria-pressed={selected}
+                                disabled={busy || accessBusyTrustId === trust.trust_id}
+                                onClick={() => {
+                                  if (!selected) updateTrustAccess(trust.trust_id, level);
+                                }}
+                              >
+                                {t(`federation.accessLevels.${level}`)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                        {t(`federation.accessDescriptions.${currentAccessLevel}`)}
+                      </p>
                     </div>
-                    <div className="inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
-                      {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
-                        const selected = currentAccessLevel === level;
-                        return (
-                          <button
-                            key={level}
-                            type="button"
-                            className={accessButtonClass(level, selected)}
-                            aria-pressed={selected}
-                            disabled={busy || accessBusyTrustId === trust.trust_id}
-                            onClick={() => {
-                              if (!selected) updateTrustAccess(trust.trust_id, level);
-                            }}
-                          >
-                            {t(`federation.accessLevels.${level}`)}
-                          </button>
-                        );
-                      })}
+
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-[200px] flex-1">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{t("federation.accessOnRemoteGroup")}</div>
+                          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("federation.accessOnRemoteGroupHelp")}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className={secondaryButtonClass("sm")}
+                          disabled={busy || remoteRefreshBusy}
+                          onClick={() => refreshTrustRemoteInfo(trust.trust_id)}
+                        >
+                          <RefreshIcon size={14} className={remoteRefreshBusy ? "animate-spin" : ""} />
+                          {remoteRefreshBusy ? t("federation.refreshingConnections") : t("federation.refreshRemoteInfo")}
+                        </button>
+                      </div>
+                      <div className="mt-2 inline-flex rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1">
+                        {GROUP_BRIDGE_ACCESS_LEVELS.map((level) => {
+                          const selected = remoteAccessKnown && remoteAccessLevel === level;
+                          return (
+                            <span key={level} className={accessButtonClass(level, selected)}>
+                              {t(`federation.accessLevels.${level}`)}
+                            </span>
+                          );
+                        })}
+                        {!remoteAccessKnown && (
+                          <span className="min-h-[32px] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[var(--color-text-muted)]">
+                            {t("federation.unknownAccess", { defaultValue: "Unknown" })}
+                          </span>
+                        )}
+                      </div>
+                      {refreshError && (
+                        <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">
+                          {refreshError}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-                    {t(`federation.accessDescriptions.${currentAccessLevel}`)}
-                  </p>
                 </div>
               </div>
             );

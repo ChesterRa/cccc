@@ -1715,6 +1715,12 @@
     "trustedRemoteGroupsHelp": "这些桥接可以交换显式消息。这里的访问控制决定该远端工作组能在当前工作组里做什么。",
     "groupBridgeAccess": "访问当前工作组",
     "groupBridgeAccessHelp": "选择这个远端工作组可以在当前工作组中使用的权限。",
+    "accessToThisGroup": "访问当前工作组",
+    "accessOnRemoteGroup": "访问远端工作组",
+    "accessOnRemoteGroupHelp": "当前工作组在远端工作组里可以做什么。",
+    "refreshRemoteInfo": "刷新",
+    "refreshRemoteInfoFailed": "无法刷新远端信息。",
+    "unknownAccess": "未知",
     "updateAccessFailed": "更新访问权限失败",
     "accessLevels": {
       "messages": "消息",

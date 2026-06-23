@@ -236,6 +236,12 @@ def deliver_appended_chat_message(
     clean_attachments = [item for item in (attachments or []) if isinstance(item, dict)]
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
+    event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    remote_reply_to = (
+        [str(item or "").strip() for item in event_data.get("remote_reply_to") if str(item or "").strip()]
+        if isinstance(event_data.get("remote_reply_to"), list)
+        else []
+    )
     delivery_text = build_actor_delivery_text(
         text=text,
         priority=priority,
@@ -245,6 +251,7 @@ def deliver_appended_chat_message(
         attachments=clean_attachments,
         src_group_id=src_group_id,
         src_event_id=src_event_id,
+        remote_reply_to=remote_reply_to,
     )
     headless_delivery_text = append_mcp_reply_reminder(
         build_actor_headless_delivery_text(

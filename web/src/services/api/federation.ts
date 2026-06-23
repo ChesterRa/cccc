@@ -80,6 +80,7 @@ export interface FederationTrust {
   transport: string;
   status: string;
   access_level?: GroupBridgeAccessLevel | string;
+  remote_access_level?: GroupBridgeAccessLevel | string;
   access_updated_by?: string;
 }
 
@@ -244,6 +245,13 @@ export async function updateFederationTrustAccess(trustId: string, accessLevel: 
       method: "POST",
       body: JSON.stringify({ access_level: accessLevel, updated_by: updatedBy }),
     },
+  );
+}
+
+export async function refreshFederationTrustRemoteInfo(trustId: string) {
+  return apiJson<{ trust: FederationTrust; remote_status: Record<string, unknown> }>(
+    `/api/federation/pairing/trusts/${encodeURIComponent(trustId)}/refresh`,
+    { method: "POST" },
   );
 }
 

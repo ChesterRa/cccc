@@ -176,6 +176,7 @@ def build_actor_delivery_text(
     attachments: list[dict[str, Any]],
     src_group_id: str = "",
     src_event_id: str = "",
+    remote_reply_to: list[str] | None = None,
 ) -> str:
     delivery_text = text
     prefix_lines: list[str] = []
@@ -185,6 +186,10 @@ def build_actor_delivery_text(
         prefix_lines.append(f"[cccc] REPLY REQUIRED (event_id={event_id}): reply via cccc_message_reply.")
     if src_group_id and src_event_id:
         prefix_lines.append(f"[cccc] RELAYED FROM (group_id={src_group_id}, event_id={src_event_id}):")
+    reply_targets = [str(item or "").strip() for item in (remote_reply_to or []) if str(item or "").strip()]
+    if reply_targets:
+        target_text = ", ".join(reply_targets)
+        prefix_lines.append(f"[cccc] REMOTE REPLY DEFAULT: omit to in cccc_message_reply to reply to remote {target_text}.")
     if prefix_lines:
         delivery_text = "\n".join(prefix_lines) + "\n" + delivery_text
     ref_lines = render_delivery_refs(refs)
@@ -261,6 +266,13 @@ def render_actor_event_for_delivery(event: Dict[str, Any], *, actor_id: str = ""
             else [],
             src_group_id=str(data.get("src_group_id") or ""),
             src_event_id=str(data.get("src_event_id") or ""),
+            remote_reply_to=[
+                str(item or "").strip()
+                for item in (data.get("remote_reply_to") or [])
+                if str(item or "").strip()
+            ]
+            if isinstance(data.get("remote_reply_to"), list)
+            else [],
         )
         return build_actor_headless_delivery_text(
             by=by,

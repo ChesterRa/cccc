@@ -1098,6 +1098,48 @@ class TestWebFederationPairingRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_pairing_trust_refresh_updates_remote_name_and_grant_snapshot(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.federation.pairing import approve_pairing_request, create_pairing_invite, create_pairing_request
+
+            client = self._client()
+            headers = self._admin_header()
+            invite = create_pairing_invite(group_id="g_local", ttl_seconds=600)
+            request = create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_remote",
+                requester_group_title="Old Remote",
+                requester_peer_id="peer_remote",
+            )
+            trust = approve_pairing_request(request["request_id"], approver_user_id="user-a")["trust"]
+
+            with patch(
+                "cccc.ports.web.routes.federation.group_bridge_remote_access",
+                return_value={"remote_group_title": "Renamed Remote", "access_level": "full", "permissions": {"full": True}},
+            ) as remote_access:
+                resp = client.post(
+                    f"/api/federation/pairing/trusts/{trust['trust_id']}/refresh",
+                    headers=headers,
+                )
+
+            self.assertEqual(resp.status_code, 200, resp.text)
+            body = resp.json()["result"]
+            self.assertEqual(body["trust"]["remote_group_title"], "Renamed Remote")
+            self.assertEqual(body["trust"]["remote_access_level"], "full")
+            remote_access.assert_called_once_with(
+                group_id="g_local",
+                arguments={"action": "status", "remote_group_id": "g_remote"},
+            )
+
+            listed = client.get("/api/federation/pairing/trusts?group_id=g_local", headers=headers)
+            self.assertEqual(listed.status_code, 200, listed.text)
+            listed_trust = listed.json()["result"]["trusts"][0]
+            self.assertEqual(listed_trust["remote_group_title"], "Renamed Remote")
+            self.assertEqual(listed_trust["remote_access_level"], "full")
+        finally:
+            cleanup()
+
     def test_reject_blocks_approve(self) -> None:
         _, cleanup = self._with_home()
         try:

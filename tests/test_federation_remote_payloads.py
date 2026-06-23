@@ -16,7 +16,13 @@ class TestFederationRemotePayloads(unittest.TestCase):
                 remote_group_id="g_remote",
                 remote_peer_id="peer_target",
             ),
-            payload=RemoteSendPayload(text="hello", to=["@foreman"], priority="attention", reply_required=True),
+            payload=RemoteSendPayload(
+                text="hello",
+                to=["@foreman"],
+                priority="attention",
+                reply_required=True,
+                source_by="user",
+            ),
             idempotency_key="delivery:abc",
             source_event_id="local-event-1",
             reply_to_remote_event_id="remote-event-1",
@@ -34,6 +40,7 @@ class TestFederationRemotePayloads(unittest.TestCase):
         self.assertEqual(body["idempotency_key"], "delivery:abc")
         self.assertEqual(body["source_platform"], "federation_session")
         self.assertEqual(body["source_user_id"], "peer_source")
+        self.assertEqual(body["source_by"], "user")
         self.assertEqual(body["src_group_id"], "g_local")
         self.assertEqual(body["src_event_id"], "local-event-1")
         self.assertEqual(body["reply_to"], "remote-event-1")

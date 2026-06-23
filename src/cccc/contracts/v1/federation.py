@@ -33,6 +33,7 @@ class RemoteSendPayload(BaseModel):
     to: List[str] = Field(default_factory=list)
     refs: List[Dict[str, object]] = Field(default_factory=list)
     attachments: List[Dict[str, object]] = Field(default_factory=list)
+    source_by: str = ""  # Original sender id in the source group, e.g. user or actor_id.
 
     model_config = ConfigDict(extra="forbid")
 

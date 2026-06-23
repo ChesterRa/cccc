@@ -220,6 +220,13 @@ export function ChatComposer({
     () => (remoteGroups || []).filter((group) => String(group.group_id || "").trim() && group.federation_remote),
     [remoteGroups],
   );
+  const visibleRecipientPopoverTarget = useMemo(() => {
+    if (!recipientPopoverTarget) return null;
+    if (!recipientPopoverTarget.key.startsWith("remote:")) return recipientPopoverTarget;
+    const groupId = recipientPopoverTarget.key.slice("remote:".length);
+    const stillAvailable = availableRemoteGroups.some((group) => String(group.group_id || "").trim() === groupId);
+    return stillAvailable ? recipientPopoverTarget : null;
+  }, [availableRemoteGroups, recipientPopoverTarget]);
 
   const readRootFontScale = () => {
     if (typeof document === "undefined") return 1;
@@ -318,17 +325,6 @@ export function ChatComposer({
       clearTimeout(recipientPopoverHideTimerRef.current);
     }
   }, []);
-
-  useEffect(() => {
-    if (!recipientPopoverTarget) return;
-    if (!recipientPopoverTarget.key.startsWith("remote:")) return;
-    const groupId = recipientPopoverTarget.key.slice("remote:".length);
-    const stillAvailable = availableRemoteGroups.some((group) => String(group.group_id || "").trim() === groupId);
-    if (!stillAvailable) {
-      setRecipientPopoverTarget(null);
-      setRecipientPopoverStyle(null);
-    }
-  }, [availableRemoteGroups, recipientPopoverTarget]);
 
   useEffect(() => {
     if (!selectedGroupId || groupSettings) return;
@@ -841,7 +837,6 @@ export function ChatComposer({
   });
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
-  const hasRemoteGroupSelection = selectedRemoteGroupIds.length > 0;
   const actorChipDisabled = !selectedGroupId || busy === "send" || !!selectedGroupActorsHydrating;
   const actionVisibility = getComposerActionVisibility(isSmallScreen);
 
@@ -1176,7 +1171,7 @@ export function ChatComposer({
                 </div>
               </ScrollFade>
 
-              {typeof document !== "undefined" && recipientPopoverTarget && recipientPopoverStyle ? createPortal((
+              {typeof document !== "undefined" && visibleRecipientPopoverTarget && recipientPopoverStyle ? createPortal((
                 <div
                   className={classNames(
                     "fixed z-[1000] rounded-lg border px-3 py-2 text-xs shadow-xl backdrop-blur-xl",
@@ -1186,15 +1181,15 @@ export function ChatComposer({
                   )}
                   style={recipientPopoverStyle}
                   role="dialog"
-                  aria-label={t("recipientDetails", { name: recipientPopoverTarget.label, defaultValue: "Recipient details for {{name}}" })}
+                  aria-label={t("recipientDetails", { name: visibleRecipientPopoverTarget.label, defaultValue: "Recipient details for {{name}}" })}
                   onMouseEnter={cancelRecipientPopoverHide}
                   onMouseLeave={scheduleRecipientPopoverHide}
                 >
                   <div className="flex min-w-0 items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold">{recipientPopoverTarget.label}</div>
+                      <div className="truncate text-sm font-semibold">{visibleRecipientPopoverTarget.label}</div>
                       <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
-                        {recipientPopoverTarget.detail}
+                        {visibleRecipientPopoverTarget.detail}
                       </div>
                     </div>
                     <button
@@ -1204,7 +1199,7 @@ export function ChatComposer({
                         isDark ? "text-slate-300 hover:bg-white/10 hover:text-white" : "text-gray-500 hover:bg-black/5 hover:text-gray-800",
                       )}
                       onClick={() => {
-                        void copyRecipientIdentifier(recipientPopoverTarget.identifier);
+                        void copyRecipientIdentifier(visibleRecipientPopoverTarget.identifier);
                         hideRecipientPopover();
                       }}
                       aria-label={t("copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
@@ -1216,13 +1211,13 @@ export function ChatComposer({
                   </div>
                   <div className="mt-2 flex min-w-0 items-center gap-2">
                     <code className={classNames("min-w-0 flex-1 truncate rounded-md px-2 py-1 font-mono text-[11px]", isDark ? "bg-white/[0.08] text-slate-200" : "bg-gray-100 text-gray-800")}>
-                      {recipientPopoverTarget.identifier}
+                      {visibleRecipientPopoverTarget.identifier}
                     </code>
                   </div>
-                  {recipientPopoverTarget.idValue ? (
+                  {visibleRecipientPopoverTarget.idValue ? (
                     <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
-                      <span className="font-semibold uppercase tracking-wide">{recipientPopoverTarget.idLabel}</span>
-                      <span className="ml-2 font-mono">{recipientPopoverTarget.idValue}</span>
+                      <span className="font-semibold uppercase tracking-wide">{visibleRecipientPopoverTarget.idLabel}</span>
+                      <span className="ml-2 font-mono">{visibleRecipientPopoverTarget.idValue}</span>
                     </div>
                   ) : null}
                 </div>

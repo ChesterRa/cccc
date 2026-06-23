@@ -1715,6 +1715,12 @@
     "trustedRemoteGroupsHelp": "These bridges can exchange explicit messages. Access controls here decide what the remote group may do inside this group.",
     "groupBridgeAccess": "Access to this group",
     "groupBridgeAccessHelp": "Choose what this remote group can do in the current group.",
+    "accessToThisGroup": "Access to this group",
+    "accessOnRemoteGroup": "Access on remote group",
+    "accessOnRemoteGroupHelp": "What this group may do in the remote group.",
+    "refreshRemoteInfo": "Refresh",
+    "refreshRemoteInfoFailed": "Could not refresh remote info.",
+    "unknownAccess": "Unknown",
     "updateAccessFailed": "Failed to update access",
     "accessLevels": {
       "messages": "Messages",

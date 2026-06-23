@@ -237,6 +237,25 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_remote_access_status_exposes_target_group_title(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group, _root = self._create_group_with_scope(home, title="Remote Product")
+            context = self._bridge_context(target_group_id=group.group_id, access_level="read")
+
+            response = self._call_tool(
+                "cccc_remote_access",
+                {"remote_group_id": group.group_id, "action": "status"},
+                context,
+            )
+
+            payload = self._tool_payload(response)
+            self.assertEqual(payload["remote_group_id"], group.group_id)
+            self.assertEqual(payload["remote_group_title"], "Remote Product")
+            self.assertEqual(payload["access_level"], "read")
+        finally:
+            cleanup()
+
     def test_web_group_bridge_endpoint_uses_federation_token_and_access_update(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
         from cccc.kernel.federation.pairing import (

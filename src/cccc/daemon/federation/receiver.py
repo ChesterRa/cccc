@@ -130,7 +130,7 @@ def receive_remote_send(
         msg = RemoteSendPayload(
             **{
                 key: payload_doc.get(key)
-                for key in ("text", "format", "priority", "reply_required", "to", "refs", "attachments")
+                for key in ("text", "format", "priority", "reply_required", "to", "refs", "attachments", "source_by")
                 if key in payload_doc
             }
         )
@@ -155,6 +155,8 @@ def receive_remote_send(
         attachments = store_remote_attachment_payloads(group, msg.attachments)
     except ValueError as exc:
         return _error("invalid_attachments", str(exc))
+    source_by = str(msg.source_by or "").strip()
+    remote_reply_to = _remote_reply_to_from_source_by(source_by)
 
     event = append_event(
         group.ledger_path,
@@ -175,6 +177,8 @@ def receive_remote_send(
             source_user_id=peer_id,
             src_group_id=src_gid,
             src_event_id=str(payload_doc.get("src_event_id") or "").strip() or None,
+            src_by=source_by or None,
+            remote_reply_to=remote_reply_to or None,
             client_id=key,
         ).model_dump(),
     )
@@ -213,6 +217,17 @@ def _explicit_remote_recipients(to: Any) -> list[str]:
     if not isinstance(to, list):
         return []
     return [str(item or "").strip() for item in to if str(item or "").strip()]
+
+
+def _remote_reply_to_from_source_by(source_by: str) -> list[str]:
+    sender = str(source_by or "").strip()
+    if not sender:
+        return []
+    if sender in ("user", "@user"):
+        return ["user"]
+    if sender.startswith("@") or sender.startswith("#") or sender.startswith("federation:"):
+        return []
+    return [sender]
 
 
 def _load_group(group_id: str, *, home: Optional[Path]):  # type: ignore[no-untyped-def]

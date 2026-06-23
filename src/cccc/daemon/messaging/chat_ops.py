@@ -32,7 +32,11 @@ from ...kernel.messaging import (
 from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
 from ...util.time import utc_now_iso
-from ..federation.reply_relay import can_relay_federation_reply, relay_federation_reply
+from ..federation.reply_relay import (
+    can_relay_federation_reply,
+    default_federation_reply_recipients,
+    relay_federation_reply,
+)
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import flush_pending_messages
@@ -766,6 +770,7 @@ def handle_reply(
     to_tokens: list[str] = []
     if isinstance(to_raw, list):
         to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+    to_explicitly_set = bool(to_tokens)
 
     if priority not in ("normal", "attention"):
         return diag.finish_response(_error("invalid_priority", "priority must be 'normal' or 'attention'"))
@@ -815,16 +820,23 @@ def handle_reply(
         else []
     )
     relayable_federation_reply = can_relay_federation_reply(group_id=group.group_id, original_data=original_data)
+    federation_reply_to = default_federation_reply_recipients(original_data) if relayable_federation_reply else []
 
     if not to_tokens:
         if relayable_federation_reply:
-            return diag.finish_response(
-                _error(
-                    "missing_remote_recipient",
-                    "Federation replies require an explicit recipient. Please pass to=['user'], to=['@foreman'], or another recipient.",
+            if federation_reply_to:
+                # Keep the local reply visible to the human operator; the relay
+                # uses the preserved remote target stored on the original event.
+                to_tokens = ["user"]
+            else:
+                return diag.finish_response(
+                    _error(
+                        "missing_remote_recipient",
+                        "Federation replies require an explicit recipient. Please pass to=['user'], to=['@foreman'], or another recipient.",
+                    )
                 )
-            )
-        to_tokens = default_reply_recipients(group, by=by, original_event=original)
+        else:
+            to_tokens = default_reply_recipients(group, by=by, original_event=original)
     try:
         to = resolve_recipient_tokens(group, to_tokens)
     except Exception as e:
@@ -894,10 +906,12 @@ def handle_reply(
         original_data=original_data,
         reply_event_id=str(event.get("id") or ""),
         text=text,
+        by=by,
         to=to,
         priority=priority,
         reply_required=reply_required,
         refs=refs,
+        to_was_explicit=to_explicitly_set,
     )
     diag.mark("federation_reply")
 

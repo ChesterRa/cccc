@@ -14,6 +14,7 @@ import {
   createFederationPairingRequest,
   createFederationRemotePairingRequest,
   rejectFederationPairingRequest,
+  refreshFederationTrustRemoteInfo,
   revokeFederationTrust,
   fetchFederationStatus,
   updateFederationTrustAccess,
@@ -77,6 +78,7 @@ describe("federation API client", () => {
     await syncFederationPairingOutbound("pout_1");
     await deleteFederationPairingOutbound("pout_1");
     await updateFederationTrustAccess("ptrust_1", "read", "user-a");
+    await refreshFederationTrustRemoteInfo("ptrust_1");
     await revokeFederationTrust("ptrust_1", "user-a");
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/federation/pairing/identity");
@@ -118,7 +120,9 @@ describe("federation API client", () => {
       access_level: "read",
       updated_by: "user-a",
     });
-    expect(String(fetchMock.mock.calls[13]?.[0])).toBe("/api/federation/pairing/trusts/ptrust_1/revoke");
-    expect(JSON.parse(String((fetchMock.mock.calls[13]?.[1] as RequestInit)?.body))).toEqual({ revoked_by: "user-a" });
+    expect(String(fetchMock.mock.calls[13]?.[0])).toBe("/api/federation/pairing/trusts/ptrust_1/refresh");
+    expect(String((fetchMock.mock.calls[13]?.[1] as RequestInit)?.method)).toBe("POST");
+    expect(String(fetchMock.mock.calls[14]?.[0])).toBe("/api/federation/pairing/trusts/ptrust_1/revoke");
+    expect(JSON.parse(String((fetchMock.mock.calls[14]?.[1] as RequestInit)?.body))).toEqual({ revoked_by: "user-a" });
   });
 });

@@ -11,6 +11,7 @@ class TestFederationContracts(unittest.TestCase):
         self.assertEqual(p.to, [])
         self.assertEqual(p.refs, [])
         self.assertEqual(p.attachments, [])
+        self.assertEqual(p.source_by, "")
         with self.assertRaises(Exception):
             RemoteSendPayload(text="hi", bogus=1)
 

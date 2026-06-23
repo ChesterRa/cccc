@@ -13,10 +13,12 @@ class _CountingTransport:
         self._result = result
         self.calls = 0
         self.credentials = []
+        self.payloads = []
 
     def deliver(self, envelope):
         self.calls += 1
         self.credentials.append(envelope.credential)
+        self.payloads.append(envelope.payload)
         return self._result
 
 
@@ -108,6 +110,7 @@ class TestFederationDaemonOps(unittest.TestCase):
             self.assertEqual(resp.result["receipt"]["status"], "sent")
             self.assertEqual(resp.result["receipt"]["remote_event_id"], "remote-1")
             self.assertEqual(fake.calls, 1)
+            self.assertEqual(fake.payloads[0].source_by, "actor-a")
 
             replay = handle_remote_send(
                 {

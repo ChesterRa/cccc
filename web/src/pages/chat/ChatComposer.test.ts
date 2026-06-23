@@ -104,7 +104,7 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("selectorPopoverTarget(tok)");
     expect(composerSource).toContain("actorPopoverTarget(actor)");
     expect(composerSource).toContain("remoteGroupPopoverTarget(group)");
-    expect(composerSource).toContain("recipientPopoverTarget.identifier");
+    expect(composerSource).toContain("visibleRecipientPopoverTarget.identifier");
     expect(composerSource).toContain('t("copyRecipientIdentifier"');
   });
 

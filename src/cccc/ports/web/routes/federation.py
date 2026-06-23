@@ -33,10 +33,13 @@ from ....kernel.federation.pairing import (
     reject_pairing_request,
     revoke_trust,
     update_trust_access_level,
+    update_trust_remote_info,
     upsert_pairing_outbound,
 )
 from ....kernel.federation.pairing_remote import build_connection_payload, sync_remote_pairing_outbound, submit_remote_pairing_request
 from ....kernel.federation.registration import delete_registration, get_registration, list_registrations
+from ....ports.mcp.common import MCPError
+from ....ports.mcp.handlers.group_bridge_client import remote_access as group_bridge_remote_access
 from ..schemas import RouteContext, check_group, get_principal, require_user
 
 # Registration records may carry a credential reference. Public projections must
@@ -383,6 +386,34 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
         return {"ok": True, "result": {"trust": updated}}
+
+    @router.post("/pairing/trusts/{trust_id}/refresh")
+    async def federation_pairing_trust_refresh(request: Request, trust_id: str) -> Dict[str, Any]:
+        existing = list_trusts()
+        match = next((item for item in existing if str(item.get("trust_id") or "") == str(trust_id or "").strip()), None)
+        if not match:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "trust not found", "details": {}})
+        group_id = str(match.get("group_id") or "").strip()
+        remote_group_id = str(match.get("remote_group_id") or "").strip()
+        _require_group_or_403(request, group_id)
+        try:
+            remote_status = group_bridge_remote_access(
+                group_id=group_id,
+                arguments={"action": "status", "remote_group_id": remote_group_id},
+            )
+            updated = update_trust_remote_info(
+                trust_id,
+                remote_group_title=str(remote_status.get("remote_group_title") or ""),
+                remote_access_level=str(remote_status.get("access_level") or ""),
+            )
+        except MCPError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": exc.code, "message": exc.message, "details": exc.details or {}},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": str(exc), "details": {}}) from exc
+        return {"ok": True, "result": {"trust": updated, "remote_status": remote_status}}
 
     @router.get("/pairing/outbounds")
     async def federation_pairing_outbound_list(request: Request, group_id: str = "") -> Dict[str, Any]:

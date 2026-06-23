@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -342,6 +343,74 @@ class TestWebMessagingClientId(unittest.TestCase):
                 error = resp.json().get("error") or {}
                 self.assertEqual(error.get("code"), "invalid_recipient")
                 self.assertIn("unknown recipient", str(error.get("message") or ""))
+        finally:
+            cleanup()
+
+    def test_reply_upload_rejects_legacy_federation_reply_before_storing_blob(self) -> None:
+        from cccc.contracts.v1.message import ChatMessageData
+        from cccc.kernel.federation.pairing import _save_store
+        from cccc.kernel.group import create_group
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="reply-upload-legacy-federation", topic="")
+            _save_store(
+                {
+                    "invites": {},
+                    "requests": {},
+                    "outbounds": {},
+                    "trusts": {
+                        "ptrust_legacy": {
+                            "trust_id": "ptrust_legacy",
+                            "group_id": group.group_id,
+                            "remote_group_id": "g_remote",
+                            "remote_peer_id": "peer_remote",
+                            "registration_id": "reg_remote",
+                            "transport": "federation_session",
+                            "remote_endpoint": "http://remote.example:8848",
+                            "status": "active",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "updated_at": "2026-01-01T00:00:00Z",
+                        }
+                    },
+                }
+            )
+            original = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key=str(group.doc.get("active_scope_key") or ""),
+                by="federation:peer_remote",
+                data=ChatMessageData(
+                    text="legacy remote message",
+                    to=["@foreman"],
+                    source_platform="federation_session",
+                    source_user_id="peer_remote",
+                    src_group_id="g_remote",
+                    src_event_id="remote-event-1",
+                ).model_dump(),
+            )
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/reply_upload",
+                    data={
+                        "by": "user",
+                        "text": "upload reply",
+                        "reply_to": str(original.get("id") or ""),
+                    },
+                    files={"files": ("reply.txt", BytesIO(b"reply"), "text/plain")},
+                )
+
+            self.assertEqual(resp.status_code, 400)
+            detail = resp.json().get("detail") or resp.json().get("error") or {}
+            self.assertEqual(detail.get("code"), "missing_remote_recipient")
+            blob_dir = Path(home) / "groups" / group.group_id / "state" / "blobs"
+            self.assertFalse(blob_dir.exists() and any(blob_dir.iterdir()))
         finally:
             cleanup()
 

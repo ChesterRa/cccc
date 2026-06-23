@@ -537,6 +537,37 @@ def update_trust_access_level(
     return _project_trust(_enrich_trust_display_fields(trust, store))
 
 
+def update_trust_remote_info(
+    trust_id: str,
+    *,
+    remote_group_title: str = "",
+    remote_access_level: str = "",
+    home: Optional[Path] = None,
+) -> Dict[str, Any]:
+    tid = str(trust_id or "").strip()
+    if not tid:
+        raise ValueError("trust_id is required")
+    store = _load_store(home)
+    trust = store["trusts"].get(tid)
+    if not isinstance(trust, dict):
+        raise ValueError("trust not found")
+    if str(trust.get("status") or "") != "active":
+        raise ValueError("trust is not active")
+    title = str(remote_group_title or "").strip()
+    if title:
+        trust["remote_group_title"] = title
+    level = str(remote_access_level or "").strip()
+    if level:
+        trust["remote_access_level"] = normalize_access_level(level)
+    trust["updated_at"] = utc_now_iso()
+    _save_store(store, home)
+    _publish_pairing_event("federation.pairing.trust_remote_info_updated", {
+        "group_id": str(trust.get("group_id") or ""),
+        "trust_id": tid,
+    })
+    return _project_trust(_enrich_trust_display_fields(trust, store))
+
+
 def active_trust_for_remote_send_credential(credential: Dict[str, Any], *, home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     if not isinstance(credential, dict):
         return None
@@ -888,6 +919,7 @@ def _project_trust(trust: Dict[str, Any]) -> Dict[str, Any]:
         "multiaddrs",
         "transport",
         "access_level",
+        "remote_access_level",
         "access_updated_by",
         "status",
         "created_at",

@@ -379,9 +379,13 @@ def _remote_access(arguments: Dict[str, Any], context: GroupBridgeContext) -> Di
         "read": _has_read(context),
         "full": _has_full(context),
     }
+    group = load_group(context.target_group_id)
+    remote_group_title = ""
+    if group is not None:
+        remote_group_title = str(group.doc.get("title") or "").strip()
     target = {
         "remote_group_id": context.target_group_id,
-        "remote_group_title": "",
+        "remote_group_title": remote_group_title,
         "bridge_status": "active",
         "access_level": _normalize_access(context.access_level),
         "permissions": permissions,

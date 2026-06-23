@@ -60,6 +60,8 @@ class ChatMessageData(BaseModel):
     # Cross-group provenance (for relays/forwarding)
     src_group_id: Optional[str] = None
     src_event_id: Optional[str] = None
+    src_by: Optional[str] = None
+    remote_reply_to: Optional[List[str]] = None
 
     # Cross-group destination metadata (for "send to other group" source messages)
     dst_group_id: Optional[str] = None

@@ -152,6 +152,7 @@ def handle_send_cross_group(
         remote_resp = handle_remote_send(
             {
                 "group_id": src_group_id,
+                "by": by,
                 "registration_id": remote_route.registration_id,
                 "idempotency_key": idempotency_key,
                 "source_event_id": src_event_id,

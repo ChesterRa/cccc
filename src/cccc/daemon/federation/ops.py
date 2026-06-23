@@ -59,6 +59,9 @@ def handle_remote_send(
         payload = RemoteSendPayload(**payload_raw)
     except Exception as e:
         return _error("invalid_payload", str(e))
+    source_by = str(args.get("by") or "").strip()
+    if source_by and not str(payload.source_by or "").strip():
+        payload = payload.model_copy(update={"source_by": source_by})
     recipients = _explicit_remote_recipients(payload.to)
     if not recipients:
         return _error(

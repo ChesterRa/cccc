@@ -813,6 +813,7 @@ class TestFederationTransport(unittest.TestCase):
     def test_receive_remote_send_delivers_once_and_deduplicates(self) -> None:
         from cccc.contracts.v1.message import ChatMessageData
         from cccc.daemon.federation.receiver import receive_remote_send
+        from cccc.kernel.inbox import iter_events
         from cccc.kernel.ledger import append_event
 
         with tempfile.TemporaryDirectory() as td:
@@ -832,7 +833,7 @@ class TestFederationTransport(unittest.TestCase):
                     target_group_id="g_local",
                     src_group_id="g_remote",
                     remote_peer_id="peer_remote",
-                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention"},
+                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention", "source_by": "user"},
                     idempotency_key="remote-client-1",
                     home=home,
                 )
@@ -849,10 +850,11 @@ class TestFederationTransport(unittest.TestCase):
                     target_group_id="g_local",
                     src_group_id="g_remote",
                     remote_peer_id="peer_remote",
-                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention"},
+                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention", "source_by": "user"},
                     idempotency_key="remote-client-1",
                     home=home,
                 )
+                events = [event for event in iter_events(group_dir / "ledger.jsonl") if event.get("id") == first["event_id"]]
 
         self.assertTrue(first["ok"], first)
         self.assertFalse(first["duplicate"])
@@ -868,6 +870,8 @@ class TestFederationTransport(unittest.TestCase):
         self.assertEqual(str(delivery["event"].get("id") or ""), first["event_id"])
         self.assertEqual(delivery["text"], "hello from remote")
         self.assertEqual(delivery["source_user_name"], "Remote Group")
+        self.assertEqual((events[0].get("data") or {}).get("src_by"), "user")
+        self.assertEqual((events[0].get("data") or {}).get("remote_reply_to"), ["user"])
 
     def test_receive_remote_send_stores_attachments_as_local_blobs(self) -> None:
         from cccc.daemon.federation.receiver import receive_remote_send

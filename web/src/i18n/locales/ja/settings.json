@@ -1715,6 +1715,12 @@
     "trustedRemoteGroupsHelp": "これらのブリッジは明示的なメッセージを交換できます。ここでのアクセス制御は、そのリモートグループが現在のグループ内で何をできるかを決めます。",
     "groupBridgeAccess": "このグループへのアクセス",
     "groupBridgeAccessHelp": "このリモートグループが現在のグループで使用できる権限を選びます。",
+    "accessToThisGroup": "このグループへのアクセス",
+    "accessOnRemoteGroup": "リモートグループでのアクセス",
+    "accessOnRemoteGroupHelp": "このグループがリモートグループ内でできることです。",
+    "refreshRemoteInfo": "更新",
+    "refreshRemoteInfoFailed": "リモート情報を更新できませんでした。",
+    "unknownAccess": "不明",
     "updateAccessFailed": "アクセス権限の更新に失敗しました",
     "accessLevels": {
       "messages": "メッセージ",

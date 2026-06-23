@@ -379,10 +379,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         from ....kernel.actors import resolve_recipient_tokens
         from ....kernel.inbox import find_event
         from ....kernel.messaging import default_reply_recipients
+        from ....daemon.federation.reply_relay import can_relay_federation_reply, default_federation_reply_recipients
 
         original = find_event(group, reply_to_id)
         if original is None:
             raise HTTPException(status_code=404, detail={"code": "event_not_found", "message": f"event not found: {reply_to_id}"})
+        original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
 
         try:
             canonical_to = resolve_recipient_tokens(group, to_list)
@@ -393,8 +395,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         if not canonical_to and not to_list:
             try:
-                canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
+                relayable_federation_reply = can_relay_federation_reply(group_id=group.group_id, original_data=original_data)
+                if relayable_federation_reply:
+                    federation_reply_to = default_federation_reply_recipients(original_data)
+                    if not federation_reply_to:
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "code": "missing_remote_recipient",
+                                "message": "Federation replies require an explicit recipient.",
+                            },
+                        )
+                    canonical_to = resolve_recipient_tokens(group, ["user"])
+                else:
+                    canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
             except Exception as e:
+                if isinstance(e, HTTPException):
+                    raise
                 raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
 
         # Note: enabled-recipient validation + auto-wake is handled by the daemon.
@@ -410,7 +427,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             args={
                 "text": msg_text,
                 "by": by,
-                "to": canonical_to,
+                "to": to_list,
                 "reply_to": reply_to_id,
                 "attachments": attachments,
                 "priority": prio,

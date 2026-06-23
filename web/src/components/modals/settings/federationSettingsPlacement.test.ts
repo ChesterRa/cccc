@@ -157,7 +157,10 @@ describe("federation settings placement", () => {
     expect(src).toContain('t("federation.remoteGroupIdAgentHelp"');
     expect(src).toContain('t("federation.copyRecipientIdentifier"');
     expect(src).toContain("formatRecipientIdentifier");
-    expect(src).toContain('t("federation.accessSummary"');
+    expect(src).toContain('t("federation.accessToThisGroup"');
+    expect(src).toContain('t("federation.accessOnRemoteGroup"');
+    expect(src).toContain('t("federation.refreshRemoteInfo"');
+    expect(src).toContain('t("federation.unknownAccess"');
     expect(src).not.toContain('t("federation.remoteCccc"');
     expect(src).not.toContain('t("federation.unknownCccc"');
     expect(src).not.toContain('t("federation.remotePeerId"');
@@ -223,6 +226,12 @@ describe("federation settings placement", () => {
       expect(locale.federation?.copyRecipientIdentifier).toBeTruthy();
       expect(locale.federation?.copyRecipientIdentifierDone).toBeTruthy();
       expect(locale.federation?.copyRecipientIdentifierManual).toBeTruthy();
+      expect(locale.federation?.accessToThisGroup).toBeTruthy();
+      expect(locale.federation?.accessOnRemoteGroup).toBeTruthy();
+      expect(locale.federation?.accessOnRemoteGroupHelp).toBeTruthy();
+      expect(locale.federation?.refreshRemoteInfo).toBeTruthy();
+      expect(locale.federation?.refreshRemoteInfoFailed).toBeTruthy();
+      expect(locale.federation?.unknownAccess).toBeTruthy();
       expect(locale.federation?.advancedInviteMetadata).toBeTruthy();
       expect(locale.federation?.localDiagnostics).toBeTruthy();
       expect(locale.federation?.localDiagnosticsHelp).toBeTruthy();

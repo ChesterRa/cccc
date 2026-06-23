@@ -305,6 +305,40 @@ class TestFederationPairing(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_update_trust_remote_info_records_remote_snapshot(self) -> None:
+        from cccc.kernel.federation.pairing import (
+            approve_pairing_request,
+            create_pairing_invite,
+            create_pairing_request,
+            list_trusts,
+            update_trust_remote_info,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            invite = create_pairing_invite(group_id="g_local", ttl_seconds=600)
+            request = create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_remote",
+                requester_group_title="Old Remote",
+                requester_peer_id="peer_remote",
+            )
+            trust = approve_pairing_request(request["request_id"], approver_user_id="user-a")["trust"]
+
+            updated = update_trust_remote_info(
+                trust["trust_id"],
+                remote_group_title="Renamed Remote",
+                remote_access_level="read",
+            )
+
+            self.assertEqual(updated["remote_group_title"], "Renamed Remote")
+            self.assertEqual(updated["remote_access_level"], "read")
+            listed = list_trusts(group_id="g_local")[0]
+            self.assertEqual(listed["remote_group_title"], "Renamed Remote")
+            self.assertEqual(listed["remote_access_level"], "read")
+        finally:
+            cleanup()
+
     def test_invite_can_be_created_for_local_group_without_remote_identity(self) -> None:
         from cccc.kernel.federation.pairing import create_pairing_invite
 
