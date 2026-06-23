@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestDeliveryStateBehavior(unittest.TestCase):
@@ -37,6 +38,70 @@ class TestDeliveryStateBehavior(unittest.TestCase):
             group.save()
             self.assertFalse(should_deliver_message(group, "chat.message"))
             self.assertFalse(should_deliver_message(group, "system.notify"))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
+    def test_pty_submit_text_uses_single_enter_for_regular_runtimes(self) -> None:
+        from cccc.daemon.messaging.delivery import pty_submit_text
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="delivery-submit")
+            add_actor(group, actor_id="peer1", runtime="claude", submit="enter")
+            writes: list[bytes] = []
+
+            with patch("cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.bracketed_paste_enabled",
+                return_value=False,
+            ), patch(
+                "cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.write_input",
+                side_effect=lambda **kwargs: writes.append(kwargs["data"]) or True,
+            ), patch("cccc.daemon.messaging.delivery.time.sleep", return_value=None):
+                self.assertTrue(pty_submit_text(group, actor_id="peer1", text="hello", wait_for_submit=True))
+
+            self.assertEqual(writes, [b"hello", b"\r"])
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
+    def test_pty_submit_text_uses_second_enter_for_copilot_tui(self) -> None:
+        from cccc.daemon.messaging.delivery import pty_submit_text
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="delivery-submit")
+            add_actor(group, actor_id="copilot1", runtime="copilot", submit="enter")
+            writes: list[bytes] = []
+
+            with patch("cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.bracketed_paste_enabled",
+                return_value=False,
+            ), patch(
+                "cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.write_input",
+                side_effect=lambda **kwargs: writes.append(kwargs["data"]) or True,
+            ), patch("cccc.daemon.messaging.delivery.time.sleep", return_value=None):
+                self.assertTrue(pty_submit_text(group, actor_id="copilot1", text="hello", wait_for_submit=True))
+
+            self.assertEqual(writes, [b"hello", b"\r", b"\r"])
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

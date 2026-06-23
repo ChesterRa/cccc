@@ -54,6 +54,7 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   auggie: "auggie",
   claude: "claude --dangerously-skip-permissions",
   codex: "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
+  copilot: "copilot --allow-all",
   devin: "devin --permission-mode dangerous",
   kiro: "kiro-cli chat --trust-all-tools",
   droid: "droid --auto high",

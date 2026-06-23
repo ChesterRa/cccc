@@ -128,6 +128,10 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
     set: "# Configure OpenAI-compatible Codex providers with Codex config or command -c overrides.",
     unset: "",
   },
+  copilot: {
+    set: "# Configure GitHub Copilot CLI auth with `copilot` before starting this actor.",
+    unset: "",
+  },
   devin: {
     set: "# Configure Devin auth and providers through Devin CLI setup.",
     unset: "",

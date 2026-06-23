@@ -49,8 +49,9 @@ export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
 
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
-const terminalResponseSuppressionRuntimes = new Set(["codex", "droid"]);
+const terminalResponseSuppressionRuntimes = new Set(["codex", "devin", "droid"]);
 const terminalGeneratedInputSequencePattern = /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
+const bareTerminalColorReplyPattern = /^(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4})*$/;
 
 export type TerminalBinaryFrame =
   | { type: "input"; payload: Uint8Array }
@@ -83,7 +84,7 @@ export function shouldSuppressTerminalGeneratedInput(data: string, runtime: stri
   if (!terminalResponseSuppressionRuntimes.has(normalizedRuntime)) return false;
   const text = String(data || "");
   if (!text) return false;
-  return terminalGeneratedInputSequencePattern.test(text);
+  return terminalGeneratedInputSequencePattern.test(text) || bareTerminalColorReplyPattern.test(text);
 }
 
 export function decodeTerminalJsonFrame<T = Record<string, unknown>>(payload: Uint8Array): T | null {

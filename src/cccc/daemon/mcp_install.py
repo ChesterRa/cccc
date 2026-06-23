@@ -60,7 +60,7 @@ def _entry_command_matches_expected(command: Any, args: Any, expected_cmd: list[
 def _mcp_transport_matches(entry: Dict[str, Any]) -> bool:
     transport = entry.get("transport", entry.get("type", "stdio"))
     value = str(transport or "stdio").strip().lower()
-    return not value or value == "stdio"
+    return not value or value in {"stdio", "local"}
 
 
 def _coerce_output_text(output: Any) -> str:
@@ -158,6 +158,21 @@ def _json_mcp_entry_matches_expected(entry: Any, expected_cmd: list[str]) -> boo
     )
 
 
+def _entry_has_env_keys(entry: Any, keys: tuple[str, ...]) -> bool:
+    if not isinstance(entry, dict) or not keys:
+        return False
+    env = entry.get("env", entry.get("environment"))
+    if isinstance(env, dict):
+        normalized = {str(key).strip() for key in env.keys()}
+        return any(key in normalized for key in keys)
+    if isinstance(env, list):
+        text = "\n".join(str(item or "") for item in env)
+        return any(f"{key}=" in text or key in text for key in keys)
+    if isinstance(env, str):
+        return any(f"{key}=" in env or key in env for key in keys)
+    return False
+
+
 def _mcp_command_array_matches_expected(command: Any, expected_cmd: list[str]) -> bool:
     if not isinstance(command, list) or len(command) != len(expected_cmd):
         return False
@@ -246,6 +261,7 @@ def _kiro_home_dir(env: Dict[str, str] | None) -> Path:
 
 _OPENCODE_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
 _CODEX_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
+_COPILOT_CONTEXT_ENV_KEYS = ("CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID")
 
 
 def _opencode_context_environment(env: Dict[str, str] | None) -> Dict[str, str]:
@@ -348,6 +364,8 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
         return ["claude", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd]
     if runtime == "codex":
         return ["codex", "mcp", "add", "cccc", "--", *cccc_cmd]
+    if runtime == "copilot":
+        return ["copilot", "mcp", "add", "cccc", "--", *cccc_cmd]
     if runtime == "devin":
         return ["devin", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd]
     if runtime == "kiro":
@@ -387,6 +405,8 @@ def build_mcp_remove_command(runtime: str) -> list[str] | None:
         return ["claude", "mcp", "remove", "cccc", "-s", "user"]
     if runtime == "devin":
         return ["devin", "mcp", "remove", "-s", "user", "cccc"]
+    if runtime == "copilot":
+        return ["copilot", "mcp", "remove", "cccc"]
     if runtime == "kiro":
         return ["kiro-cli", "mcp", "remove", "--name", "cccc", "--scope", "global"]
     if runtime == "droid":
@@ -445,6 +465,54 @@ def _json_mcp_state(paths: tuple[Path, ...], expected_cmd: list[str]) -> str:
     return state
 
 
+def _copilot_entry_from_get_output(output: str) -> Dict[str, Any] | None:
+    try:
+        doc = json.loads(str(output or "{}"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    entry = doc.get("cccc")
+    if isinstance(entry, dict):
+        return entry
+    servers = doc.get("mcpServers")
+    if isinstance(servers, dict) and isinstance(servers.get("cccc"), dict):
+        return servers["cccc"]
+    return None
+
+
+def _copilot_mcp_entry_matches_expected(entry: Any, expected_cmd: list[str]) -> bool:
+    if not _json_mcp_entry_matches_expected(entry, expected_cmd):
+        return False
+    if _entry_has_env_keys(entry, _COPILOT_CONTEXT_ENV_KEYS):
+        return False
+    tools = entry.get("tools") if isinstance(entry, dict) else None
+    if tools is None:
+        return True
+    if isinstance(tools, str):
+        return tools.strip() in {"", "*"}
+    if isinstance(tools, list):
+        values = {str(item or "").strip() for item in tools}
+        return "*" in values
+    return False
+
+
+def _copilot_mcp_state_details(
+    expected_cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: Dict[str, str] | None = None,
+) -> tuple[str, str]:
+    result = _run_cli(["copilot", "mcp", "get", "cccc", "--json"], cwd=cwd, timeout=10, env=env)
+    if result.returncode != 0:
+        return "missing", ""
+    entry = _copilot_entry_from_get_output(result.stdout)
+    if entry is None:
+        return "missing", ""
+    source = str(entry.get("source") or "").strip().lower()
+    return ("ready" if _copilot_mcp_entry_matches_expected(entry, expected_cmd) else "stale"), source
+
+
 def _kiro_mcp_state(expected_cmd: list[str], *, cwd: Path | None = None, env: Dict[str, str] | None = None) -> str:
     if cwd is not None:
         local_state = _json_mcp_entry_state(Path(cwd) / ".kiro" / "settings" / "mcp.json", expected_cmd)
@@ -468,6 +536,10 @@ def _runtime_mcp_state(runtime: str, *, cwd: Path | None = None, env: Dict[str, 
         if result.returncode != 0:
             return "missing"
         return "ready" if _codex_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
+
+    if runtime == "copilot":
+        state, _source = _copilot_mcp_state_details(expected_cmd, cwd=cwd, env=env)
+        return state
 
     if runtime == "devin":
         kwargs: dict[str, Any] = {"timeout": 10, "env": env}
@@ -596,6 +668,26 @@ def ensure_mcp_installed(
         except Exception:
             return False
     try:
+        if runtime == "copilot":
+            expected_cmd = _runtime_expected_cccc_command(runtime)
+            state, source = _copilot_mcp_state_details(expected_cmd, cwd=cwd, env=env)
+            if state == "ready":
+                return True
+            add_cmd = build_mcp_add_command(runtime)
+            if not add_cmd:
+                return False
+            if state == "stale":
+                if source != "user":
+                    return False
+                remove_cmd = build_mcp_remove_command(runtime)
+                if not remove_cmd:
+                    return False
+                remove_result = _run_cli(remove_cmd, cwd=cwd, timeout=30, env=env)
+                if remove_result.returncode != 0:
+                    return False
+            result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env)
+            return result.returncode == 0 and is_mcp_installed(runtime, cwd=cwd, env=env)
+
         state = _runtime_mcp_state(runtime, cwd=cwd, env=env)
         if state == "ready":
             return True

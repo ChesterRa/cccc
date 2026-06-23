@@ -83,6 +83,16 @@ describe("shouldSuppressTerminalGeneratedInput", () => {
     expect(shouldSuppressTerminalGeneratedInput("\x1b[?1;2c", "droid")).toBe(true);
     expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:0f0f/1717/2a2a\x1b\\", "droid")).toBe(true);
   });
+
+  it("suppresses terminal color query replies for Devin PTY actors", () => {
+    expect(shouldSuppressTerminalGeneratedInput("\x1b]10;rgb:1e1e/2929/3b3b\x07", "devin")).toBe(true);
+    expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:fafa/fafa/fafa\x1b\\", "devin")).toBe(true);
+    expect(shouldSuppressTerminalGeneratedInput("10;rgb:1e1e/2929/3b3b11;rgb:fafa/fafa/fafa", "devin")).toBe(true);
+    expect(shouldSuppressTerminalGeneratedInput("10;rgb:1e1e/2929/3b3b", "devin")).toBe(true);
+    expect(shouldSuppressTerminalGeneratedInput("hello", "devin")).toBe(false);
+    expect(shouldSuppressTerminalGeneratedInput("\r", "devin")).toBe(false);
+    expect(shouldSuppressTerminalGeneratedInput("10;rgb is not a full terminal reply", "devin")).toBe(false);
+  });
 });
 
 describe("buildTerminalWebSocketUrl", () => {

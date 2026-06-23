@@ -7,6 +7,7 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   auggie: "logos/auggie.png",
   claude: "logos/claude.png",
   codex: "logos/codex.png",
+  copilot: "logos/copilot.svg",
   devin: "logos/devin.svg",
   kiro: "logos/kiro.svg",
   droid: "logos/droid.png",

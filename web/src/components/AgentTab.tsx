@@ -20,6 +20,7 @@ import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
 import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "./AgentTab.model";
+import { ActorAvatar } from "./ActorAvatar";
 
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
@@ -559,26 +560,41 @@ export function AgentTab({
       )}>
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-4">
-            <span
-              className={classNames(
-                "relative inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full transition-all",
-                statusTone.dotClass
-              )}
-            >
-              {statusTone.pulse && (
-                <span
-                  className={classNames(
-                    "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
-                    statusTone.strongPulse
-                      ? "animate-ping bg-emerald-300/35"
-                      : "animate-pulse bg-current/20"
-                  )}
-                />
-              )}
-              {statusTone.strongPulse && (
-                <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
-              )}
-            </span>
+            <div className="relative flex-shrink-0">
+              <ActorAvatar
+                avatarUrl={actor.avatar_url || undefined}
+                runtime={actor.runtime}
+                title={actor.title || actor.id}
+                isDark={isDark}
+                sizeClassName={isSmallScreen ? "h-8 w-8" : "h-9 w-9"}
+                textClassName="text-xs"
+                className={classNames(
+                  "shadow-[0_14px_28px_-20px_rgba(15,23,42,0.68)]",
+                  isDark ? "bg-slate-900" : "bg-white",
+                )}
+              />
+              <span
+                className={classNames(
+                  "absolute -bottom-0.5 -right-0.5 inline-flex h-2.5 w-2.5 rounded-full ring-2 transition-all",
+                  isDark ? "ring-slate-950" : "ring-white",
+                  statusTone.dotClass
+                )}
+              >
+                {statusTone.pulse && (
+                  <span
+                    className={classNames(
+                      "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
+                      statusTone.strongPulse
+                        ? "animate-ping bg-emerald-300/35"
+                        : "animate-pulse bg-current/20"
+                    )}
+                  />
+                )}
+                {statusTone.strongPulse && (
+                  <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
+                )}
+              </span>
+            </div>
 
             <div className="flex min-w-0 items-center gap-3">
               <div className="min-w-0 shrink-0">

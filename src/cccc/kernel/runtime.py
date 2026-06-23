@@ -55,6 +55,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
     },
+    "copilot": {
+        "display_name": "GitHub Copilot CLI",
+        "command": "copilot",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "copilot mcp add {name} -- {cmd}",
+    },
     "devin": {
         "display_name": "Devin CLI",
         "command": "devin",
@@ -115,6 +121,7 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
 PRIMARY_RUNTIMES = [
     "claude",
     "codex",
+    "copilot",
     "devin",
     "kiro",
     "droid",
@@ -279,6 +286,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
+        "copilot": ["copilot", "--allow-all"],
         "devin": ["devin", "--permission-mode", "dangerous"],
         "kiro": ["kiro-cli", "chat", "--trust-all-tools"],
         "droid": ["droid", "--auto", "high"],

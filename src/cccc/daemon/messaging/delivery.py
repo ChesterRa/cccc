@@ -62,6 +62,7 @@ PTY_STARTUP_MAX_WAIT_SECONDS = 10.0  # Max wait for a fresh runtime to become re
 PTY_STARTUP_READY_GRACE_SECONDS = 1.0  # Extra safety delay after readiness is detected (user request)
 ASYNC_FLUSH_POLL_SECONDS = 0.25  # Short poll used when a one-shot kick loses the immediate flush window
 ASYNC_FLUSH_MAX_WAIT_SECONDS = 12.0  # Avoid keeping a kick thread alive indefinitely when delivery is impossible
+PTY_REPEAT_SUBMIT_DELAY_SECONDS = 0.2  # Short gap for runtimes that need a second Enter after pasted input.
 ### NOTE
 # Delivery is intentionally daemon-driven (single-writer). If a service needs to notify actors, it
 # should call the daemon IPC and retry on transient failures rather than writing directly to ledgers.
@@ -86,6 +87,22 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
 def _get_auto_mark_on_delivery(group: Group) -> bool:
     """Get auto_mark_on_delivery setting from group.yaml delivery config."""
     return auto_mark_on_delivery_from_doc(group.doc.get("delivery"))
+
+
+def _pty_submit_sequence_for_actor(actor: Any) -> tuple[bytes, ...]:
+    actor_doc = actor if isinstance(actor, dict) else {}
+    mode = str(actor_doc.get("submit") or "enter").strip().lower() or "enter"
+    if mode == "none":
+        return ()
+    if mode == "newline":
+        return (b"\n",)
+    runtime = str(actor_doc.get("runtime") or "").strip().lower()
+    if runtime == "copilot":
+        # Copilot CLI's TUI can keep pasted text in the composer after the first
+        # synthetic Enter, especially on Windows ConPTY. A second Enter matches
+        # the observed manual recovery without changing other runtimes.
+        return (b"\r", b"\r")
+    return (b"\r",)
 
 
 def should_auto_mark_on_delivery(group: Group) -> bool:
@@ -735,14 +752,10 @@ def pty_submit_text(
 
     multiline = ("\n" in raw) or ("\r" in raw)
     
-    # Determine submit mode for this actor.
-    submit = b"\r"
     actor = find_actor(group, aid)
-    mode = str(actor.get("submit") if isinstance(actor, dict) else "") or "enter"
-    if mode == "none":
-        submit = b""
-    elif mode == "newline":
-        submit = b"\n"
+    actor_doc = actor if isinstance(actor, dict) else {}
+    mode = str(actor_doc.get("submit") or "enter").strip().lower() or "enter"
+    submit_sequence = _pty_submit_sequence_for_actor(actor_doc)
 
     payload = raw.encode("utf-8", errors="replace")
     
@@ -770,10 +783,10 @@ def pty_submit_text(
         return False
     logger.debug(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
     
-    # Step 2: send submit (Enter/Newline) after a small delay for CLI timing
-    if submit:
-        if wait_for_submit:
-            time.sleep(PTY_SUBMIT_DELAY_SECONDS)
+    def _write_submit_sequence() -> bool:
+        for index, submit in enumerate(submit_sequence):
+            if index > 0:
+                time.sleep(PTY_REPEAT_SUBMIT_DELAY_SECONDS)
             if not pty_runner.SUPERVISOR.actor_running(gid, aid):
                 logger.warning(f"[pty_submit_text] Actor no longer running for delayed submit: {gid}/{aid}")
                 return False
@@ -781,18 +794,20 @@ def pty_submit_text(
             if not ok_submit:
                 logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
                 return False
+        return True
+
+    # Step 2: send submit (Enter/Newline) after a small delay for CLI timing
+    if submit_sequence:
+        if wait_for_submit:
+            time.sleep(PTY_SUBMIT_DELAY_SECONDS)
+            if not _write_submit_sequence():
+                return False
             logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
         else:
             def delayed_submit():
                 time.sleep(PTY_SUBMIT_DELAY_SECONDS)  # Empirically reliable delay
-                if pty_runner.SUPERVISOR.actor_running(gid, aid):
-                    ok_submit = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit))
-                    if ok_submit:
-                        logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
-                    else:
-                        logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
-                else:
-                    logger.warning(f"[pty_submit_text] Actor no longer running for delayed submit: {gid}/{aid}")
+                if _write_submit_sequence():
+                    logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
 
             submit_thread = threading.Thread(target=delayed_submit, daemon=True)
             submit_thread.start()

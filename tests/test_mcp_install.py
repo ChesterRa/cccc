@@ -128,6 +128,13 @@ class TestMcpInstall(unittest.TestCase):
                 ["devin", "mcp", "add", "-s", "user", "cccc", "--", "/abs/cccc", "mcp"],
             )
 
+    def test_build_mcp_add_command_copilot_uses_user_stdio(self) -> None:
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertEqual(
+                build_mcp_add_command("copilot"),
+                ["copilot", "mcp", "add", "cccc", "--", "/abs/cccc", "mcp"],
+            )
+
     def test_build_mcp_add_command_kiro_uses_global_stdio_config(self) -> None:
         with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
             self.assertEqual(
@@ -217,6 +224,74 @@ class TestMcpInstall(unittest.TestCase):
             ) as mock_run:
                 self.assertTrue(is_mcp_installed("devin", cwd=cwd))
         mock_run.assert_called_once_with(["devin", "mcp", "get", "cccc"], cwd=cwd, timeout=10, env=None)
+
+    def test_is_mcp_installed_copilot_parses_json_get_output(self) -> None:
+        payload = {
+            "cccc": {
+                "tools": ["*"],
+                "type": "local",
+                "command": "/abs/cccc",
+                "args": ["mcp"],
+                "source": "user",
+            }
+        }
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+        ) as mock_run:
+            self.assertTrue(is_mcp_installed("copilot"))
+        mock_run.assert_called_once_with(["copilot", "mcp", "get", "cccc", "--json"], cwd=None, timeout=10, env=None)
+
+    def test_is_mcp_installed_copilot_checks_actor_cwd_when_provided(self) -> None:
+        payload = {"cccc": {"type": "local", "command": "/abs/cccc", "args": ["mcp"], "source": "workspace"}}
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install._run_cli",
+                return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+            ) as mock_run:
+                self.assertTrue(is_mcp_installed("copilot", cwd=cwd))
+        mock_run.assert_called_once_with(["copilot", "mcp", "get", "cccc", "--json"], cwd=cwd, timeout=10, env=None)
+
+    def test_is_mcp_installed_copilot_rejects_wrong_command(self) -> None:
+        payload = {"cccc": {"type": "local", "command": "/old/cccc", "args": ["mcp"], "source": "user"}}
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+        ):
+            self.assertFalse(is_mcp_installed("copilot"))
+
+    def test_is_mcp_installed_copilot_rejects_context_env_in_config(self) -> None:
+        payload = {
+            "cccc": {
+                "type": "local",
+                "command": "/abs/cccc",
+                "args": ["mcp"],
+                "env": {"CCCC_GROUP_ID": "g_stale"},
+                "source": "user",
+            }
+        }
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+        ):
+            self.assertFalse(is_mcp_installed("copilot"))
+
+    def test_is_mcp_installed_copilot_rejects_filtered_out_tools(self) -> None:
+        payload = {
+            "cccc": {
+                "tools": [],
+                "type": "local",
+                "command": "/abs/cccc",
+                "args": ["mcp"],
+                "source": "user",
+            }
+        }
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=json.dumps(payload), stderr=""),
+        ):
+            self.assertFalse(is_mcp_installed("copilot"))
 
     def test_is_mcp_installed_kiro_reads_kiro_home_settings_config(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -426,6 +501,129 @@ class TestMcpInstall(unittest.TestCase):
                                 timeout=30,
                             ),
                         ],
+                    )
+
+    def test_ensure_mcp_installed_copilot_adds_cccc_stdio(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            ready_payload = json.dumps(
+                {"cccc": {"tools": ["*"], "type": "local", "command": "/abs/cccc", "args": ["mcp"], "source": "user"}}
+            )
+            with patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.side_effect = [
+                        Mock(returncode=1, stdout="", stderr=""),
+                        Mock(returncode=0, stdout="", stderr=""),
+                        Mock(returncode=0, stdout=ready_payload, stderr=""),
+                    ]
+                    ok = ensure_mcp_installed("copilot", cwd, auto_mcp_runtimes=("copilot",))
+                    self.assertTrue(ok)
+                    self.assertEqual(
+                        mock_run.call_args_list,
+                        [
+                            call(
+                                ["copilot", "mcp", "get", "cccc", "--json"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=10,
+                            ),
+                            call(
+                                ["copilot", "mcp", "add", "cccc", "--", "/abs/cccc", "mcp"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                            call(
+                                ["copilot", "mcp", "get", "cccc", "--json"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=10,
+                            ),
+                        ],
+                    )
+
+    def test_ensure_mcp_installed_copilot_repairs_stale_user_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            stale_payload = json.dumps(
+                {"cccc": {"type": "local", "command": "/old/cccc", "args": ["mcp"], "source": "user"}}
+            )
+            ready_payload = json.dumps(
+                {"cccc": {"tools": ["*"], "type": "local", "command": "/abs/cccc", "args": ["mcp"], "source": "user"}}
+            )
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv",
+                side_effect=lambda argv: list(argv),
+            ):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.side_effect = [
+                        Mock(returncode=0, stdout=stale_payload, stderr=""),
+                        Mock(returncode=0, stdout="", stderr=""),
+                        Mock(returncode=0, stdout="", stderr=""),
+                        Mock(returncode=0, stdout=ready_payload, stderr=""),
+                    ]
+                    ok = ensure_mcp_installed("copilot", cwd, auto_mcp_runtimes=("copilot",))
+                    self.assertTrue(ok)
+                    self.assertEqual(
+                        mock_run.call_args_list,
+                        [
+                            call(
+                                ["copilot", "mcp", "get", "cccc", "--json"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=10,
+                            ),
+                            call(
+                                ["copilot", "mcp", "remove", "cccc"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                            call(
+                                ["copilot", "mcp", "add", "cccc", "--", "/abs/cccc", "mcp"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=30,
+                            ),
+                            call(
+                                ["copilot", "mcp", "get", "cccc", "--json"],
+                                capture_output=True,
+                                text=True,
+                                cwd=str(cwd),
+                                timeout=10,
+                            ),
+                        ],
+                    )
+
+    def test_ensure_mcp_installed_copilot_does_not_repair_workspace_stale_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            stale_payload = json.dumps(
+                {"cccc": {"type": "local", "command": "/old/cccc", "args": ["mcp"], "source": "workspace"}}
+            )
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv",
+                side_effect=lambda argv: list(argv),
+            ):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value = Mock(returncode=0, stdout=stale_payload, stderr="")
+                    ok = ensure_mcp_installed("copilot", cwd, auto_mcp_runtimes=("copilot",))
+                    self.assertFalse(ok)
+                    mock_run.assert_called_once_with(
+                        ["copilot", "mcp", "get", "cccc", "--json"],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(cwd),
+                        timeout=10,
                     )
 
     def test_is_mcp_installed_grok_reads_json_list_and_validates_env(self) -> None:

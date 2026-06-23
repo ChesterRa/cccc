@@ -1409,6 +1409,7 @@ export type PresentationWorkspaceListing = {
 export const SUPPORTED_RUNTIMES = [
   "claude",
   "codex",
+  "copilot",
   "devin",
   "kiro",
   "droid",
@@ -1429,6 +1430,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   auggie: { label: "Auggie (Augment)", desc: "" },
   claude: { label: "Claude Code", desc: "" },
   codex: { label: "Codex CLI", desc: "" },
+  copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
   devin: { label: "Devin CLI", desc: "Uses Devin MCP CLI setup with the PTY runner" },
   kiro: { label: "Kiro CLI", desc: "Uses Kiro MCP CLI setup with the PTY runner" },
   droid: { label: "Droid", desc: "" },
@@ -1470,6 +1472,10 @@ export const RUNTIME_COLORS: Record<string, {
   codex: { 
     bg: "bg-emerald-900/30", text: "text-emerald-300", border: "border-emerald-600/50", dot: "bg-emerald-400",
     bgLight: "bg-emerald-50", textLight: "text-emerald-700", borderLight: "border-emerald-300", dotLight: "bg-emerald-500"
+  },
+  copilot: {
+    bg: "bg-slate-900/40", text: "text-slate-200", border: "border-slate-500/60", dot: "bg-slate-300",
+    bgLight: "bg-slate-100", textLight: "text-slate-800", borderLight: "border-slate-300", dotLight: "bg-slate-600"
   },
   devin: {
     bg: "bg-sky-900/30", text: "text-sky-300", border: "border-sky-600/50", dot: "bg-sky-400",

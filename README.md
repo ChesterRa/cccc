@@ -10,7 +10,7 @@
 ### Coordinate your coding agents like a group chat
 
 **Read receipts, delivery tracking, and remote ops from your phone —
-for Claude Code, Codex, ChatGPT Web, and 9 more runtimes in one durable group.**
+for Claude Code, Codex, ChatGPT Web, and 10 more runtimes in one durable group.**
 
 Run multiple coding agents as a **persistent, coordinated team** — not a pile of disconnected terminal sessions.
 
@@ -57,7 +57,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Devin CLI, Kiro CLI, Grok Build, OpenCode, ChatGPT Web, and 5 more first-class runtimes, plus `custom` for everything else |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, GitHub Copilot CLI, Devin CLI, Kiro CLI, Grok Build, OpenCode, ChatGPT Web, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -136,7 +136,7 @@ graph TB
         A2["Codex CLI"]
         A3["ChatGPT Web<br/>GPT-5.x via MCP"]
         A4["Grok Build"]
-        A5["+ 8 more + custom"]
+        A5["+ 9 more + custom"]
     end
 
     subgraph Daemon["CCCC Daemon · single writer"]
@@ -184,12 +184,13 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 12 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 13 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Command / Surface |
 |---------|-------------|-------------------|
 | Claude Code | Auto MCP setup | `claude` |
 | Codex CLI | Auto MCP setup | `codex` |
+| GitHub Copilot CLI | Auto MCP setup | `copilot` |
 | Devin CLI | Auto MCP setup | `devin` |
 | Kiro CLI | Auto MCP setup | `kiro-cli` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |

@@ -7,6 +7,23 @@ from unittest.mock import patch
 
 
 class TestCliMain(unittest.TestCase):
+    def test_parser_accepts_copilot_runtime_for_primary_runtime_commands(self) -> None:
+        cli_main = importlib.import_module("cccc.cli.main")
+
+        parser = cli_main.build_parser()
+        self.assertEqual(parser.parse_args(["actor", "add", "peer", "--runtime", "copilot"]).runtime, "copilot")
+        self.assertEqual(parser.parse_args(["actor", "update", "peer", "--runtime", "copilot"]).runtime, "copilot")
+        self.assertEqual(parser.parse_args(["setup", "--runtime", "copilot"]).runtime, "copilot")
+
+    def test_parser_still_accepts_devin_and_kiro_runtime_choices(self) -> None:
+        cli_main = importlib.import_module("cccc.cli.main")
+
+        parser = cli_main.build_parser()
+        for runtime in ("devin", "kiro"):
+            self.assertEqual(parser.parse_args(["actor", "add", "peer", "--runtime", runtime]).runtime, runtime)
+            self.assertEqual(parser.parse_args(["actor", "update", "peer", "--runtime", runtime]).runtime, runtime)
+            self.assertEqual(parser.parse_args(["setup", "--runtime", runtime]).runtime, runtime)
+
     def test_main_uses_default_entry_when_no_subcommand(self) -> None:
         cli_main = importlib.import_module("cccc.cli.main")
 
