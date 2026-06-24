@@ -112,7 +112,8 @@ MCP_TOOLS = [
     {
         "name": "cccc_message_send",
         "description": (
-            "Send a visible chat message. Choose `to` deliberately; use @all only when the whole group needs it. "
+            "Start a new visible chat message. Do not use this to answer an existing delivered message/event; "
+            "use cccc_message_reply with that event_id instead. Choose `to` deliberately; use @all only when the whole group needs it. "
             "For a trusted remote Group Bridge target, get remote_group_id from cccc_remote_access(action=\"list\") "
             "and send with dst_group_id=<remote_group_id>, to=[\"@foreman\"] unless a more specific remote recipient is known."
         ),
@@ -383,7 +384,7 @@ MCP_TOOLS = [
         "name": "cccc_repo",
         "description": (
             "Read-only active workspace repository inspection for remote runtimes: "
-            "action=info|list|list_dir|read. All paths are constrained to the group's active scope root. "
+            "action=info|list|list_dir|read|search. All paths are constrained to the group's active scope root. "
             "Read returns sha256 and supports start_line/end_line; pass sha256 back as expected_sha256 before writing. "
             "Use cccc_repo_edit or cccc_apply_patch for writes."
         ),
@@ -393,11 +394,12 @@ MCP_TOOLS = [
                 **_COMMON_GROUP,
                 "action": {
                     "type": "string",
-                    "enum": ["info", "list", "list_dir", "read"],
+                    "enum": ["info", "list", "list_dir", "read", "search"],
                     "default": "info",
                 },
                 "path": {"type": "string", "description": "Relative path under the active workspace root."},
                 "file_path": {"type": "string", "description": "Alias for path."},
+                "query": {"type": "string", "description": "Required for action=search."},
                 "max_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
                 "limit": {"type": "integer", "default": 200, "minimum": 1, "maximum": 500},
                 "offset": {"type": "integer", "default": 1, "minimum": 1, "description": "For action=list_dir, 1-indexed entry offset."},
@@ -405,6 +407,12 @@ MCP_TOOLS = [
                 "start_line": {"type": "integer", "minimum": 1, "description": "For action=read, first 1-indexed line to return."},
                 "end_line": {"type": "integer", "minimum": 1, "description": "For action=read, final 1-indexed line to return."},
                 "include_hidden": {"type": "boolean", "default": False},
+                "case_sensitive": {"type": "boolean", "default": False},
+                "regex": {"type": "boolean", "default": False},
+                "include_globs": {"type": "array", "items": {"type": "string"}},
+                "exclude_globs": {"type": "array", "items": {"type": "string"}},
+                "context_lines": {"type": "integer", "default": 0, "minimum": 0, "maximum": 10},
+                "max_file_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
             }
         ),
     },
@@ -1121,10 +1129,10 @@ MCP_TOOLS = [
         ),
     },
     {
-        "name": "cccc_role_notes",
+        "name": "cccc_actor_notes",
         "description": (
-            "Manage actor-scoped role notes in CCCC_HELP.md (`## @actor: <actor_id>` blocks): action=get|set|clear. "
-            "Foreman can read/write any actor's role notes; other actors can only read their own notes."
+            "Manage actor-scoped notes in CCCC_HELP.md (`## @actor: <actor_id>` blocks): action=get|set|clear. "
+            "Foreman can read/write any actor's notes; other actors can only read their own notes."
         ),
         "inputSchema": _obj(
             {
@@ -1132,7 +1140,7 @@ MCP_TOOLS = [
                 "action": {"type": "string", "enum": ["get", "set", "clear"], "default": "get"},
                 "target_actor_id": {
                     "type": "string",
-                    "description": "The actor whose help-scoped role notes to read/write. Omit for get only when listing all as foreman.",
+                    "description": "The actor whose help-scoped notes to read/write. Omit for get only when listing all as foreman.",
                 },
                 "content": {
                     "type": "string",
@@ -1279,43 +1287,6 @@ MCP_TOOLS = [
         ),
     },
     {
-        "name": "cccc_remote_send",
-        "description": (
-            "Enqueue an outbound federated message to a remote target via a saved registration. "
-            "Returns a queued receipt; delivery happens daemon-side. idempotency_key is required and replays safely."
-        ),
-        "inputSchema": _obj(
-            {
-                **_COMMON_GROUP,
-                **_COMMON_ACTOR,
-                "registration_id": {"type": "string"},
-                "text": {"type": "string"},
-                "idempotency_key": {"type": "string"},
-                "to": {
-                    "anyOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
-                    ]
-                },
-                "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
-                "reply_required": {"type": "boolean", "default": False},
-            },
-            required=["registration_id", "text", "idempotency_key", "to"],
-        ),
-    },
-    {
-        "name": "cccc_remote_delivery_status",
-        "description": "Read back the delivery receipt for a prior cccc_remote_send by (registration_id, idempotency_key).",
-        "inputSchema": _obj(
-            {
-                **_COMMON_GROUP,
-                "registration_id": {"type": "string"},
-                "idempotency_key": {"type": "string"},
-            },
-            required=["registration_id", "idempotency_key"],
-        ),
-    },
-    {
         "name": "cccc_remote_access",
         "description": "List Group Bridge targets and inspect what access the remote group grants to this group.",
         "annotations": {"readOnlyHint": True},
@@ -1364,6 +1335,10 @@ MCP_TOOLS = [
                 "end_line": {"type": "integer", "minimum": 1},
                 "include_hidden": {"type": "boolean", "default": False},
                 "case_sensitive": {"type": "boolean", "default": False},
+                "regex": {"type": "boolean", "default": False},
+                "include_globs": {"type": "array", "items": {"type": "string"}},
+                "exclude_globs": {"type": "array", "items": {"type": "string"}},
+                "context_lines": {"type": "integer", "default": 0, "minimum": 0, "maximum": 10},
                 "max_file_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
             },
             required=["remote_group_id"],
@@ -1490,74 +1465,5 @@ MCP_TOOLS = [
             },
             required=["remote_group_id", "session_id"],
         ),
-    },
-    {
-        "name": "cccc_group_bridge_identity",
-        "description": "Return this runtime's stable public Group Bridge identity (node_id/peer_id). No secret material is returned.",
-        "annotations": {"readOnlyHint": True},
-        "inputSchema": _obj({}),
-    },
-    {
-        "name": "cccc_pairing_invite_create",
-        "description": "Create a short-lived Group Bridge session pairing invite. The plaintext pairing_code is returned once; only a hash is persisted.",
-        "inputSchema": _obj(
-            {
-                **_COMMON_GROUP,
-                "remote_group_id": {"type": "string"},
-                "remote_peer_id": {"type": "string"},
-                "multiaddrs": {"type": "array", "items": {"type": "string"}},
-                "ttl_seconds": {"type": "integer", "default": 600},
-            },
-            required=["remote_group_id", "remote_peer_id"],
-        ),
-    },
-    {
-        "name": "cccc_pairing_request_create",
-        "description": "Create a pending pairing request from a plaintext pairing_code. Does not create a registration until approval.",
-        "inputSchema": _obj(
-            {
-                "pairing_code": {"type": "string"},
-                "requester_group_id": {"type": "string"},
-                "requester_peer_id": {"type": "string"},
-                "requester_endpoint": {"type": "string"},
-                "requester_multiaddrs": {"type": "array", "items": {"type": "string"}},
-            },
-            required=["pairing_code", "requester_group_id", "requester_peer_id"],
-        ),
-    },
-    {
-        "name": "cccc_pairing_request_list",
-        "description": "List Group Bridge session pairing requests, optionally scoped to group_id.",
-        "annotations": {"readOnlyHint": True},
-        "inputSchema": _obj({**_COMMON_GROUP}),
-    },
-    {
-        "name": "cccc_pairing_approve",
-        "description": "Approve a pending pairing request and create/replay the active Group Bridge session registration and trust record.",
-        "inputSchema": _obj(
-            {
-                "request_id": {"type": "string"},
-                "approver_user_id": {"type": "string"},
-            },
-            required=["request_id"],
-        ),
-    },
-    {
-        "name": "cccc_pairing_reject",
-        "description": "Reject a pending pairing request. Rejected requests cannot later be approved.",
-        "inputSchema": _obj(
-            {
-                "request_id": {"type": "string"},
-                "rejected_by": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-            required=["request_id"],
-        ),
-    },
-    {
-        "name": "cccc_pairing_trust_list",
-        "description": "List approved Group Bridge session trust records, optionally scoped to group_id.",
-        "annotations": {"readOnlyHint": True},
-        "inputSchema": _obj({**_COMMON_GROUP}),
     },
 ]

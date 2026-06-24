@@ -130,13 +130,36 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
 
             response = self._call_tool(
                 "cccc_remote_repo",
-                {"remote_group_id": group.group_id, "action": "search", "query": "alpha"},
+                {
+                    "remote_group_id": group.group_id,
+                    "action": "search",
+                    "query": "alpha",
+                    "include_globs": ["src/*.py"],
+                },
                 context,
             )
             payload = self._tool_payload(response)
             paths = {item["path"] for item in payload["matches"]}
-            self.assertIn("README.md", paths)
+            self.assertNotIn("README.md", paths)
             self.assertIn("src/app.py", paths)
+
+            contextual = self._call_tool(
+                "cccc_remote_repo",
+                {
+                    "remote_group_id": group.group_id,
+                    "action": "search",
+                    "query": "b.ta",
+                    "regex": True,
+                    "context_lines": 1,
+                    "exclude_globs": ["src/*"],
+                },
+                context,
+            )
+            contextual_payload = self._tool_payload(contextual)
+            contextual_matches = contextual_payload.get("matches") if isinstance(contextual_payload.get("matches"), list) else []
+            self.assertEqual(len(contextual_matches), 1)
+            self.assertEqual(contextual_matches[0].get("path"), "README.md")
+            self.assertEqual((contextual_matches[0].get("before_context") or [{}])[0].get("line_text"), "project alpha")
 
             denied = self._call_tool(
                 "cccc_remote_repo",

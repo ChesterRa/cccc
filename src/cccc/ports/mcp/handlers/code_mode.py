@@ -35,6 +35,7 @@ _COMMON_WORK_LOOPS = [
         "steps": [
             "cccc_git(action='status')",
             "cccc_git(action='diff')",
+            "cccc_repo(action='search') to find candidate files/symbols",
             "cccc_repo(action='read', start_line/end_line as needed)",
             "cccc_shell or cccc_exec_command for focused tests",
             "cccc_message_reply with findings/evidence",
@@ -90,6 +91,7 @@ _TOOL_HELP_ALIASES = {
 }
 _TOOL_HELP_COMPACT_NOTES = {
     "repo": [
+        "Use cccc_repo(action='search') to find candidate files or symbols before broad reads.",
         "Use cccc_repo(action='read') to inspect text and get sha256.",
         "Use cccc_repo_edit(action='replace'|'multi_replace', expected_sha256=...) for exact small edits.",
         "Use cccc_apply_patch only for Codex *** Begin Patch file patches.",

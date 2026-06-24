@@ -12,7 +12,7 @@ interface FormState {
   editActorRunner: "pty" | "headless";
   editActorCommand: string;
   editActorTitle: string;
-  editActorRoleNotes: string;
+  editActorNotes: string;
   editActorCapabilityAutoloadText: string;
 
   // Add Actor
@@ -24,7 +24,7 @@ interface FormState {
   newActorUseDefaultCommand: boolean;
   newActorSecretsSetText: string;
   newActorCapabilityAutoloadText: string;
-  newActorRoleNotes: string;
+  newActorNotes: string;
   newActorUseProfile: boolean;
   newActorProfileId: string;
   addActorError: string;
@@ -47,7 +47,7 @@ interface FormState {
   setEditActorRunner: (v: "pty" | "headless") => void;
   setEditActorCommand: (v: string) => void;
   setEditActorTitle: (v: string) => void;
-  setEditActorRoleNotes: (v: string) => void;
+  setEditActorNotes: (v: string) => void;
   setEditActorCapabilityAutoloadText: (v: string) => void;
 
   // Actions - Add Actor
@@ -59,7 +59,7 @@ interface FormState {
   setNewActorUseDefaultCommand: (v: boolean) => void;
   setNewActorSecretsSetText: (v: string) => void;
   setNewActorCapabilityAutoloadText: (v: string) => void;
-  setNewActorRoleNotes: (v: string) => void;
+  setNewActorNotes: (v: string) => void;
   setNewActorUseProfile: (v: boolean) => void;
   setNewActorProfileId: (v: string) => void;
   setAddActorError: (v: string) => void;
@@ -86,7 +86,7 @@ export const useFormStore = create<FormState>((set) => ({
   editActorRunner: "pty",
   editActorCommand: "",
   editActorTitle: "",
-  editActorRoleNotes: "",
+  editActorNotes: "",
   editActorCapabilityAutoloadText: "",
 
   // Initial state - Add Actor
@@ -98,7 +98,7 @@ export const useFormStore = create<FormState>((set) => ({
   newActorUseDefaultCommand: true,
   newActorSecretsSetText: "",
   newActorCapabilityAutoloadText: "",
-  newActorRoleNotes: "",
+  newActorNotes: "",
   newActorUseProfile: false,
   newActorProfileId: "",
   addActorError: "",
@@ -121,7 +121,7 @@ export const useFormStore = create<FormState>((set) => ({
   setEditActorRunner: (v) => set({ editActorRunner: v }),
   setEditActorCommand: (v) => set({ editActorCommand: v }),
   setEditActorTitle: (v) => set({ editActorTitle: v }),
-  setEditActorRoleNotes: (v) => set({ editActorRoleNotes: v }),
+  setEditActorNotes: (v) => set({ editActorNotes: v }),
   setEditActorCapabilityAutoloadText: (v) => set({ editActorCapabilityAutoloadText: v }),
 
   // Actions - Add Actor
@@ -133,7 +133,7 @@ export const useFormStore = create<FormState>((set) => ({
   setNewActorUseDefaultCommand: (v) => set({ newActorUseDefaultCommand: v }),
   setNewActorSecretsSetText: (v) => set({ newActorSecretsSetText: v }),
   setNewActorCapabilityAutoloadText: (v) => set({ newActorCapabilityAutoloadText: v }),
-  setNewActorRoleNotes: (v) => set({ newActorRoleNotes: v }),
+  setNewActorNotes: (v) => set({ newActorNotes: v }),
   setNewActorUseProfile: (v) => set({ newActorUseProfile: v }),
   setNewActorProfileId: (v) => set({ newActorProfileId: v }),
   setAddActorError: (v) => set({ addActorError: v }),
@@ -146,7 +146,7 @@ export const useFormStore = create<FormState>((set) => ({
       newActorUseDefaultCommand: true,
       newActorSecretsSetText: "",
       newActorCapabilityAutoloadText: "",
-      newActorRoleNotes: "",
+      newActorNotes: "",
       newActorUseProfile: false,
       newActorProfileId: "",
       newActorRole: "peer",

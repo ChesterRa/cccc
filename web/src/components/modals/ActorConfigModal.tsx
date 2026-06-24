@@ -67,9 +67,9 @@ export interface EditActorConfigProps extends ActorConfigBaseProps {
   onChangeCommand: (command: string) => void;
   title: string;
   onChangeTitle: (title: string) => void;
-  roleNotes: string;
-  onChangeRoleNotes: (value: string) => void;
-  roleNotesBusy?: boolean;
+  actorNotes: string;
+  onChangeActorNotes: (value: string) => void;
+  actorNotesBusy?: boolean;
   capabilityAutoloadText: string;
   onChangeCapabilityAutoloadText: (value: string) => void;
   onSave: (payload: EditActorSavePayload) => Promise<void>;
@@ -105,8 +105,8 @@ export interface CreateActorConfigProps extends ActorConfigBaseProps {
   onChangeSecretsSetText: (value: string) => void;
   capabilityAutoloadText: string;
   onChangeCapabilityAutoloadText: (value: string) => void;
-  roleNotes: string;
-  onChangeRoleNotes: (value: string) => void;
+  actorNotes: string;
+  onChangeActorNotes: (value: string) => void;
   error: string;
   onChangeError: (message: string) => void;
   canSubmit: boolean;
@@ -239,8 +239,8 @@ function CreateActorConfigModal({
   onChangeSecretsSetText,
   capabilityAutoloadText,
   onChangeCapabilityAutoloadText,
-  roleNotes,
-  onChangeRoleNotes,
+  actorNotes,
+  onChangeActorNotes,
   error,
   onChangeError,
   canSubmit,
@@ -423,17 +423,17 @@ function CreateActorConfigModal({
                 </div>
 
                 <div>
-                  <RolePresetPicker draftValue={roleNotes} onChangeDraft={onChangeRoleNotes} disabled={busy === "actor-add"} />
-                  <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">{t("roleNotes")}</label>
+                  <RolePresetPicker draftValue={actorNotes} onChangeDraft={onChangeActorNotes} disabled={busy === "actor-add"} />
+                  <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">{t("actorNotes")}</label>
                   <Textarea
                     className="min-h-[144px]"
-                    value={roleNotes}
-                    onChange={(e) => onChangeRoleNotes(e.target.value)}
-                    placeholder={t("roleNotesPlaceholder")}
+                    value={actorNotes}
+                    onChange={(e) => onChangeActorNotes(e.target.value)}
+                    placeholder={t("actorNotesPlaceholder")}
                     spellCheck={false}
                     disabled={busy === "actor-add"}
                   />
-                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">{t("newActorRoleNotesHint")}</div>
+                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">{t("newActorNotesHint")}</div>
                 </div>
               </div>
             </Surface>
@@ -738,9 +738,9 @@ function EditActorConfigModal({
   onChangeCommand,
   title,
   onChangeTitle,
-  roleNotes,
-  onChangeRoleNotes,
-  roleNotesBusy = false,
+  actorNotes,
+  onChangeActorNotes,
+  actorNotesBusy = false,
   capabilityAutoloadText,
   onChangeCapabilityAutoloadText,
   onSave,
@@ -1129,7 +1129,7 @@ function EditActorConfigModal({
     busy === "actor-update" ||
     avatarBusy !== "" ||
     secretsBusy ||
-    roleNotesBusy ||
+    actorNotesBusy ||
     (editMode === "custom" && effectiveLinked) ||
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
@@ -1253,21 +1253,21 @@ function EditActorConfigModal({
 
                 <div>
                   <RolePresetPicker
-                    draftValue={roleNotes}
-                    onChangeDraft={onChangeRoleNotes}
-                    disabled={roleNotesBusy || busy === "actor-update"}
+                    draftValue={actorNotes}
+                    onChangeDraft={onChangeActorNotes}
+                    disabled={actorNotesBusy || busy === "actor-update"}
                   />
-                  <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">{t("roleNotes")}</label>
+                  <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">{t("actorNotes")}</label>
                   <Textarea
                     className="min-h-[144px]"
-                    value={roleNotes}
-                    onChange={(e) => onChangeRoleNotes(e.target.value)}
-                    placeholder={t("roleNotesPlaceholder")}
+                    value={actorNotes}
+                    onChange={(e) => onChangeActorNotes(e.target.value)}
+                    placeholder={t("actorNotesPlaceholder")}
                     spellCheck={false}
-                    disabled={roleNotesBusy}
+                    disabled={actorNotesBusy}
                   />
-                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">{t("roleNotesHint")}</div>
-                  {roleNotesBusy ? <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">{t("loadingRoleNotes")}</div> : null}
+                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">{t("actorNotesHint")}</div>
+                  {actorNotesBusy ? <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">{t("loadingActorNotes")}</div> : null}
                 </div>
               </div>
             </Surface>

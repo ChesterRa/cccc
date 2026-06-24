@@ -1026,7 +1026,6 @@
     "orphanActorNotePlaceholder": "Keep or clean this leftover note for an actor that no longer exists…",
     "scopedNoteConfigured": "Configured",
     "unknownRole": "Unknown",
-    "legacyRoleNotesHint": "Legacy role notes were detected and mapped into the structured fields. Saving here will normalize them into scoped help blocks.",
     "noScopeWarning": "No scope attached to this group yet. Guidance overrides still work because they are stored under CCCC_HOME, but repo-linked features may stay unavailable until a scope is attached."
   },
   "copyGroups": {

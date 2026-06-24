@@ -111,7 +111,7 @@ For remote-MCP pull mode, prompt the model to use CCCC explicitly:
    Use the CCCC connector. First call cccc_runtime_wait_next_turn.
    For multi-step local development, prefer cccc_code_exec and call nested tools
    through tools.*. Direct tools remain available for simple steps: cccc_repo for
-   read-only workspace inspection, cccc_repo_edit or cccc_apply_patch for edits,
+   read-only workspace inspection/search, cccc_repo_edit or cccc_apply_patch for edits,
    cccc_exec_command/cccc_write_stdin for commands/tests, cccc_git for
    status/diff/add/commit, cccc_message_send for visible replies, then
    cccc_runtime_complete_turn.
@@ -156,7 +156,7 @@ The browser-injected prompt should stay small. It identifies the actor and deliv
 
 Use this split to avoid duplicate or drifting instructions:
 
-- Shared agent behavior: `cccc_bootstrap`, `cccc_help`, role notes, capability state, context, memory, and messaging rules.
+- Shared agent behavior: `cccc_bootstrap`, `cccc_help`, actor notes, capability state, context, memory, and messaging rules.
 - Web transport behavior: do not pull a browser-injected batch again; do pull when operating in remote-MCP mode without an injected batch; visible communication must use CCCC MCP tools; browser delivery commits on confirmed injection rather than completion. Delivery-unverified and failed browser deliveries stay visible and are not automatically redelivered in a later batch.
 
 ## Smoke Test

@@ -571,10 +571,9 @@ THROTTLE = DeliveryThrottle()
 
 REMINDER_EVERY_N_MESSAGES = 1
 MCP_REMINDER_LINE = (
-    "[cccc] If you respond: use MCP (cccc_message_send / cccc_message_reply); "
-    "terminal output isn't delivered. Verify reply_to/to; avoid routine @all. "
-    "A reply handles the communication obligation, not the whole job; "
-    "resume active work unless priority changed. If unsure, use MCP tool cccc_help."
+    "[cccc] Use cccc_message_reply for replies; use cccc_message_send for new messages. "
+    "Terminal output is not delivered. Verify reply_to/to; avoid routine @all. "
+    "Use cccc_help if unsure."
 )
 
 

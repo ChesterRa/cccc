@@ -26,6 +26,15 @@ _FILENAME_MIME_FALLBACKS = {
     ".md": "text/markdown",
     ".markdown": "text/markdown",
 }
+POST_REPLY_RESUME_CHECKPOINT = (
+    "Reply sent. Reorient after this interruption: review unfinished work, "
+    "open loops, commitments, and the larger goal; resume the highest-value "
+    "next step. If nothing remains, do one brief quality/risk pass and stop cleanly."
+)
+POST_SEND_TOOL_BOUNDARY = (
+    "New message sent. If you were answering an existing delivered message/event, "
+    "use cccc_message_reply(event_id=...) next time."
+)
 
 
 def _guess_mime_type(filename: str) -> str:
@@ -73,6 +82,24 @@ def _remote_message_idempotency_key(value: str = "") -> str:
     return explicit or f"mcpmsg_{uuid.uuid4().hex}"
 
 
+def _with_post_reply_hint(result: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(result or {})
+    out["post_reply_hint"] = {
+        "kind": "resume_checkpoint",
+        "message": POST_REPLY_RESUME_CHECKPOINT,
+    }
+    return out
+
+
+def _with_post_send_hint(result: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(result or {})
+    out["post_send_hint"] = {
+        "kind": "message_tool_boundary",
+        "message": POST_SEND_TOOL_BOUNDARY,
+    }
+    return out
+
+
 def message_send(
     *,
     group_id: str,
@@ -115,55 +142,61 @@ def message_send(
                     code="missing_remote_recipient",
                     message="remote messages require explicit to across Group Bridge; use '@foreman', '@all', or a target actor",
                 )
-            return _call_daemon_or_raise(
+            return _with_post_send_hint(
+                _call_daemon_or_raise(
+                    {
+                        "op": "remote_send",
+                        "args": {
+                            "group_id": group_id,
+                            "by": actor_id,
+                            "registration_id": group_bridge_route.registration_id,
+                            "idempotency_key": _remote_message_idempotency_key(idempotency_key),
+                            "payload": {
+                                "text": text,
+                                "to": remote_to,
+                                "priority": prio,
+                                "reply_required": reply_required_flag,
+                                "refs": refs if refs is not None else [],
+                            },
+                        },
+                    }
+                )
+            )
+        return _with_post_send_hint(
+            _call_daemon_or_raise(
                 {
-                    "op": "remote_send",
+                    "op": "send_cross_group",
                     "args": {
                         "group_id": group_id,
+                        "dst_group_id": dst_gid,
+                        "text": text,
                         "by": actor_id,
-                        "registration_id": group_bridge_route.registration_id,
-                        "idempotency_key": _remote_message_idempotency_key(idempotency_key),
-                        "payload": {
-                            "text": text,
-                            "to": remote_to,
-                            "priority": prio,
-                            "reply_required": reply_required_flag,
-                            "refs": refs if refs is not None else [],
-                        },
+                        "to": to if to is not None else [],
+                        "priority": prio,
+                        "reply_required": reply_required_flag,
+                        "refs": refs if refs is not None else [],
                     },
                 }
             )
-        return _call_daemon_or_raise(
+        )
+
+    return _with_post_send_hint(
+        _call_daemon_or_raise(
             {
-                "op": "send_cross_group",
+                "op": "send",
                 "args": {
                     "group_id": group_id,
-                    "dst_group_id": dst_gid,
                     "text": text,
                     "by": actor_id,
                     "to": to if to is not None else [],
+                    "path": "",
                     "priority": prio,
                     "reply_required": reply_required_flag,
                     "refs": refs if refs is not None else [],
+                    "suggested_user_message": suggestion,
                 },
             }
         )
-
-    return _call_daemon_or_raise(
-        {
-            "op": "send",
-            "args": {
-                "group_id": group_id,
-                "text": text,
-                "by": actor_id,
-                "to": to if to is not None else [],
-                "path": "",
-                "priority": prio,
-                "reply_required": reply_required_flag,
-                "refs": refs if refs is not None else [],
-                "suggested_user_message": suggestion,
-            },
-        }
     )
 
 
@@ -248,21 +281,23 @@ def message_reply(
     if prio not in ("normal", "attention"):
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
     reply_required_flag = coerce_bool(reply_required, default=False)
-    return _call_daemon_or_raise(
-        {
-            "op": "reply",
-            "args": {
-                "group_id": group_id,
-                "text": text,
-                "by": actor_id,
-                "reply_to": reply_to,
-                "to": to if to is not None else [],
-                "priority": prio,
-                "reply_required": reply_required_flag,
-                "refs": refs if refs is not None else [],
-                "suggested_user_message": suggestion,
-            },
-        }
+    return _with_post_reply_hint(
+        _call_daemon_or_raise(
+            {
+                "op": "reply",
+                "args": {
+                    "group_id": group_id,
+                    "text": text,
+                    "by": actor_id,
+                    "reply_to": reply_to,
+                    "to": to if to is not None else [],
+                    "priority": prio,
+                    "reply_required": reply_required_flag,
+                    "refs": refs if refs is not None else [],
+                    "suggested_user_message": suggestion,
+                },
+            }
+        )
     )
 
 

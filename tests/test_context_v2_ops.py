@@ -1060,7 +1060,7 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_legacy_role_notes_set_updates_help_actor_block_without_touching_persona_notes(self) -> None:
+    def test_actor_notes_set_updates_help_actor_block_without_touching_persona_notes(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.kernel.actors import add_actor
@@ -1082,7 +1082,7 @@ class TestContextV2Ops(unittest.TestCase):
             resp, _ = self._sync(
                 gid,
                 [{
-                    "op": "role_notes.set",
+                    "op": "actor_notes.set",
                     "actor_id": "peer1",
                     "persona_notes": "Stay skeptical.\nUse receipts.",
                 }],

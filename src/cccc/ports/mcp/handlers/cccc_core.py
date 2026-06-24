@@ -728,9 +728,7 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
                 _append_skill_preview(lines, item)
         lines.extend(
             [
-                "- Capsule skill is runtime capsule activation, not a full local skill-package install.",
-                "- Runtime success is mainly visible via `capability_state.active_capsule_skills`; `dynamic_tools` may stay unchanged.",
-                "- Install repository, URL, and local `SKILL.md` sources through `cccc_capability_install` so they remain CCCC capability records.",
+                "- Treat active skills as additional working rules for the current task; ignore them when they do not apply.",
             ]
         )
         sections.append("\n".join(lines).rstrip())

@@ -1026,7 +1026,6 @@
     "orphanActorNotePlaceholder": "这里是遗留给已不存在 actor 的提示词，你可以保留或清理……",
     "scopedNoteConfigured": "已配置",
     "unknownRole": "未知角色",
-    "legacyRoleNotesHint": "检测到了旧版 Role Notes 结构，已映射到结构化字段。保存后会自动规范成最新的 scoped help 结构。",
     "noScopeWarning": "这个工作组目前还没有绑定 scope。由于 guidance override 是存放在 CCCC_HOME 下的，所以仍然可以工作；但依赖仓库作用域的功能在绑定 scope 之前可能不可用。"
   },
   "copyGroups": {

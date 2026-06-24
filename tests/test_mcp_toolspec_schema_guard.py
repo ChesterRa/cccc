@@ -113,6 +113,14 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             self.assertIn("must not be used for approvals", desc)
             self.assertNotIn("suggested_user_message", schema.get("required") or [])
 
+    def test_message_send_toolspec_directs_replies_to_reply_tool(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_message_send"), None)
+        self.assertIsInstance(spec, dict)
+        desc = str(spec.get("description") or "") if isinstance(spec, dict) else ""
+        self.assertIn("Start a new visible chat message", desc)
+        self.assertIn("Do not use this to answer an existing delivered message/event", desc)
+        self.assertIn("use cccc_message_reply with that event_id instead", desc)
+
     def test_task_toolspec_exposes_type_enum(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_task"), None)
         self.assertIsInstance(spec, dict)
@@ -146,7 +154,12 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIsInstance(repo_annotations, dict)
         self.assertTrue(repo_annotations.get("readOnlyHint"))
         repo_props = ((repo.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo, dict) else {}
-        self.assertEqual((repo_props.get("action") or {}).get("enum"), ["info", "list", "list_dir", "read"])
+        self.assertEqual((repo_props.get("action") or {}).get("enum"), ["info", "list", "list_dir", "read", "search"])
+        self.assertIn("query", repo_props)
+        self.assertIn("regex", repo_props)
+        self.assertIn("include_globs", repo_props)
+        self.assertIn("exclude_globs", repo_props)
+        self.assertIn("context_lines", repo_props)
         self.assertIn("start_line", repo_props)
         self.assertIn("end_line", repo_props)
 

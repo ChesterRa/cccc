@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, Iterator, List, Mapping, Sequence
 
 from ....kernel.group import load_group
 from ....kernel.prompt_files import resolve_active_scope_root
@@ -150,6 +152,79 @@ def _paths_arg(value: Any) -> List[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+def _patterns_arg(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item or "").strip() for item in value if str(item or "").strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _normalize_glob_pattern(pattern: str) -> str:
+    value = str(pattern or "").strip().replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    while value.startswith("/"):
+        value = value[1:]
+    return value
+
+
+def _normalize_glob_path(rel_path: str) -> str:
+    value = str(rel_path or "").replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    while value.startswith("/"):
+        value = value[1:]
+    return value
+
+
+def _glob_parts(value: str) -> List[str]:
+    return [part for part in value.split("/") if part and part != "."]
+
+
+def _match_glob_parts(path_parts: Sequence[str], pattern_parts: Sequence[str]) -> bool:
+    if not pattern_parts:
+        return not path_parts
+    head = pattern_parts[0]
+    if head == "**":
+        if _match_glob_parts(path_parts, pattern_parts[1:]):
+            return True
+        return bool(path_parts) and _match_glob_parts(path_parts[1:], pattern_parts)
+    if not path_parts:
+        return False
+    if not fnmatch.fnmatchcase(path_parts[0], head):
+        return False
+    return _match_glob_parts(path_parts[1:], pattern_parts[1:])
+
+
+def _path_matches_glob(rel_path: str, pattern: str) -> bool:
+    pat = _normalize_glob_pattern(pattern)
+    if not pat:
+        return False
+    path = _normalize_glob_path(rel_path)
+    if "/" not in pat:
+        return fnmatch.fnmatchcase(path.rsplit("/", 1)[-1], pat)
+    return _match_glob_parts(_glob_parts(path), _glob_parts(pat))
+
+
+def _iter_search_candidates(root: Path, base: Path, *, include_hidden: bool) -> Iterator[Path]:
+    if base.is_file():
+        yield base
+        return
+    if not base.is_dir():
+        raise MCPError(code="invalid_path", message="path must be a file or directory")
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [
+            name
+            for name in sorted(dirnames)
+            if name not in _SKIP_DIRS and (include_hidden or not name.startswith("."))
+        ]
+        for name in sorted(filenames):
+            if not include_hidden and name.startswith("."):
+                continue
+            yield Path(dirpath) / name
 
 
 def _relative_paths_under_root(root: Path, raw_paths: Sequence[str]) -> List[str]:
@@ -391,6 +466,10 @@ def repo_search_tool(
     limit: Any = 100,
     include_hidden: bool = False,
     case_sensitive: bool = False,
+    regex: bool = False,
+    include_globs: Any = None,
+    exclude_globs: Any = None,
+    context_lines: Any = 0,
     max_file_bytes: Any = _DEFAULT_READ_BYTES,
 ) -> Dict[str, Any]:
     """Search text files under the group's active scope root."""
@@ -403,33 +482,34 @@ def repo_search_tool(
         raise MCPError(code="not_found", message=f"path not found: {base}")
     match_limit = _coerce_int(limit, default=100, minimum=1, maximum=500)
     file_limit = _coerce_int(max_file_bytes, default=_DEFAULT_READ_BYTES, minimum=1, maximum=_MAX_READ_BYTES)
+    context = _coerce_int(context_lines, default=0, minimum=0, maximum=10)
+    include_patterns = _patterns_arg(include_globs)
+    exclude_patterns = _patterns_arg(exclude_globs)
     needle_cmp = needle if bool(case_sensitive) else needle.lower()
+    pattern = None
+    if bool(regex):
+        try:
+            pattern = re.compile(needle, 0 if bool(case_sensitive) else re.IGNORECASE)
+        except re.error as exc:
+            raise MCPError(code="invalid_regex", message=f"invalid search regex: {exc}") from exc
     matches: List[Dict[str, Any]] = []
     scanned_files = 0
     skipped_files = 0
+    filtered_files = 0
+    truncated_files = 0
     truncated = False
 
-    if base.is_file():
-        candidates = [base]
-    elif base.is_dir():
-        candidates = []
-        for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [
-                name
-                for name in sorted(dirnames)
-                if name not in _SKIP_DIRS and (include_hidden or not name.startswith("."))
-            ]
-            for name in sorted(filenames):
-                if not include_hidden and name.startswith("."):
-                    continue
-                candidates.append(Path(dirpath) / name)
-    else:
-        raise MCPError(code="invalid_path", message="path must be a file or directory")
-
-    for candidate in candidates:
+    for candidate in _iter_search_candidates(root, base, include_hidden=bool(include_hidden)):
         if len(matches) >= match_limit:
             truncated = True
             break
+        rel_path = _relative(root, candidate)
+        if include_patterns and not any(_path_matches_glob(rel_path, pat) for pat in include_patterns):
+            filtered_files += 1
+            continue
+        if exclude_patterns and any(_path_matches_glob(rel_path, pat) for pat in exclude_patterns):
+            filtered_files += 1
+            continue
         try:
             text, file_truncated, _size, _sha256 = _read_text(candidate, max_bytes=file_limit)
         except MCPError as exc:
@@ -439,19 +519,36 @@ def repo_search_tool(
             raise
         scanned_files += 1
         if file_truncated:
-            skipped_files += 1
-            continue
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            haystack = line if bool(case_sensitive) else line.lower()
-            if needle_cmp not in haystack:
-                continue
-            matches.append(
-                {
-                    "path": _relative(root, candidate),
-                    "line_number": line_number,
-                    "line_text": line,
-                }
+            truncated_files += 1
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            matched = (
+                bool(pattern.search(line))
+                if pattern is not None
+                else needle_cmp in (line if bool(case_sensitive) else line.lower())
             )
+            if not matched:
+                continue
+            line_number = index + 1
+            item: Dict[str, Any] = {
+                "path": rel_path,
+                "line_number": line_number,
+                "line_text": line,
+            }
+            if file_truncated:
+                item["file_truncated"] = True
+            if context:
+                before_start = max(0, index - context)
+                after_end = min(len(lines), index + context + 1)
+                item["before_context"] = [
+                    {"line_number": before_index + 1, "line_text": lines[before_index]}
+                    for before_index in range(before_start, index)
+                ]
+                item["after_context"] = [
+                    {"line_number": after_index + 1, "line_text": lines[after_index]}
+                    for after_index in range(index + 1, after_end)
+                ]
+            matches.append(item)
             if len(matches) >= match_limit:
                 truncated = True
                 break
@@ -462,9 +559,15 @@ def repo_search_tool(
         "path": _relative(root, base),
         "query": needle,
         "case_sensitive": bool(case_sensitive),
+        "regex": bool(regex),
+        "include_globs": include_patterns,
+        "exclude_globs": exclude_patterns,
+        "context_lines": context,
         "matches": matches,
         "scanned_files": scanned_files,
         "skipped_files": skipped_files,
+        "filtered_files": filtered_files,
+        "truncated_files": truncated_files,
         "truncated": truncated,
     }
 
@@ -856,7 +959,7 @@ def repo_tool(
 
     raise MCPError(
         code="invalid_action",
-        message="cccc_repo action must be info|list|list_dir|read; use cccc_repo_edit for writes and cccc_apply_patch for Codex patches",
+        message="repo_tool action must be info|list|list_dir|read; use repo_search_tool for search and cccc_repo_edit/cccc_apply_patch for writes",
     )
 
 

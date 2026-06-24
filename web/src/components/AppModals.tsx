@@ -192,13 +192,13 @@ export function AppModals({
     editActorRunner,
     editActorCommand,
     editActorTitle,
-    editActorRoleNotes,
+    editActorNotes,
     editActorCapabilityAutoloadText,
     setEditActorRuntime,
     setEditActorRunner,
     setEditActorCommand,
     setEditActorTitle,
-    setEditActorRoleNotes,
+    setEditActorNotes,
     setEditActorCapabilityAutoloadText,
     newActorId,
     newActorRole,
@@ -208,7 +208,7 @@ export function AppModals({
     newActorUseDefaultCommand,
     newActorSecretsSetText,
     newActorCapabilityAutoloadText,
-    newActorRoleNotes,
+    newActorNotes,
     newActorUseProfile,
     newActorProfileId,
     addActorError,
@@ -220,7 +220,7 @@ export function AppModals({
     setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
     setNewActorCapabilityAutoloadText,
-    setNewActorRoleNotes,
+    setNewActorNotes,
     setNewActorUseProfile,
     setNewActorProfileId,
     setAddActorError,
@@ -244,10 +244,10 @@ export function AppModals({
   const [dirBrowseError, setDirBrowseError] = useState("");
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
   const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
-  const [editActorRoleNotesBusy, setEditActorRoleNotesBusy] = useState(false);
+  const [editActorNotesBusy, setEditActorNotesBusy] = useState(false);
   const [presentationViewerCacheByGroup, setPresentationViewerCacheByGroup] = useState<Record<string, string[]>>({});
-  const editActorRoleNotesBaselineRef = useRef("");
-  const editActorRoleNotesSeqRef = useRef(0);
+  const editActorNotesBaselineRef = useRef("");
+  const editActorNotesSeqRef = useRef(0);
 
   const rememberPresentationViewerSlot = useCallback((groupId: string, slotId: string) => {
     const normalizedGroupId = String(groupId || "").trim();
@@ -325,39 +325,39 @@ export function AppModals({
     return sortPresentationSlotIds(cachedSlots);
   }, [groupPresentation, presentationViewer, presentationViewerCacheByGroup, selectedGroupId]);
 
-  const loadEditingActorRoleNotes = useCallback(async (groupId: string, actorId: string) => {
+  const loadEditingActorNotes = useCallback(async (groupId: string, actorId: string) => {
     const gid = String(groupId || "").trim();
     const aid = String(actorId || "").trim();
     if (!gid || !aid) {
-      editActorRoleNotesBaselineRef.current = "";
-      setEditActorRoleNotes("");
+      editActorNotesBaselineRef.current = "";
+      setEditActorNotes("");
       return;
     }
-    const seq = ++editActorRoleNotesSeqRef.current;
-    setEditActorRoleNotesBusy(true);
+    const seq = ++editActorNotesSeqRef.current;
+    setEditActorNotesBusy(true);
     try {
       const resp = await api.fetchGroupPrompts(gid);
       if (!resp.ok) {
-        if (seq === editActorRoleNotesSeqRef.current) {
-          editActorRoleNotesBaselineRef.current = "";
-          setEditActorRoleNotes("");
+        if (seq === editActorNotesSeqRef.current) {
+          editActorNotesBaselineRef.current = "";
+          setEditActorNotes("");
         }
         return;
       }
       const helpContent = String(resp.result?.help?.content || "");
       const parsed = parseHelpMarkdown(helpContent);
       const note = String(parsed.actorNotes[aid] || "");
-      if (seq !== editActorRoleNotesSeqRef.current) return;
-      editActorRoleNotesBaselineRef.current = note.trim();
-      setEditActorRoleNotes(note);
+      if (seq !== editActorNotesSeqRef.current) return;
+      editActorNotesBaselineRef.current = note.trim();
+      setEditActorNotes(note);
     } finally {
-      if (seq === editActorRoleNotesSeqRef.current) {
-        setEditActorRoleNotesBusy(false);
+      if (seq === editActorNotesSeqRef.current) {
+        setEditActorNotesBusy(false);
       }
     }
-  }, [setEditActorRoleNotes]);
+  }, [setEditActorNotes]);
 
-  const persistActorRoleNotes = useCallback(
+  const persistActorNotes = useCallback(
     async (groupId: string, actorId: string, note: string, actorOrder?: string[]) => {
       const gid = String(groupId || "").trim();
       const aid = String(actorId || "").trim();
@@ -657,8 +657,8 @@ export function AppModals({
     const currentCapabilityAutoload = normalizeCapabilityIdList(
       (editingActor as { capability_autoload?: unknown[] })?.capability_autoload
     );
-    const currentRoleNotes = String(editActorRoleNotesBaselineRef.current || "").trim();
-    const nextRoleNotes = String(editActorRoleNotes || "").trim();
+    const currentActorNotes = String(editActorNotesBaselineRef.current || "").trim();
+    const nextActorNotes = String(editActorNotes || "").trim();
     const nextRuntime = String(editActorRuntime || "codex").trim();
     const nextRunner = normalizeActorRunner(editActorRunner);
     const nextCommand = String(editActorCommand || "").trim();
@@ -678,11 +678,11 @@ export function AppModals({
       profileScope: String(editingActor.profile_scope || "global").trim() || "global",
       profileOwner: String(editingActor.profile_owner || "").trim(),
     });
-    const roleNotesChanged = nextRoleNotes !== currentRoleNotes;
+    const actorNotesChanged = nextActorNotes !== currentActorNotes;
     const hasActorMutation =
       convertToCustom || runtimeChanged || runnerChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
 
-    if (!options.restart && !hasActorMutation && !willChangeSecrets && !roleNotesChanged) {
+    if (!options.restart && !hasActorMutation && !willChangeSecrets && !actorNotesChanged) {
       throw new Error(NO_CHANGES_SENTINEL);
     }
 
@@ -791,18 +791,18 @@ export function AppModals({
         }
       }
 
-      if (roleNotesChanged) {
-        const roleNotesResp = await persistActorRoleNotes(
+      if (actorNotesChanged) {
+        const actorNotesResp = await persistActorNotes(
           selectedGroupId,
           actorId,
-          nextRoleNotes,
+          nextActorNotes,
           actors.map((item) => String(item.id || "").trim()).filter(Boolean)
         );
-        if (!roleNotesResp.ok) {
-          showError(roleNotesResp.error);
+        if (!actorNotesResp.ok) {
+          showError(actorNotesResp.error);
           return;
         }
-        editActorRoleNotesBaselineRef.current = nextRoleNotes;
+        editActorNotesBaselineRef.current = nextActorNotes;
       }
 
       if (options.restart) {
@@ -842,20 +842,20 @@ export function AppModals({
     setEditActorRunner(getEffectiveActorRunner(actor));
     setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
     setEditActorTitle(String(actor.title || ""));
-    setEditActorRoleNotes("");
-    editActorRoleNotesBaselineRef.current = "";
+    setEditActorNotes("");
+    editActorNotesBaselineRef.current = "";
     setEditActorCapabilityAutoloadText(
       formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload)
     );
     setEditingActor(actor as Actor);
-  }, [setEditActorRuntime, setEditActorRunner, setEditActorCommand, setEditActorTitle, setEditActorRoleNotes, setEditActorCapabilityAutoloadText, setEditingActor]);
+  }, [setEditActorRuntime, setEditActorRunner, setEditActorCommand, setEditActorTitle, setEditActorNotes, setEditActorCapabilityAutoloadText, setEditingActor]);
 
   useEffect(() => {
     if (!editingActor || !selectedGroupId) return;
     const actorId = String(editingActor.id || "").trim();
     if (!actorId) return;
-    void loadEditingActorRoleNotes(selectedGroupId, actorId);
-  }, [editingActor, selectedGroupId, loadEditingActorRoleNotes]);
+    void loadEditingActorNotes(selectedGroupId, actorId);
+  }, [editingActor, selectedGroupId, loadEditingActorNotes]);
 
   useEffect(() => {
     if (!editingActor) return;
@@ -998,7 +998,7 @@ export function AppModals({
     if (!selectedGroupId) return false;
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
-    const roleNotes = String(newActorRoleNotes || "").trim();
+    const actorNotes = String(newActorNotes || "").trim();
     const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
     const capabilityAutoload = parseCapabilityIdInput(newActorCapabilityAutoloadText);
 
@@ -1055,15 +1055,15 @@ export function AppModals({
 
       const postCreateErrors: string[] = [];
 
-      if (roleNotes && createdActorId) {
-        const roleNotesResp = await persistActorRoleNotes(
+      if (actorNotes && createdActorId) {
+        const actorNotesResp = await persistActorNotes(
           selectedGroupId,
           createdActorId,
-          roleNotes,
+          actorNotes,
           [...actors.map((item) => String(item.id || "").trim()).filter(Boolean), createdActorId]
         );
-        if (!roleNotesResp.ok) {
-          postCreateErrors.push(`${t("roleNotes")}: ${roleNotesResp.error}`);
+        if (!actorNotesResp.ok) {
+          postCreateErrors.push(`${t("actorNotes")}: ${actorNotesResp.error}`);
         }
       }
 
@@ -1196,12 +1196,12 @@ export function AppModals({
   );
 
   const handleCancelEditActor = useCallback(() => {
-    editActorRoleNotesSeqRef.current += 1;
-    editActorRoleNotesBaselineRef.current = "";
-    setEditActorRoleNotesBusy(false);
-    setEditActorRoleNotes("");
+    editActorNotesSeqRef.current += 1;
+    editActorNotesBaselineRef.current = "";
+    setEditActorNotesBusy(false);
+    setEditActorNotes("");
     setEditingActor(null);
-  }, [setEditActorRoleNotes, setEditingActor]);
+  }, [setEditActorNotes, setEditingActor]);
 
   const relaySourceGroupId = useMemo(() => {
     const fromStore = relaySource?.groupId ? String(relaySource.groupId) : "";
@@ -1668,9 +1668,9 @@ export function AppModals({
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
-        roleNotes={editActorRoleNotes}
-        onChangeRoleNotes={setEditActorRoleNotes}
-        roleNotesBusy={editActorRoleNotesBusy}
+        actorNotes={editActorNotes}
+        onChangeActorNotes={setEditActorNotes}
+        actorNotesBusy={editActorNotesBusy}
         capabilityAutoloadText={editActorCapabilityAutoloadText}
         onChangeCapabilityAutoloadText={setEditActorCapabilityAutoloadText}
         onSave={handleSaveEditActorOnly}
@@ -1741,8 +1741,8 @@ export function AppModals({
         onChangeSecretsSetText={setNewActorSecretsSetText}
         capabilityAutoloadText={newActorCapabilityAutoloadText}
         onChangeCapabilityAutoloadText={setNewActorCapabilityAutoloadText}
-        roleNotes={newActorRoleNotes}
-        onChangeRoleNotes={setNewActorRoleNotes}
+        actorNotes={newActorNotes}
+        onChangeActorNotes={setNewActorNotes}
         error={addActorError}
         onChangeError={setAddActorError}
         canSubmit={canAddActor}

@@ -358,6 +358,47 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("suggested_user_message"), "Please run the next implementation pass.")
+        hint = out.get("post_reply_hint") if isinstance(out.get("post_reply_hint"), dict) else {}
+        self.assertEqual(hint.get("kind"), "resume_checkpoint")
+        message = str(hint.get("message") or "")
+        self.assertIn("Reply sent.", message)
+        self.assertIn("Reorient after this interruption", message)
+        self.assertIn("unfinished work", message)
+        self.assertIn("open loops", message)
+        self.assertIn("commitments", message)
+        self.assertIn("larger goal", message)
+        self.assertIn("highest-value next step", message)
+        self.assertIn("brief quality/risk pass", message)
+
+    def test_message_send_adds_lightweight_tool_boundary_hint(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        def _fake_call_daemon(req):
+            return {"ok": True, "result": {"event_id": "ev_send"}}
+
+        with patch.dict(os.environ, _CLEAN_ENV, clear=False), \
+             patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon):
+            out = mcp_server.handle_tool_call(
+                "cccc_message_send",
+                {
+                    "group_id": "g_test",
+                    "actor_id": "peer1",
+                    "text": "ordinary send",
+                    "to": ["user"],
+                },
+            )
+
+        self.assertEqual(out.get("event_id"), "ev_send")
+        self.assertNotIn("post_reply_hint", out)
+        hint = out.get("post_send_hint") if isinstance(out.get("post_send_hint"), dict) else {}
+        self.assertEqual(hint.get("kind"), "message_tool_boundary")
+        message = str(hint.get("message") or "")
+        self.assertIn("New message sent.", message)
+        self.assertIn("answering an existing delivered message/event", message)
+        self.assertIn("cccc_message_reply(event_id=...)", message)
+        self.assertNotIn("unfinished work", message)
+        self.assertNotIn("quality/risk pass", message)
 
     def test_tracked_send_passes_task_contract_args(self) -> None:
         from cccc.ports.mcp import server as mcp_server

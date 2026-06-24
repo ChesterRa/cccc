@@ -26,7 +26,6 @@ const EMPTY_HELP: ParsedHelpMarkdown = {
   voiceSecretary: "",
   actorNotes: {},
   extraTaggedBlocks: [],
-  usedLegacyRoleNotes: false,
 };
 
 function displayActorName(actor: Actor): string {
@@ -576,12 +575,6 @@ export function GuidanceTab({ isDark, groupId }: {
               </button>
             </div>
           </div>
-
-          {helpStructured.usedLegacyRoleNotes ? (
-            <div className={`mt-3 rounded-lg border px-3 py-2 text-[11px] ${isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
-              {t("guidance.legacyRoleNotesHint", "Legacy role notes were detected and mapped into the structured fields. Saving here will normalize them into scoped help blocks.")}
-            </div>
-          ) : null}
 
           {helpViewMode === "structured" ? (
             <div className={`mt-5 grid grid-cols-1 gap-5 ${expanded ? "min-h-0 flex-1 xl:grid-cols-[256px_minmax(0,1fr)]" : "items-start xl:grid-cols-[228px_minmax(0,1fr)]"}`}>

@@ -325,11 +325,11 @@ def build_prompt_assisted_mcp_setup_prompt(runtime: str) -> str:
     contract_text = json.dumps(contract, ensure_ascii=False, indent=2)
     return (
         "[CCCC] MCP setup request\n"
-        f"You are running inside {runtime_label}. Before normal CCCC work, make sure this runtime has a CCCC MCP server available.\n\n"
+        f"You are running inside {runtime_label}. Before setup, check whether cccc_bootstrap is available in this session.\n\n"
         "Idempotency requirement:\n"
-        "- If an MCP server named \"cccc\" is missing or points to different details, create or update only that entry using this runtime's normal user/global MCP configuration method.\n"
-        "- If \"cccc\" is already installed with equivalent details, leave it unchanged.\n"
-        "- Do not modify unrelated MCP servers.\n\n"
+        "- If cccc_bootstrap is available, skip MCP setup entirely and continue with the CCCC session bootstrap below.\n"
+        "- Only when cccc_bootstrap is not available, install or update the \"cccc\" MCP server using this runtime's normal user/global MCP configuration method.\n"
+        "- Do not reinstall just to verify the config; do not modify unrelated MCP servers.\n\n"
         "CCCC MCP server details:\n"
         f"{contract_text}\n\n"
         "After setup, continue with the CCCC session bootstrap below. If this runtime requires a restart before new MCP tools appear, say so clearly in the terminal."

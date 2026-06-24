@@ -368,7 +368,7 @@ def agent_state_clear(*, group_id: str, actor_id: str, by: Optional[str] = None)
     return context_sync(group_id=group_id, ops=[{"op": "agent_state.clear", "actor_id": actor_id}], by=by)
 
 
-def _load_role_notes_help(group: Any) -> Dict[str, Any]:
+def _load_actor_notes_help(group: Any) -> Dict[str, Any]:
     prompt_file = read_group_prompt_file(group, HELP_FILENAME)
     if prompt_file.found and isinstance(prompt_file.content, str) and prompt_file.content.strip():
         content = str(prompt_file.content)
@@ -405,7 +405,7 @@ def _canonical_actor_id(actor_ids: List[str], target_actor_id: str, extra_actor_
     return target
 
 
-def _write_role_notes_help(group: Any, markdown: str) -> Dict[str, Any]:
+def _write_actor_notes_help(group: Any, markdown: str) -> Dict[str, Any]:
     builtin = str(load_builtin_help_markdown() or "")
     next_content = str(markdown or "")
     if not next_content.strip() or next_content == builtin:
@@ -423,7 +423,7 @@ def _write_role_notes_help(group: Any, markdown: str) -> Dict[str, Any]:
     }
 
 
-def _notify_role_notes_target(*, group_id: str, target_actor_id: str) -> List[str]:
+def _notify_actor_notes_target(*, group_id: str, target_actor_id: str) -> List[str]:
     target = str(target_actor_id or "").strip()
     if not target:
         return []
@@ -462,13 +462,13 @@ def _notify_role_notes_target(*, group_id: str, target_actor_id: str) -> List[st
         return []
 
 
-def role_notes_get(*, group_id: str, caller_actor_id: str, target_actor_id: Optional[str] = None) -> Dict[str, Any]:
+def actor_notes_get(*, group_id: str, caller_actor_id: str, target_actor_id: Optional[str] = None) -> Dict[str, Any]:
     group = load_group(group_id)
     if group is None:
         raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
     caller_id = str(caller_actor_id or "").strip()
     role = str(get_effective_role(group, caller_id) or "").strip().lower()
-    help_prompt = _load_role_notes_help(group)
+    help_prompt = _load_actor_notes_help(group)
     parsed = parse_help_markdown(str(help_prompt.get("content") or ""))
     actor_ids = _group_actor_ids(group)
     actor_notes = parsed.get("actor_notes") if isinstance(parsed.get("actor_notes"), dict) else {}
@@ -476,9 +476,9 @@ def role_notes_get(*, group_id: str, caller_actor_id: str, target_actor_id: Opti
     target = _canonical_actor_id(actor_ids, str(target_actor_id or "").strip(), extra_actor_ids=extra_actor_ids)
     if role != "foreman":
         if not target:
-            raise MCPError(code="permission_denied", message="listing all role notes requires foreman access")
+            raise MCPError(code="permission_denied", message="listing all actor notes requires foreman access")
         if target.casefold() != caller_id.casefold():
-            raise MCPError(code="permission_denied", message="actors can only read their own role notes")
+            raise MCPError(code="permission_denied", message="actors can only read their own actor notes")
     if target_actor_id:
         return {
             "target_actor_id": target,
@@ -491,7 +491,7 @@ def role_notes_get(*, group_id: str, caller_actor_id: str, target_actor_id: Opti
         if actor_id not in ordered_actor_ids:
             ordered_actor_ids.append(actor_id)
     return {
-        "role_notes": [
+        "actor_notes": [
             {"actor_id": actor_id, "content": str(actor_notes.get(actor_id) or "")}
             for actor_id in ordered_actor_ids
         ],
@@ -500,19 +500,19 @@ def role_notes_get(*, group_id: str, caller_actor_id: str, target_actor_id: Opti
     }
 
 
-def role_notes_set(*, group_id: str, target_actor_id: str, content: str, by: Optional[str] = None) -> Dict[str, Any]:
+def actor_notes_set(*, group_id: str, target_actor_id: str, content: str, by: Optional[str] = None) -> Dict[str, Any]:
     group = load_group(group_id)
     if group is None:
         raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
     caller_id = str(by or "").strip()
     role = str(get_effective_role(group, caller_id) or "").strip().lower()
     if role != "foreman":
-        raise MCPError(code="permission_denied", message="modifying actor role notes requires foreman access")
+        raise MCPError(code="permission_denied", message="modifying actor notes requires foreman access")
     actor_ids = _group_actor_ids(group)
     target = _canonical_actor_id(actor_ids, target_actor_id)
     if target not in actor_ids:
         raise MCPError(code="actor_not_found", message=f"actor not found: {target_actor_id}")
-    current = _load_role_notes_help(group)
+    current = _load_actor_notes_help(group)
     next_content = update_actor_help_note(
         str(current.get("content") or ""),
         target,
@@ -527,18 +527,18 @@ def role_notes_set(*, group_id: str, target_actor_id: str, content: str, by: Opt
             "path": current.get("path"),
             "notified_actor_ids": [],
         }
-    written = _write_role_notes_help(group, next_content)
+    written = _write_actor_notes_help(group, next_content)
     return {
         "target_actor_id": target,
         "content": str(parse_help_markdown(str(written.get("content") or "")).get("actor_notes", {}).get(target) or ""),
         "source": written.get("source"),
         "path": written.get("path"),
-        "notified_actor_ids": _notify_role_notes_target(group_id=group_id, target_actor_id=target),
+        "notified_actor_ids": _notify_actor_notes_target(group_id=group_id, target_actor_id=target),
     }
 
 
-def role_notes_clear(*, group_id: str, target_actor_id: str, by: Optional[str] = None) -> Dict[str, Any]:
-    return role_notes_set(group_id=group_id, target_actor_id=target_actor_id, content="", by=by)
+def actor_notes_clear(*, group_id: str, target_actor_id: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return actor_notes_set(group_id=group_id, target_actor_id=target_actor_id, content="", by=by)
 
 
 def _handle_context_namespace(

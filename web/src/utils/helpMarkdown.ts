@@ -7,7 +7,6 @@ export type ParsedHelpMarkdown = {
   voiceSecretary: string;
   actorNotes: Record<string, string>;
   extraTaggedBlocks: string[];
-  usedLegacyRoleNotes: boolean;
 };
 
 type TaggedSection = {
@@ -22,8 +21,6 @@ const ROLE_TAG_RE = /^##\s*@role:\s*(\w+)\s*$/i;
 const ACTOR_TAG_RE = /^##\s*@actor:\s*(\S+)(?:\s+(.*\S))?\s*$/i;
 const PET_TAG_RE = /^##\s*@pet\s*:?\s*$/i;
 const VOICE_SECRETARY_TAG_RE = /^##\s*@voice_secretary\s*:?\s*$/i;
-const LEGACY_ROLE_SECTION_RE = /^##\s+Role Notes\s*$/i;
-const H3_RE = /^###\s+(.+?)\s*$/;
 
 function splitSections(markdown: string): string[] {
   const raw = String(markdown || "").replace(/\r\n?/g, "\n");
@@ -92,86 +89,6 @@ function parseTaggedSection(section: string): TaggedSection | null {
   return null;
 }
 
-function tryExtractLegacyRoleNotes(common: string): {
-  common: string;
-  foreman: string;
-  peer: string;
-  used: boolean;
-} {
-  const normalized = String(common || "").replace(/\r\n?/g, "\n");
-  const sections = splitSections(normalized);
-  const kept: string[] = [];
-  let foreman = "";
-  let peer = "";
-  let used = false;
-
-  for (const section of sections) {
-    const raw = trimBlock(section);
-    if (!raw) continue;
-    const lines = raw.split("\n");
-    if (!LEGACY_ROLE_SECTION_RE.test(String(lines[0] || ""))) {
-      kept.push(raw);
-      continue;
-    }
-    const bodyLines = lines.slice(1);
-    const chunks: Array<{ title: string; body: string }> = [];
-    let currentTitle = "";
-    let currentBody: string[] = [];
-    let stray = false;
-    for (const line of bodyLines) {
-      const h3 = line.match(H3_RE);
-      if (h3) {
-        if (currentTitle) {
-          chunks.push({ title: currentTitle, body: trimBlock(currentBody.join("\n")) });
-        } else if (trimBlock(currentBody.join("\n"))) {
-          stray = true;
-        }
-        currentTitle = String(h3[1] || "").trim();
-        currentBody = [];
-        continue;
-      }
-      currentBody.push(line);
-    }
-    if (currentTitle) {
-      chunks.push({ title: currentTitle, body: trimBlock(currentBody.join("\n")) });
-    } else if (trimBlock(currentBody.join("\n"))) {
-      stray = true;
-    }
-    if (stray || !chunks.length) {
-      kept.push(raw);
-      continue;
-    }
-    let localForeman = "";
-    let localPeer = "";
-    let unknown = false;
-    for (const chunk of chunks) {
-      const title = chunk.title.trim().toLowerCase();
-      if (title === "foreman") {
-        localForeman = chunk.body;
-      } else if (title === "peer") {
-        localPeer = chunk.body;
-      } else {
-        unknown = true;
-        break;
-      }
-    }
-    if (unknown) {
-      kept.push(raw);
-      continue;
-    }
-    foreman = localForeman;
-    peer = localPeer;
-    used = true;
-  }
-
-  return {
-    common: kept.join("\n\n").trim(),
-    foreman,
-    peer,
-    used,
-  };
-}
-
 export function parseHelpMarkdown(markdown: string): ParsedHelpMarkdown {
   const sections = splitSections(markdown);
   const commonSections: string[] = [];
@@ -208,17 +125,8 @@ export function parseHelpMarkdown(markdown: string): ParsedHelpMarkdown {
     extraTaggedBlocks.push(tagged.raw);
   }
 
-  let common = commonSections.join("\n\n").trim();
-  let usedLegacyRoleNotes = false;
-  if (!foreman && !peer) {
-    const legacy = tryExtractLegacyRoleNotes(common);
-    common = legacy.common;
-    if (legacy.foreman) foreman = legacy.foreman;
-    if (legacy.peer) peer = legacy.peer;
-    usedLegacyRoleNotes = legacy.used;
-  }
-
-  return { common, foreman, peer, voiceSecretary, actorNotes, extraTaggedBlocks, usedLegacyRoleNotes };
+  const common = commonSections.join("\n\n").trim();
+  return { common, foreman, peer, voiceSecretary, actorNotes, extraTaggedBlocks };
 }
 
 export function buildHelpMarkdown(input: {

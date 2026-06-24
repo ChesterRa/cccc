@@ -170,6 +170,10 @@ def group_bridge_tool_specs(access_level: str) -> List[Dict[str, Any]]:
                         extra_properties={
                             "query": {"type": "string", "description": "Required for action=search."},
                             "case_sensitive": {"type": "boolean", "default": False},
+                            "regex": {"type": "boolean", "default": False},
+                            "include_globs": {"type": "array", "items": {"type": "string"}},
+                            "exclude_globs": {"type": "array", "items": {"type": "string"}},
+                            "context_lines": {"type": "integer", "default": 0, "minimum": 0, "maximum": 10},
                             "max_file_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1000000},
                         },
                     ),
@@ -429,6 +433,10 @@ def _remote_repo(arguments: Dict[str, Any], context: GroupBridgeContext) -> Dict
             limit=arguments.get("limit") or 100,
             include_hidden=coerce_bool(arguments.get("include_hidden"), default=False),
             case_sensitive=coerce_bool(arguments.get("case_sensitive"), default=False),
+            regex=coerce_bool(arguments.get("regex"), default=False),
+            include_globs=arguments.get("include_globs"),
+            exclude_globs=arguments.get("exclude_globs"),
+            context_lines=arguments.get("context_lines"),
             max_file_bytes=arguments.get("max_file_bytes") or 200000,
         )
     if action not in {"info", "list", "list_dir", "read"}:

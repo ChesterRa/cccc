@@ -61,11 +61,11 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("## Control Plane", markdown)
         self.assertIn("## Memory and Recall", markdown)
         self.assertIn("## Capability", markdown)
-        self.assertIn("## Role Notes", markdown)
+        self.assertIn("## Actor Notes", markdown)
         self.assertIn("## Active Skills (Runtime)", markdown)
-        self.assertIn("Capsule skill is runtime capsule activation", markdown)
-        self.assertIn("cccc_capability_install", markdown)
-        self.assertIn("CCCC capability records", markdown)
+        self.assertIn("Treat active skills as additional working rules", markdown)
+        self.assertNotIn("Capsule skill is runtime capsule activation", markdown)
+        self.assertNotIn("active_capsule_skills", markdown)
         self.assertNotIn("Codex's skills directory", markdown)
         self.assertNotIn("CODEX_HOME", markdown)
         self.assertIn("### Todo and Scope Discipline", markdown)
@@ -226,7 +226,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
             "- stale work_bound=false memory_bound=false\n\n"
             "## Active Skills (Runtime)\n"
             "- stale skill digest\n\n"
-            "## Role Notes\n"
+            "## Actor Notes\n"
             "- keep this\n"
         )
 
@@ -262,7 +262,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("Restate the symptom first.", markdown)
         self.assertNotIn("stale work_bound=false memory_bound=false", markdown)
         self.assertNotIn("stale skill digest", markdown)
-        self.assertIn("## Role Notes", markdown)
+        self.assertIn("## Actor Notes", markdown)
         self.assertIn("- keep this", markdown)
 
     def test_cccc_help_appends_web_model_transport_runtime_note(self) -> None:

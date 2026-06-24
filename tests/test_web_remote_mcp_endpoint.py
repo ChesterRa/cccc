@@ -193,6 +193,10 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertNotIn("cccc_voice_secretary_composer", names)
             repo_spec = next((item for item in tools if isinstance(item, dict) and item.get("name") == "cccc_repo"), {})
             self.assertTrue(((repo_spec.get("annotations") or {}).get("readOnlyHint")))
+            repo_props = ((repo_spec.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo_spec, dict) else {}
+            self.assertIn("search", (repo_props.get("action") or {}).get("enum") or [])
+            self.assertIn("regex", repo_props)
+            self.assertIn("include_globs", repo_props)
 
             help_resp = client.post(
                 f"/mcp/web-model/{connector_id}",
@@ -588,6 +592,33 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(range_payload.get("content"), "two\nthree\n")
             self.assertEqual(range_payload.get("start_line"), 2)
             self.assertEqual(range_payload.get("end_line"), 3)
+
+            search_resp = client.post(
+                f"/mcp/web-model/{connector_id}",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1911,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cccc_repo",
+                        "arguments": {
+                            "action": "search",
+                            "query": "t..ee",
+                            "regex": True,
+                            "include_globs": ["src/*.txt"],
+                            "context_lines": 1,
+                        },
+                    },
+                },
+            )
+            self.assertEqual(search_resp.status_code, 200)
+            search_payload = json.loads((((search_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}")
+            matches = search_payload.get("matches") if isinstance(search_payload.get("matches"), list) else []
+            self.assertEqual(len(matches), 1)
+            self.assertEqual(matches[0].get("path"), "src/app.txt")
+            self.assertEqual(matches[0].get("line_number"), 3)
+            self.assertEqual((matches[0].get("before_context") or [{}])[0].get("line_text"), "two")
 
             patch_resp = client.post(
                 f"/mcp/web-model/{connector_id}",

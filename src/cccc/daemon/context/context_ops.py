@@ -453,9 +453,9 @@ def _check_permission(
             return f"Permission denied: {op_name} for {target_actor_id} (caller is {by})"
         return None
 
-    if op_name == "role_notes.set":
+    if op_name == "actor_notes.set":
         if role not in {"user", "foreman"}:
-            return "Permission denied: role_notes.set requires foreman or user"
+            return "Permission denied: actor_notes.set requires foreman or user"
         return None
 
     if op_name == "coordination.brief.update":
@@ -1451,10 +1451,10 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 _mark_change(idx, op_name, f"Cleared agent state {actor_id}")
                 continue
 
-            if op_name == "role_notes.set":
+            if op_name == "actor_notes.set":
                 actor_id = str(raw.get("actor_id") or "").strip()
                 if not actor_id:
-                    raise ValueError(f"op[{idx}] role_notes.set actor_id is required")
+                    raise ValueError(f"op[{idx}] actor_notes.set actor_id is required")
                 perm_err = _check_permission(by, op_name, group_id)
                 if perm_err:
                     raise ValueError(perm_err)
@@ -1464,7 +1464,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 actor_ids = _group_actor_ids(group)
                 target_actor_id = _canonical_actor_id(actor_ids, actor_id)
                 if target_actor_id not in actor_ids:
-                    raise ValueError(f"op[{idx}] role_notes.set actor not found: {actor_id}")
+                    raise ValueError(f"op[{idx}] actor_notes.set actor not found: {actor_id}")
 
                 from ...ports.mcp.utils.help_markdown import update_actor_help_note
 
@@ -1486,7 +1486,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                         delete_group_prompt_file(group, HELP_FILENAME)
                     else:
                         write_group_prompt_file(group, HELP_FILENAME, next_content)
-                    _mark_change(idx, op_name, f"Set role notes for {target_actor_id}")
+                    _mark_change(idx, op_name, f"Set actor notes for {target_actor_id}")
                 continue
 
             if op_name == "meta.merge":

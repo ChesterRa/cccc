@@ -9,10 +9,10 @@
 
 ### Coordinate your coding agents like a group chat
 
-**Read receipts, delivery tracking, and remote ops from your phone —
+**Read receipts, delivery tracking, remote group bridges, and mobile ops —
 for Claude Code, Codex, ChatGPT Web, and 13 more runtimes in one durable group.**
 
-Run multiple coding agents as a **persistent, coordinated team** — not a pile of disconnected terminal sessions.
+Run multiple coding agents as a **persistent, coordinated team** across runtimes, machines, and trusted working groups — not a pile of disconnected terminal sessions.
 
 One `pip install`. Zero infrastructure, production-grade power.
 
@@ -46,6 +46,7 @@ CCCC runs your agents as one durable, coordinated system:
 - **Visible delivery semantics** — messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
 - **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
 - **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Grok Build, and the rest of the first-class runtimes can collaborate in one group.
+- **Group Bridge for remote teams** — trusted CCCC groups can exchange explicit messages and, when granted, inspect or work with each other's local resources.
 - **Local-first operations** — one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
 ## What CCCC Does
@@ -58,6 +59,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
 | **Multi-runtime orchestration** | Claude Code, Codex CLI, GitHub Copilot CLI, Cursor CLI, Devin CLI, Kiro CLI, Kilo Code CLI, Antigravity CLI, Grok Build, OpenCode, ChatGPT Web, and 5 more first-class runtimes, plus `custom` for everything else |
+| **Group Bridge** | Connect trusted remote groups across machines or teams, starting with explicit messages and optionally granting read/full local access |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -165,6 +167,12 @@ graph TB
         WX["Weixin"]
     end
 
+    subgraph Remote["Remote CCCC Groups"]
+        direction LR
+        RG1["Trusted group"]
+        RG2["Another machine/team"]
+    end
+
     A1 <-->|MCP tools<br/>PTY/headless| Daemon
     A2 <-->|MCP tools<br/>PTY/headless| Daemon
     A3 <-->|Browser delivery<br/>Remote MCP| Daemon
@@ -172,6 +180,8 @@ graph TB
     A5 <-->|MCP tools| Daemon
     Daemon <--> Ports
     Web <--> IM
+    Daemon <-->|Group Bridge<br/>messages · read · full| RG1
+    Daemon <-->|Group Bridge<br/>messages · read · full| RG2
 
 ```
 
@@ -180,6 +190,7 @@ graph TB
 - **Daemon is the single writer** — all state changes go through one process, eliminating race conditions
 - **Ledger is append-only** — events are never mutated, making history reliable and debuggable
 - **Ports are thin** — Web, CLI, MCP, and IM bridges are stateless frontends; the daemon owns all truth
+- **Remote groups are explicit trust edges** — Group Bridge starts with message-only coordination, and read/full access must be granted per remote group
 - **Runtime home is `CCCC_HOME`** (default `~/.cccc/`) — runtime state stays out of your repo
 
 ## Supported Runtimes
@@ -223,6 +234,20 @@ ChatGPT Web can join a CCCC group as a real actor, not just an external chat win
 
 Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). Note that GPT-5.x Pro sessions currently cannot be used this way — they do not expose third-party MCP connectors. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
+## Group Bridge: connect remote groups
+
+Group Bridge extends CCCC from one local working group into a network of trusted groups. A group on your Windows workstation can coordinate with a group in WSL, a Mac, a server, or a teammate's CCCC instance without merging their runtime state or losing the local-first model.
+
+Access is intentionally layered:
+
+| Level | What it enables |
+|-------|-----------------|
+| **Messages** | Send explicit cross-group messages to the remote foreman, including attachments when needed |
+| **Read** | Let a trusted remote group inspect local context, repository, and git state through remote MCP tools |
+| **Full** | Let a highly trusted remote group edit files and run commands through the same local-access surface used by native actors |
+
+This makes CCCC useful for multi-machine work, lead/worker coordination across several environments, or trusted team collaboration where one group needs to ask another group for status, evidence, or implementation help. It is not a public guest-access feature: grant read/full access only to remote groups you trust with the target workspace.
+
 ## Messaging & Coordination
 
 CCCC implements IM-grade messaging semantics, not just "paste text into a terminal":
@@ -233,6 +258,7 @@ CCCC implements IM-grade messaging semantics, not just "paste text into a termin
 - **Attention ACK** — priority messages require explicit acknowledgment
 - **Reply-required obligations** — tracked until the recipient responds
 - **Auto-wake** — disabled agents are automatically started when they receive a message
+- **Remote group recipients** — Group Bridge targets appear as explicit remote recipients instead of hidden broadcasts
 
 Use ordinary `send` for chat, questions, and quick requests. Use `tracked-send` when delegated work needs a durable owner, outcome, evidence, handoff, or acceptance trail. `@all` remains available for announcements or urgent shared coordination, but it should not be the default way to start concrete work.
 
@@ -268,6 +294,7 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 - **Context panel** — shared vision, sketch, milestones, and tasks
 - **Group Space** — NotebookLM integration for shared knowledge management
 - **ChatGPT Web Model setup** — connect one ChatGPT Web conversation as a CCCC actor
+- **Group Bridge setup** — pair trusted remote groups and choose message/read/full access per connection
 - **IM bridge configuration** — connect to Telegram/Slack/Discord/Feishu/DingTalk/WeCom/Weixin
 - **Settings** — messaging policies, delivery tuning, terminal transcript controls
 - **Text scale** — 90% / 100% / 125% font size with per-browser persistence
@@ -361,6 +388,7 @@ Agents interact with CCCC through a compact action-oriented MCP surface. Core to
 | **Messaging & files** | `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_message_send`, `cccc_message_reply`, `cccc_file` |
 | **Group & actor control** | `cccc_group`, `cccc_actor` |
 | **Coordination & state** | `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync` |
+| **Remote group access** | `cccc_remote_access`, `cccc_remote_context`, `cccc_remote_repo`, `cccc_remote_git`, `cccc_remote_apply_patch`, `cccc_remote_exec_command` |
 | **Automation & memory** | `cccc_automation`, `cccc_memory`, `cccc_memory_admin` |
 | **Capability-managed extras** | `cccc_capability_*`, `cccc_space`, `cccc_terminal`, `cccc_debug`, `cccc_im_bind` |
 
@@ -374,6 +402,7 @@ Agents with MCP access can self-organize: read inbox state, reply visibly, coord
 | Human + agent coordination with full audit trail | ✅ Core use case |
 | Long-running groups managed remotely via phone/IM | ✅ Strong fit |
 | Multi-runtime teams (e.g., Claude + Codex + Kimi) | ✅ Strong fit |
+| Trusted groups collaborating across machines or teams | ✅ Strong fit |
 | Single-agent local coding helper | ⚠️ Works, but CCCC's value shines with multiple participants |
 | Pure DAG workflow orchestration | ❌ Use a dedicated orchestrator; CCCC can complement it |
 
@@ -395,6 +424,7 @@ CCCC does not replace your agents — it is the layer that makes them a team. Lo
 - **Daemon IPC has no authentication.** It binds to localhost by default.
 - **IM bot tokens** are read from environment variables, never stored in config files.
 - **Runtime state** lives in `CCCC_HOME` (`~/.cccc/`), not in your repository.
+- **Group Bridge is trust-based.** Message-only bridges are the safest default; read/full access should be granted only to remote groups that may inspect or operate on the target workspace.
 - **Capability allowlist** governs which optional MCP surfaces agents can enable. Policy is composed from a packaged default and an optional user overlay in `CCCC_HOME/config/`.
 
 For detailed security guidance, see [SECURITY.md](SECURITY.md).

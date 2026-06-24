@@ -128,7 +128,7 @@ def render_role_system_prompt(
         lines.extend(scope_lines)
     
     # Keep this stable and short. Long-lived playbook details belong in cccc_help.
-    visible_reply_line = "- Visible replies must go through MCP: cccc_message_send / cccc_message_reply."
+    visible_reply_line = "- Use cccc_message_reply for replies; use cccc_message_send for new messages."
 
     core_lines = [
         "Working Style:",

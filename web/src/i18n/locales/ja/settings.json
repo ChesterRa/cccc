@@ -1026,7 +1026,6 @@
     "orphanActorNotePlaceholder": "既に存在しない actor に対する残存ノートです。保持するか整理できます……",
     "scopedNoteConfigured": "設定済み",
     "unknownRole": "不明な役割",
-    "legacyRoleNotesHint": "旧形式の Role Notes を検出し、構造化フィールドへマッピングしました。ここで保存すると最新の scoped help 形式へ正規化されます。",
     "noScopeWarning": "このグループにはまだ scope が紐づいていません。guidance override 自体は CCCC_HOME 配下に保存されるため機能しますが、repo 連携が必要な機能は scope を紐づけるまで利用できない場合があります。"
   },
   "copyGroups": {

@@ -9,8 +9,6 @@ _HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(\S+)(?:\s+(.*\S))?\s*$", r
 _HELP_PET_HEADER_RE = re.compile(r"^##\s*@pet\s*:?\s*$", re.IGNORECASE)
 _HELP_VOICE_SECRETARY_HEADER_RE = re.compile(r"^##\s*@voice_secretary\s*:?\s*$", re.IGNORECASE)
 _HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
-_HELP_LEGACY_ROLE_SECTION_RE = re.compile(r"^##\s+Role Notes\s*$", re.IGNORECASE)
-_HELP_H3_RE = re.compile(r"^###\s+(.+?)\s*$")
 
 
 def _split_sections(markdown: str) -> list[str]:
@@ -74,72 +72,6 @@ def _parse_tagged_section(section: str) -> Optional[dict[str, str]]:
     return None
 
 
-def _try_extract_legacy_role_notes(common: str) -> dict[str, Any]:
-    normalized = str(common or "").replace("\r\n", "\n").replace("\r", "\n")
-    sections = _split_sections(normalized)
-    kept: list[str] = []
-    foreman = ""
-    peer = ""
-    used = False
-
-    for section in sections:
-        raw = _trim_block(section)
-        if not raw:
-            continue
-        lines = raw.split("\n")
-        if not _HELP_LEGACY_ROLE_SECTION_RE.match(str(lines[0] or "")):
-            kept.append(raw)
-            continue
-        body_lines = lines[1:]
-        chunks: list[dict[str, str]] = []
-        current_title = ""
-        current_body: list[str] = []
-        stray = False
-        for line in body_lines:
-            h3 = _HELP_H3_RE.match(line)
-            if h3:
-                if current_title:
-                    chunks.append({"title": current_title, "body": _trim_block("\n".join(current_body))})
-                elif _trim_block("\n".join(current_body)):
-                    stray = True
-                current_title = str(h3.group(1) or "").strip()
-                current_body = []
-                continue
-            current_body.append(line)
-        if current_title:
-            chunks.append({"title": current_title, "body": _trim_block("\n".join(current_body))})
-        elif _trim_block("\n".join(current_body)):
-            stray = True
-        if stray or not chunks:
-            kept.append(raw)
-            continue
-        local_foreman = ""
-        local_peer = ""
-        unknown = False
-        for chunk in chunks:
-            title = str(chunk.get("title") or "").strip().lower()
-            if title == "foreman":
-                local_foreman = str(chunk.get("body") or "")
-            elif title == "peer":
-                local_peer = str(chunk.get("body") or "")
-            else:
-                unknown = True
-                break
-        if unknown:
-            kept.append(raw)
-            continue
-        foreman = local_foreman
-        peer = local_peer
-        used = True
-
-    return {
-        "common": "\n\n".join(kept).strip(),
-        "foreman": foreman,
-        "peer": peer,
-        "used_legacy_role_notes": used,
-    }
-
-
 def parse_help_markdown(markdown: str) -> dict[str, Any]:
     sections = _split_sections(markdown)
     common_sections: list[str] = []
@@ -180,23 +112,13 @@ def parse_help_markdown(markdown: str) -> dict[str, Any]:
             continue
         extra_tagged_blocks.append(str(tagged.get("raw") or ""))
 
-    common = "\n\n".join(common_sections).strip()
-    used_legacy_role_notes = False
-    if not foreman and not peer:
-        legacy = _try_extract_legacy_role_notes(common)
-        common = str(legacy.get("common") or "")
-        foreman = str(legacy.get("foreman") or "")
-        peer = str(legacy.get("peer") or "")
-        used_legacy_role_notes = bool(legacy.get("used_legacy_role_notes"))
-
     return {
-        "common": common,
+        "common": "\n\n".join(common_sections).strip(),
         "foreman": foreman,
         "peer": peer,
         "voice_secretary": voice_secretary,
         "actor_notes": actor_notes,
         "extra_tagged_blocks": extra_tagged_blocks,
-        "used_legacy_role_notes": used_legacy_role_notes,
     }
 
 

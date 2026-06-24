@@ -40,7 +40,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 ## Core Routes
 
 - Bootstrap / resume: start with MCP tool `cccc_bootstrap`.
-- Visible replies go through `cccc_message_send` / `cccc_message_reply`; terminal output is not delivery.
+- Use `cccc_message_reply` for replies; use `cccc_message_send` only for new messages; terminal output is not delivery.
 - At key transitions, sync `cccc_coordination` / `cccc_task` and refresh `cccc_agent_state`.
 - For strategy questions, align before implementation.
 - For recall, read `memory_recall_gate`, then local `cccc_memory`; use `cccc_space(..., lane="memory")` only as deeper fallback.
@@ -48,7 +48,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 ## Common Work Loops
 
-- Review current diff: inspect `cccc_git(action="status")` and `cccc_git(action="diff")`, read exact files with `cccc_repo`, run focused validation, then reply with findings/evidence and finish the turn.
+- Review current diff: inspect `cccc_git(action="status")` and `cccc_git(action="diff")`, search/read exact files with `cccc_repo`, run focused validation, then reply with findings/evidence and finish the turn.
 - Patch safely: `cccc_repo(action="read")` for content and `sha256`, edit with `cccc_repo_edit(action="replace"|"multi_replace", expected_sha256=...)` or Codex-format `cccc_apply_patch`, then inspect diff and validate.
 - Longer local work: prefer `cccc_code_exec` so repo reads, patches, shell/test commands, diff inspection, and the final report stay in one focused loop; use direct tools for one-step actions.
 - Attachments: CCCC attachments are blob references, not browser uploads. Use `cccc_file(action="read")` for text blobs, `blob_path` for binary/local inspection, and `cccc_file(action="send", path=..., dst_group_id=...)` to return generated files locally or through a trusted Group Bridge.
@@ -58,7 +58,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 ### Chat
 
-- Visible coordination belongs in `cccc_message_send` / `cccc_message_reply`.
+- Use `cccc_message_reply` for replies and `cccc_message_send` for new visible coordination messages.
 - Targets: `@all`, `@foreman`, `@peers`, `user`, or one actor.
 - Before sending, verify `reply_to` and `to`; make the audience explicit when it differs. Do not use `@all` for routine status, acknowledgements, or narrow updates.
 - When sending to `user`, you may include `suggested_user_message` to offer an editable next message in CCCC Web. It is only a suggestion; never use it for approvals, permissions, or decisions.
@@ -143,9 +143,9 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 - Fast path: `cccc_capability_use(...)`.
 - Discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`; treat search as a hint layer, not proof of absence.
-- For specialized work such as review, debugging, UI, docs, reports, tests, artifacts, security, or product planning, search capability before inventing a new workflow.
-- If search returns a relevant lightweight skill with `enable_hint="enable_now"`, enable/use it for the current scope and then continue the task.
-- Enable or expose only what you need now.
+- Use capability tools only when the visible core tools are not enough for the current task.
+- If search returns a relevant lightweight skill with `enable_hint="enable_now"`, enable/use it for the current scope and continue.
+- Enable or expose only what you need now; prefer session scope unless the user or foreman asks for durable behavior.
 - If the state is `activation_pending` or `refresh_required=true`, relist or reconnect and retry.
 
 ### Readiness and Diagnostics
@@ -153,17 +153,6 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - Use readiness previews from search or dry-run import to spot blockers early.
 - If enable or use fails, read `diagnostics` and `resolution_plan` before escalating.
 - Ask the user only for real environment or permission blockers.
-
-### Skill Evolution Proposals
-
-- Add/maintain only reusable procedures, recurring pitfalls, user corrections, or stable verification paths.
-- Use `cccc_capability_import` with `source_id=agent_self_proposed`; search first and update `skill:agent_self_proposed:<stable-slug>`. Required: `When to use`, `Avoid when`, `Procedure`, `Pitfalls`, `Verification`; invalid real imports preserve the last active version.
-- Direct import works for low-risk proposals; use `dry_run=true` when enabling immediately or risk/scope is unclear.
-- Use `scope="session"` for one-off trials; use `scope="actor"` for reusable skills across sessions; startup `autoload` is separate.
-- Read scope/import_action/record_changed/already_active/active_after_import; import_action is create/update/unchanged, already_active is pre-import, active_after_import is post-import runnable. If active, do not enable again. Verify via `cccc_capability_state.active_capsule_skills` `[].capsule_text`, not `capsule_preview`.
-- If stale, wrong, or duplicative, reuse the existing `capability_id` with revised `capsule_text`; do not create a near-duplicate or silently delete it.
-- Use `cccc_capability_use` only to activate an existing valid skill. For legacy `skill:agent:*`, re-import under `skill:agent_self_proposed:<stable-slug>`, then call `cccc_capability_uninstall` on the legacy id.
-- Mark high-risk/broad candidates `qualification_status=blocked` with a clear reason; do not wait for users or mutate global skills by default.
 
 ### Runtime Visibility and Cleanup
 
@@ -173,14 +162,13 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - Remove unused bindings/cache/autoload with `cccc_capability_uninstall`; self-proposed skill records are removed by the same tool, external registry records are not.
 - Use `cccc_capability_block(...)` only as an emergency deny for risky runtime side effects.
 
-## Role Notes
+## Actor Notes
 
 - Untagged guidance above applies to everyone.
 - Role and actor sections below are additive overlays from `cccc_help`.
 
 ## @role: foreman
 
-- MBTI: ENTJ
 - Own outcome quality, integration, and final acceptance.
 - Treat `done`, `idle`, and silence as evaluation signals, not closure truth.
 - Keep `goal -> success criteria -> owner` explicit; stop drift early.
@@ -195,7 +183,6 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 ## @role: peer
 
-- MBTI: ISTJ
 - Be straight and useful. Do not inflate small updates into formal reports.
 - Be proactive: surface risks and better routes early.
 - Deliver small verifiable outputs, not vague status.

@@ -104,7 +104,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_role_notes_read_is_self_only_for_peers_and_full_for_foreman(self) -> None:
+    def test_actor_notes_read_is_self_only_for_peers_and_full_for_foreman(self) -> None:
         from cccc.ports.mcp import common as mcp_common
         from cccc.ports.mcp import server as mcp_server
         from cccc.kernel.group import load_group
@@ -112,7 +112,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            create_resp, _ = self._call("group_create", {"title": "mcp-role-notes", "topic": "", "by": "user"})
+            create_resp, _ = self._call("group_create", {"title": "mcp-actor-notes", "topic": "", "by": "user"})
             self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
             group_id = str((create_resp.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -148,18 +148,18 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
                 clear=False,
             ):
                 own = mcp_server.handle_tool_call(
-                    "cccc_role_notes",
+                    "cccc_actor_notes",
                     {"action": "get", "target_actor_id": "peer-impl"},
                 )
                 self.assertEqual(str(own.get("content") or ""), "self notes")
                 with self.assertRaises(MCPError) as other_err:
                     mcp_server.handle_tool_call(
-                        "cccc_role_notes",
+                        "cccc_actor_notes",
                         {"action": "get", "target_actor_id": "peer-2"},
                     )
                 self.assertEqual(other_err.exception.code, "permission_denied")
                 with self.assertRaises(MCPError) as list_err:
-                    mcp_server.handle_tool_call("cccc_role_notes", {"action": "get"})
+                    mcp_server.handle_tool_call("cccc_actor_notes", {"action": "get"})
                 self.assertEqual(list_err.exception.code, "permission_denied")
 
             with patch.object(mcp_common, "call_daemon", side_effect=self._fake_call_daemon), patch.dict(
@@ -167,10 +167,10 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
                 {"CCCC_GROUP_ID": group_id, "CCCC_ACTOR_ID": "foreman-impl"},
                 clear=False,
             ):
-                all_notes = mcp_server.handle_tool_call("cccc_role_notes", {"action": "get"})
-                role_notes = all_notes.get("role_notes") if isinstance(all_notes.get("role_notes"), list) else []
+                all_notes = mcp_server.handle_tool_call("cccc_actor_notes", {"action": "get"})
+                actor_notes = all_notes.get("actor_notes") if isinstance(all_notes.get("actor_notes"), list) else []
                 self.assertEqual(
-                    sorted((str(item.get("actor_id") or ""), str(item.get("content") or "")) for item in role_notes if isinstance(item, dict)),
+                    sorted((str(item.get("actor_id") or ""), str(item.get("content") or "")) for item in actor_notes if isinstance(item, dict)),
                     [
                         ("foreman-impl", "foreman secret"),
                         ("peer-2", "peer-2 secret"),
@@ -180,7 +180,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_foreman_role_notes_set_updates_help_actor_block_without_touching_persona_notes(self) -> None:
+    def test_foreman_actor_notes_set_updates_help_actor_block_without_touching_persona_notes(self) -> None:
         from cccc.kernel.group import load_group
         from cccc.kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
         from cccc.ports.mcp import common as mcp_common
@@ -188,7 +188,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            create_resp, _ = self._call("group_create", {"title": "mcp-role-notes-set", "topic": "", "by": "user"})
+            create_resp, _ = self._call("group_create", {"title": "mcp-actor-notes-set", "topic": "", "by": "user"})
             self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
             group_id = str((create_resp.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -231,7 +231,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
                 clear=False,
             ):
                 updated = mcp_server.handle_tool_call(
-                    "cccc_role_notes",
+                    "cccc_actor_notes",
                     {
                         "action": "set",
                         "target_actor_id": "peer-impl",
@@ -282,13 +282,13 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_peer_cannot_set_role_notes_via_mcp(self) -> None:
+    def test_peer_cannot_set_actor_notes_via_mcp(self) -> None:
         from cccc.ports.mcp import common as mcp_common
         from cccc.ports.mcp import server as mcp_server
 
         _, cleanup = self._with_home()
         try:
-            create_resp, _ = self._call("group_create", {"title": "mcp-role-notes-peer-write", "topic": "", "by": "user"})
+            create_resp, _ = self._call("group_create", {"title": "mcp-actor-notes-peer-write", "topic": "", "by": "user"})
             self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
             group_id = str((create_resp.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -313,7 +313,7 @@ class TestMcpContextPermissionEnforcement(unittest.TestCase):
             ):
                 with self.assertRaises(MCPError) as err:
                     mcp_server.handle_tool_call(
-                        "cccc_role_notes",
+                        "cccc_actor_notes",
                         {"action": "set", "target_actor_id": "peer-impl", "content": "I should not self-author this"},
                     )
                 self.assertEqual(err.exception.code, "permission_denied")
