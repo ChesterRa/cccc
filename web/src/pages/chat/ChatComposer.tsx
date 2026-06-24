@@ -40,9 +40,9 @@ const MENTION_MENU_DESKTOP_WIDTH = 320;
 type RecipientPopoverTarget = {
   key: string;
   label: string;
-  detail: string;
+  kindLabel: string;
+  badgeLabel?: string;
   identifier: string;
-  idLabel?: string;
   idValue?: string;
 };
 
@@ -355,7 +355,7 @@ export function ChatComposer({
     cancelRecipientPopoverHide();
     const rect = node.getBoundingClientRect();
     const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
-    const tooltipWidth = Math.min(300, Math.max(220, viewportWidth - 16));
+    const tooltipWidth = Math.min(196, Math.max(176, viewportWidth - 16));
     const top = rect.bottom + 6;
     if (isSmallScreen) {
       setRecipientPopoverStyle({ top, left: 8, right: 8 });
@@ -399,7 +399,7 @@ export function ChatComposer({
   const selectorPopoverTarget = useCallback((selector: string): RecipientPopoverTarget => ({
     key: `selector:${selector}`,
     label: selector,
-    detail: t("recipientSelectorDetail", { defaultValue: "Local selector" }),
+    kindLabel: t("recipientSelectorDetail", { defaultValue: "Local selector" }),
     identifier: formatRecipientIdentifier({ kind: "selector", selector }),
   }), [t]);
   const actorPopoverTarget = useCallback((actor: Actor): RecipientPopoverTarget => {
@@ -409,11 +409,9 @@ export function ChatComposer({
     return {
       key: `actor:${id || label}`,
       label,
-      detail: role
-        ? t("recipientActorRoleDetail", { role, defaultValue: "Local {{role}} actor" })
-        : t("recipientActorDetail", { defaultValue: "Local actor" }),
+      kindLabel: t("recipientActorDetail", { defaultValue: "Local actor" }),
+      badgeLabel: role || undefined,
       identifier: formatRecipientIdentifier({ kind: "actor", label, id, role }),
-      idLabel: t("recipientActorId", { defaultValue: "Actor ID" }),
       idValue: id,
     };
   }, [t]);
@@ -424,12 +422,9 @@ export function ChatComposer({
     return {
       key: `remote:${id}`,
       label,
-      detail: t("recipientRemoteGroupDetail", {
-        access: getRemoteGroupAccessLabel(accessLevel),
-        defaultValue: "Remote group · {{access}}",
-      }),
+      kindLabel: t("recipientRemoteGroupDetail", { defaultValue: "Remote group" }),
+      badgeLabel: accessLevel.toLowerCase() === "unknown" ? undefined : getRemoteGroupAccessLabel(accessLevel),
       identifier: formatRecipientIdentifier({ kind: "remote_group", label, id, accessLevel }),
-      idLabel: t("remoteGroupId", { defaultValue: "Remote group ID" }),
       idValue: id,
     };
   }, [getRemoteGroupAccessLabel, t]);
@@ -1138,11 +1133,6 @@ export function ChatComposer({
                     const accessLevel = String(group.group_bridge_access_level || "").trim() || "unknown";
                     const accessLabel = getRemoteGroupAccessLabel(accessLevel);
                     const popoverTarget = remoteGroupPopoverTarget(group);
-                    const title = [
-                      label,
-                      t("remoteGroupSendsToForeman", { defaultValue: "Sends to the remote foreman." }),
-                      groupId,
-                    ].filter(Boolean).join(" · ");
                     return (
                       <div
                         key={groupId}
@@ -1155,7 +1145,7 @@ export function ChatComposer({
                         onMouseLeave={scheduleRecipientPopoverHide}
                         data-remote-group-id={groupId}
                         data-remote-group-access={accessLabel}
-                        title={title}
+                        title={label}
                       >
                         <button
                           type="button"
@@ -1189,18 +1179,28 @@ export function ChatComposer({
                   onMouseEnter={cancelRecipientPopoverHide}
                   onMouseLeave={scheduleRecipientPopoverHide}
                 >
-                  <div className="flex min-w-0 items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold">{visibleRecipientPopoverTarget.label}</div>
-                      <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
-                        {visibleRecipientPopoverTarget.detail}
-                      </div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className={classNames(
+                        "min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide",
+                        isDark ? "text-slate-300" : "text-gray-600",
+                      )}>
+                        {visibleRecipientPopoverTarget.kindLabel}
+                      </span>
+                      {visibleRecipientPopoverTarget.badgeLabel ? (
+                        <span className={classNames(
+                          "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                          isDark ? "border-white/12 bg-white/[0.06] text-slate-300" : "border-black/10 bg-gray-50 text-gray-600",
+                        )}>
+                          {visibleRecipientPopoverTarget.badgeLabel}
+                        </span>
+                      ) : null}
                     </div>
                     <button
                       type="button"
                       className={classNames(
-                        "inline-flex h-7 flex-shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors",
-                        isDark ? "text-slate-300 hover:bg-white/10 hover:text-white" : "text-gray-500 hover:bg-black/5 hover:text-gray-800",
+                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
+                        isDark ? "text-slate-300 hover:bg-white/[0.1] hover:text-white" : "text-gray-500 hover:bg-gray-100 hover:text-gray-950",
                       )}
                       onClick={() => {
                         void copyRecipientIdentifier(visibleRecipientPopoverTarget.identifier);
@@ -1210,18 +1210,14 @@ export function ChatComposer({
                       title={t("copyRecipientIdentifier", { defaultValue: "Copy identifier" })}
                     >
                       <CopyIcon size={13} aria-hidden="true" />
-                      <span>{t("copyRecipientIdentifier", { defaultValue: "Copy identifier" })}</span>
                     </button>
                   </div>
-                  <div className="mt-2 flex min-w-0 items-center gap-2">
-                    <code className={classNames("min-w-0 flex-1 truncate rounded-md px-2 py-1 font-mono text-[11px]", isDark ? "bg-white/[0.08] text-slate-200" : "bg-gray-100 text-gray-800")}>
-                      {visibleRecipientPopoverTarget.identifier}
-                    </code>
-                  </div>
                   {visibleRecipientPopoverTarget.idValue ? (
-                    <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
-                      <span className="font-semibold uppercase tracking-wide">{visibleRecipientPopoverTarget.idLabel}</span>
-                      <span className="ml-2 font-mono">{visibleRecipientPopoverTarget.idValue}</span>
+                    <div className={classNames(
+                      "mt-2 truncate rounded-md px-2 py-1 font-mono text-[11px]",
+                      isDark ? "bg-white/[0.08] text-slate-200" : "bg-gray-100 text-gray-800",
+                    )}>
+                      {visibleRecipientPopoverTarget.idValue}
                     </div>
                   ) : null}
                 </div>

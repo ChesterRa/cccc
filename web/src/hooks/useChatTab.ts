@@ -54,7 +54,6 @@ import {
 import type { GroupBridgeTrust } from "../services/api/groupBridge";
 import { isDelegationSourceOutboundEvent } from "../components/messageBubbleDelegation";
 import { subscribeGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
-import { canOpenSourceMessageLocally } from "./chatSourceNavigation";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -87,6 +86,15 @@ export function shouldLockChatToBottomForSend(input: {
 export function buildComposerTrustFetchGroupId(_selectedGroupId: string): string | undefined {
   const gid = String(_selectedGroupId || "").trim();
   return gid || undefined;
+}
+
+function canOpenSourceMessageLocally(groups: GroupMeta[], srcGroupId: string): boolean {
+  const gid = String(srcGroupId || "").trim();
+  if (!gid) return false;
+  return (groups || []).some((group) => {
+    if (String(group?.group_id || "").trim() !== gid) return false;
+    return !group.group_bridge_remote;
+  });
 }
 
 export function shouldShowInConversation(event: LedgerEvent): boolean {
@@ -1923,12 +1931,10 @@ export function useChatTab({
         useUIStore.getState().setActiveTab("chat");
         void openChatWindow(gid, eid);
       } else {
-        // Queue deep link and switch groups
         useGroupStore.getState().setSelectedGroupId(gid);
-        // Note: App.tsx handles the deep link effect
       }
     },
-    [groups, selectedGroupId, openChatWindow, showError, t]
+    [groups, openChatWindow, selectedGroupId, showError, t]
   );
 
   const exitChatWindow = useCallback(() => {

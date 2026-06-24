@@ -133,16 +133,36 @@ def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
                 "remote_endpoint": "https://remote.example",
                 "remote_peer_id": "peer_remote",
                 "trust_id": "ptrust_1",
+                "access_level": "read",
+                "recipient_identifier": "Remote Product (g_remote remote/read)",
                 "token": "#Remote Product",
             }
         ],
         attachments=[],
     )
 
-    assert "- Group Bridge route Remote Product (remote_group_id=g_remote)" in text
+    assert "- Group Bridge route Remote Product (g_remote remote/read)" in text
     assert "endpoint: https://remote.example" not in text
     assert "peer_id: peer_remote" not in text
     assert "trust_id: ptrust_1" not in text
+
+
+def test_group_bridge_route_ref_renderer_preserves_route_id_with_long_label() -> None:
+    long_label = "Remote Product " + ("Very Long " * 12)
+
+    lines = render_group_bridge_route_ref(
+        {
+            "kind": "group_bridge_route",
+            "remote_group_id": "g_remote_stable",
+            "remote_group_title": long_label,
+            "access_level": "full",
+            "recipient_identifier": f"{long_label} (g_remote_stable remote/full)",
+        }
+    )
+
+    assert len(lines) == 1
+    assert lines[0].endswith("(g_remote_stable remote/full)")
+    assert "…" in lines[0]
 
 
 def test_group_bridge_route_ref_renderer_ignores_refs_without_group_id() -> None:

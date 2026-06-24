@@ -112,6 +112,8 @@ export type GroupBridgeRouteMessageRef = MessageRef & {
   remote_endpoint?: string;
   remote_peer_id?: string;
   trust_id?: string;
+  access_level?: string;
+  recipient_identifier?: string;
   token?: string;
 };
 

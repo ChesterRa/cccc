@@ -171,6 +171,7 @@ describe("buildComposerMentionSuggestions", () => {
         kind: "group",
         value: "g_remote",
         label: "Remote Product",
+        badgeKind: "remote",
         description: "g_remote",
         meta: "peer_remote",
       }),
@@ -206,6 +207,7 @@ describe("buildComposerMentionSuggestions", () => {
         kind: "group",
         value: "g_0fb5f39478cc",
         label: "CCCC Cross Test",
+        badgeKind: "remote",
         description: "g_0fb5f39478cc",
         meta: "peer_00e780d5eb7bad9dea41bba479a9c292",
       }),
@@ -256,6 +258,7 @@ describe("buildComposerMentionSuggestions", () => {
 
     expect(items[0]).toEqual(expect.objectContaining({
       label: "remote.example",
+      badgeKind: "remote",
       description: "g_0fb5f39478cc",
       meta: "peer_00e780d5eb7bad9dea41bba479a9c292",
     }));

@@ -197,12 +197,12 @@ graph TB
 
 CCCC orchestrates agents across 16 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
-| Runtime | Integration | Command / Surface |
-|---------|-------------|-------------------|
+| Runtime | Integration | Entrypoint / Surface |
+|---------|-------------|----------------------|
 | Claude Code | Auto MCP setup | `claude` |
 | Codex CLI | Auto MCP setup | `codex` |
 | GitHub Copilot CLI | Auto MCP setup | `copilot` |
-| Cursor CLI | Prompt-assisted MCP setup | `cursor-agent --yolo --approve-mcps` |
+| Cursor CLI | Prompt-assisted MCP setup | `cursor-agent` |
 | Devin CLI | Auto MCP setup | `devin` |
 | Kiro CLI | Auto MCP setup | `kiro-cli` |
 | Kilo Code CLI | Prompt-assisted MCP setup | `kilo` |
@@ -216,6 +216,8 @@ CCCC orchestrates agents across 16 first-class runtimes, with `custom` available
 | Kimi CLI | Auto MCP setup | `kimi` |
 | OpenCode | Auto MCP setup via runtime config | `opencode` |
 | Custom | Manual | Any command |
+
+These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings.
 
 ```bash
 cccc setup --runtime claude       # auto-configures MCP for this runtime

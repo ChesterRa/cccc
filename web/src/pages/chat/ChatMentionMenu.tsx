@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import { classNames } from "../../utils/classNames";
 import type { ComposerMentionSuggestion } from "./chatMentionSuggestions";
@@ -22,6 +23,7 @@ export function ChatMentionMenu({
   onSelect,
   onHover,
 }: ChatMentionMenuProps) {
+  const { t } = useTranslation("chat");
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
@@ -76,7 +78,19 @@ export function ChatMentionMenu({
                 {item.kind === "group" ? "#" : "@"}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="break-words text-sm leading-5">{item.label}</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="min-w-0 flex-1 break-words text-sm leading-5">{item.label}</div>
+                  {item.badgeKind ? (
+                    <span
+                      className={classNames(
+                        "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                        isDark ? "border-sky-300/20 bg-sky-400/10 text-sky-100" : "border-sky-100 bg-sky-50 text-sky-900",
+                      )}
+                    >
+                      {item.badgeKind === "remote" ? t("remoteBadge", { defaultValue: "Remote" }) : item.badgeKind}
+                    </span>
+                  ) : null}
+                </div>
                 {item.description ? (
                   <div className={classNames("line-clamp-2 break-words text-[11px] leading-4", isDark ? "text-slate-400" : "text-gray-500")}>
                     {item.description}

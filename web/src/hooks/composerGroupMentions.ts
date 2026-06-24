@@ -1,4 +1,5 @@
 import type { GroupBridgeRouteMessageRef, GroupMeta } from "../types";
+import { formatRecipientIdentifier } from "../utils/recipientIdentifier";
 
 export interface ComposerGroupMentionToken {
   groupId: string;
@@ -178,15 +179,19 @@ export function buildComposerGroupBridgeRouteRefs({
     if (!groupId || seen.has(groupId)) continue;
     const group = (groups || []).find((item) => String(item.group_id || "").trim() === groupId);
     if (!group?.group_bridge_remote) continue;
+    const label = String(group.title || "").trim() || String(group.topic || "").trim() || groupId;
+    const accessLevel = String(group.group_bridge_access_level || "").trim() || "unknown";
     seen.add(groupId);
     refs.push({
       kind: "group_bridge_route",
       local_group_id: String(group.group_bridge_local_group_id || "").trim() || undefined,
       remote_group_id: groupId,
-      remote_group_title: String(group.title || "").trim(),
+      remote_group_title: label,
       remote_endpoint: String(group.group_bridge_remote_endpoint || "").trim(),
       remote_peer_id: String(group.group_bridge_remote_peer_id || "").trim(),
       trust_id: String(group.group_bridge_trust_id || "").trim(),
+      access_level: accessLevel,
+      recipient_identifier: formatRecipientIdentifier({ kind: "remote_group", label, id: groupId, accessLevel }),
       token: token.token,
     });
   }

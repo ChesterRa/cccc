@@ -116,6 +116,40 @@ describe("MessageBubble delegation display wiring", () => {
     );
   });
 
+  it("renders Group Bridge source as metadata instead of an open-original action", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"), "utf8");
+    expect(source).toContain('remoteBadgeLabel={remoteBadgeLabel || undefined}');
+    expect(source).toContain('const isGroupBridgeSource = sourcePlatform === "group_bridge_session" || String(ev.by || "").startsWith("group_bridge:");');
+    expect(source).toContain('hasSource && !isGroupBridgeSource');
+    expect(source).toContain('t("remoteBadge"');
+    expect(source).toContain('t("relayedFrom", { label: sourceLabel })');
+    expect(source).not.toContain("openOriginalMessage");
+    expect(source).toContain("onOpenSource?.(srcGroupId, srcEventId)");
+    expect(source).not.toContain("remoteSourceDetails");
+    expect(source).not.toContain('t("relayedFrom", { groupId: srcGroupId');
+  });
+
+  it("keeps local relay source chips clickable while remote sources stay non-local", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const bubbleSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"), "utf8");
+    const listSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "VirtualMessageList.tsx"), "utf8");
+    const chatTabSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../pages/chat/ChatTab.tsx"), "utf8");
+    const tabSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"), "utf8");
+
+    expect(bubbleSource).toContain('onClick={() => onOpenSource?.(srcGroupId, srcEventId)}');
+    expect(bubbleSource).toContain('disabled={!onOpenSource}');
+    expect(listSource).toContain('onOpenSource={onOpenSource}');
+    expect(chatTabSource).toContain('onOpenSource={openSourceMessage}');
+    expect(tabSource).toContain("function canOpenSourceMessageLocally");
+    expect(tabSource).toContain("return !group.group_bridge_remote");
+    expect(tabSource).toContain("openSourceMessage");
+  });
+
   it("conversation list filters source outbound delegation audit events", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");

@@ -80,7 +80,7 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("onMouseEnter={(event) => showRecipientPopover(popoverTarget, event.currentTarget as HTMLElement)}");
     expect(composerSource).toContain('role="dialog"');
     expect(composerSource).toContain("getGroupRouteDisplayName(group)");
-    expect(composerSource).toContain("remoteGroupSendsToForeman");
+    expect(composerSource).not.toContain("remoteGroupSendsToForeman");
     expect(composerSource).not.toContain("remoteActors.map");
     expect(composerSource).not.toContain("remoteDetailsRef");
     expect(composerSource).not.toContain("copyRemoteGroupId");
@@ -106,7 +106,11 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("actorPopoverTarget(actor)");
     expect(composerSource).toContain("remoteGroupPopoverTarget(group)");
     expect(composerSource).toContain("visibleRecipientPopoverTarget.identifier");
+    expect(composerSource).toContain("visibleRecipientPopoverTarget.kindLabel");
+    expect(composerSource).toContain("visibleRecipientPopoverTarget.badgeLabel");
     expect(composerSource).toContain('t("copyRecipientIdentifier"');
+    expect(composerSource).not.toContain("visibleRecipientPopoverTarget.detail");
+    expect(composerSource).not.toContain("visibleRecipientPopoverTarget.idLabel");
   });
 
   it("disables actor chips only while selected group actors are resolving", () => {
@@ -177,5 +181,11 @@ describe("ChatComposer mention menu navigation", () => {
     expect(mentionMenuSource).toContain("ring-black/15");
     expect(mentionMenuSource).toContain("bg-black/[0.045] text-gray-950");
     expect(mentionMenuSource).toContain("bg-white/12 text-white");
+    expect(mentionMenuSource).toContain("item.badgeKind");
+    expect(mentionMenuSource).toContain('t("remoteBadge"');
+  });
+
+  it("keeps recipient hover popovers compact", () => {
+    expect(composerSource).toContain("Math.min(196, Math.max(176, viewportWidth - 16))");
   });
 });

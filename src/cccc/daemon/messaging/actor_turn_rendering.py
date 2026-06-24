@@ -39,9 +39,12 @@ def render_group_bridge_route_ref(ref: dict[str, Any]) -> list[str]:
     remote_group_id = compact_delivery_text(ref.get("remote_group_id"), limit=48)
     if not remote_group_id:
         return []
+    access_level = compact_delivery_text(ref.get("access_level"), limit=24)
     remote_group_title = compact_delivery_text(ref.get("remote_group_title"), limit=72)
     token = compact_delivery_text(ref.get("token"), limit=72)
     label = remote_group_title or token or remote_group_id
+    if access_level:
+        return [f"- Group Bridge route {label} ({remote_group_id} remote/{access_level})"]
     return [f"- Group Bridge route {label} (remote_group_id={remote_group_id})"]
 
 

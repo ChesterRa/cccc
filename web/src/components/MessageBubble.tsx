@@ -180,6 +180,9 @@ function MessageBubbleBody({
     groupLabelById,
     toLabel,
     hasSource,
+    sourceLabel,
+    sourceTitle,
+    isGroupBridgeSource,
     srcGroupId,
     srcEventId,
     hasDestination,
@@ -208,6 +211,9 @@ function MessageBubbleBody({
     groupLabelById: Record<string, string>;
     toLabel: string;
     hasSource: boolean;
+    sourceLabel: string;
+    sourceTitle: string;
+    isGroupBridgeSource: boolean;
     srcGroupId: string;
     srcEventId: string;
     hasDestination: boolean;
@@ -265,7 +271,7 @@ function MessageBubbleBody({
 
     return (
         <>
-            {(normalizedToLabel || hasSource || hasDestination) ? (
+            {(normalizedToLabel || (hasSource && !isGroupBridgeSource) || hasDestination) ? (
                 <div className="mb-3 flex flex-wrap items-center gap-1.5">
                     {normalizedToLabel ? (
                         <span className={metaChipClass} title={normalizedToLabel}>
@@ -273,7 +279,7 @@ function MessageBubbleBody({
                             <span className="truncate">{normalizedToLabel}</span>
                         </span>
                     ) : null}
-                    {hasSource ? (
+                    {hasSource && !isGroupBridgeSource ? (
                         <button
                             type="button"
                             className={classNames(
@@ -283,11 +289,11 @@ function MessageBubbleBody({
                             )}
                             onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
                             disabled={!onOpenSource}
-                            title={t("openOriginalMessage")}
+                            title={sourceTitle}
                         >
                             <span className="opacity-65">↗</span>
                             <span className="truncate">
-                                {t("relayedFrom", { groupId: srcGroupId, eventId: srcEventId.slice(0, 8) })}
+                                {t("relayedFrom", { label: sourceLabel })}
                             </span>
                         </button>
                     ) : null}
@@ -649,7 +655,7 @@ export const MessageBubble = memo(function MessageBubble({
     const quoteText = msgData?.quote_text;
     const replyToEventId = typeof msgData?.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
     const senderSnapshotTitle = typeof msgData?.sender_title === "string" ? String(msgData.sender_title || "").trim() : "";
-    const group_bridgeSourceName = typeof msgData?.source_user_name === "string" ? String(msgData.source_user_name || "").trim() : "";
+    const groupBridgeSourceName = typeof msgData?.source_user_name === "string" ? String(msgData.source_user_name || "").trim() : "";
     const senderSnapshotRuntime = typeof msgData?.sender_runtime === "string" ? String(msgData.sender_runtime || "").trim() : "";
     const senderSnapshotAvatarPath = typeof msgData?.sender_avatar_path === "string" ? String(msgData.sender_avatar_path || "").trim() : "";
     const isAttention = String(msgData?.priority || "normal") === "attention";
@@ -666,6 +672,7 @@ export const MessageBubble = memo(function MessageBubble({
     const hasDestination = !!dstGroupId;
     const rawAttachments: MessageAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
     const sourcePlatform = typeof msgData?.source_platform === "string" ? String(msgData.source_platform || "").trim() : "";
+    const isGroupBridgeSource = sourcePlatform === "group_bridge_session" || String(ev.by || "").startsWith("group_bridge:");
     const blobAttachments = rawAttachments
         .filter((a): a is MessageAttachment => a != null && typeof a === "object")
         .map((a) => ({
@@ -805,14 +812,27 @@ export const MessageBubble = memo(function MessageBubble({
             senderId: String(ev.by || ""),
             senderActor,
             senderTitle: senderSnapshotTitle,
-            group_bridgeSourceName,
+            group_bridgeSourceName: isGroupBridgeSource ? groupBridgeSourceName || t("remoteGroupFallback") : groupBridgeSourceName,
             displayNameMap,
         });
-    }, [displayNameMap, ev.by, group_bridgeSourceName, senderActor, senderSnapshotTitle]);
+    }, [displayNameMap, ev.by, groupBridgeSourceName, isGroupBridgeSource, senderActor, senderSnapshotTitle, t]);
     const senderAvatarUrl = useMemo(() => {
         return buildSenderAvatarUrl(blobGroupId, senderSnapshotAvatarPath) || String(senderActor?.avatar_url || "").trim();
     }, [blobGroupId, senderActor?.avatar_url, senderSnapshotAvatarPath]);
     const senderRuntime = senderSnapshotRuntime || String(senderActor?.runtime || "").trim();
+    const sourceLabel = useMemo(() => {
+        if (!hasSource || isGroupBridgeSource) return "";
+        return String(groupLabelById?.[srcGroupId] || "").trim() || groupBridgeSourceName || srcGroupId;
+    }, [groupBridgeSourceName, groupLabelById, hasSource, isGroupBridgeSource, srcGroupId]);
+    const sourceTitle = useMemo(() => {
+        if (!hasSource || isGroupBridgeSource) return "";
+        return t("relayedSourceDetails", {
+            label: sourceLabel,
+            groupId: srcGroupId,
+            eventId: srcEventId,
+        });
+    }, [hasSource, isGroupBridgeSource, sourceLabel, srcEventId, srcGroupId, t]);
+    const remoteBadgeLabel = isGroupBridgeSource ? t("remoteBadge", { defaultValue: "Remote" }) : "";
 
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
@@ -909,6 +929,7 @@ export const MessageBubble = memo(function MessageBubble({
                             senderAvatarUrl={senderAvatarUrl || undefined}
                             senderRuntime={senderRuntime || undefined}
                             avatarRingClassName={senderAccent?.ring}
+                            remoteBadgeLabel={remoteBadgeLabel || undefined}
                         />
 
                         <MessageMetadataHeader
@@ -918,6 +939,7 @@ export const MessageBubble = memo(function MessageBubble({
                             senderDisplayName={senderDisplayName}
                             messageTimestamp={messageTimestamp}
                             fullMessageTimestamp={fullMessageTimestamp}
+                            remoteBadgeLabel={remoteBadgeLabel || undefined}
                         />
                     </>
                 ) : null}
@@ -951,7 +973,9 @@ export const MessageBubble = memo(function MessageBubble({
                             : classNames(
                                 "w-full rounded-[22px] rounded-tl-md border-y border-r border-l-4 bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.04)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.25)]",
                                 "border-y-[var(--glass-border-subtle)] border-r-[var(--glass-border-subtle)]",
-                                ACCENT_BORDER_CLASSES[senderAccent?.text || ""] || "border-l-[var(--glass-border-subtle)]"
+                                isGroupBridgeSource
+                                    ? "border-l-emerald-500/85 bg-emerald-50/35 dark:border-l-emerald-400/80 dark:bg-emerald-950/15"
+                                    : ACCENT_BORDER_CLASSES[senderAccent?.text || ""] || "border-l-[var(--glass-border-subtle)]"
                               )
                         ,
                         isAttention ? "ring-1 ring-amber-400/40 dark:ring-amber-500/40" : ""
@@ -967,6 +991,9 @@ export const MessageBubble = memo(function MessageBubble({
                         groupLabelById={groupLabelById}
                         toLabel={toLabel}
                         hasSource={hasSource}
+                        sourceLabel={sourceLabel}
+                        sourceTitle={sourceTitle}
+                        isGroupBridgeSource={isGroupBridgeSource}
                         srcGroupId={srcGroupId}
                         srcEventId={srcEventId}
                         hasDestination={hasDestination}

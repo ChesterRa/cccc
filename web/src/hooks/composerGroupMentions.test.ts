@@ -127,6 +127,7 @@ describe("composer group mention tokens", () => {
           group_bridge_remote_endpoint: "https://remote.example",
           group_bridge_remote_peer_id: "peer_remote",
           group_bridge_trust_id: "ptrust_1",
+          group_bridge_access_level: "read",
         },
       ] as GroupMeta[],
     });
@@ -140,6 +141,8 @@ describe("composer group mention tokens", () => {
         remote_endpoint: "https://remote.example",
         remote_peer_id: "peer_remote",
         trust_id: "ptrust_1",
+        access_level: "read",
+        recipient_identifier: "Remote Product (g_remote remote/read)",
         token: "#Remote Product",
       },
     ]);

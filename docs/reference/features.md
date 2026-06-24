@@ -305,25 +305,27 @@ Recommended options:
 
 ### Supported Runtimes
 
-| Runtime | Integration | Description |
-|---------|-------------|-------------|
+| Runtime | Entrypoint / Surface | Description |
+|---------|----------------------|-------------|
 | amp | `amp` | Amp |
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
 | codex | `codex` | Codex CLI |
-| copilot | `copilot --allow-all` | GitHub Copilot CLI |
-| cursor | `cursor-agent --yolo --approve-mcps` | Cursor CLI |
-| devin | `devin --permission-mode dangerous` | Devin CLI |
-| kiro | `kiro-cli chat --trust-all-tools` | Kiro CLI |
+| copilot | `copilot` | GitHub Copilot CLI |
+| cursor | `cursor-agent` | Cursor CLI |
+| devin | `devin` | Devin CLI |
+| kiro | `kiro-cli` | Kiro CLI |
 | kilo | `kilo` | Kilo Code CLI |
 | antigravity | `agy` | Antigravity CLI |
 | droid | `droid` | Droid |
 | grok | `grok` | Grok Build |
-| hermes | `hermes --tui --yolo` | Hermes Agent |
-| kimi | `kimi --yolo` | Kimi CLI |
+| hermes | `hermes` | Hermes Agent |
+| kimi | `kimi` | Kimi CLI |
 | opencode | `opencode` | OpenCode |
-| web_model | Remote MCP + browser delivery | ChatGPT Web conversation with an MCP-capable GPT-5.x session; GPT-5.x Pro is advisory-only and has no reliable CCCC local access |
-| custom | Custom | Any command |
+| web_model | ChatGPT Web conversation | ChatGPT Web conversation with an MCP-capable GPT-5.x session; GPT-5.x Pro is advisory-only and has no reliable CCCC local access |
+| custom | Any command | Any command |
+
+These entries show stable runtime entrypoints or surfaces, not every runtime-specific launch flag. CCCC applies launch defaults automatically and actor/profile commands can be reviewed or customized in settings.
 
 CCCC first-class runtime support is the named runtimes above. `custom` remains the manual fallback for any other command.
 

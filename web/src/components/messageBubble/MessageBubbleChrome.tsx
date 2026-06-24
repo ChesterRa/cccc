@@ -15,6 +15,7 @@ export function MessageMetadataHeader({
   senderAvatarUrl,
   senderRuntime,
   avatarRingClassName,
+  remoteBadgeLabel,
 }: {
   mobile?: boolean;
   isUserMessage: boolean;
@@ -26,6 +27,7 @@ export function MessageMetadataHeader({
   senderAvatarUrl?: string;
   senderRuntime?: string;
   avatarRingClassName?: string;
+  remoteBadgeLabel?: string;
 }) {
   const senderTextClass = isUserMessage
     ? isDark
@@ -58,6 +60,14 @@ export function MessageMetadataHeader({
         <span className={classNames("shrink-0 text-xs font-medium", senderTextClass)}>
           {senderDisplayName}
         </span>
+        {remoteBadgeLabel ? (
+          <span
+            className="shrink-0 rounded-full border border-emerald-300/70 bg-emerald-50/85 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-emerald-800 dark:border-emerald-300/30 dark:bg-emerald-950/35 dark:text-emerald-100"
+            title={remoteBadgeLabel}
+          >
+            {remoteBadgeLabel}
+          </span>
+        ) : null}
         <span className="shrink-0 text-[10px] text-[var(--color-text-tertiary)]">
           <span title={fullMessageTimestamp}>{messageTimestamp}</span>
         </span>
@@ -83,6 +93,14 @@ export function MessageMetadataHeader({
       >
         {senderDisplayName}
       </span>
+      {remoteBadgeLabel ? (
+        <span
+          className="shrink-0 rounded-full border border-emerald-300/70 bg-emerald-50/80 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-emerald-800 dark:border-emerald-300/30 dark:bg-emerald-950/35 dark:text-emerald-100"
+          title={remoteBadgeLabel}
+        >
+          {remoteBadgeLabel}
+        </span>
+      ) : null}
       <span className="shrink-0 text-[10px] text-[var(--color-text-tertiary)]">
         <span title={fullMessageTimestamp}>{messageTimestamp}</span>
       </span>

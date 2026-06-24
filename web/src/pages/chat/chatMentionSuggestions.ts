@@ -7,6 +7,7 @@ export type ComposerMentionSuggestion = {
   kind: ComposerMentionKind;
   value: string;
   label: string;
+  badgeKind?: "remote";
   description?: string;
   meta?: string;
   keywords?: string[];
@@ -76,6 +77,7 @@ function buildGroupMentionSuggestions(groups: GroupMeta[], needle: string): Comp
         kind: "group" as const,
         value: groupId,
         label,
+        badgeKind: group.group_bridge_remote ? "remote" as const : undefined,
         description: group.group_bridge_remote ? groupId : (remoteEndpoint || topic || undefined),
         meta: group.group_bridge_remote ? (remotePeerId || undefined) : (label !== groupId ? groupId : undefined),
         keywords: [groupId, title, topic, remoteEndpoint, remotePeerId].filter(Boolean),
