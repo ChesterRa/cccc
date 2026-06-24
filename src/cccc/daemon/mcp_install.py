@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,10 @@ from ..kernel.runtime import get_cccc_mcp_stdio_command
 from ..util.conv import coerce_bool
 from ..util.fs import read_json
 from ..util.process import resolve_subprocess_argv
+
+
+class McpInstallError(RuntimeError):
+    """Actionable runtime MCP setup failure."""
 
 
 def _parse_mcp_get_output(output: str) -> Dict[str, str]:
@@ -67,6 +72,27 @@ def _coerce_output_text(output: Any) -> str:
     if isinstance(output, bytes):
         return output.decode(errors="ignore")
     return str(output or "")
+
+
+def _compact_output(output: Any, *, limit: int = 500) -> str:
+    text = re.sub(r"\s+", " ", _coerce_output_text(output)).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def _display_command(argv: list[str]) -> str:
+    try:
+        return shlex.join([str(part) for part in argv])
+    except Exception:
+        return " ".join(str(part) for part in argv)
+
+
+def _cli_failure_message(step: str, argv: list[str], result: subprocess.CompletedProcess[Any]) -> str:
+    stderr = _compact_output(getattr(result, "stderr", ""))
+    stdout = _compact_output(getattr(result, "stdout", ""))
+    detail = stderr or stdout or "no output"
+    return f"{step} failed while running `{_display_command(argv)}` (exit {getattr(result, 'returncode', 'unknown')}): {detail}"
 
 
 def _codex_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> bool:
@@ -141,6 +167,43 @@ def _claude_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> 
         expected_cmd,
         strict=sys.platform.startswith("win"),
     )
+
+
+def _claude_remove_hint(output: str) -> str:
+    match = re.search(r"To remove this server,\s*run:\s*(.+)", str(output or ""), flags=re.I)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def _claude_mcp_state_details(
+    expected_cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    argv = ["claude", "mcp", "get", "cccc"]
+    result = _run_cli(argv, cwd=cwd, timeout=10, text=False, env=env)
+    output = _coerce_output_text(result.stdout)
+    if result.returncode != 0:
+        return {
+            "state": "missing",
+            "argv": argv,
+            "result": result,
+            "output": output,
+            "entry": {},
+            "remove_hint": "",
+        }
+    entry = _parse_mcp_get_output(output)
+    state = "ready" if _claude_mcp_entry_matches_expected(output, expected_cmd) else "stale"
+    return {
+        "state": state,
+        "argv": argv,
+        "result": result,
+        "output": output,
+        "entry": entry,
+        "remove_hint": _claude_remove_hint(output),
+    }
 
 
 def _json_mcp_entry_matches_expected(entry: Any, expected_cmd: list[str]) -> bool:
@@ -443,6 +506,132 @@ def _run_cli(
     return subprocess.run(resolve_subprocess_argv(argv), **kwargs)
 
 
+def _raise_or_false(message: str, *, raise_on_error: bool) -> bool:
+    if raise_on_error:
+        raise McpInstallError(message)
+    return False
+
+
+def _ensure_claude_mcp_installed(
+    cwd: Path,
+    *,
+    env: Dict[str, str] | None = None,
+    raise_on_error: bool = False,
+) -> bool:
+    expected_cmd = _runtime_expected_cccc_command("claude")
+    expected_display = _display_command(expected_cmd)
+    try:
+        details = _claude_mcp_state_details(expected_cmd, cwd=cwd, env=env)
+    except FileNotFoundError as exc:
+        return _raise_or_false(
+            "Claude CLI was not found while checking CCCC MCP setup. Verify `claude` is available in the same environment as CCCC.",
+            raise_on_error=raise_on_error,
+        )
+    except subprocess.TimeoutExpired:
+        return _raise_or_false(
+            "Claude MCP setup check timed out while running `claude mcp get cccc`.",
+            raise_on_error=raise_on_error,
+        )
+    except Exception as exc:
+        return _raise_or_false(
+            f"Claude MCP setup check failed while running `claude mcp get cccc`: {exc}",
+            raise_on_error=raise_on_error,
+        )
+
+    state = str(details.get("state") or "missing")
+    if state == "ready":
+        return True
+
+    if state == "stale":
+        entry = details.get("entry") if isinstance(details.get("entry"), dict) else {}
+        scope = str(entry.get("scope") or "").strip()
+        scope_lower = scope.lower()
+        if scope and "user" not in scope_lower:
+            command = str(entry.get("command") or "").strip()
+            args = str(entry.get("args") or "").strip()
+            remove_hint = str(details.get("remove_hint") or "").strip()
+            parts = [
+                "Claude MCP server `cccc` is configured outside user scope and points to a stale CCCC command.",
+                f"Detected scope: {scope}.",
+            ]
+            if command:
+                parts.append(f"Detected command: {command}{(' ' + args) if args else ''}.")
+            parts.append(f"Expected command: {expected_display}.")
+            if remove_hint:
+                parts.append(f"Remove the stale entry with: {remove_hint}")
+            else:
+                parts.append("Run `claude mcp get cccc` in the actor workspace and remove the stale entry from the reported scope.")
+            parts.append("Then run `cccc setup --runtime claude` and start the actor again.")
+            return _raise_or_false(" ".join(parts), raise_on_error=raise_on_error)
+
+        remove_cmd = build_mcp_remove_command("claude")
+        if remove_cmd:
+            try:
+                remove_result = _run_cli(remove_cmd, cwd=cwd, timeout=30, env=env)
+            except subprocess.TimeoutExpired:
+                return _raise_or_false(
+                    "Claude MCP stale-entry removal timed out while running `claude mcp remove cccc -s user`.",
+                    raise_on_error=raise_on_error,
+                )
+            except FileNotFoundError:
+                return _raise_or_false(
+                    "Claude CLI was not found while removing stale CCCC MCP setup.",
+                    raise_on_error=raise_on_error,
+                )
+            if remove_result.returncode != 0:
+                return _raise_or_false(
+                    _cli_failure_message("Claude MCP stale-entry removal", remove_cmd, remove_result),
+                    raise_on_error=raise_on_error,
+                )
+
+    add_cmd = build_mcp_add_command("claude")
+    if not add_cmd:
+        return _raise_or_false("Claude MCP setup command is unavailable.", raise_on_error=raise_on_error)
+    try:
+        add_result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env)
+    except subprocess.TimeoutExpired:
+        return _raise_or_false(
+            "Claude MCP setup timed out while running `claude mcp add -s user cccc -- ...`.",
+            raise_on_error=raise_on_error,
+        )
+    except FileNotFoundError:
+        return _raise_or_false(
+            "Claude CLI was not found while adding CCCC MCP setup.",
+            raise_on_error=raise_on_error,
+        )
+    if add_result.returncode != 0:
+        return _raise_or_false(
+            _cli_failure_message("Claude MCP setup", add_cmd, add_result),
+            raise_on_error=raise_on_error,
+        )
+
+    try:
+        verified = _claude_mcp_state_details(expected_cmd, cwd=cwd, env=env)
+    except subprocess.TimeoutExpired:
+        return _raise_or_false(
+            "Claude MCP setup was added, but verification timed out while running `claude mcp get cccc`.",
+            raise_on_error=raise_on_error,
+        )
+    except Exception as exc:
+        return _raise_or_false(
+            f"Claude MCP setup was added, but verification failed: {exc}",
+            raise_on_error=raise_on_error,
+        )
+    if str(verified.get("state") or "") == "ready":
+        return True
+
+    entry = verified.get("entry") if isinstance(verified.get("entry"), dict) else {}
+    detected = ""
+    command = str(entry.get("command") or "").strip()
+    args = str(entry.get("args") or "").strip()
+    if command:
+        detected = f" Detected command after setup: {command}{(' ' + args) if args else ''}."
+    return _raise_or_false(
+        f"Claude MCP setup command completed, but `claude mcp get cccc` still did not verify the expected CCCC command.{detected} Expected command: {expected_display}.",
+        raise_on_error=raise_on_error,
+    )
+
+
 def _json_mcp_entry_state(cfg_path: Path, expected_cmd: list[str]) -> str:
     cfg = read_json(cfg_path)
     servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
@@ -525,11 +714,7 @@ def _runtime_mcp_state(runtime: str, *, cwd: Path | None = None, env: Dict[str, 
     expected_cmd = _runtime_expected_cccc_command(runtime)
 
     if runtime == "claude":
-        result = _run_cli(["claude", "mcp", "get", "cccc"], timeout=10, text=False, env=env)
-        if result.returncode != 0:
-            return "missing"
-        output = _coerce_output_text(result.stdout)
-        return "ready" if _claude_mcp_entry_matches_expected(output, expected_cmd) else "stale"
+        return str(_claude_mcp_state_details(expected_cmd, cwd=cwd, env=env).get("state") or "missing")
 
     if runtime == "codex":
         result = _run_cli(["codex", "mcp", "get", "cccc"], timeout=10, env=env, drop_env_keys=_CODEX_CONTEXT_ENV_KEYS)
@@ -649,9 +834,12 @@ def ensure_mcp_installed(
     *,
     auto_mcp_runtimes: tuple[str, ...],
     env: Dict[str, str] | None = None,
+    raise_on_error: bool = False,
 ) -> bool:
     if runtime not in auto_mcp_runtimes:
         return True
+    if runtime == "claude":
+        return _ensure_claude_mcp_installed(cwd, env=env, raise_on_error=raise_on_error)
     if runtime == "hermes":
         try:
             state = _runtime_mcp_state(runtime, env=env)
@@ -705,6 +893,10 @@ def ensure_mcp_installed(
         drop_env_keys = _CODEX_CONTEXT_ENV_KEYS if runtime == "codex" else ()
         result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env, drop_env_keys=drop_env_keys)
         return result.returncode == 0 and is_mcp_installed(runtime, cwd=cwd, env=env)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except FileNotFoundError as exc:
+        if raise_on_error:
+            raise McpInstallError(f"Runtime CLI was not found while installing MCP for {runtime}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        if raise_on_error:
+            raise McpInstallError(f"Runtime MCP setup timed out for {runtime}.") from exc
     return False

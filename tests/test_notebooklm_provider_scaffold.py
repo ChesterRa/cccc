@@ -225,6 +225,73 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
         refs = out.get("references") if isinstance(out.get("references"), list) else []
         self.assertEqual(len(refs), 1)
 
+    def test_query_reference_metadata_keeps_answer_range_and_score(self) -> None:
+        from cccc.providers.notebooklm.adapter import _reference_to_dict
+
+        class _Ref:
+            source_id = "src_1"
+            citation_number = 3
+            cited_text = "quoted text"
+            answer_start_char = 12
+            answer_end_char = 28
+            score = 0.81
+
+        out = _reference_to_dict(_Ref())
+
+        self.assertEqual(str(out.get("source_id") or ""), "src_1")
+        self.assertEqual(out.get("citation_number"), 3)
+        self.assertEqual(out.get("answer_range"), {"start_char": 12, "end_char": 28})
+        self.assertEqual(out.get("score"), 0.81)
+
+    def test_generate_infographic_passes_style_option_to_vendor(self) -> None:
+        import asyncio
+
+        from cccc.providers.notebooklm.adapter import _generate_artifact_async
+
+        captured: dict[str, object] = {}
+
+        class _FakeStatus:
+            task_id = "task_1"
+            status = "queued"
+            url = ""
+            error = ""
+            error_code = ""
+            metadata = {}
+
+        class _FakeArtifacts:
+            async def generate_infographic(self, *args, **kwargs):
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+                return _FakeStatus()
+
+        class _FakeClient:
+            artifacts = _FakeArtifacts()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_build_client(*, auth_payload, timeout_seconds):
+            _ = auth_payload, timeout_seconds
+            return _FakeClient()
+
+        with patch("cccc.providers.notebooklm.adapter._build_client", side_effect=_fake_build_client):
+            out = asyncio.run(
+                _generate_artifact_async(
+                    notebook_id="nb_1",
+                    kind="infographic",
+                    options={"style": "scientific"},
+                    auth_payload={},
+                    timeout_seconds=10.0,
+                )
+            )
+
+        self.assertEqual(str(out.get("task_id") or ""), "task_1")
+        kwargs = captured.get("kwargs") if isinstance(captured.get("kwargs"), dict) else {}
+        self.assertEqual(str(getattr(kwargs.get("style"), "name", "") or ""), "SCIENTIFIC")
+
     def test_create_space_works_from_saved_state_without_real_env_flag(self) -> None:
         from cccc.daemon.space.group_space_provider import provider_create_space
         from cccc.daemon.space.group_space_store import set_space_provider_state, update_space_provider_secrets

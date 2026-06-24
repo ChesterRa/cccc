@@ -7,6 +7,7 @@ import { LedgerEvent, Actor, AgentState, Task, getActorAccentColor, ChatMessageD
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
+import { isGroupBridgeInboundMessage } from "../utils/groupBridgeMessages";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import { getTaskMessageRefs, getTaskRefChipLabel, getTaskRefStateKey, type TaskRefStateKey } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
@@ -672,7 +673,7 @@ export const MessageBubble = memo(function MessageBubble({
     const hasDestination = !!dstGroupId;
     const rawAttachments: MessageAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
     const sourcePlatform = typeof msgData?.source_platform === "string" ? String(msgData.source_platform || "").trim() : "";
-    const isGroupBridgeSource = sourcePlatform === "group_bridge_session" || String(ev.by || "").startsWith("group_bridge:");
+    const isGroupBridgeSource = isGroupBridgeInboundMessage(ev.by, msgData);
     const blobAttachments = rawAttachments
         .filter((a): a is MessageAttachment => a != null && typeof a === "object")
         .map((a) => ({

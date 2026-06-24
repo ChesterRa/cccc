@@ -533,7 +533,17 @@ class ClaudeAppSession:
             env["CCCC_GROUP_ID"] = self.group_id
             env["CCCC_ACTOR_ID"] = self.actor_id
             env = with_node_deprecation_warnings_suppressed(env)
-            if not ensure_mcp_installed("claude", self.cwd, auto_mcp_runtimes=("claude",), env=env):
+            try:
+                mcp_ready = ensure_mcp_installed(
+                    "claude",
+                    self.cwd,
+                    auto_mcp_runtimes=("claude",),
+                    env=env,
+                    raise_on_error=True,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"failed to install MCP for runtime: claude: {exc}") from exc
+            if not mcp_ready:
                 raise RuntimeError("failed to install MCP for runtime: claude")
 
             cmd: List[str] = [

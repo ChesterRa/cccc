@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from cccc.daemon.mcp_install import build_mcp_add_command, ensure_mcp_installed, is_mcp_installed, prepare_runtime_mcp_env
+from cccc.daemon.mcp_install import (
+    McpInstallError,
+    build_mcp_add_command,
+    ensure_mcp_installed,
+    is_mcp_installed,
+    prepare_runtime_mcp_env,
+)
 from cccc.kernel.runtime import get_cccc_mcp_stdio_command
 
 
@@ -836,6 +842,7 @@ class TestMcpInstall(unittest.TestCase):
                                 ["claude", "mcp", "get", "cccc"],
                                 capture_output=True,
                                 text=False,
+                                cwd=str(cwd),
                                 timeout=10,
                             ),
                             call(
@@ -856,10 +863,111 @@ class TestMcpInstall(unittest.TestCase):
                                 ["claude", "mcp", "get", "cccc"],
                                 capture_output=True,
                                 text=False,
+                                cwd=str(cwd),
                                 timeout=10,
                             ),
                         ],
                     )
+
+    def test_ensure_mcp_installed_claude_reports_non_user_scope_stale_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/new/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv",
+                side_effect=lambda argv: list(argv),
+            ):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value = Mock(
+                        returncode=0,
+                        stdout=(
+                            "cccc:\n"
+                            "  Scope: Project config\n"
+                            "  Type: stdio\n"
+                            "  Command: /old/cccc\n"
+                            "  Args: mcp\n"
+                            "\n"
+                            "To remove this server, run: claude mcp remove \"cccc\" -s project\n"
+                        ).encode(),
+                        stderr=b"",
+                    )
+
+                    with self.assertRaises(McpInstallError) as caught:
+                        ensure_mcp_installed(
+                            "claude",
+                            cwd,
+                            auto_mcp_runtimes=("claude",),
+                            raise_on_error=True,
+                        )
+
+                    message = str(caught.exception)
+                    self.assertIn("Project config", message)
+                    self.assertIn("/old/cccc mcp", message)
+                    self.assertIn("/new/cccc mcp", message)
+                    self.assertIn("claude mcp remove \"cccc\" -s project", message)
+                    mock_run.assert_called_once_with(
+                        ["claude", "mcp", "get", "cccc"],
+                        capture_output=True,
+                        text=False,
+                        cwd=str(cwd),
+                        timeout=10,
+                    )
+
+    def test_is_mcp_installed_claude_checks_actor_workspace_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/new/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv",
+                side_effect=lambda argv: list(argv),
+            ):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value = Mock(
+                        returncode=0,
+                        stdout=(
+                            "cccc:\n"
+                            "  Scope: Project config\n"
+                            "  Type: stdio\n"
+                            "  Command: /old/cccc\n"
+                            "  Args: mcp\n"
+                        ).encode(),
+                        stderr=b"",
+                    )
+
+                    self.assertFalse(is_mcp_installed("claude", cwd=cwd))
+
+                    mock_run.assert_called_once_with(
+                        ["claude", "mcp", "get", "cccc"],
+                        capture_output=True,
+                        text=False,
+                        cwd=str(cwd),
+                        timeout=10,
+                    )
+
+    def test_ensure_mcp_installed_claude_reports_add_failure_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/new/cccc", "mcp"]), patch(
+                "cccc.daemon.mcp_install.resolve_subprocess_argv",
+                side_effect=lambda argv: list(argv),
+            ):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.side_effect = [
+                        Mock(returncode=1, stdout=b"", stderr=b"not found"),
+                        Mock(returncode=2, stdout="", stderr="permission denied"),
+                    ]
+
+                    with self.assertRaises(McpInstallError) as caught:
+                        ensure_mcp_installed(
+                            "claude",
+                            cwd,
+                            auto_mcp_runtimes=("claude",),
+                            raise_on_error=True,
+                        )
+
+                    message = str(caught.exception)
+                    self.assertIn("Claude MCP setup failed", message)
+                    self.assertIn("claude mcp add", message)
+                    self.assertIn("permission denied", message)
+                    self.assertEqual(len(mock_run.call_args_list), 2)
 
     def test_ensure_mcp_installed_codex_does_not_persist_actor_context_env(self) -> None:
         with tempfile.TemporaryDirectory() as td:

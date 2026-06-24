@@ -360,7 +360,13 @@ def _is_mcp_installed(runtime: str) -> bool:
 
 
 def _ensure_mcp_installed(runtime: str, cwd: Path, *, env: Dict[str, str] | None = None) -> bool:
-    return runtime_ensure_mcp_installed(runtime, cwd, auto_mcp_runtimes=AUTO_MCP_RUNTIMES, env=env)
+    return runtime_ensure_mcp_installed(
+        runtime,
+        cwd,
+        auto_mcp_runtimes=AUTO_MCP_RUNTIMES,
+        env=env,
+        raise_on_error=True,
+    )
 
 
 def _prepare_pty_env(env: Dict[str, Any]) -> Dict[str, str]:

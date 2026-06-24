@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 import json
+import math
 import os
 import threading
 from datetime import datetime, timezone
@@ -829,7 +830,38 @@ def _reference_to_dict(ref: Any) -> Dict[str, Any]:
     cited_text = str(getattr(ref, "cited_text", "") or "").strip()
     if cited_text:
         data["cited_text"] = cited_text
+    answer_start = _optional_int(getattr(ref, "answer_start_char", None))
+    answer_end = _optional_int(getattr(ref, "answer_end_char", None))
+    if answer_start is not None and answer_end is not None and answer_start <= answer_end:
+        data["answer_range"] = {
+            "start_char": answer_start,
+            "end_char": answer_end,
+        }
+    score = _optional_float(getattr(ref, "score", None))
+    if score is not None:
+        data["score"] = score
     return data
+
+
+def _optional_int(raw: Any) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _optional_float(raw: Any) -> float | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except Exception:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
 
 
 async def _query_async(
@@ -1038,6 +1070,7 @@ async def _generate_artifact_async(
         AudioLength,
         InfographicDetail,
         InfographicOrientation,
+        InfographicStyle,
         QuizDifficulty,
         QuizQuantity,
         ReportFormat,
@@ -1119,6 +1152,11 @@ async def _generate_artifact_async(
                     InfographicDetail,
                     options.get("detail_level"),
                     field="detail_level",
+                ),
+                style=_enum_or_none(
+                    InfographicStyle,
+                    options.get("infographic_style") or options.get("style"),
+                    field="infographic_style",
                 ),
             )
         elif kind == "slide_deck":

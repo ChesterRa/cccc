@@ -122,7 +122,7 @@ describe("MessageBubble delegation display wiring", () => {
     const { fileURLToPath } = await import("node:url");
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"), "utf8");
     expect(source).toContain('remoteBadgeLabel={remoteBadgeLabel || undefined}');
-    expect(source).toContain('const isGroupBridgeSource = sourcePlatform === "group_bridge_session" || String(ev.by || "").startsWith("group_bridge:");');
+    expect(source).toContain('const isGroupBridgeSource = isGroupBridgeInboundMessage(ev.by, msgData);');
     expect(source).toContain('hasSource && !isGroupBridgeSource');
     expect(source).toContain('t("remoteBadge"');
     expect(source).toContain('t("relayedFrom", { label: sourceLabel })');
