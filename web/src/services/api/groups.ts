@@ -1133,9 +1133,11 @@ export async function archiveVoiceAssistantDocument(
 
 export async function fetchPresentation(
   groupId: string,
+  init?: RequestInit & { noCache?: boolean },
 ): Promise<ApiResponse<{ group_id: string; presentation: GroupPresentation }>> {
   const resp = await apiJson<{ group_id?: string; presentation?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation`,
+    init,
   );
   if (!resp.ok) return resp as ApiResponse<{ group_id: string; presentation: GroupPresentation }>;
   return {

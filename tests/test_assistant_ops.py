@@ -566,6 +566,28 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_assistant_state_can_suppress_voice_retry_notify_for_read_queue(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            with patch("cccc.daemon.assistants.assistant_ops._maybe_emit_voice_input_retry_notify") as retry_notify:
+                state, _ = self._call(
+                    "assistant_state",
+                    {
+                        "group_id": group_id,
+                        "assistant_id": "voice_secretary",
+                        "view": "voice_workspace",
+                        "suppress_retry_notify": True,
+                    },
+                )
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            retry_notify.assert_not_called()
+        finally:
+            cleanup()
+
     def test_voice_status_view_omits_heavy_document_and_model_payloads(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -7,6 +7,7 @@ import {
   buildChatBucketPatch,
   buildShellGroupDoc,
   buildPrimedGroupState,
+  CACHED_TAIL_REFRESH_DELAY_MS,
   EMPTY_CHAT_BUCKET,
   ensureGroupChatBucket,
   filterUiEvents,
@@ -36,6 +37,7 @@ import {
   scheduleDeferredUnreadRefresh,
   setRefreshGroupsInFlight,
   setRefreshGroupsQueued,
+  shouldDeferInitialTailRefresh,
   settingsRequestEpochByGroup,
   warmGroupInFlight,
   incrementLoadGroupToken,
@@ -59,6 +61,44 @@ function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntime
     visibleActors.push(actor);
   }
   return { actors: visibleActors, internalRuntimeActors };
+}
+
+const loadGroupAbortControllers = new Map<string, AbortController>();
+
+function abortStaleLoadGroupRequests(activeGroupId: string): void {
+  const active = String(activeGroupId || "").trim();
+  for (const [groupId, controller] of loadGroupAbortControllers.entries()) {
+    if (groupId === active) continue;
+    controller.abort();
+    loadGroupAbortControllers.delete(groupId);
+    loadGroupInFlight.delete(groupId);
+  }
+}
+
+function abortedResponse<T>(): api.ApiResponse<T> {
+  return { ok: false, error: { code: "aborted", message: "Request aborted" } };
+}
+
+function delayCachedTailRefresh<T>(
+  task: () => Promise<api.ApiResponse<T>>,
+  signal: AbortSignal,
+): Promise<api.ApiResponse<T>> {
+  if (signal.aborted) return Promise.resolve(abortedResponse<T>());
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      if (signal.aborted) {
+        resolve(abortedResponse<T>());
+        return;
+      }
+      void task().then(resolve);
+    }, CACHED_TAIL_REFRESH_DELAY_MS);
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      resolve(abortedResponse<T>());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function createGroupStoreAsyncActions(
@@ -288,6 +328,10 @@ export function createGroupStoreAsyncActions(
       if (!gid) return;
       const inFlight = loadGroupInFlight.get(gid);
       if (inFlight) return;
+      abortStaleLoadGroupRequests(gid);
+      const loadController = new AbortController();
+      loadGroupAbortControllers.set(gid, loadController);
+      const loadSignal = loadController.signal;
 
       const token = incrementLoadGroupToken();
       const isLatestSelection = () => get().selectedGroupId === gid && loadGroupToken === token;
@@ -312,9 +356,9 @@ export function createGroupStoreAsyncActions(
       };
       const state = get();
       const currentDocGroupId = String(state.groupDoc?.group_id || "").trim();
+      const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);
+      const chatBucket = nextChatByGroup[gid] || EMPTY_CHAT_BUCKET;
       if (currentDocGroupId !== gid) {
-        const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);
-        const chatBucket = nextChatByGroup[gid] || EMPTY_CHAT_BUCKET;
         const primedState = buildPrimedGroupState(gid, state.groups);
         saveGroupView(gid, {
           groupDoc: primedState.groupDoc,
@@ -341,9 +385,12 @@ export function createGroupStoreAsyncActions(
         get().mergeEventStatuses(statusesResp.result.statuses || {}, gid);
       };
 
-      const showPromise = api.fetchGroup(gid);
-      const tailPromise = api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false });
-      const actorsPromise = api.fetchActors(gid, false, undefined, { includeInternal: true });
+      const showPromise = api.fetchGroup(gid, { signal: loadSignal });
+      const fetchTail = () => api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false, signal: loadSignal });
+      const tailPromise = shouldDeferInitialTailRefresh(chatBucket)
+        ? delayCachedTailRefresh(fetchTail, loadSignal)
+        : fetchTail();
+      const actorsPromise = api.fetchActors(gid, false, { signal: loadSignal }, { includeInternal: true });
       const contextEpoch = beginContextRequest(gid);
       const settingsEpoch = beginGroupRequestEpoch(settingsRequestEpochByGroup, gid);
 
@@ -436,7 +483,7 @@ export function createGroupStoreAsyncActions(
         });
       });
 
-      void api.fetchContext(gid, { detail: "summary" }).then((ctx) => {
+      void api.fetchContext(gid, { detail: "summary", signal: loadSignal }).then((ctx) => {
         if (!ctx.ok) return;
         if (!isLatestContextRequest(gid, contextEpoch)) return;
         const summary = ctx.result as GroupContext;
@@ -454,7 +501,7 @@ export function createGroupStoreAsyncActions(
 
         if (snapshotState === "stale" && hasCachedContext) return;
         if (snapshotState === "missing" || (snapshotState === "stale" && !hasCachedContext)) {
-          void api.fetchContext(gid, { detail: "full", fresh: true }).then((fullCtx) => {
+          void api.fetchContext(gid, { detail: "full", fresh: true, signal: loadSignal }).then((fullCtx) => {
             if (!fullCtx.ok) return;
             if (!isLatestContextRequest(gid, contextEpoch)) return;
             commitViewPatch({ groupContext: fullCtx.result as GroupContext });
@@ -469,7 +516,7 @@ export function createGroupStoreAsyncActions(
         console.error(`Failed to load context for group=${gid}:`, error);
       });
 
-      void api.fetchSettings(gid).then((settings) => {
+      void api.fetchSettings(gid, { signal: loadSignal }).then((settings) => {
         if (!settings.ok) return;
         if (!isLatestGroupRequestEpoch(settingsRequestEpochByGroup, gid, settingsEpoch)) return;
         commitViewPatch({ groupSettings: settings.result.settings || null });
@@ -477,13 +524,13 @@ export function createGroupStoreAsyncActions(
         console.error(`Failed to load settings for group=${gid}:`, error);
       });
 
-      const initialLoad = Promise.allSettled([showPromise, tailPromise, actorsPromise]);
-      const initialLoadDone = initialLoad.then(() => undefined);
-      loadGroupInFlight.set(gid, initialLoadDone);
+      const initialLoad = Promise.allSettled([showPromise, actorsPromise]);
+      const loadGroupDone = Promise.allSettled([showPromise, actorsPromise, tailPromise]).then(() => undefined);
+      loadGroupInFlight.set(gid, loadGroupDone);
       void initialLoad.then(() => {
         const timeout = window.setTimeout(() => {
           const presentationEpoch = beginGroupRequestEpoch(presentationRequestEpochByGroup, gid);
-          void api.fetchPresentation(gid).then((presentationResp) => {
+          void api.fetchPresentation(gid, { signal: loadSignal }).then((presentationResp) => {
             if (!presentationResp.ok) return;
             if (!isLatestGroupRequestEpoch(presentationRequestEpochByGroup, gid, presentationEpoch)) return;
             commitViewPatch({ groupPresentation: presentationResp.result.presentation || null });
@@ -494,9 +541,13 @@ export function createGroupStoreAsyncActions(
         if (!isLatestSelection()) {
           window.clearTimeout(timeout);
         }
-      }).finally(() => {
-        if (loadGroupInFlight.get(gid) === initialLoadDone) {
+      });
+      void loadGroupDone.finally(() => {
+        if (loadGroupInFlight.get(gid) === loadGroupDone) {
           loadGroupInFlight.delete(gid);
+        }
+        if (loadGroupAbortControllers.get(gid) === loadController) {
+          loadGroupAbortControllers.delete(gid);
         }
       });
     },

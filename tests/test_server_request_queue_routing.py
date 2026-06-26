@@ -80,7 +80,7 @@ class TestServerRequestQueueRouting(unittest.TestCase):
 
         self.assertIs(selected, read_queue)
 
-    def test_voice_workspace_state_stays_on_slow_queue_because_get_can_emit_retry_notify(self) -> None:
+    def test_voice_workspace_state_stays_on_slow_queue_when_retry_notify_can_emit(self) -> None:
         from cccc.daemon.server import _request_queue_for
 
         read_queue = object()
@@ -94,3 +94,44 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         selected = _request_queue_for(req, read_queue=read_queue, message_lanes=message_lanes, slow_queue=slow_queue)
 
         self.assertIs(selected, slow_queue)
+
+    def test_voice_workspace_state_can_use_read_queue_when_retry_notify_is_suppressed(self) -> None:
+        from cccc.daemon.server import _request_queue_for
+
+        read_queue = object()
+        message_lanes = object()
+        slow_queue = object()
+        req = SimpleNamespace(
+            op="assistant_state",
+            args={
+                "group_id": "g1",
+                "assistant_id": "voice_secretary",
+                "view": "voice_workspace",
+                "suppress_retry_notify": True,
+            },
+        )
+
+        selected = _request_queue_for(req, read_queue=read_queue, message_lanes=message_lanes, slow_queue=slow_queue)
+
+        self.assertIs(selected, read_queue)
+
+    def test_voice_workspace_state_string_false_retry_notify_uses_slow_queue(self) -> None:
+        from cccc.daemon.server import _request_queue_for
+
+        read_queue = object()
+        message_lanes = object()
+        slow_queue = object()
+        for value in ("false", "0"):
+            req = SimpleNamespace(
+                op="assistant_state",
+                args={
+                    "group_id": "g1",
+                    "assistant_id": "voice_secretary",
+                    "view": "voice_workspace",
+                    "suppress_retry_notify": value,
+                },
+            )
+
+            selected = _request_queue_for(req, read_queue=read_queue, message_lanes=message_lanes, slow_queue=slow_queue)
+
+            self.assertIs(selected, slow_queue)

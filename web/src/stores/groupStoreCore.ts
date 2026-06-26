@@ -84,7 +84,8 @@ export const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   isChatWindowLoading: false,
 };
 
-export const INITIAL_LEDGER_TAIL_LIMIT = 300;
+export const INITIAL_LEDGER_TAIL_LIMIT = 120;
+export const CACHED_TAIL_REFRESH_DELAY_MS = 1200;
 export const MAX_UI_EVENTS = 800;
 const GROUP_VIEW_CACHE_TTL_MS = 300_000;
 const GROUP_ORDER_KEY = "cccc-group-order";
@@ -119,6 +120,10 @@ export function setRefreshGroupsQueued(value: boolean): void {
 export function incrementLoadGroupToken(): number {
   loadGroupToken += 1;
   return loadGroupToken;
+}
+
+export function shouldDeferInitialTailRefresh(bucket: Pick<GroupChatBucket, "events"> | null | undefined): boolean {
+  return Array.isArray(bucket?.events) && bucket.events.length > 0;
 }
 
 export function normalizeGroupIdList(ids: string[]): string[] {

@@ -3302,13 +3302,14 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     assistant_id = _normalize_assistant_id(args.get("assistant_id"))
     view = str(args.get("view") or "").strip()
+    suppress_retry_notify = coerce_bool(args.get("suppress_retry_notify"), default=False)
     prompt_request_id = str(args.get("prompt_request_id") or args.get("request_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    if not assistant_id or assistant_id == ASSISTANT_ID_VOICE_SECRETARY:
+    if not suppress_retry_notify and (not assistant_id or assistant_id == ASSISTANT_ID_VOICE_SECRETARY):
         _maybe_emit_voice_input_retry_notify(group)
     runtime_state = _load_runtime_state(group)
     if assistant_id:

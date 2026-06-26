@@ -483,6 +483,16 @@ describe("useGroupStore actors fetch policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorageMock.clear();
+    groupStoreCore.groupViewCache.clear();
+    groupStoreCore.loadGroupInFlight.clear();
+    groupStoreCore.warmGroupInFlight.clear();
+    groupStoreCore.refreshActorsInFlight.clear();
+    groupStoreCore.refreshActorsQueued.clear();
+    groupStoreCore.settingsRequestEpochByGroup.clear();
+    groupStoreCore.presentationRequestEpochByGroup.clear();
+    groupStoreCore.chatWindowRequestEpochByGroup.clear();
+    groupStoreCore.internalActorsRequestEpochByGroup.clear();
+    groupStoreCore.contextRequestEpochByGroup.clear();
     useGroupStore.setState({
       groups: [{ group_id: "g-demo", title: "Demo", topic: "", state: "active" }],
       groupOrder: ["g-demo"],
@@ -775,9 +785,31 @@ describe("useGroupStore actors fetch policy", () => {
   it("loadGroup keeps unread counts on the selected group path", async () => {
     await useGroupStore.getState().loadGroup("g-demo");
     await vi.waitFor(() => {
-      expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false, undefined, { includeInternal: true });
+      expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false, { signal: expect.any(AbortSignal) }, { includeInternal: true });
       expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true, undefined, { includeInternal: true });
     });
+  });
+
+  it("loadGroup restarts an aborted group load when switching back quickly", () => {
+    useGroupStore.setState({
+      groups: [
+        { group_id: "g-a", title: "A", topic: "", state: "active" },
+        { group_id: "g-b", title: "B", topic: "", state: "active" },
+      ],
+      groupOrder: ["g-a", "g-b"],
+      selectedGroupId: "g-a",
+    });
+    vi.mocked(api.fetchGroup).mockImplementation(
+      () => new Promise(() => undefined) as ReturnType<typeof api.fetchGroup>,
+    );
+
+    void useGroupStore.getState().loadGroup("g-a");
+    void useGroupStore.getState().loadGroup("g-b");
+    void useGroupStore.getState().loadGroup("g-a");
+
+    expect(api.fetchGroup).toHaveBeenNthCalledWith(1, "g-a", { signal: expect.any(AbortSignal) });
+    expect(api.fetchGroup).toHaveBeenNthCalledWith(2, "g-b", { signal: expect.any(AbortSignal) });
+    expect(api.fetchGroup).toHaveBeenNthCalledWith(3, "g-a", { signal: expect.any(AbortSignal) });
   });
 
   it("loadGroup waits for pure-read actors before scheduling unread refresh", async () => {
@@ -794,7 +826,7 @@ describe("useGroupStore actors fetch policy", () => {
     await useGroupStore.getState().loadGroup("g-demo");
     await flushDeferredUnreadRefresh();
     expect(api.fetchActors).toHaveBeenCalledTimes(1);
-    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false, undefined, { includeInternal: true });
+    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false, { signal: expect.any(AbortSignal) }, { includeInternal: true });
 
     resolvePureRead?.({ ok: true, result: { actors: [{ id: "peer-1" }] } } as Awaited<ReturnType<typeof api.fetchActors>>);
     await vi.waitFor(() => {
@@ -959,8 +991,8 @@ describe("useGroupStore actors fetch policy", () => {
     await useGroupStore.getState().loadGroup("g-demo");
 
     await vi.waitFor(() => {
-      expect(api.fetchContext).toHaveBeenNthCalledWith(1, "g-demo", { detail: "summary" });
-      expect(api.fetchContext).toHaveBeenNthCalledWith(2, "g-demo", { detail: "full", fresh: true });
+      expect(api.fetchContext).toHaveBeenNthCalledWith(1, "g-demo", { detail: "summary", signal: expect.any(AbortSignal) });
+      expect(api.fetchContext).toHaveBeenNthCalledWith(2, "g-demo", { detail: "full", fresh: true, signal: expect.any(AbortSignal) });
       expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:2");
       expect(useGroupStore.getState().groupContext?.agent_states?.[0]?.id).toBe("peer-1");
     });
@@ -994,7 +1026,7 @@ describe("useGroupStore actors fetch policy", () => {
 
     await vi.waitFor(() => {
       expect(api.fetchContext).toHaveBeenCalledTimes(1);
-      expect(api.fetchContext).toHaveBeenNthCalledWith(1, "g-demo", { detail: "summary" });
+      expect(api.fetchContext).toHaveBeenNthCalledWith(1, "g-demo", { detail: "summary", signal: expect.any(AbortSignal) });
       expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:cached");
       expect(useGroupStore.getState().groupContext?.agent_states?.[0]?.id).toBe("peer-cached");
     });
