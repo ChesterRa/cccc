@@ -141,7 +141,7 @@ def render_role_system_prompt(
         "- No fabrication. Verify before claiming done.",
         visible_reply_line,
         "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs.",
-        "- Terminal output is not delivery.",
+        "- Terminal output is not delivered.",
         "- A status message, plan, or promise is not task progress; for action requests, either start the work now or state the exact blocker.",
         "- At key transitions, sync shared control-plane state and your cccc_agent_state.",
         "- Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.",

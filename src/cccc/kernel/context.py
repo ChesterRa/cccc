@@ -186,7 +186,6 @@ class AgentStateWarm:
         environment_summary: str = "",
         user_model: str = "",
         persona_notes: str = "",
-        resume_hint: str = "",
     ):
         self.what_changed = what_changed
         self.open_loops = open_loops or []
@@ -194,7 +193,6 @@ class AgentStateWarm:
         self.environment_summary = environment_summary
         self.user_model = user_model
         self.persona_notes = persona_notes
-        self.resume_hint = resume_hint
 
 
 class AgentState:
@@ -687,7 +685,6 @@ class ContextStorage:
                             environment_summary=str(warm_raw.get("environment_summary") or ""),
                             user_model=str(warm_raw.get("user_model") or ""),
                             persona_notes=str(warm_raw.get("persona_notes") or ""),
-                            resume_hint=str(warm_raw.get("resume_hint") or ""),
                         ),
                         updated_at=str(raw.get("updated_at") or "") or None,
                     )
@@ -715,7 +712,6 @@ class ContextStorage:
                         "environment_summary": agent.warm.environment_summary,
                         "user_model": agent.warm.user_model,
                         "persona_notes": agent.warm.persona_notes,
-                        "resume_hint": agent.warm.resume_hint,
                     },
                     "updated_at": agent.updated_at,
                 }

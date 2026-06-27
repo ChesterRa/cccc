@@ -213,7 +213,6 @@ Agent states are keyed by `actor_id`.
   environment_summary?: string
   user_model?: string
   persona_notes?: string
-  resume_hint?: string
 }
 ```
 
@@ -222,7 +221,10 @@ Permission: self / user.
 Notes:
 - Partial patch.
 - Daemon stores data into `hot` (`active_task_id`, `focus`, `blockers`, `next_action`) and `warm` (the rest).
+- `open_loops` is the current memo for unfinished work, unresolved facts, risks, assumptions, and follow-ups.
+- `commitments` records promises made to users or other actors.
 - `agent_state` is actor-owned working state. Foreman should guide peers via tasks, coordination, or help/role-notes, not by directly rewriting a peer's `agent_state`.
+- `resume_hint` is not part of this contract; clients must use `open_loops` for current memo entries.
 - Legacy aliases `agent_id`, `environment`, `user_profile`, and `notes` are tolerated by daemon but SHOULD NOT be used by new clients.
 
 #### `agent_state.clear`

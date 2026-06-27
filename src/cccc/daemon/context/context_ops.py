@@ -233,7 +233,6 @@ def _agent_state_to_dict(agent: AgentState) -> Dict[str, Any]:
             "environment_summary": agent.warm.environment_summary,
             "user_model": agent.warm.user_model,
             "persona_notes": agent.warm.persona_notes,
-            "resume_hint": agent.warm.resume_hint,
         },
         "updated_at": agent.updated_at,
     }
@@ -1361,6 +1360,11 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 actor_id = str(raw.get("actor_id") or raw.get("agent_id") or "").strip()
                 if not actor_id:
                     raise ValueError(f"op[{idx}] agent_state.update actor_id is required")
+                if "resume_hint" in raw:
+                    raise ValueError(
+                        f"op[{idx}] agent_state.update field resume_hint is unsupported; "
+                        "use open_loops for current memo entries"
+                    )
                 perm_err = _check_permission(by, op_name, group_id, target_actor_id=actor_id)
                 if perm_err:
                     raise ValueError(perm_err)
@@ -1420,11 +1424,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     value = _normalize_text(source, max_len=600)
                     if warm.persona_notes != value:
                         warm.persona_notes = value
-                        updated = True
-                if "resume_hint" in raw:
-                    value = _normalize_text(raw.get("resume_hint"), max_len=400)
-                    if warm.resume_hint != value:
-                        warm.resume_hint = value
                         updated = True
                 if updated:
                     agent.hot = hot

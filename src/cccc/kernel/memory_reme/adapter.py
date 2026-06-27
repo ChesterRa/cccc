@@ -249,7 +249,8 @@ def summarize_daily_messages(
             next_action = str(hot.get("next_action") or "").strip()
             blockers = hot.get("blockers") if isinstance(hot.get("blockers"), list) else []
             what_changed = str(warm.get("what_changed") or "").strip()
-            resume_hint = str(warm.get("resume_hint") or "").strip()
+            open_loops = warm.get("open_loops") if isinstance(warm.get("open_loops"), list) else []
+            commitments = warm.get("commitments") if isinstance(warm.get("commitments"), list) else []
             if focus:
                 parts.append(f"focus={focus[:120]}")
             if next_action:
@@ -259,8 +260,12 @@ def summarize_daily_messages(
                 parts.append(f"blockers={blocker_text}")
             if what_changed:
                 parts.append(f"changed={what_changed[:120]}")
-            if resume_hint:
-                parts.append(f"resume={resume_hint[:120]}")
+            loop_text = "; ".join(str(x or "").strip()[:80] for x in open_loops[:2] if str(x or "").strip())
+            if loop_text:
+                parts.append(f"open={loop_text}")
+            commitment_text = "; ".join(str(x or "").strip()[:80] for x in commitments[:2] if str(x or "").strip())
+            if commitment_text:
+                parts.append(f"commit={commitment_text}")
             if parts:
                 agent_lines.append("- " + " | ".join(parts))
         if agent_lines:

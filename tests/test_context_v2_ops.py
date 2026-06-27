@@ -818,7 +818,7 @@ class TestContextV2Ops(unittest.TestCase):
                     "blockers": ["dep waiting"],
                     "next_action": "write tests",
                     "what_changed": "context reset pending",
-                    "resume_hint": "open failing test first",
+                    "open_loops": ["open failing test first"],
                 }],
                 by="peer1",
             )
@@ -835,8 +835,27 @@ class TestContextV2Ops(unittest.TestCase):
                 "environment_summary": "",
                 "user_model": "",
                 "persona_notes": "",
-                "resume_hint": "",
             })
+        finally:
+            cleanup()
+
+    def test_agent_state_update_rejects_unsupported_resume_hint(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            resp, _ = self._sync(
+                gid,
+                [{
+                    "op": "agent_state.update",
+                    "actor_id": "peer1",
+                    "resume_hint": "do not silently drop this",
+                }],
+                by="peer1",
+            )
+            self.assertFalse(resp.ok)
+            self.assertEqual(resp.error.code, "context_sync_error")
+            self.assertIn("resume_hint is unsupported", str(resp.error.message))
+            self.assertIn("open_loops", str(resp.error.message))
         finally:
             cleanup()
 

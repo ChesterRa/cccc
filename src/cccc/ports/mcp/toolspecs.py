@@ -1119,12 +1119,22 @@ MCP_TOOLS = [
                 "blockers": {"type": "array", "items": {"type": "string"}},
                 "next_action": {"type": "string"},
                 "what_changed": {"type": "string"},
-                "open_loops": {"type": "array", "items": {"type": "string"}},
-                "commitments": {"type": "array", "items": {"type": "string"}},
+                "open_loops": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Current memo: unfinished work, unresolved facts, risks, assumptions, Creed-derived warnings, and follow-ups.",
+                },
+                "commitments": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Promises made to the user or other actors.",
+                },
                 "environment_summary": {"type": "string"},
                 "user_model": {"type": "string"},
-                "persona_notes": {"type": "string"},
-                "resume_hint": {"type": "string"},
+                "persona_notes": {
+                    "type": "string",
+                    "description": "Durable stance or preference notes, not temporary task memos.",
+                },
             }
         ),
     },

@@ -362,13 +362,12 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(hint.get("kind"), "resume_checkpoint")
         message = str(hint.get("message") or "")
         self.assertIn("Reply sent.", message)
-        self.assertIn("Reorient after this interruption", message)
-        self.assertIn("unfinished work", message)
-        self.assertIn("open loops", message)
+        self.assertIn("interrupted longer work", message)
+        self.assertIn("refresh cccc_agent_state", message)
+        self.assertIn("focus/next_action", message)
+        self.assertIn("open_loops", message)
         self.assertIn("commitments", message)
-        self.assertIn("larger goal", message)
-        self.assertIn("highest-value next step", message)
-        self.assertIn("brief quality/risk pass", message)
+        self.assertIn("highest-value unfinished work", message)
 
     def test_message_send_adds_lightweight_tool_boundary_hint(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -394,11 +393,11 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         hint = out.get("post_send_hint") if isinstance(out.get("post_send_hint"), dict) else {}
         self.assertEqual(hint.get("kind"), "message_tool_boundary")
         message = str(hint.get("message") or "")
-        self.assertIn("New message sent.", message)
-        self.assertIn("answering an existing delivered message/event", message)
+        self.assertIn("Message sent.", message)
+        self.assertIn("answered an existing delivered message/event", message)
         self.assertIn("cccc_message_reply(event_id=...)", message)
         self.assertNotIn("unfinished work", message)
-        self.assertNotIn("quality/risk pass", message)
+        self.assertNotIn("resume_hint", message)
 
     def test_tracked_send_passes_task_contract_args(self) -> None:
         from cccc.ports.mcp import server as mcp_server

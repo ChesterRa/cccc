@@ -27,12 +27,12 @@ _FILENAME_MIME_FALLBACKS = {
     ".markdown": "text/markdown",
 }
 POST_REPLY_RESUME_CHECKPOINT = (
-    "Reply sent. Reorient after this interruption: review unfinished work, "
-    "open loops, commitments, and the larger goal; resume the highest-value "
-    "next step. If nothing remains, do one brief quality/risk pass and stop cleanly."
+    "Reply sent. If this interrupted longer work, refresh cccc_agent_state with "
+    "focus/next_action plus open_loops and commitments; then "
+    "resume the highest-value unfinished work."
 )
 POST_SEND_TOOL_BOUNDARY = (
-    "New message sent. If you were answering an existing delivered message/event, "
+    "Message sent. If this answered an existing delivered message/event, "
     "use cccc_message_reply(event_id=...) next time."
 )
 

@@ -29,6 +29,22 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             self.assertIsInstance(props, dict, msg=f"MCP_TOOLS[{idx}] inputSchema.properties must be dict")
             self.assertIsInstance(required, list, msg=f"MCP_TOOLS[{idx}] inputSchema.required must be list")
 
+    def test_agent_state_toolspec_describes_current_memo_fields(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_agent_state"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+
+        open_loops = props.get("open_loops") if isinstance(props, dict) else {}
+        commitments = props.get("commitments") if isinstance(props, dict) else {}
+        persona_notes = props.get("persona_notes") if isinstance(props, dict) else {}
+        self.assertIn("Current memo", str(open_loops.get("description") or ""))
+        self.assertIn("Creed-derived warnings", str(open_loops.get("description") or ""))
+        self.assertIn("Promises", str(commitments.get("description") or ""))
+        self.assertIn("not temporary task memos", str(persona_notes.get("description") or ""))
+        self.assertNotIn("resume_hint", props)
+
     def test_space_query_toolspec_options_are_explicit(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_space"), None)
         self.assertIsInstance(spec, dict)

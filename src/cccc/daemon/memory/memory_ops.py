@@ -141,9 +141,14 @@ def _sanitize_agents(items: Any, *, max_items: int) -> List[Dict[str, Any]]:
         what_changed = _trim_text(warm.get("what_changed") if warm else raw.get("what_changed"), max_chars=140)
         if what_changed:
             row["what_changed"] = what_changed
-        resume_hint = _trim_text(warm.get("resume_hint") if warm else raw.get("resume_hint"), max_chars=140)
-        if resume_hint:
-            row["resume_hint"] = resume_hint
+        open_loops_raw = warm.get("open_loops") if isinstance(warm.get("open_loops"), list) else raw.get("open_loops") if isinstance(raw.get("open_loops"), list) else []
+        open_loops = [_trim_text(x, max_chars=100) for x in open_loops_raw if str(x or "").strip()][:3]
+        if open_loops:
+            row["open_loops"] = open_loops
+        commitments_raw = warm.get("commitments") if isinstance(warm.get("commitments"), list) else raw.get("commitments") if isinstance(raw.get("commitments"), list) else []
+        commitments = [_trim_text(x, max_chars=100) for x in commitments_raw if str(x or "").strip()][:3]
+        if commitments:
+            row["commitments"] = commitments
         environment_summary = _trim_text(warm.get("environment_summary") if warm else raw.get("environment_summary"), max_chars=120)
         if environment_summary:
             row["environment_summary"] = environment_summary
@@ -392,7 +397,8 @@ def _build_group_signal_pack(group_id: str, *, token_budget: int) -> tuple[Optio
                 },
                 "warm": {
                     "what_changed": getattr(getattr(agent, "warm", None), "what_changed", ""),
-                    "resume_hint": getattr(getattr(agent, "warm", None), "resume_hint", ""),
+                    "open_loops": list(getattr(getattr(agent, "warm", None), "open_loops", []) or []),
+                    "commitments": list(getattr(getattr(agent, "warm", None), "commitments", []) or []),
                     "environment_summary": getattr(getattr(agent, "warm", None), "environment_summary", ""),
                     "user_model": getattr(getattr(agent, "warm", None), "user_model", ""),
                     "persona_notes": getattr(getattr(agent, "warm", None), "persona_notes", ""),

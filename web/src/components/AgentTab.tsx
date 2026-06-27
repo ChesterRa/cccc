@@ -691,7 +691,12 @@ export function AgentTab({
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
       <div className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
-          <div className="flex h-full min-h-0 flex-col px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3">
+          <div
+            className={classNames(
+              "flex h-full min-h-0 flex-col",
+              isWebModel ? "px-3 pb-3 pt-2 sm:px-4 sm:pb-4" : "px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3",
+            )}
+          >
             <div
               className={classNames(
                 "mx-auto flex w-full min-h-0 flex-1 flex-col",
@@ -704,7 +709,6 @@ export function AgentTab({
                   actor={actor}
                   isDark={isDark}
                   isVisible={isVisible}
-                  isRunning={isRunning}
                   readOnly={readOnly}
                 />
               ) : null}

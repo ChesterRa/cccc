@@ -339,7 +339,6 @@ def agent_state_update(
     environment_summary: Optional[str] = None,
     user_model: Optional[str] = None,
     persona_notes: Optional[str] = None,
-    resume_hint: Optional[str] = None,
     by: Optional[str] = None,
 ) -> Dict[str, Any]:
     op: Dict[str, Any] = {"op": "agent_state.update", "actor_id": actor_id}
@@ -351,7 +350,6 @@ def agent_state_update(
         ("environment_summary", environment_summary),
         ("user_model", user_model),
         ("persona_notes", persona_notes),
-        ("resume_hint", resume_hint),
     ):
         if value is not None:
             op[field] = value
@@ -696,7 +694,6 @@ def _handle_context_namespace(
             "environment_summary",
             "user_model",
             "persona_notes",
-            "resume_hint",
         ):
             if field in arguments:
                 kwargs[field] = arguments[field]

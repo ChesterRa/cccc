@@ -69,7 +69,8 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
                     "hot": {"focus": "memory lane", "next_action": "verify recall gate", "active_task_id": "T001", "blockers": []},
                     "warm": {
                         "what_changed": "seeded",
-                        "resume_hint": "open memory lane",
+                        "open_loops": ["verify recall gate evidence", "do not forget scoped dirty repo"],
+                        "commitments": ["report validation evidence to user"],
                         "environment_summary": "repo dirty but scoped",
                         "user_model": "prefers concise evidence",
                         "persona_notes": "be precise and low-noise",
@@ -120,6 +121,8 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
 
         recovery = out["recovery"]
         self.assertEqual(recovery["self_state"]["hot"]["active_task_id"], "T001")
+        self.assertEqual(recovery["self_state"]["recovery"]["open_loops"], ["verify recall gate evidence", "do not forget scoped dirty repo"])
+        self.assertEqual(recovery["self_state"]["recovery"]["commitments"], ["report validation evidence to user"])
         self.assertEqual(recovery["self_state"]["recovery"]["environment_summary"], "repo dirty but scoped")
         self.assertEqual(recovery["self_state"]["recovery"]["user_model"], "prefers concise evidence")
         self.assertEqual(recovery["self_state"]["recovery"]["persona_notes"], "be precise and low-noise")
@@ -186,7 +189,7 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
                     "hot": {"focus": "", "next_action": "", "active_task_id": None, "blockers": []},
                     "warm": {
                         "what_changed": "",
-                        "resume_hint": "re-check shared assumptions",
+                        "open_loops": ["re-check shared assumptions"],
                         "environment_summary": "workspace has multiple parallel edits",
                         "user_model": "cares about ROI and low noise",
                         "persona_notes": "ask before overbuilding",
@@ -256,7 +259,8 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
                     },
                     "warm": {
                         "what_changed": "picked up recovery hardening",
-                        "resume_hint": "inspect continuity pack",
+                        "open_loops": ["preserve recovery fields under budget"],
+                        "commitments": ["keep bootstrap packet slim"],
                         "environment_summary": "workspace has many parallel changes but current scope is limited",
                         "user_model": "prefers simple mechanisms with high ROI",
                         "persona_notes": "preserve continuity and do not overbuild",
@@ -276,6 +280,9 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertIn("workspace has many parallel changes", str(mini.get("environment_summary") or ""))
         self.assertIn("prefers simple mechanisms", str(mini.get("user_model") or ""))
         self.assertIn("preserve continuity", str(mini.get("persona_notes") or ""))
+        warm = agent_state.get("warm") if isinstance(agent_state.get("warm"), dict) else {}
+        self.assertEqual(warm.get("open_loops"), ["preserve recovery fields under budget"])
+        self.assertEqual(warm.get("commitments"), ["keep bootstrap packet slim"])
         self.assertTrue(assigned_active)
         self.assertEqual(assigned_active[0].get("task_type"), "optimization")
         self.assertEqual(assigned_active[0].get("parent_id"), "T000")

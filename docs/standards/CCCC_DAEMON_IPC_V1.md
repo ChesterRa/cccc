@@ -2673,7 +2673,6 @@ Result:
       environment_summary?: string | null
       user_model?: string | null
       persona_notes?: string | null
-      resume_hint?: string | null
     }
     updated_at?: string | null
   }>

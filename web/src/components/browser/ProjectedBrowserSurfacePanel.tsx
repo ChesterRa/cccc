@@ -558,7 +558,7 @@ export function ProjectedBrowserSurfacePanel({
         rfb.scaleViewport = true;
         rfb.clipViewport = false;
         rfb.resizeSession = false;
-        rfb.background = "transparent";
+        rfb.background = "#ffffff";
         rfb.addEventListener("connect", () => {
           if (!cancelled) setVncConnected(true);
         });
@@ -737,7 +737,7 @@ export function ProjectedBrowserSurfacePanel({
   const panelClassName = classNames(
     "relative flex flex-col overflow-hidden outline-none",
     chromeMode === "embedded"
-      ? "rounded-xl"
+      ? "rounded-none"
       : classNames("rounded-3xl border", isDark ? "border-white/10 bg-slate-950/80" : "border-black/10 bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)]"),
     isExpanded ? "h-full w-full shadow-2xl sm:h-[min(92dvh,980px)] sm:w-[min(96vw,1600px)]" : viewportClassName || "flex-1 min-h-0",
   );
@@ -754,7 +754,7 @@ export function ProjectedBrowserSurfacePanel({
         className={classNames(
           "flex flex-wrap items-center gap-2 text-xs",
           chromeMode === "embedded"
-            ? classNames("border-b px-2 py-1.5", isDark ? "border-white/6 bg-slate-950/50 text-slate-400" : "border-black/5 bg-black/[0.03] text-gray-600")
+            ? classNames("border-b px-2 py-1.5", isDark ? "border-white/[0.06] bg-slate-950/50 text-slate-400" : "border-black/[0.05] bg-black/[0.03] text-gray-600")
             : classNames("border-b px-4 py-3", isDark ? "border-white/10 bg-slate-950/70 text-slate-300" : "border-black/10 bg-white/75 text-gray-700"),
         )}
       >
@@ -834,10 +834,18 @@ export function ProjectedBrowserSurfacePanel({
         ) : null}
       </div>
 
-      <div className={classNames("relative flex min-h-0 flex-1 items-center justify-center overflow-hidden", chromeMode === "embedded" ? "" : "p-4")}>
+      <div className={classNames("relative flex min-h-0 flex-1 items-center justify-center overflow-hidden", chromeMode === "embedded" ? "bg-white" : "p-4")}>
         {vncAvailable ? (
           <div className="relative h-full w-full">
-            <div ref={vncTargetRef} className="h-full w-full overflow-hidden" />
+            <div
+              ref={vncTargetRef}
+              className={classNames(
+                "h-full w-full overflow-hidden",
+                chromeMode === "embedded"
+                  ? "bg-white [&>*]:!overflow-hidden [&_*]:!border-0 [&_canvas]:!block [&_canvas]:!outline-none"
+                  : "",
+              )}
+            />
             {!vncConnected ? (
               <div
                 className={classNames(

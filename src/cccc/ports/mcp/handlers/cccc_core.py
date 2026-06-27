@@ -35,6 +35,20 @@ def _trim_text(value: Any, *, max_chars: int) -> str:
     return text[: max_chars - 3].rstrip() + "..."
 
 
+def _trim_text_list(value: Any, *, max_items: int, max_chars: int) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    out: List[str] = []
+    for item in value:
+        text = _trim_text(item, max_chars=max_chars)
+        if not text:
+            continue
+        out.append(text)
+        if len(out) >= max_items:
+            break
+    return out
+
+
 _BOOTSTRAP_INTERRUPT_NOTIFY_KINDS = {
     "actor_idle",
     "auto_idle",
@@ -165,7 +179,12 @@ def _memory_recall_query_from_context(*, context: Dict[str, Any], actor_id: str)
         _add(8, attention[0].get("title"), max_chars=100)
 
     _add(6, warm.get("what_changed"), max_chars=120)
-    _add(7, warm.get("resume_hint"), max_chars=120)
+    open_loops = warm.get("open_loops") if isinstance(warm.get("open_loops"), list) else []
+    commitments = warm.get("commitments") if isinstance(warm.get("commitments"), list) else []
+    for item in open_loops[:2]:
+        _add(7, item, max_chars=120)
+    for item in commitments[:2]:
+        _add(8, item, max_chars=120)
     _add(9, brief.get("objective"), max_chars=120)
     _add(10, warm.get("environment_summary") or mini.get("environment_summary"), max_chars=100)
     _add(11, warm.get("user_model") or mini.get("user_model"), max_chars=100)
@@ -362,7 +381,8 @@ def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str, group_id
     mind_context_mini = build_mind_context_mini(raw_warm, max_chars=84)
     warm = {
         "what_changed": _trim_text(raw_warm.get("what_changed"), max_chars=180),
-        "resume_hint": _trim_text(raw_warm.get("resume_hint"), max_chars=180),
+        "open_loops": _trim_text_list(raw_warm.get("open_loops"), max_items=3, max_chars=140),
+        "commitments": _trim_text_list(raw_warm.get("commitments"), max_items=3, max_chars=140),
         "environment_summary": _trim_text(raw_warm.get("environment_summary"), max_chars=160),
         "user_model": _trim_text(raw_warm.get("user_model"), max_chars=160),
         "persona_notes": _trim_text(raw_warm.get("persona_notes"), max_chars=160),
@@ -441,13 +461,21 @@ def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str, group_id
     if _estimate_payload_tokens(pack) > hard_cap:
         compact_warm = {
             "what_changed": _trim_text(raw_warm.get("what_changed"), max_chars=96),
-            "resume_hint": _trim_text(raw_warm.get("resume_hint"), max_chars=96),
+            "open_loops": _trim_text_list(raw_warm.get("open_loops"), max_items=2, max_chars=96),
+            "commitments": _trim_text_list(raw_warm.get("commitments"), max_items=2, max_chars=96),
             "environment_summary": _trim_text(raw_warm.get("environment_summary"), max_chars=72),
             "user_model": _trim_text(raw_warm.get("user_model"), max_chars=72),
             "persona_notes": _trim_text(raw_warm.get("persona_notes"), max_chars=72),
         }
         pack["agent_state"]["warm"] = {key: value for key, value in compact_warm.items() if value}
-    optional_warm_drop_order = ("resume_hint", "what_changed", "persona_notes", "user_model", "environment_summary")
+    optional_warm_drop_order = (
+        "environment_summary",
+        "user_model",
+        "persona_notes",
+        "what_changed",
+        "commitments",
+        "open_loops",
+    )
     while _estimate_payload_tokens(pack) > hard_cap and pack["agent_state"]["warm"]:
         dropped = False
         for field in optional_warm_drop_order:

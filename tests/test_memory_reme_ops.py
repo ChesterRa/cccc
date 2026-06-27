@@ -582,7 +582,7 @@ class TestMemoryRemeOps(unittest.TestCase):
                     {
                         "id": f"a{i}",
                         "hot": {"focus": "G" * 400, "next_action": "H" * 400, "blockers": ["I" * 300]},
-                        "warm": {"what_changed": "seeded", "resume_hint": "re-open memory lane"},
+                        "warm": {"what_changed": "seeded", "open_loops": ["re-open memory lane"]},
                     }
                     for i in range(20)
                 ],
@@ -771,7 +771,7 @@ class TestMemoryRemeOps(unittest.TestCase):
                             "focus": "primary work",
                             "next_action": "verify bootstrap recovery",
                             "what_changed": "picked up the active task",
-                            "resume_hint": "re-open the bootstrap tests",
+                            "open_loops": ["re-open the bootstrap tests"],
                             "environment_summary": "workspace has a small dirty tree",
                             "user_model": "prefers concise evidence",
                             "persona_notes": "do not overbuild the fix",
@@ -793,7 +793,7 @@ class TestMemoryRemeOps(unittest.TestCase):
                             "focus": "secondary",
                             "next_action": "wait",
                             "what_changed": "idle",
-                            "resume_hint": "none",
+                            "open_loops": ["none"],
                             "environment_summary": "cold",
                             "user_model": "secondary",
                             "persona_notes": "secondary",
@@ -848,7 +848,7 @@ class TestMemoryRemeOps(unittest.TestCase):
                         },
                         "warm": {
                             "what_changed": "picked up the task",
-                            "resume_hint": "re-open tests",
+                            "open_loops": ["re-open tests"],
                             "environment_summary": "workspace has a very long environment summary " * 8,
                             "user_model": "user likes concise evidence " * 8,
                             "persona_notes": "avoid overbuilding and keep low noise " * 8,

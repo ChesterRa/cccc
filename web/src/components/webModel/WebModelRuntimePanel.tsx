@@ -6,7 +6,7 @@ import type { WebModelBrowserSession } from "../../services/api";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
 import { useModalStore } from "../../stores";
-import { PlusIcon, RefreshIcon, SettingsIcon } from "../Icons";
+import { RefreshIcon, SettingsIcon } from "../Icons";
 import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurfacePanel";
 
 type Tone = "ready" | "needs" | "neutral" | "error";
@@ -23,7 +23,6 @@ interface WebModelRuntimePanelProps {
   actor: Actor;
   isDark: boolean;
   isVisible: boolean;
-  isRunning: boolean;
   readOnly?: boolean;
 }
 
@@ -108,24 +107,37 @@ function buildChatGptBlock(session: WebModelBrowserSession | null): StatusBlock 
   };
 }
 
+function targetLabelValue(raw: string, state: string): string {
+  const label = raw.trim();
+  if (state === "missing") return "No target";
+  if (state === "new_chat_pending") {
+    if (label.toLowerCase().includes("binding")) return "Binding new chat";
+    return "New chat next";
+  }
+  if (state === "bound") return "Existing chat";
+  if (!label) return state ? "Target selected" : "No target";
+  return label
+    .replace(/\bChatGPT\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
   const health = session?.health_snapshot;
   if (health?.target?.state) {
     const state = String(health.target.state || "").trim();
-    const url = String(health.target.url || "").trim();
     return {
       label: "Target",
-      value: String(health.target.label || "").trim() || "Target",
-      detail: url ? shortChatGptUrl(url) : String(health.target.reason || "").trim() || "ChatGPT delivery target.",
+      value: targetLabelValue(String(health.target.label || ""), state),
+      detail: String(health.target.reason || "").trim() || "ChatGPT delivery target.",
       tone: state === "missing" ? "needs" : "ready",
     };
   }
-  const conversationUrl = String(session?.conversation_url || "").trim();
-  if (conversationUrl) {
+  if (session?.conversation_url) {
     return {
       label: "Target",
-      value: "Bound chat",
-      detail: shortChatGptUrl(conversationUrl),
+      value: "Existing chat",
+      detail: "Next delivery goes to the saved ChatGPT conversation.",
       tone: "ready",
     };
   }
@@ -133,13 +145,13 @@ function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
     return {
       label: "Target",
       value: "New chat next",
-      detail: "Next delivery creates and binds a ChatGPT conversation.",
+      detail: "Next delivery starts a fresh ChatGPT chat and binds it.",
       tone: "ready",
     };
   }
   return {
     label: "Target",
-    value: "Not selected",
+    value: "No target",
     detail: "Choose a target chat in settings.",
     tone: "needs",
   };
@@ -270,22 +282,10 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
   };
 }
 
-function StatusCell({ block }: { block: StatusBlock }) {
-  return (
-    <div className="min-w-0 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <div className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-          {block.label}
-        </div>
-        <span className={classNames("shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold", tonePillClass(block.tone))}>
-          {block.value}
-        </span>
-      </div>
-      <div className="mt-2 truncate text-xs leading-5 text-[var(--color-text-tertiary)]" title={block.detail}>
-        {block.detail}
-      </div>
-    </div>
-  );
+function shouldShowActivity(block: StatusBlock, queuedCount: number): boolean {
+  if (queuedCount > 0) return true;
+  if (block.tone !== "neutral") return true;
+  return block.value !== "No recent delivery";
 }
 
 export function WebModelRuntimePanel({
@@ -293,7 +293,6 @@ export function WebModelRuntimePanel({
   actor,
   isDark,
   isVisible,
-  isRunning,
   readOnly,
 }: WebModelRuntimePanelProps) {
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
@@ -354,29 +353,6 @@ export function WebModelRuntimePanel({
     }
   };
 
-  const useNewChat = async () => {
-    if (readOnly || !groupId || !actorId) return;
-    setBusyAction("new-chat");
-    setError("");
-    try {
-      const resp = await api.bindCurrentWebModelBrowserConversation({
-        groupId,
-        actorId,
-        conversationUrl: "https://chatgpt.com/",
-        newChat: true,
-      });
-      if (resp.ok) {
-        setSession(resp.result.browser_session || {});
-      } else {
-        setError(resp.error?.message || "Failed to select a new ChatGPT chat.");
-      }
-    } catch {
-      setError("Failed to select a new ChatGPT chat.");
-    } finally {
-      setBusyAction("");
-    }
-  };
-
   const openSettings = () => {
     openSettingsTarget({ scope: "global", tab: "webModels" });
   };
@@ -413,95 +389,88 @@ export function WebModelRuntimePanel({
     return resp;
   }, [actorId, canControlSurface, groupId, readOnly]);
 
-  const blocks = useMemo(
-    () => [
-      buildChatGptBlock(session),
-      buildTargetBlock(session),
-      buildActivityBlock(session, queuedCount),
-    ],
-    [queuedCount, session],
-  );
+  const chatGptBlock = useMemo(() => buildChatGptBlock(session), [session]);
+  const targetBlock = useMemo(() => buildTargetBlock(session), [session]);
+  const activityBlock = useMemo(() => buildActivityBlock(session, queuedCount), [queuedCount, session]);
   const primaryActionNeeded = !session?.ready || (!session?.conversation_url && !session?.pending_new_chat_bind);
-  const showNewChatAction = !readOnly && !session?.conversation_url && !session?.pending_new_chat_bind;
   const nextAction = session?.health_snapshot?.next_action;
   const recommendedAction = String(nextAction?.recommended || "none").trim();
   const surfaceDisabledMessage = readOnly
     ? "Browser view is unavailable in read-only mode."
     : "";
+  const showActivity = shouldShowActivity(activityBlock, queuedCount);
+  const nextSummary = recommendedAction && recommendedAction !== "none"
+    ? String(nextAction?.label || "").trim() || recommendedAction
+    : "";
 
   return (
     <section
       className={classNames(
-        "flex min-h-0 flex-1 flex-col rounded-[20px] border px-3 py-3 shadow-[0_20px_70px_-55px_rgba(15,23,42,0.65)] sm:px-4",
-        isDark
-          ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.92),rgba(13,14,18,0.98))]"
-          : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]",
+        "flex min-h-0 flex-1 flex-col gap-3",
+        isDark ? "text-slate-100" : "text-[rgb(35,36,37)]",
       )}
       aria-label="ChatGPT Web Model runtime"
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">ChatGPT Web Model</div>
-            <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-semibold", tonePillClass(isRunning ? "ready" : "neutral"))}>
-              {isRunning ? "Actor running" : "Actor stopped"}
+      <div
+        className={classNames(
+          "shrink-0 rounded-2xl border px-2 py-2 shadow-[0_14px_42px_-38px_rgba(15,23,42,0.65)]",
+          isDark ? "border-white/10 bg-white/[0.035]" : "border-black/[0.07] bg-white/[0.78]",
+        )}
+      >
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 px-1">
+            <span className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", tonePillClass(chatGptBlock.tone))}>
+              ChatGPT {chatGptBlock.value}
             </span>
+            <span
+              className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", tonePillClass(targetBlock.tone))}
+              title={targetBlock.detail}
+            >
+              Target {targetBlock.value}
+            </span>
+            {showActivity ? (
+              <span
+                className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", tonePillClass(activityBlock.tone))}
+                title={activityBlock.detail}
+              >
+                {activityBlock.value}
+              </span>
+            ) : null}
+            {nextSummary ? (
+              <span
+                className="min-w-0 max-w-[min(54vw,520px)] truncate text-xs text-[var(--color-text-tertiary)]"
+                title={nextAction?.reason ? `${nextSummary}: ${nextAction.reason}` : nextSummary}
+              >
+                Next: {nextSummary}
+              </span>
+            ) : null}
           </div>
-          <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-            Browser delivery uses the bound ChatGPT conversation below.
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={reloadChatGptPage}
-            disabled={Boolean(busyAction)}
-            className={iconButtonClass(false)}
-            title="Restart ChatGPT browser"
-            aria-label="Restart ChatGPT browser"
-          >
-            <RefreshIcon size={17} aria-hidden="true" />
-          </button>
-          {showNewChatAction ? (
+          <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={useNewChat}
+              onClick={reloadChatGptPage}
               disabled={Boolean(busyAction)}
               className={iconButtonClass(false)}
-              title="Use a new ChatGPT chat on next delivery"
-              aria-label="Use a new ChatGPT chat on next delivery"
+              title="Restart ChatGPT browser"
+              aria-label="Restart ChatGPT browser"
             >
-              <PlusIcon size={17} aria-hidden="true" />
+              <RefreshIcon size={17} aria-hidden="true" />
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={openSettings}
-            className={iconButtonClass(primaryActionNeeded)}
-            title="Open ChatGPT Web Model settings"
-            aria-label="Open ChatGPT Web Model settings"
-          >
-            <SettingsIcon size={17} aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              onClick={openSettings}
+              className={iconButtonClass(primaryActionNeeded)}
+              title="Open ChatGPT Web Model settings"
+              aria-label="Open ChatGPT Web Model settings"
+            >
+              <SettingsIcon size={17} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
-
-      <div className="mt-3 grid gap-2 md:grid-cols-3">
-        {blocks.map((block) => (
-          <StatusCell key={block.label} block={block} />
-        ))}
-      </div>
-
-      {recommendedAction && recommendedAction !== "none" ? (
-        <div className="mt-2 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
-          <span className="font-semibold text-[var(--color-text-primary)]">Next:</span>{" "}
-          {String(nextAction?.label || "").trim() || recommendedAction}
-          {nextAction?.reason ? <span className="text-[var(--color-text-tertiary)]"> · {nextAction.reason}</span> : null}
-        </div>
-      ) : null}
 
       {canControlSurface ? (
-        <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <ProjectedBrowserSurfacePanel
             key={`chatgpt-runtime-surface:${groupId}:${actorId}:${surfaceRestartNonce}`}
             isDark={isDark}
@@ -525,13 +494,13 @@ export function WebModelRuntimePanel({
           />
         </div>
       ) : surfaceDisabledMessage ? (
-        <div className="mt-3 flex min-h-[240px] flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3 text-center text-xs leading-5 text-[var(--color-text-tertiary)]">
+        <div className="flex min-h-[240px] flex-1 items-center justify-center rounded-[18px] border border-dashed border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3 text-center text-xs leading-5 text-[var(--color-text-tertiary)]">
           {surfaceDisabledMessage}
         </div>
       ) : null}
 
       {error ? (
-        <div className="mt-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300">
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300">
           {error}
         </div>
       ) : null}
