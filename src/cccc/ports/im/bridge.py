@@ -1537,6 +1537,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
             app_id=feishu_app_id,
             app_secret=feishu_app_secret,
             domain=str(im_config.get("feishu_domain") or "https://open.feishu.cn"),
+            bot_name=str(im_config.get("feishu_bot_name") or os.environ.get("FEISHU_BOT_NAME") or "cccc"),
             log_path=log_path,
         )
     elif platform.lower() == "dingtalk":

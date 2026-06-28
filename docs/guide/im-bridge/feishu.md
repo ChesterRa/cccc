@@ -38,25 +38,11 @@ Copyable scope configuration:
 {
   "scopes": {
     "tenant": [
-      "application:application.app_message_stats.overview:readonly",
-      "application:application:self_manage",
-      "application:bot.menu:write",
-      "cardkit:card:read",
-      "cardkit:card:write",
-      "contact:user.employee_id:readonly",
-      "corehr:file:download",
-      "event:ip_list",
-      "im:chat.access_event.bot_p2p_chat:read",
-      "im:chat.members:bot_access",
-      "im:message",
       "im:message.group_at_msg:readonly",
       "im:message.p2p_msg:readonly",
-      "im:message:readonly",
       "im:message:send_as_bot",
+      "im:message:readonly",
       "im:resource"
-    ],
-    "user": [
-      "im:chat.access_event.bot_p2p_chat:read"
     ]
   }
 }
@@ -64,11 +50,15 @@ Copyable scope configuration:
 ::: tip Required Permissions
 | Scope | Purpose |
 |-------|---------|
-| `im:message*`, `im:resource`, `im:chat.members:bot_access` | Bot send/receive message flow and resource access |
-| `im:chat.access_event.bot_p2p_chat:read` | Receive bot P2P chat access events |
-| `application:*`, `cardkit:*` | Bot self-management, menus, cards, and app stats |
-| `contact:user.employee_id:readonly`, `corehr:file:download`, `event:ip_list` | Supporting identity, file, and platform event access |
+| `im:message.group_at_msg:readonly` | Receive group messages that mention the bot |
+| `im:message.p2p_msg:readonly` | Receive direct messages sent to the bot |
+| `im:message:send_as_bot` | Send CCCC replies as the bot |
+| `im:message:readonly` | Read inbound message metadata/content needed by the bridge |
+| `im:resource` | Upload and download Feishu message images/files |
 :::
+
+`im:resource` is the only Feishu resource/file scope CCCC needs. Do not add
+`corehr:file:download` or other HR/document scopes for IM attachments.
 
 ## Step 3: Configure CCCC
 
@@ -268,6 +258,10 @@ Attach files to your message. Feishu files are downloaded and stored in CCCC's b
 1. Go to **Permissions & Scopes**
 2. Add the missing permission
 3. Submit a new version for approval
+
+If outbound attachments appear as text-only messages or the bridge log contains
+`Access denied` for `/im/v1/files`, add `im:resource`. Feishu requires this
+tenant scope before CCCC can upload files and send them as real Feishu file messages.
 
 ### Bot not receiving messages
 
