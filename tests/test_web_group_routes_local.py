@@ -1,8 +1,9 @@
+import asyncio
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -198,7 +199,7 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
     def test_group_copy_preview_too_large_error_includes_limit_and_file_size(self) -> None:
         _, cleanup = self._with_home()
         try:
-            with patch("cccc.ports.web.routes.groups.WEB_MAX_GROUP_COPY_PACKAGE_BYTES", 8):
+            with patch("cccc.ports.web.routes.group_copy_uploads.WEB_MAX_GROUP_COPY_PACKAGE_BYTES", 8):
                 with self._client() as client:
                     resp = client.post(
                         "/api/v1/groups/copy/preview_import",
@@ -211,6 +212,248 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
             message = str(error.get("message") or "")
             self.assertIn("max 8 bytes", message)
             self.assertIn("selected file is 9 bytes", message)
+        finally:
+            cleanup()
+
+    def test_group_copy_export_too_large_returns_413_not_zip_download(self) -> None:
+        from cccc.daemon.ops import group_copy_ops
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+
+            with patch.object(group_copy_ops, "MAX_PACKAGE_BYTES", 8):
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/copy/export")
+
+            self.assertEqual(resp.status_code, 413)
+            self.assertNotEqual(resp.headers.get("content-type"), "application/zip")
+            error = resp.json().get("error") or {}
+            self.assertEqual(error.get("code"), "copy_package_too_large")
+            details = error.get("details") or {}
+            self.assertEqual(details.get("max_bytes"), 8)
+            self.assertGreater(int(details.get("actual_bytes") or 0), 8)
+        finally:
+            cleanup()
+
+    def test_group_copy_default_package_limit_is_one_gib(self) -> None:
+        from cccc.daemon.ops import group_copy_ops
+        from cccc.ports.web.routes import group_copy_uploads
+
+        self.assertEqual(group_copy_uploads.WEB_MAX_GROUP_COPY_PACKAGE_BYTES, 1024 * 1024 * 1024)
+        self.assertEqual(group_copy_ops.MAX_PACKAGE_BYTES, 1024 * 1024 * 1024)
+
+    def test_group_copy_upload_spool_reads_chunks_and_cleans_up_on_limit(self) -> None:
+        class FakeUpload:
+            def __init__(self, chunks: list[bytes]):
+                self.chunks = list(chunks)
+                self.read_sizes: list[int] = []
+
+            async def read(self, size: int = -1) -> bytes:
+                self.read_sizes.append(size)
+                return self.chunks.pop(0) if self.chunks else b""
+
+        _, cleanup = self._with_home()
+        try:
+            from cccc.ports.web.routes import group_copy_uploads
+            from cccc.ports.web.routes import groups as group_routes
+
+            upload = FakeUpload([b"1234", b"5678", b"9"])
+            with patch.object(group_copy_uploads, "WEB_MAX_GROUP_COPY_PACKAGE_BYTES", 8), patch.object(
+                group_copy_uploads,
+                "WEB_GROUP_COPY_UPLOAD_CHUNK_BYTES",
+                4,
+            ):
+                with self.assertRaises(Exception):
+                    asyncio.run(group_copy_uploads.spool_group_copy_upload(upload))
+
+            self.assertEqual(upload.read_sizes, [4, 4, 4])
+            stage_dir = group_copy_uploads.group_copy_upload_stage_dir()
+            self.assertFalse(any(stage_dir.glob("*.zip")))
+        finally:
+            cleanup()
+
+    def test_group_copy_preview_stages_upload_id_for_import_reuse(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.routes import groups as group_routes
+
+        _, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id = self._create_group()
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.doc["scopes"] = [
+                    {
+                        "scope_key": "s_test",
+                        "url": str(Path(workspace_raw).resolve()),
+                        "label": "workspace",
+                        "git_remote": "",
+                    }
+                ]
+                group.doc["active_scope_key"] = "s_test"
+                group.save()
+
+                with self._client() as client:
+                    export_resp = client.get(f"/api/v1/groups/{group_id}/copy/export")
+                    self.assertEqual(export_resp.status_code, 200)
+                    package_bytes = export_resp.content
+
+                    preview_resp = client.post(
+                        "/api/v1/groups/copy/preview_import",
+                        files={"file": ("group.zip", package_bytes, "application/zip")},
+                    )
+                    self.assertEqual(preview_resp.status_code, 200)
+                    preview_body = preview_resp.json()
+                    self.assertTrue(bool(preview_body.get("ok")), preview_body)
+                    upload_id = str(((preview_body.get("result") or {}).get("upload_id")) or "")
+                    self.assertTrue(upload_id)
+                    staged_path = group_routes._group_copy_upload_path(upload_id)
+                    self.assertTrue(staged_path.is_file())
+
+                    import_resp = client.post(
+                        "/api/v1/groups/copy/import",
+                        data={"upload_id": upload_id, "workspace_root": str(Path(workspace_raw).resolve()), "title": "Imported copy", "by": "user"},
+                    )
+                    self.assertEqual(import_resp.status_code, 200)
+                    import_body = import_resp.json()
+                    self.assertTrue(bool(import_body.get("ok")), import_body)
+                    self.assertFalse(staged_path.exists())
+
+                    export_tmp_dir = Path(os.environ["CCCC_HOME"]) / "tmp" / "group-copy-export"
+                    self.assertFalse(any(export_tmp_dir.glob("*.zip")))
+        finally:
+            cleanup()
+
+    def test_group_copy_upload_id_import_keeps_staging_on_fixable_failure_then_deletes_on_success(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.routes import groups as group_routes
+
+        home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id = self._create_group()
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.doc["scopes"] = [
+                    {
+                        "scope_key": "s_test",
+                        "url": str(Path(workspace_raw).resolve()),
+                        "label": "workspace",
+                        "git_remote": "",
+                    }
+                ]
+                group.doc["active_scope_key"] = "s_test"
+                group.save()
+
+                with self._client() as client:
+                    export_resp = client.get(f"/api/v1/groups/{group_id}/copy/export")
+                    self.assertEqual(export_resp.status_code, 200)
+                    preview_resp = client.post(
+                        "/api/v1/groups/copy/preview_import",
+                        files={"file": ("group.zip", export_resp.content, "application/zip")},
+                    )
+                    upload_id = str((((preview_resp.json().get("result") or {}).get("upload_id")) or ""))
+                    self.assertTrue(upload_id)
+                    staged_path = group_routes._group_copy_upload_path(upload_id)
+
+                    bad_resp = client.post(
+                        "/api/v1/groups/copy/import",
+                        data={"upload_id": upload_id, "workspace_root": home, "title": "Imported copy", "by": "user"},
+                    )
+                    self.assertEqual(bad_resp.status_code, 200)
+                    self.assertFalse(bool(bad_resp.json().get("ok")), bad_resp.json())
+                    self.assertTrue(staged_path.is_file())
+
+                    good_resp = client.post(
+                        "/api/v1/groups/copy/import",
+                        data={"upload_id": upload_id, "workspace_root": str(Path(workspace_raw).resolve()), "title": "Imported copy", "by": "user"},
+                    )
+                    self.assertEqual(good_resp.status_code, 200)
+                    self.assertTrue(bool(good_resp.json().get("ok")), good_resp.json())
+                    self.assertFalse(staged_path.exists())
+        finally:
+            cleanup()
+
+    def test_group_copy_upload_cleanup_endpoint_deletes_staging(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.routes import groups as group_routes
+
+        _, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id = self._create_group()
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.doc["scopes"] = [
+                    {
+                        "scope_key": "s_test",
+                        "url": str(Path(workspace_raw).resolve()),
+                        "label": "workspace",
+                        "git_remote": "",
+                    }
+                ]
+                group.doc["active_scope_key"] = "s_test"
+                group.save()
+
+                with self._client() as client:
+                    export_resp = client.get(f"/api/v1/groups/{group_id}/copy/export")
+                    preview_resp = client.post(
+                        "/api/v1/groups/copy/preview_import",
+                        files={"file": ("group.zip", export_resp.content, "application/zip")},
+                    )
+                    upload_id = str((((preview_resp.json().get("result") or {}).get("upload_id")) or ""))
+                    staged_path = group_routes._group_copy_upload_path(upload_id)
+                    self.assertTrue(staged_path.is_file())
+
+                    cleanup_resp = client.delete(f"/api/v1/groups/copy/uploads/{upload_id}")
+                    self.assertEqual(cleanup_resp.status_code, 200)
+                    self.assertTrue(bool(cleanup_resp.json().get("ok")), cleanup_resp.json())
+                    self.assertFalse(staged_path.exists())
+        finally:
+            cleanup()
+
+    def test_group_copy_import_invalid_upload_id_returns_clear_error(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with self._client() as client:
+                resp = client.post(
+                    "/api/v1/groups/copy/import",
+                    data={"upload_id": "missing", "workspace_root": "/tmp", "title": "Imported copy", "by": "user"},
+                )
+            self.assertEqual(resp.status_code, 404)
+            error = resp.json().get("error") or {}
+            self.assertEqual(error.get("code"), "copy_upload_not_found")
+            self.assertIn("upload not found", str(error.get("message") or ""))
+        finally:
+            cleanup()
+
+    def test_group_copy_upload_startup_cleanup_removes_expired_staging_without_new_upload(self) -> None:
+        import time
+
+        from cccc.ports.web.routes import group_copy_uploads
+
+        home, cleanup = self._with_home()
+        try:
+            stage_dir = Path(home) / "tmp" / "group-copy-uploads"
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            old_file = stage_dir / ("a" * 32 + ".zip")
+            new_file = stage_dir / ("b" * 32 + ".zip")
+            old_file.write_bytes(b"old")
+            new_file.write_bytes(b"new")
+            now = time.time()
+            os.utime(old_file, (now - 10, now - 10))
+            os.utime(new_file, (now, now))
+
+            with patch.object(group_copy_uploads, "WEB_GROUP_COPY_UPLOAD_TTL_SECONDS", 1):
+                with self._client():
+                    pass
+
+            self.assertFalse(old_file.exists())
+            self.assertTrue(new_file.exists())
         finally:
             cleanup()
 

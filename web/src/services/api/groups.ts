@@ -1481,6 +1481,12 @@ export type GroupCopyPreview = {
   };
 };
 
+export type GroupCopyPreviewResult = {
+  preview?: GroupCopyPreview;
+  upload_id?: string;
+  package_size_bytes?: number;
+};
+
 export type GroupCopyImportResult = {
   group_id: string;
   source_group_id?: string;
@@ -1520,17 +1526,36 @@ export async function exportGroupCopy(groupId: string): Promise<ApiResponse<{ bl
 export async function previewGroupCopy(file: File) {
   const form = new FormData();
   form.append("file", file);
-  return apiForm<{ preview: GroupCopyPreview }>("/api/v1/groups/copy/preview_import", form);
+  return apiForm<GroupCopyPreviewResult>("/api/v1/groups/copy/preview_import", form);
 }
 
-export async function importGroupCopy(file: File, workspaceRoot: string, title: string) {
+export type GroupCopyImportSource = File | { file?: File | null; uploadId?: string };
+
+export async function importGroupCopy(source: GroupCopyImportSource, workspaceRoot: string, title: string) {
   clearGroupsReadRequest();
   const form = new FormData();
   form.append("workspace_root", workspaceRoot);
   form.append("title", title || "");
   form.append("by", "user");
-  form.append("file", file);
+  if (typeof File !== "undefined" && source instanceof File) {
+    form.append("file", source);
+  } else {
+    const stagedSource = source as { file?: File | null; uploadId?: string };
+    const uploadId = String(stagedSource.uploadId || "").trim();
+    if (uploadId) {
+      form.append("upload_id", uploadId);
+    } else if (stagedSource.file) {
+      form.append("file", stagedSource.file);
+    }
+  }
   return apiForm<GroupCopyImportResult>("/api/v1/groups/copy/import", form);
+}
+
+export async function cleanupGroupCopyUpload(uploadId: string) {
+  return apiJson<{ upload_id: string; deleted: boolean }>(
+    `/api/v1/groups/copy/uploads/${encodeURIComponent(uploadId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function updateGroup(groupId: string, title: string, topic: string) {

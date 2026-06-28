@@ -1110,7 +1110,7 @@ describe("copy groups api entrypoints", () => {
     const file = new File(["zip"], "copy.zip", { type: "application/zip" });
 
     await api.previewGroupCopy(file);
-    await api.importGroupCopy(file, "/tmp/demo", "Demo");
+    await api.importGroupCopy({ file, uploadId: "upload-123" }, "/tmp/demo", "Demo");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -1120,6 +1120,10 @@ describe("copy groups api entrypoints", () => {
         body: expect.any(FormData),
       }),
     );
+    const previewInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const previewForm = previewInit.body as FormData;
+    expect(previewForm.get("file")).toBe(file);
+
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "/api/v1/groups/copy/import",
@@ -1127,6 +1131,27 @@ describe("copy groups api entrypoints", () => {
         method: "POST",
         body: expect.any(FormData),
       }),
+    );
+    const importInit = fetchMock.mock.calls[1][1] as RequestInit;
+    const importForm = importInit.body as FormData;
+    expect(importForm.get("upload_id")).toBe("upload-123");
+    expect(importForm.get("file")).toBeNull();
+  });
+
+  it("can clean up staged group copy uploads", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { deleted: true } }),
+    });
+
+    const api = await import("../../src/services/api");
+
+    await api.cleanupGroupCopyUpload("upload-123");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/copy/uploads/upload-123",
+      expect.objectContaining({ method: "DELETE" }),
     );
   });
 });

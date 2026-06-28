@@ -25,12 +25,13 @@ from ...util.fs import atomic_write_text
 from ...util.time import utc_now_iso
 from ..actors.actor_profile_runtime import actor_profile_ref
 from ..actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
+from .group_copy_files import GroupCopyFileDeps, build_package_file, safe_package_path, scan_package_path
 
 GROUP_COPY_KIND = "cccc.group_copy"
 GROUP_COPY_VERSION = 1
 
-MAX_PACKAGE_BYTES = 100 * 1024 * 1024
-MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
+MAX_PACKAGE_BYTES = 1024 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_FILE_COUNT = 20_000
 MAX_COMPRESSION_RATIO = 200.0
 
@@ -110,6 +111,15 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=details or {}))
 
 
+def _copy_package_too_large_error(actual_bytes: int) -> DaemonResponse:
+    max_bytes = int(MAX_PACKAGE_BYTES)
+    return _error(
+        "copy_package_too_large",
+        f"group copy too large: max {max_bytes} bytes, package is {int(actual_bytes)} bytes",
+        details={"max_bytes": max_bytes, "actual_bytes": int(actual_bytes)},
+    )
+
+
 def _slug_filename(value: str) -> str:
     out = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(value or "").strip())
     out = "-".join(part for part in out.split("-") if part)
@@ -175,17 +185,12 @@ def _normalize_zip_name(name: str) -> str:
     return normalized
 
 
-def _validate_zip_bytes(data: bytes) -> Tuple[zipfile.ZipFile, List[zipfile.ZipInfo]]:
-    if len(data) > MAX_PACKAGE_BYTES:
+def _validate_zip_file(zf: zipfile.ZipFile, *, package_bytes: int) -> List[zipfile.ZipInfo]:
+    if package_bytes > MAX_PACKAGE_BYTES:
         raise ValueError("copy package too large")
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(data), "r")
-    except Exception as exc:
-        raise ValueError("invalid zip package") from exc
 
     infos = zf.infolist()
     if len(infos) > MAX_FILE_COUNT:
-        zf.close()
         raise ValueError("copy package has too many files")
 
     seen: set[str] = set()
@@ -195,33 +200,40 @@ def _validate_zip_bytes(data: bytes) -> Tuple[zipfile.ZipFile, List[zipfile.ZipI
     for info in infos:
         normalized = _normalize_zip_name(info.filename)
         if normalized in seen:
-            zf.close()
             raise ValueError(f"duplicate package entry: {normalized}")
         folded = normalized.casefold()
         if folded in seen_folded:
-            zf.close()
             raise ValueError(f"case-insensitive package path collision: {normalized}")
         seen.add(normalized)
         seen_folded.add(folded)
 
         if _is_zip_symlink(info):
-            zf.close()
             raise ValueError(f"symlink package entry not allowed: {normalized}")
         if info.is_dir():
             continue
         total_uncompressed += max(0, int(info.file_size or 0))
         total_compressed += max(0, int(info.compress_size or 0))
         if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
-            zf.close()
             raise ValueError("copy package uncompressed size too large")
         compressed = max(1, int(info.compress_size or 0))
         ratio = float(max(0, int(info.file_size or 0))) / float(compressed)
         if ratio > MAX_COMPRESSION_RATIO and int(info.file_size or 0) > 1024 * 1024:
-            zf.close()
             raise ValueError("suspicious copy package compression ratio")
     if total_compressed > 0 and total_uncompressed / float(total_compressed) > MAX_COMPRESSION_RATIO:
-        zf.close()
         raise ValueError("suspicious copy package compression ratio")
+    return infos
+
+
+def _validate_zip_bytes(data: bytes) -> Tuple[zipfile.ZipFile, List[zipfile.ZipInfo]]:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data), "r")
+    except Exception as exc:
+        raise ValueError("invalid zip package") from exc
+    try:
+        infos = _validate_zip_file(zf, package_bytes=len(data))
+    except Exception:
+        zf.close()
+        raise
     return zf, infos
 
 
@@ -342,11 +354,18 @@ def _iter_export_group_files(group_path: Path) -> Iterable[Tuple[str, bytes]]:
 
 
 def _content_digest(files: Iterable[Tuple[str, bytes]]) -> str:
+    return _content_digest_from_hashes(
+        (rel, hashlib.sha256(data).hexdigest())
+        for rel, data in files
+    )
+
+
+def _content_digest_from_hashes(items: Iterable[Tuple[str, str]]) -> str:
     h = hashlib.sha256()
-    for rel, data in sorted(files, key=lambda item: item[0]):
+    for rel, digest in sorted(items, key=lambda item: item[0]):
         h.update(rel.encode("utf-8"))
         h.update(b"\0")
-        h.update(hashlib.sha256(data).hexdigest().encode("ascii"))
+        h.update(digest.encode("ascii"))
         h.update(b"\0")
     return "sha256:" + h.hexdigest()
 
@@ -365,6 +384,36 @@ def _manifest_for_group(*, group_id: str, title: str, files: List[Tuple[str, byt
         "workspace_included": False,
         "contains_secrets": False,
         "content_digest": _content_digest(files),
+        "content": {
+            "ledger": "ledger.jsonl" in rels,
+            "context": any(rel.startswith("context/") for rel in rels),
+            "blobs": any(rel.startswith("state/blobs/") for rel in rels),
+            "memory": any(rel.startswith("state/memory") or rel == "state/memory.md" for rel in rels),
+            "assistants": "state/assistants.json" in rels,
+            "automation": "state/automation.json" in rels or "group.yaml" in rels,
+        },
+    }
+
+
+def _manifest_for_group_source_hashes(
+    *,
+    group_id: str,
+    title: str,
+    rels: set[str],
+    content_hashes: List[Tuple[str, str]],
+) -> Dict[str, Any]:
+    return {
+        "kind": GROUP_COPY_KIND,
+        "version": GROUP_COPY_VERSION,
+        "source_group_id": group_id,
+        "source_title": title,
+        "exported_at": utc_now_iso(),
+        "cccc_version": __version__,
+        "source_platform": platform.system().lower() or "unknown",
+        "export_mode": "group_state_only",
+        "workspace_included": False,
+        "contains_secrets": False,
+        "content_digest": _content_digest_from_hashes(content_hashes),
         "content": {
             "ledger": "ledger.jsonl" in rels,
             "context": any(rel.startswith("context/") for rel in rels),
@@ -450,6 +499,22 @@ def _validate_manifest(manifest: Dict[str, Any]) -> None:
         raise ValueError("secret-containing copy packages are not supported")
     if str(manifest.get("export_mode") or "") != "group_state_only":
         raise ValueError("unsupported copy package export_mode")
+
+
+def _group_copy_file_deps() -> GroupCopyFileDeps:
+    return GroupCopyFileDeps(
+        load_group=load_group,
+        should_exclude_group_relpath=_should_exclude_group_relpath,
+        load_yaml_bytes=_load_yaml_bytes,
+        dump_yaml=_dump_yaml,
+        scrub_group_doc_for_copy=_scrub_group_doc_for_copy,
+        validate_zip_file=_validate_zip_file,
+        normalize_zip_name=_normalize_zip_name,
+        validate_manifest=_validate_manifest,
+        content_digest_from_hashes=_content_digest_from_hashes,
+        manifest_for_group_source_hashes=_manifest_for_group_source_hashes,
+        copy_package_filename=_copy_package_filename,
+    )
 
 
 def _primary_workspace_root(doc: Dict[str, Any]) -> str:
@@ -713,6 +778,14 @@ def _decode_and_read_package(args: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
     return _read_package(data)
 
 
+def _preview_package(args: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    package_path = str(args.get("package_path") or "").strip()
+    if package_path:
+        return scan_package_path(safe_package_path(package_path), _group_copy_file_deps())
+    manifest, _entries, group_doc = _decode_and_read_package(args)
+    return manifest, group_doc
+
+
 def group_copy_export(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
@@ -731,9 +804,44 @@ def group_copy_export(args: Dict[str, Any]) -> DaemonResponse:
     )
 
 
+def group_copy_export_file(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    output_path: Optional[Path] = None
+    try:
+        tmp_root = ensure_home() / "tmp" / "group-copy-export"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        output_path = tmp_root / f"{uuid.uuid4().hex}.zip"
+        manifest, filename = build_package_file(group_id, output_path, _group_copy_file_deps())
+        package_size_bytes = output_path.stat().st_size
+        if package_size_bytes > MAX_PACKAGE_BYTES:
+            try:
+                output_path.unlink()
+            except FileNotFoundError:
+                pass
+            return _copy_package_too_large_error(package_size_bytes)
+        return DaemonResponse(
+            ok=True,
+            result={
+                "package_path": str(output_path),
+                "package_size_bytes": package_size_bytes,
+                "filename": filename,
+                "manifest": manifest,
+            },
+        )
+    except Exception as exc:
+        if output_path is not None:
+            try:
+                output_path.unlink()
+            except FileNotFoundError:
+                pass
+        return _error("group_copy_export_failed", str(exc))
+
+
 def group_copy_preview_import(args: Dict[str, Any]) -> DaemonResponse:
     try:
-        manifest, _entries, group_doc = _decode_and_read_package(args)
+        manifest, group_doc = _preview_package(args)
         preview = _build_preview(manifest, group_doc)
     except Exception as exc:
         return _error("invalid_group_copy", str(exc))
@@ -743,8 +851,15 @@ def group_copy_preview_import(args: Dict[str, Any]) -> DaemonResponse:
 def group_copy_import(args: Dict[str, Any]) -> DaemonResponse:
     workspace_root = str(args.get("workspace_root") or "").strip()
     title_override = str(args.get("title") or "").strip()
+    package_path_text = str(args.get("package_path") or "").strip()
+    package_path: Optional[Path] = None
     try:
-        manifest, entries, group_doc = _decode_and_read_package(args)
+        if package_path_text:
+            package_path = safe_package_path(package_path_text)
+            manifest, group_doc = scan_package_path(package_path, _group_copy_file_deps())
+            entries: Dict[str, bytes] = {}
+        else:
+            manifest, entries, group_doc = _decode_and_read_package(args)
     except Exception as exc:
         return _error("invalid_group_copy", str(exc))
 
@@ -766,7 +881,10 @@ def group_copy_import(args: Dict[str, Any]) -> DaemonResponse:
     staging_group_dir = Path(staging_parent) / "group"
     created = False
     try:
-        _write_package_entries_to_staging(entries, staging_group_dir)
+        if package_path is not None:
+            scan_package_path(package_path, _group_copy_file_deps(), staging_group_dir=staging_group_dir)
+        else:
+            _write_package_entries_to_staging(entries, staging_group_dir)
         _cleanup_imported_runtime_state(staging_group_dir)
 
         doc_path = staging_group_dir / "group.yaml"
@@ -853,6 +971,8 @@ def group_copy_import(args: Dict[str, Any]) -> DaemonResponse:
 def try_handle_group_copy_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
     if op == "group_copy_export":
         return group_copy_export(args)
+    if op == "group_copy_export_file":
+        return group_copy_export_file(args)
     if op == "group_copy_preview_import":
         return group_copy_preview_import(args)
     if op == "group_copy_import":

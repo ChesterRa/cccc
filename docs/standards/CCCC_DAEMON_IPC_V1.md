@@ -4223,6 +4223,45 @@ Notes:
 - Export MUST scrub actor environment secrets from packaged `group.yaml`.
 - `contains_secrets: false` means CCCC-managed live credentials and auth sessions are excluded. The package can still contain user-provided sensitive content such as ledger history, memory, blobs, and attachments.
 
+#### `group_copy_export_file`
+
+Export one group as a zip package stored on the daemon host filesystem.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  package_path: string
+  package_size_bytes: number
+  filename: string
+  manifest: {
+    kind: "cccc.group_copy"
+    version: number
+    source_group_id: string
+    source_title?: string
+    exported_at: string
+    cccc_version?: string
+    source_platform?: string
+    export_mode: "group_state_only"
+    workspace_included: false
+    contains_secrets: false
+    content_digest?: string
+    content?: Record<string, unknown>
+  }
+}
+```
+
+Notes:
+- The package path is a temporary daemon-local file path intended for local download flows.
+- Export size limits and secret-scrubbing requirements match `group_copy_export`.
+
 #### `group_copy_preview_import`
 
 Validate a copy package and return an import preview without writing group state.

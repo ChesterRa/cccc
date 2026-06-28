@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml  # type: ignore
 
@@ -254,6 +255,172 @@ class TestGroupCopyOps(unittest.TestCase):
 
                 reg = load_registry()
                 self.assertEqual(reg.defaults.get(scope_key), group_id)
+        finally:
+            cleanup()
+
+    def test_export_file_and_path_import_avoid_package_b64(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw, tempfile.TemporaryDirectory() as remap_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                (group.path / "runtime" / "codex" / "peer1").mkdir(parents=True, exist_ok=True)
+                (group.path / "runtime" / "codex" / "peer1" / "cache.pack").write_text("runtime cache", encoding="utf-8")
+
+                export_resp, _ = self._call("group_copy_export_file", {"group_id": group_id, "by": "user"})
+                self.assertTrue(export_resp.ok, getattr(export_resp, "error", None))
+                result = export_resp.result or {}
+                self.assertNotIn("package_b64", result)
+                package_path = Path(str(result.get("package_path") or ""))
+                self.assertTrue(package_path.is_file(), result)
+
+                with zipfile.ZipFile(package_path, "r") as zf:
+                    self.assertNotIn("group/runtime/codex/peer1/cache.pack", set(zf.namelist()))
+
+                preview_resp, _ = self._call("group_copy_preview_import", {"package_path": str(package_path)})
+                self.assertTrue(preview_resp.ok, getattr(preview_resp, "error", None))
+                preview = (preview_resp.result or {}).get("preview") or {}
+                self.assertEqual(str(preview.get("source_group_id") or ""), group_id)
+
+                import_resp, _ = self._call(
+                    "group_copy_import",
+                    {"package_path": str(package_path), "workspace_root": remap_raw, "by": "user"},
+                )
+                self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
+                imported_id = str((import_resp.result or {}).get("group_id") or "")
+                self.assertTrue(imported_id)
+                self.assertNotEqual(imported_id, group_id)
+        finally:
+            cleanup()
+
+    def test_export_file_package_bytes_can_import_through_package_b64(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw, tempfile.TemporaryDirectory() as remap_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.ledger_path.write_text("hello\n", encoding="utf-8")
+
+                export_resp, _ = self._call("group_copy_export_file", {"group_id": group_id, "by": "user"})
+                self.assertTrue(export_resp.ok, getattr(export_resp, "error", None))
+                package_path = Path(str((export_resp.result or {}).get("package_path") or ""))
+                package_b64 = base64.b64encode(package_path.read_bytes()).decode("ascii")
+
+                import_resp, _ = self._call(
+                    "group_copy_import",
+                    {"package_b64": package_b64, "workspace_root": remap_raw, "by": "user"},
+                )
+
+                self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
+                imported_id = str((import_resp.result or {}).get("group_id") or "")
+                self.assertTrue(imported_id)
+                self.assertNotEqual(imported_id, group_id)
+        finally:
+            cleanup()
+
+    def test_export_file_digest_matches_bytes_written_when_source_changes_during_export(self) -> None:
+        from cccc.daemon.ops import group_copy_files
+        from cccc.daemon.ops import group_copy_ops
+        from cccc.kernel.group import load_group
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.ledger_path.write_text("before\n", encoding="utf-8")
+                output_path = Path(os.environ["CCCC_HOME"]) / "tmp" / "race-export.zip"
+
+                original_write_source_to_zip = group_copy_files._write_source_to_zip
+
+                def append_after_ledger_write(zf, arcname, *, path, data):
+                    digest = original_write_source_to_zip(zf, arcname, path=path, data=data)
+                    if arcname == "group/ledger.jsonl":
+                        group.ledger_path.write_text("before\nafter\n", encoding="utf-8")
+                    return digest
+
+                with patch.object(group_copy_files, "_write_source_to_zip", side_effect=append_after_ledger_write):
+                    manifest, _filename = group_copy_files.build_package_file(
+                        group_id,
+                        output_path,
+                        group_copy_ops._group_copy_file_deps(),
+                    )
+
+                with zipfile.ZipFile(output_path, "r") as zf:
+                    entries = {
+                        name.removeprefix("group/"): zf.read(name)
+                        for name in zf.namelist()
+                        if name.startswith("group/") and not name.endswith("/")
+                    }
+                self.assertEqual(entries["ledger.jsonl"], b"before\n")
+                self.assertEqual(manifest["content_digest"], group_copy_ops._content_digest(entries.items()))
+        finally:
+            cleanup()
+
+    def test_export_file_rejects_package_over_limit_and_removes_zip(self) -> None:
+        from cccc.daemon.ops import group_copy_ops
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                caller_path = Path(os.environ["CCCC_HOME"]) / "tmp" / "caller-owned-export.zip"
+                caller_path.parent.mkdir(parents=True, exist_ok=True)
+                caller_path.write_text("keep me", encoding="utf-8")
+
+                with patch.object(group_copy_ops, "MAX_PACKAGE_BYTES", 8):
+                    export_resp, _ = self._call(
+                        "group_copy_export_file",
+                        {"group_id": group_id, "output_path": str(caller_path), "by": "user"},
+                    )
+
+                self.assertFalse(export_resp.ok)
+                self.assertEqual(getattr(export_resp.error, "code", ""), "copy_package_too_large")
+                details = getattr(export_resp.error, "details", {}) or {}
+                self.assertEqual(details.get("max_bytes"), 8)
+                self.assertGreater(int(details.get("actual_bytes") or 0), 8)
+                self.assertEqual(caller_path.read_text(encoding="utf-8"), "keep me")
+        finally:
+            cleanup()
+
+    def test_export_file_does_not_delete_caller_path_when_build_fails(self) -> None:
+        from cccc.daemon.ops import group_copy_files
+        from cccc.daemon.ops import group_copy_ops
+
+        _home, cleanup = self._with_home()
+        try:
+            caller_path = Path(os.environ["CCCC_HOME"]) / "tmp" / "caller-owned-partial-export.zip"
+            caller_path.parent.mkdir(parents=True, exist_ok=True)
+            caller_path.write_text("keep me", encoding="utf-8")
+            captured_output_paths: list[Path] = []
+
+            def _write_partial_then_fail(_group_id: str, path: Path, _deps):
+                captured_output_paths.append(path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"partial zip")
+                raise RuntimeError("simulated build failure")
+
+            with patch.object(group_copy_ops, "build_package_file", side_effect=_write_partial_then_fail):
+                export_resp, _ = self._call(
+                    "group_copy_export_file",
+                    {"group_id": "g_test", "output_path": str(caller_path), "by": "user"},
+                )
+
+            self.assertFalse(export_resp.ok)
+            self.assertEqual(getattr(export_resp.error, "code", ""), "group_copy_export_failed")
+            self.assertEqual(caller_path.read_text(encoding="utf-8"), "keep me")
+            self.assertTrue(captured_output_paths)
+            self.assertFalse(captured_output_paths[0].exists())
         finally:
             cleanup()
 

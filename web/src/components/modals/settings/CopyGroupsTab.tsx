@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { useGroupStore } from "../../../stores/useGroupStore";
@@ -19,6 +19,9 @@ interface CopyGroupsTabProps {
 
 type CopyPreviewResult = {
   preview?: api.GroupCopyPreview;
+  upload_id?: string;
+  package_size_bytes?: number;
+  file?: File;
 };
 
 function downloadBlobFile(filename: string, blob: Blob) {
@@ -45,8 +48,31 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState("");
+  const stagedUploadIdRef = useRef("");
+  const previewRequestSeqRef = useRef(0);
+
+  const cleanupStagedUploadId = (uploadId: string) => {
+    const trimmed = String(uploadId || "").trim();
+    if (!trimmed) return;
+    if (stagedUploadIdRef.current === trimmed) stagedUploadIdRef.current = "";
+    void api.cleanupGroupCopyUpload(trimmed);
+  };
+
+  const cleanupStagedCopy = (preview: CopyPreviewResult | null) => {
+    cleanupStagedUploadId(String(preview?.upload_id || ""));
+  };
+
+  useEffect(() => {
+    return () => {
+      const uploadId = stagedUploadIdRef.current;
+      stagedUploadIdRef.current = "";
+      if (uploadId) void api.cleanupGroupCopyUpload(uploadId);
+    };
+  }, []);
 
   const loadCopyPreview = async (file: File) => {
+    const requestId = previewRequestSeqRef.current + 1;
+    previewRequestSeqRef.current = requestId;
     setBusy(true);
     setErr("");
     setInfo("");
@@ -60,14 +86,20 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
         return;
       }
       const nextPreview = resp.result as CopyPreviewResult;
+      const nextUploadId = String(nextPreview.upload_id || "").trim();
+      if (requestId !== previewRequestSeqRef.current) {
+        cleanupStagedUploadId(nextUploadId);
+        return;
+      }
       const previewData = nextPreview.preview;
-      setCopyPreview(nextPreview);
+      stagedUploadIdRef.current = nextUploadId;
+      setCopyPreview({ ...nextPreview, file });
       setWorkspaceRoot(String(previewData?.source_workspace_root || ""));
       setTargetTitle(String(previewData?.source_title || ""));
     } catch {
-      setErr(t("copyGroups.failedToPreview"));
+      if (requestId === previewRequestSeqRef.current) setErr(t("copyGroups.failedToPreview"));
     } finally {
-      setBusy(false);
+      if (requestId === previewRequestSeqRef.current) setBusy(false);
     }
   };
 
@@ -101,12 +133,18 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
     setErr("");
     setInfo("");
     try {
-      const resp = await api.importGroupCopy(copyFile, workspaceRoot.trim(), targetTitle.trim());
+      const uploadId = copyPreview.file === copyFile ? String(copyPreview.upload_id || "").trim() : "";
+      const resp = await api.importGroupCopy(
+        { file: copyFile, uploadId },
+        workspaceRoot.trim(),
+        targetTitle.trim(),
+      );
       if (!resp.ok) {
         setErr(resp.error?.message || t("copyGroups.failedToImport"));
         return;
       }
       const nextGroupId = String(resp.result?.group_id || "").trim();
+      stagedUploadIdRef.current = "";
       setCopyFile(null);
       setCopyPreview(null);
       setWorkspaceRoot("");
@@ -199,6 +237,8 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                 disabled={busy}
                 onChange={(e) => {
                   const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                  cleanupStagedCopy(copyPreview);
+                  previewRequestSeqRef.current += 1;
                   setCopyFile(file);
                   setCopyPreview(null);
                   setWorkspaceRoot("");
@@ -243,6 +283,8 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                       className={secondaryButtonClass("sm")}
                       disabled={busy}
                       onClick={() => {
+                        cleanupStagedCopy(copyPreview);
+                        previewRequestSeqRef.current += 1;
                         setCopyFile(null);
                         setCopyPreview(null);
                         setWorkspaceRoot("");

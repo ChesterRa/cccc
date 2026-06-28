@@ -243,6 +243,13 @@ def create_app() -> FastAPI:
         else:
             _app.state.request_web_restart = None
 
+        try:
+            from .routes.groups import cleanup_group_copy_uploads_once
+
+            await run_in_threadpool(cleanup_group_copy_uploads_once)
+        except Exception:
+            logger.exception("failed to clean up expired group copy uploads")
+
         if restart_supported and runtime_supervisor_pid > 0:
             def _supervisor_watchdog_loop() -> None:
                 while not supervisor_watchdog_stop.is_set():

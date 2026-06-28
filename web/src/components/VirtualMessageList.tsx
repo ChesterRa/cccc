@@ -24,6 +24,7 @@ import {
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
+import { getNonVirtualMessageListTopMargin } from "./virtualMessageListLayout";
 import { buildGroupBridgeDisplayNameMap } from "./virtualMessageListGroupBridge";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
@@ -1019,6 +1020,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [displayMessages, getCurrentContentSize, isLoadingHistory, scrollToMessageAnchor, shouldVirtualize, virtualizer]);
 
   const effectiveHighlightEventId = replyJumpHighlightId || highlightEventId;
+  const showHistoryStatus = isLoadingHistory || (!hasMoreHistory && !isLoadingHistory);
+  const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset, showHistoryStatus });
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
@@ -1071,7 +1074,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         )
       ) : (
         <>
-          {(isLoadingHistory || (!hasMoreHistory && !isLoadingHistory)) && (
+          {showHistoryStatus && (
             <div
               className="pointer-events-none absolute inset-x-0 z-10 flex justify-center py-3"
               style={{ top: topInset }}
@@ -1147,7 +1150,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               })}
             </div>
           ) : (
-            <div ref={contentRef} className="w-full" style={{ marginTop: topInset }}>
+            <div ref={contentRef} className="w-full" style={{ marginTop: nonVirtualTopMargin }}>
               {displayMessages.map((message, index) => {
                 const previousMessage = index > 0 ? displayMessages[index - 1] : undefined;
                 const grouping = getMessageRowGrouping(previousMessage, message);

@@ -75,6 +75,7 @@ def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
     try:
         f.seek(0)
         f.write((str(os.getpid()) + "\n").encode("utf-8", errors="replace"))
+        f.truncate()
         f.flush()
     except Exception:
         # Best-effort: the lock is the important part.
