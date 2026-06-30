@@ -17,6 +17,7 @@ import {
   getStableMessageKey,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
+  shouldKeepFollowDuringContentResize,
   shouldNotifyScrollChange,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
@@ -943,9 +944,33 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       // Observe the message content layer rather than the scroll container.
       // Images, streaming text, and expanded attachment lists change content height
       // without changing the container size; observing only the container misses bottom-follow updates.
-      lastScrollTopRef.current = scrollEl.scrollTop;
+      const previousScrollTop = lastScrollTopRef.current;
+      const currentScrollTop = scrollEl.scrollTop;
+      const isScrollingUp = currentScrollTop < previousScrollTop - 0.5;
+
+      isContainerResizingRef.current = true;
+      lastScrollTopRef.current = currentScrollTop;
       const previousContentSize = previousContentSizeRef.current;
-      previousContentSizeRef.current = getCurrentContentSize();
+      const nextContentSize = getCurrentContentSize();
+      previousContentSizeRef.current = nextContentSize;
+
+      const wasAtBottomBeforeResize = !isScrollingUp && wasAtBottomBeforeContentChange({
+        previousContentSize,
+        scrollTop: currentScrollTop,
+        clientHeight: scrollEl.clientHeight,
+      });
+      const contentSizeChanged = Math.abs(nextContentSize - previousContentSize) > 0.5;
+
+      if (
+        shouldKeepFollowDuringContentResize({
+          followMode: followModeRef.current,
+          wasAtBottomBeforeResize,
+          contentSizeChanged,
+        })
+      ) {
+        setAtBottom(true);
+        scheduleForceStickToBottom();
+      }
 
       if (shouldAutoScrollNow({ previousContentSize })) {
         scheduleScroll(() => {
@@ -956,11 +981,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
       window.requestAnimationFrame(() => {
         lastScrollTopRef.current = scrollEl.scrollTop;
+        isContainerResizingRef.current = false;
       });
     });
     observer.observe(observedEl);
     return () => observer.disconnect();
-  }, [getCurrentContentSize, scheduleScroll, scrollToBottom, shouldAutoScrollNow]);
+  }, [getCurrentContentSize, scheduleForceStickToBottom, scheduleScroll, scrollToBottom, setAtBottom, shouldAutoScrollNow]);
 
   useEffect(() => {
     return () => {

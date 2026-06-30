@@ -59,7 +59,7 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   devin: "devin --permission-mode dangerous",
   kiro: "kiro-cli chat --trust-all-tools",
   kilo: "kilo",
-  antigravity: "agy",
+  antigravity: "agy --dangerously-skip-permissions",
   droid: "droid --auto high",
   grok: "grok",
   kimi: "kimi --yolo",

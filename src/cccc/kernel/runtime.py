@@ -340,7 +340,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
     """Get the command with recommended flags for autonomous operation."""
     commands = {
         "amp": ["amp"],
-        "antigravity": ["agy"],
+        "antigravity": ["agy", "--dangerously-skip-permissions"],
         "auggie": ["auggie"],
         "claude": ["claude", "--dangerously-skip-permissions"],
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)

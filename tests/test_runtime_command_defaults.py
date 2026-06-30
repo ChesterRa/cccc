@@ -14,7 +14,7 @@ class TestRuntimeCommandDefaults(unittest.TestCase):
         self.assertEqual(get_runtime_command_with_flags("devin"), ["devin", "--permission-mode", "dangerous"])
         self.assertEqual(get_runtime_command_with_flags("kiro"), ["kiro-cli", "chat", "--trust-all-tools"])
         self.assertEqual(get_runtime_command_with_flags("kilo"), ["kilo"])
-        self.assertEqual(get_runtime_command_with_flags("antigravity"), ["agy"])
+        self.assertEqual(get_runtime_command_with_flags("antigravity"), ["agy", "--dangerously-skip-permissions"])
         self.assertEqual(get_runtime_command_with_flags("kimi"), ["kimi", "--yolo"])
         self.assertEqual(get_runtime_command_with_flags("hermes"), ["hermes", "--tui", "--yolo"])
         self.assertEqual(get_runtime_command_with_flags("opencode"), ["opencode"])

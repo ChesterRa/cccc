@@ -188,4 +188,11 @@ describe("ChatComposer mention menu navigation", () => {
   it("keeps recipient hover popovers compact", () => {
     expect(composerSource).toContain("Math.min(196, Math.max(176, viewportWidth - 16))");
   });
+
+  it("positions recipient hover popovers above their chips", () => {
+    expect(composerSource).toContain("const top = rect.top");
+    expect(composerSource).toContain('const transform = "translateY(calc(-100% - 6px))"');
+    expect(composerSource).toContain("setRecipientPopoverStyle({ top, left: 8, right: 8, transform })");
+    expect(composerSource).not.toContain("const top = rect.bottom + 6");
+  });
 });

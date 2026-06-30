@@ -62,6 +62,14 @@ export function shouldDetachChatFollowOnScroll(input: {
   return true;
 }
 
+export function shouldKeepFollowDuringContentResize(input: {
+  followMode: "follow" | "detached";
+  wasAtBottomBeforeResize: boolean;
+  contentSizeChanged: boolean;
+}): boolean {
+  return input.followMode === "follow" && input.wasAtBottomBeforeResize && input.contentSizeChanged;
+}
+
 export function shouldNotifyScrollChange(input: {
   wasAtBottom: boolean;
   atBottom: boolean;
