@@ -495,7 +495,6 @@ export type AgentStateWarm = {
   environment_summary?: string | null;
   user_model?: string | null;
   persona_notes?: string | null;
-  resume_hint?: string | null;
 };
 
 export type AgentState = {

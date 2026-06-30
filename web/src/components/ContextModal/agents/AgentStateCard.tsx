@@ -181,7 +181,6 @@ export function AgentStateCard({ agent, tr, mutedTextClass, subtleTextClass }: A
           ) : (
             <div className="mt-3 space-y-4">
               <ExpandableTextBlock label={tr("context.whatChanged", "What changed")} text={warm.whatChanged} mutedTextClass={mutedTextClass} subtleTextClass={subtleTextClass} tr={tr} lines={3} />
-              <ExpandableTextBlock label={tr("context.resumeHint", "Resume hint")} text={warm.resumeHint} mutedTextClass={mutedTextClass} subtleTextClass={subtleTextClass} tr={tr} lines={3} />
               {warm.openLoops.length > 0 ? (
                 <div>
                   <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.openLoops", "Open loops")}</div>

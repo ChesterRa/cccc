@@ -435,7 +435,6 @@ function normalizeAgentState(value: unknown): AgentState | null {
       environment_summary: asOptionalString(warmRecord?.environment_summary),
       user_model: asOptionalString(warmRecord?.user_model),
       persona_notes: asOptionalString(warmRecord?.persona_notes),
-      resume_hint: asOptionalString(warmRecord?.resume_hint),
     },
     updated_at: asOptionalString(record.updated_at),
   };

@@ -303,7 +303,6 @@ export function agentWarm(agent: AgentState | null | undefined) {
     environmentSummary: String(agent?.warm?.environment_summary || "").trim(),
     userModel: String(agent?.warm?.user_model || "").trim(),
     personaNotes: String(agent?.warm?.persona_notes || "").trim(),
-    resumeHint: String(agent?.warm?.resume_hint || "").trim(),
   };
 }
 
@@ -322,7 +321,6 @@ export function hasRecoveryCues(agent: AgentState | null | undefined): boolean {
     warm.whatChanged
     || warm.openLoops.length
     || warm.commitments.length
-    || warm.resumeHint
   );
 }
 
@@ -342,7 +340,6 @@ export function isAgentStale(agent: AgentState | null | undefined): boolean {
 export function recoverySummary(agent: AgentState, tr: ContextTranslator): string {
   const warm = agentWarm(agent);
   const parts: string[] = [];
-  if (warm.resumeHint) parts.push(tr("context.resumeReady", "resume ready"));
   if (warm.openLoops.length > 0) {
     parts.push(tr("context.openLoopsCount", "{{count}} open loops", { count: warm.openLoops.length }));
   }

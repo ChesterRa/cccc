@@ -4222,6 +4222,7 @@ Notes:
 - Export MUST exclude live runtime state, browser profiles, credentials, connector secrets, lock files, and rebuildable caches.
 - Export MUST scrub actor environment secrets from packaged `group.yaml`.
 - `contains_secrets: false` means CCCC-managed live credentials and auth sessions are excluded. The package can still contain user-provided sensitive content such as ledger history, memory, blobs, and attachments.
+- This compatibility operation is intended for small packages. Large packages SHOULD use `group_copy_export_file` and pass the returned `package_path` to preview/import.
 
 #### `group_copy_export_file`
 
@@ -4260,7 +4261,7 @@ Result:
 
 Notes:
 - The package path is a temporary daemon-local file path intended for local download flows.
-- Export size limits and secret-scrubbing requirements match `group_copy_export`.
+- This operation uses the large package limit. Secret-scrubbing requirements match `group_copy_export`.
 
 #### `group_copy_preview_import`
 
@@ -4269,10 +4270,13 @@ Validate a copy package and return an import preview without writing group state
 Args:
 ```ts
 {
-  package_b64: string
+  package_b64?: string
+  package_path?: string
   by?: string
 }
 ```
+
+Exactly one of `package_b64` or `package_path` is required. `package_b64` is a small-package compatibility path; large local flows SHOULD use `package_path`.
 
 Result:
 ```ts
@@ -4306,12 +4310,15 @@ Import a group copy into the current `CCCC_HOME`.
 Args:
 ```ts
 {
-  package_b64: string
+  package_b64?: string
+  package_path?: string
   workspace_root?: string
   title?: string
   by?: string
 }
 ```
+
+Exactly one of `package_b64` or `package_path` is required. `package_b64` is a small-package compatibility path; large local flows SHOULD use `package_path`.
 
 Result:
 ```ts

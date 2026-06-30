@@ -31,6 +31,7 @@ GROUP_COPY_KIND = "cccc.group_copy"
 GROUP_COPY_VERSION = 1
 
 MAX_PACKAGE_BYTES = 1024 * 1024 * 1024
+MAX_PACKAGE_B64_BYTES = 100 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_FILE_COUNT = 20_000
 MAX_COMPRESSION_RATIO = 200.0
@@ -107,16 +108,23 @@ _RUNTIME_SUFFIXES = {
 }
 
 
+class _GroupCopyPackageTooLarge(ValueError):
+    def __init__(self, actual_bytes: int, max_bytes: int) -> None:
+        self.actual_bytes = int(actual_bytes)
+        self.max_bytes = int(max_bytes)
+        super().__init__("copy package too large")
+
+
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=details or {}))
 
 
-def _copy_package_too_large_error(actual_bytes: int) -> DaemonResponse:
-    max_bytes = int(MAX_PACKAGE_BYTES)
+def _copy_package_too_large_error(actual_bytes: int, *, max_bytes: Optional[int] = None) -> DaemonResponse:
+    limit = int(MAX_PACKAGE_BYTES if max_bytes is None else max_bytes)
     return _error(
         "copy_package_too_large",
-        f"group copy too large: max {max_bytes} bytes, package is {int(actual_bytes)} bytes",
-        details={"max_bytes": max_bytes, "actual_bytes": int(actual_bytes)},
+        f"group copy too large: max {limit} bytes, package is {int(actual_bytes)} bytes",
+        details={"max_bytes": limit, "actual_bytes": int(actual_bytes)},
     )
 
 
@@ -134,14 +142,35 @@ def _new_scope_key() -> str:
     return "s_" + uuid.uuid4().hex[:12]
 
 
-def _safe_b64_decode(value: Any) -> bytes:
+def _raise_package_too_large(actual_bytes: int, max_bytes: int) -> None:
+    raise _GroupCopyPackageTooLarge(int(actual_bytes), int(max_bytes))
+
+
+def _safe_b64_decode(value: Any, *, max_decoded_bytes: Optional[int] = None) -> bytes:
+    max_bytes = int(MAX_PACKAGE_B64_BYTES if max_decoded_bytes is None else max_decoded_bytes)
     raw = str(value or "").strip()
     if not raw:
         raise ValueError("missing package_b64")
+    encoded_limit = ((max_bytes + 2) // 3) * 4
+    if len(raw) > encoded_limit:
+        _raise_package_too_large((len(raw) * 3) // 4, max_bytes)
     try:
-        return base64.b64decode(raw.encode("ascii"), validate=True)
+        data = base64.b64decode(raw.encode("ascii"), validate=True)
     except Exception as exc:
         raise ValueError("invalid package_b64") from exc
+    if len(data) > max_bytes:
+        _raise_package_too_large(len(data), max_bytes)
+    return data
+
+
+def _package_input(args: Dict[str, Any]) -> Tuple[str, str]:
+    package_b64 = str(args.get("package_b64") or "").strip()
+    package_path = str(args.get("package_path") or "").strip()
+    if bool(package_b64) == bool(package_path):
+        raise ValueError("exactly one of package_b64 or package_path is required")
+    if package_path:
+        return "path", package_path
+    return "b64", package_b64
 
 
 def _is_zip_symlink(info: zipfile.ZipInfo) -> bool:
@@ -187,7 +216,7 @@ def _normalize_zip_name(name: str) -> str:
 
 def _validate_zip_file(zf: zipfile.ZipFile, *, package_bytes: int) -> List[zipfile.ZipInfo]:
     if package_bytes > MAX_PACKAGE_BYTES:
-        raise ValueError("copy package too large")
+        _raise_package_too_large(package_bytes, MAX_PACKAGE_BYTES)
 
     infos = zf.infolist()
     if len(infos) > MAX_FILE_COUNT:
@@ -429,7 +458,8 @@ def _copy_package_filename(group_id: str, title: str) -> str:
     return f"cccc-group--{_slug_filename(title)}--{group_id}--{utc_now_iso().replace(':', '').replace('-', '')[:15]}.zip"
 
 
-def _build_package_bytes(group_id: str) -> Tuple[bytes, Dict[str, Any], str]:
+def _build_package_bytes(group_id: str, *, max_package_bytes: Optional[int] = None) -> Tuple[bytes, Dict[str, Any], str]:
+    max_bytes = int(MAX_PACKAGE_B64_BYTES if max_package_bytes is None else max_package_bytes)
     group = load_group(group_id)
     if group is None:
         raise ValueError(f"group not found: {group_id}")
@@ -441,9 +471,16 @@ def _build_package_bytes(group_id: str) -> Tuple[bytes, Dict[str, Any], str]:
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2))
+        if out.tell() > max_bytes:
+            _raise_package_too_large(out.tell(), max_bytes)
         for rel, data in files:
             zf.writestr(f"group/{rel}", data)
-    return out.getvalue(), manifest, _copy_package_filename(group_id, title)
+            if out.tell() > max_bytes:
+                _raise_package_too_large(out.tell(), max_bytes)
+    package_bytes = out.getvalue()
+    if len(package_bytes) > max_bytes:
+        _raise_package_too_large(len(package_bytes), max_bytes)
+    return package_bytes, manifest, _copy_package_filename(group_id, title)
 
 
 def _read_package(data: bytes) -> Tuple[Dict[str, Any], Dict[str, bytes], Dict[str, Any]]:
@@ -779,9 +816,9 @@ def _decode_and_read_package(args: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
 
 
 def _preview_package(args: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    package_path = str(args.get("package_path") or "").strip()
-    if package_path:
-        return scan_package_path(safe_package_path(package_path), _group_copy_file_deps())
+    package_mode, package_value = _package_input(args)
+    if package_mode == "path":
+        return scan_package_path(safe_package_path(package_value), _group_copy_file_deps())
     manifest, _entries, group_doc = _decode_and_read_package(args)
     return manifest, group_doc
 
@@ -792,6 +829,8 @@ def group_copy_export(args: Dict[str, Any]) -> DaemonResponse:
         return _error("missing_group_id", "missing group_id")
     try:
         package_bytes, manifest, filename = _build_package_bytes(group_id)
+    except _GroupCopyPackageTooLarge as exc:
+        return _copy_package_too_large_error(exc.actual_bytes, max_bytes=exc.max_bytes)
     except Exception as exc:
         return _error("group_copy_export_failed", str(exc))
     return DaemonResponse(
@@ -843,6 +882,8 @@ def group_copy_preview_import(args: Dict[str, Any]) -> DaemonResponse:
     try:
         manifest, group_doc = _preview_package(args)
         preview = _build_preview(manifest, group_doc)
+    except _GroupCopyPackageTooLarge as exc:
+        return _copy_package_too_large_error(exc.actual_bytes, max_bytes=exc.max_bytes)
     except Exception as exc:
         return _error("invalid_group_copy", str(exc))
     return DaemonResponse(ok=True, result={"preview": preview})
@@ -851,15 +892,17 @@ def group_copy_preview_import(args: Dict[str, Any]) -> DaemonResponse:
 def group_copy_import(args: Dict[str, Any]) -> DaemonResponse:
     workspace_root = str(args.get("workspace_root") or "").strip()
     title_override = str(args.get("title") or "").strip()
-    package_path_text = str(args.get("package_path") or "").strip()
     package_path: Optional[Path] = None
     try:
-        if package_path_text:
-            package_path = safe_package_path(package_path_text)
+        package_mode, package_value = _package_input(args)
+        if package_mode == "path":
+            package_path = safe_package_path(package_value)
             manifest, group_doc = scan_package_path(package_path, _group_copy_file_deps())
             entries: Dict[str, bytes] = {}
         else:
             manifest, entries, group_doc = _decode_and_read_package(args)
+    except _GroupCopyPackageTooLarge as exc:
+        return _copy_package_too_large_error(exc.actual_bytes, max_bytes=exc.max_bytes)
     except Exception as exc:
         return _error("invalid_group_copy", str(exc))
 

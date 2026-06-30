@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import type { AgentState } from "../../../src/types";
 import {
   alignTaskDraftTaskType,
+  agentWarm,
   emptyTaskDraft,
   getWaitingOnOptions,
+  hasRecoveryCues,
   isVisibleContextAgent,
+  recoverySummary,
   taskDraftDirty,
   taskDraftMatches,
   taskToDraft,
@@ -78,5 +82,33 @@ describe("ContextModal visible agents", () => {
   it("hides empty agent ids from the default agents view", () => {
     expect(isVisibleContextAgent({ id: "" })).toBe(false);
     expect(isVisibleContextAgent({ id: "foreman-1" })).toBe(true);
+  });
+});
+
+describe("ContextModal recovery cues", () => {
+  const tr = (_key: string, fallback: string, options?: Record<string, unknown>) => (
+    fallback.replace("{{count}}", String(options?.count ?? ""))
+  );
+
+  it("ignores legacy resume_hint and summarizes open loops and commitments", () => {
+    const legacyAgent = {
+      id: "peer-1",
+      warm: { resume_hint: "legacy cue" },
+    } as unknown as AgentState;
+
+    expect(agentWarm(legacyAgent)).not.toHaveProperty("resumeHint");
+    expect(hasRecoveryCues(legacyAgent)).toBe(false);
+    expect(recoverySummary(legacyAgent, tr)).toBe("No recovery cues");
+
+    const currentAgent = {
+      id: "peer-1",
+      warm: {
+        open_loops: ["verify migration"],
+        commitments: ["report residual risk"],
+      },
+    } as AgentState;
+
+    expect(hasRecoveryCues(currentAgent)).toBe(true);
+    expect(recoverySummary(currentAgent, tr)).toBe("1 open loops · 1 commitments");
   });
 });

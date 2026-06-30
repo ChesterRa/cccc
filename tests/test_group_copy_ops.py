@@ -326,6 +326,115 @@ class TestGroupCopyOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_preview_and_import_reject_ambiguous_package_inputs(self) -> None:
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw, tempfile.TemporaryDirectory() as remap_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                export_resp, _ = self._call("group_copy_export_file", {"group_id": group_id, "by": "user"})
+                self.assertTrue(export_resp.ok, getattr(export_resp, "error", None))
+                package_path = Path(str((export_resp.result or {}).get("package_path") or ""))
+                self.assertTrue(package_path.is_file())
+                package_b64 = base64.b64encode(package_path.read_bytes()).decode("ascii")
+
+                preview_resp, _ = self._call(
+                    "group_copy_preview_import",
+                    {"package_path": str(package_path), "package_b64": package_b64},
+                )
+                self.assertFalse(preview_resp.ok)
+                self.assertEqual(getattr(preview_resp.error, "code", ""), "invalid_group_copy")
+                self.assertIn("exactly one", getattr(preview_resp.error, "message", ""))
+
+                import_resp, _ = self._call(
+                    "group_copy_import",
+                    {
+                        "package_path": str(package_path),
+                        "package_b64": package_b64,
+                        "workspace_root": remap_raw,
+                        "by": "user",
+                    },
+                )
+                self.assertFalse(import_resp.ok)
+                self.assertEqual(getattr(import_resp.error, "code", ""), "invalid_group_copy")
+                self.assertIn("exactly one", getattr(import_resp.error, "message", ""))
+        finally:
+            cleanup()
+
+    def test_base64_export_keeps_smaller_compatibility_limit(self) -> None:
+        from cccc.daemon.ops import group_copy_ops
+        from cccc.kernel.group import load_group
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.ledger_path.write_text("hello\n", encoding="utf-8")
+
+                with patch.object(group_copy_ops, "MAX_PACKAGE_B64_BYTES", 8):
+                    export_resp, _ = self._call("group_copy_export", {"group_id": group_id, "by": "user"})
+
+                self.assertFalse(export_resp.ok)
+                self.assertEqual(getattr(export_resp.error, "code", ""), "copy_package_too_large")
+                details = getattr(export_resp.error, "details", {}) or {}
+                self.assertEqual(details.get("max_bytes"), 8)
+                self.assertGreater(int(details.get("actual_bytes") or 0), 8)
+        finally:
+            cleanup()
+
+    def test_base64_export_rechecks_final_zip_size_after_close(self) -> None:
+        from cccc.daemon.ops import group_copy_ops
+        from cccc.kernel.group import load_group
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.ledger_path.write_text("hello\n", encoding="utf-8")
+
+                package_bytes, _manifest, _filename = group_copy_ops._build_package_bytes(
+                    group_id,
+                    max_package_bytes=1024 * 1024,
+                )
+                limit = len(package_bytes) - 1
+                self.assertGreater(limit, 0)
+
+                with patch.object(group_copy_ops, "MAX_PACKAGE_B64_BYTES", limit):
+                    export_resp, _ = self._call("group_copy_export", {"group_id": group_id, "by": "user"})
+
+                self.assertFalse(export_resp.ok)
+                self.assertEqual(getattr(export_resp.error, "code", ""), "copy_package_too_large")
+                details = getattr(export_resp.error, "details", {}) or {}
+                self.assertEqual(details.get("max_bytes"), limit)
+                self.assertGreater(int(details.get("actual_bytes") or 0), limit)
+        finally:
+            cleanup()
+
+    def test_base64_import_keeps_smaller_compatibility_limit(self) -> None:
+        from cccc.daemon.ops import group_copy_ops
+
+        _home, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace_raw:
+                group_id, _scope_key = self._create_group_with_scope(Path(workspace_raw))
+                package_b64 = base64.b64encode(self._package_bytes(group_id)).decode("ascii")
+
+                with patch.object(group_copy_ops, "MAX_PACKAGE_B64_BYTES", 8):
+                    preview_resp, _ = self._call("group_copy_preview_import", {"package_b64": package_b64})
+
+                self.assertFalse(preview_resp.ok)
+                self.assertEqual(getattr(preview_resp.error, "code", ""), "copy_package_too_large")
+                details = getattr(preview_resp.error, "details", {}) or {}
+                self.assertEqual(details.get("max_bytes"), 8)
+                self.assertGreater(int(details.get("actual_bytes") or 0), 8)
+        finally:
+            cleanup()
+
     def test_export_file_digest_matches_bytes_written_when_source_changes_during_export(self) -> None:
         from cccc.daemon.ops import group_copy_files
         from cccc.daemon.ops import group_copy_ops
