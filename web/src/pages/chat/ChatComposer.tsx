@@ -356,14 +356,16 @@ export function ChatComposer({
     const rect = node.getBoundingClientRect();
     const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
     const tooltipWidth = Math.min(196, Math.max(176, viewportWidth - 16));
-    const top = rect.bottom + 6;
+    const top = rect.top;
+    const transform = "translateY(calc(-100% - 6px))";
     if (isSmallScreen) {
-      setRecipientPopoverStyle({ top, left: 8, right: 8 });
+      setRecipientPopoverStyle({ top, left: 8, right: 8, transform });
     } else {
       setRecipientPopoverStyle({
         top,
         left: Math.min(Math.max(rect.left, 8), Math.max(8, viewportWidth - tooltipWidth - 8)),
         width: tooltipWidth,
+        transform,
       });
     }
     setRecipientPopoverTarget(target);
