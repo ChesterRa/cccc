@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-localhost",
+  "description": "Allow startDragging IPC from localhost daemon UI",
+  "remote": {
+    "urls": ["http://localhost:8848/**"]
+  },
+  "windows": ["main"],
+  "permissions": ["core:window:allow-start-dragging"]
+}
