@@ -14,6 +14,7 @@ from .messaging_cmds import *  # noqa: F401,F403
 from .space_cmds import *  # noqa: F401,F403
 from .im_cmds import *  # noqa: F401,F403
 from .system_cmds import *  # noqa: F401,F403
+from .dev_cmds import *  # noqa: F401,F403
 from .main import build_parser, main  # noqa: F401
 
 _PATCH_FORWARD_MODULES = (
@@ -24,6 +25,7 @@ _PATCH_FORWARD_MODULES = (
     "cccc.cli.space_cmds",
     "cccc.cli.im_cmds",
     "cccc.cli.system_cmds",
+    "cccc.cli.dev_cmds",
 )
 
 
