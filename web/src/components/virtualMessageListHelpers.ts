@@ -2,6 +2,10 @@ import type { LedgerEvent } from "../types";
 import { getChatTailMutationSnapshot, getChatTailSnapshot, shouldAutoFollowOnTailAppend, shouldAutoFollowOnTailMutation } from "../utils/chatAutoFollow";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 
+export const VIRTUAL_OVERSCAN_ROWS = 10;
+// Allow the last rendered item to be within overscan buffer range plus a small margin of the true end
+export const VIRTUAL_BOTTOM_INDEX_THRESHOLD = VIRTUAL_OVERSCAN_ROWS + 5;
+
 const VIRTUALIZATION_THRESHOLD = 80;
 
 function hasOnlyQueuedActivities(value: unknown): boolean {
@@ -60,6 +64,15 @@ export function shouldDetachChatFollowOnScroll(input: {
   if (input.followMode !== "follow") return false;
   if (input.isContainerResizing || input.atBottom) return false;
   return true;
+}
+
+export function shouldPromoteScrollToFollow(input: {
+  followMode: "follow" | "detached";
+  previousTop: number;
+  currentTop: number;
+}): boolean {
+  if (input.followMode === "follow") return true;
+  return input.currentTop > input.previousTop;
 }
 
 export function shouldNotifyScrollChange(input: {
@@ -151,4 +164,15 @@ export function getStableMessageKey(message: LedgerEvent | undefined, index: num
 
 export function shouldUseVirtualizedMessageList(messageCount: number): boolean {
   return Math.max(0, Number(messageCount) || 0) >= VIRTUALIZATION_THRESHOLD;
+}
+
+export function isVirtualizedScrollNearEnd(input: {
+  virtualItems: { index: number }[];
+  displayMessagesCount: number;
+  threshold?: number;
+}): boolean {
+  if (input.virtualItems.length <= 0) return true;
+  const lastItem = input.virtualItems[input.virtualItems.length - 1];
+  const threshold = input.threshold ?? VIRTUAL_BOTTOM_INDEX_THRESHOLD;
+  return input.displayMessagesCount - 1 - lastItem.index <= threshold;
 }

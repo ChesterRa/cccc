@@ -1,5 +1,7 @@
 import type { LedgerEvent } from "../types";
 
+const CROSS_GROUP_RECEIPT_KIND = "chat.cross_group_receipt";
+
 function mergeEventWithExistingStatus(incoming: LedgerEvent, existing?: LedgerEvent): LedgerEvent {
   if (!existing) return incoming;
   return {
@@ -10,10 +12,56 @@ function mergeEventWithExistingStatus(incoming: LedgerEvent, existing?: LedgerEv
   };
 }
 
+function stringDataValue(event: LedgerEvent, key: string): string {
+  const data = event?.data;
+  if (!data || typeof data !== "object") return "";
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function projectCrossGroupReceipts(events: LedgerEvent[]): LedgerEvent[] {
+  const receipts = events.filter((event) => String(event?.kind || "") === CROSS_GROUP_RECEIPT_KIND);
+  if (receipts.length === 0) return events;
+
+  const anchorsBySourceId = new Map<string, { dstEventId: string; remoteEventId: string }>();
+  for (const receipt of receipts) {
+    const sourceEventId = stringDataValue(receipt, "source_event_id");
+    if (!sourceEventId) continue;
+    const dstEventId = stringDataValue(receipt, "dst_event_id");
+    const remoteEventId = stringDataValue(receipt, "remote_event_id");
+    if (!dstEventId && !remoteEventId) continue;
+    const existing = anchorsBySourceId.get(sourceEventId);
+    anchorsBySourceId.set(sourceEventId, {
+      dstEventId: dstEventId || existing?.dstEventId || "",
+      remoteEventId: remoteEventId || existing?.remoteEventId || "",
+    });
+  }
+  if (anchorsBySourceId.size === 0) {
+    return events.filter((event) => String(event?.kind || "") !== CROSS_GROUP_RECEIPT_KIND);
+  }
+
+  return events
+    .filter((event) => String(event?.kind || "") !== CROSS_GROUP_RECEIPT_KIND)
+    .map((event) => {
+      const eventId = String(event?.id || "").trim();
+      const anchor = eventId ? anchorsBySourceId.get(eventId) : undefined;
+      if (!anchor || String(event?.kind || "") !== "chat.message") return event;
+      const data = event.data && typeof event.data === "object" ? event.data : {};
+      return {
+        ...event,
+        data: {
+          ...data,
+          ...(anchor.dstEventId ? { dst_event_id: anchor.dstEventId } : {}),
+          ...(anchor.remoteEventId ? { remote_event_id: anchor.remoteEventId } : {}),
+        },
+      };
+    });
+}
+
 export function mergeLedgerEvents(existing: LedgerEvent[], incoming: LedgerEvent[], maxEvents: number): LedgerEvent[] {
   const nextIncoming = Array.isArray(incoming) ? incoming.filter(Boolean) : [];
   if (nextIncoming.length === 0) {
-    const nextExisting = Array.isArray(existing) ? existing.filter(Boolean) : [];
+    const nextExisting = projectCrossGroupReceipts(Array.isArray(existing) ? existing.filter(Boolean) : []);
     return nextExisting.length > maxEvents ? nextExisting.slice(nextExisting.length - maxEvents) : nextExisting;
   }
   const existingById = new Map(
@@ -38,7 +86,7 @@ export function mergeLedgerEvents(existing: LedgerEvent[], incoming: LedgerEvent
     return !eventId || !incomingIds.has(eventId);
   });
 
-  const merged = [...hydratedIncoming, ...localOnlyExisting]
+  const merged = projectCrossGroupReceipts([...hydratedIncoming, ...localOnlyExisting]
     .map((event, index) => ({
       event,
       index,
@@ -51,7 +99,7 @@ export function mergeLedgerEvents(existing: LedgerEvent[], incoming: LedgerEvent
       if (leftValid !== rightValid) return leftValid ? -1 : 1;
       return left.index - right.index;
     })
-    .map((entry) => entry.event);
+    .map((entry) => entry.event));
 
   return merged.length > maxEvents ? merged.slice(merged.length - maxEvents) : merged;
 }

@@ -6,6 +6,7 @@ import {
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
   shouldNotifyScrollChange,
+  shouldPromoteScrollToFollow,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
   wasAtBottomBeforeContentChange,
@@ -304,6 +305,18 @@ describe("shouldAutoScrollToBottom", () => {
         forceStickToBottom: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldPromoteScrollToFollow", () => {
+  it("keeps detached history detached when the scroll position is unchanged", () => {
+    expect(
+      shouldPromoteScrollToFollow({
+        followMode: "detached",
+        previousTop: 240,
+        currentTop: 240,
+      }),
+    ).toBe(false);
   });
 });
 

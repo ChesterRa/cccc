@@ -15,11 +15,14 @@ import type { ChatFollowMode } from "../stores/useUIStore";
 import {
   getAutoFollowTrigger,
   getStableMessageKey,
+  isVirtualizedScrollNearEnd,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
   shouldNotifyScrollChange,
+  shouldPromoteScrollToFollow,
   shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
+  VIRTUAL_OVERSCAN_ROWS,
   wasAtBottomBeforeContentChange,
 } from "./virtualMessageListHelpers";
 import { classNames } from "../utils/classNames";
@@ -367,7 +370,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     getScrollElement: () => parentRef.current,
     getItemKey: (index) => getStableMessageKey(displayMessages[index], index),
     estimateSize: getEstimatedSize,
-    overscan: 10,
+    overscan: VIRTUAL_OVERSCAN_ROWS,
     paddingStart: 72 + topInset,
   });
 
@@ -452,8 +455,17 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const el = parentRef.current;
     if (!el) return true;
     const threshold = 8;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-  }, []);
+    const scrollAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    if (!scrollAtBottom) return false;
+
+    if (shouldVirtualize) {
+      return isVirtualizedScrollNearEnd({
+        virtualItems: virtualizer.getVirtualItems(),
+        displayMessagesCount: displayMessages.length,
+      });
+    }
+    return true;
+  }, [displayMessages.length, shouldVirtualize, virtualizer]);
 
   const scrollToBottom = useCallback((opts?: { force?: boolean; requestToken?: number }) => {
     const el = parentRef.current;
@@ -639,11 +651,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const handleScroll = useCallback(() => {
     const currentEl = parentRef.current;
     if (currentEl && !isContainerResizingRef.current) {
+      const curTop = currentEl.scrollTop;
+      const previousTop = lastScrollTopRef.current;
       const atBottom = checkIsAtBottom();
       const wasAtBottom = isAtBottomRef.current;
       setAtBottom(atBottom);
       if (atBottom) {
-        setFollowMode("follow");
+        if (shouldPromoteScrollToFollow({ followMode: followModeRef.current, previousTop, currentTop: curTop })) {
+          setFollowMode("follow");
+        }
       } else {
         setFollowMode("detached");
         cancelPendingBottomScroll();
@@ -681,7 +697,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     lastScrollTopRef.current = curTop;
 
     if (atBottom && followModeRef.current === "detached") {
-      if (curTop >= previousTop) {
+      if (shouldPromoteScrollToFollow({ followMode: followModeRef.current, previousTop, currentTop: curTop })) {
         setFollowMode("follow");
       }
     }
