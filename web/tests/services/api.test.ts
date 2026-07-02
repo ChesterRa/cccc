@@ -938,6 +938,45 @@ describe("api.message refs", () => {
     );
   });
 
+  it("dispatches slash skills through the hidden dispatch endpoint", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { delivered: true } }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.dispatchSlashSkill("g-demo", {
+      taskText: "开始执行",
+      command: "/using-superpowers",
+      capabilityId: "skill:agent_self_proposed:using-superpowers",
+      to: ["worker-1"],
+      priority: "attention",
+      replyRequired: true,
+      clientId: "client-1",
+      replyTo: "evt-parent",
+      quoteText: "原始消息",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/slash_skill_dispatch",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          task_text: "开始执行",
+          command: "/using-superpowers",
+          capability_id: "skill:agent_self_proposed:using-superpowers",
+          to: ["worker-1"],
+          priority: "attention",
+          reply_required: true,
+          client_id: "client-1",
+          reply_to: "evt-parent",
+          quote_text: "原始消息",
+        }),
+      }),
+    );
+  });
+
   it("sends cross-group messages through the source group endpoint with explicit dst_group_id", async () => {
     fetchMock.mockResolvedValue({
       status: 200,

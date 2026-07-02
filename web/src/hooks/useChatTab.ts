@@ -98,7 +98,52 @@ function canOpenSourceMessageLocally(groups: GroupMeta[], srcGroupId: string): b
 }
 
 export function shouldShowInConversation(event: LedgerEvent): boolean {
+  const data = event.data && typeof event.data === "object"
+    ? event.data as { hidden?: unknown; refs?: unknown }
+    : {};
+  if (data.hidden === true && !getSlashSkillDispatchRef(event)) return false;
   return !isDelegationSourceOutboundEvent(event.data);
+}
+
+function isSlashSkillDispatchRef(ref: unknown): ref is {
+  hidden?: unknown;
+  control_kind?: unknown;
+  title?: unknown;
+  command?: unknown;
+  task_text?: unknown;
+} {
+  if (!ref || typeof ref !== "object") return false;
+  const record = ref as { hidden?: unknown; control_kind?: unknown; title?: unknown };
+  return record.hidden === true
+    && (String(record.control_kind || "").trim() === "slash_skill_dispatch"
+      || String(record.title || "").trim() === "slash_skill_dispatch");
+}
+
+function getSlashSkillDispatchRef(event: LedgerEvent) {
+  const data = event.data && typeof event.data === "object"
+    ? event.data as { refs?: unknown }
+    : {};
+  const refs = Array.isArray(data.refs) ? data.refs : [];
+  return refs.find(isSlashSkillDispatchRef) || null;
+}
+
+export function toVisibleConversationEvent(event: LedgerEvent): LedgerEvent {
+  const ref = getSlashSkillDispatchRef(event);
+  if (!ref) return event;
+  const command = String(ref.command || "").trim();
+  const taskText = String(ref.task_text || "").trim();
+  const visibleText = [command, taskText].filter(Boolean).join(" ").trim();
+  if (!visibleText) return event;
+  const data = event.data && typeof event.data === "object" ? event.data as ChatMessageData : {};
+  return {
+    ...event,
+    data: {
+      ...data,
+      text: visibleText,
+      refs: [],
+      attachments: [],
+    },
+  };
 }
 
 function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
@@ -687,7 +732,7 @@ export function buildUnfilteredLiveChatMessages(
   outboxEntries: Pick<OutboxEntry, "localId" | "event">[],
   orderState: LogicalMessageOrderState,
 ): LedgerEvent[] {
-  const all = events.filter(isFormalChatMessageEvent);
+  const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation).map(toVisibleConversationEvent);
   const renderableCanonicalClientIds = new Set(
     all
       .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
@@ -1181,7 +1226,7 @@ export function useChatTab({
 
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
-    const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation);
+    const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation).map(toVisibleConversationEvent);
     const renderableCanonicalClientIds = new Set(
       all
         .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
@@ -1226,7 +1271,12 @@ export function useChatTab({
 
   // Chat messages (window or live)
   const chatMessages = useMemo(() => {
-    if (inChatWindow && chatWindow) return (chatWindow.events || []).filter(isFormalChatMessageEvent).filter(shouldShowInConversation);
+    if (inChatWindow && chatWindow) {
+      return (chatWindow.events || [])
+        .filter(isFormalChatMessageEvent)
+        .filter(shouldShowInConversation)
+        .map(toVisibleConversationEvent);
+    }
     return liveChatMessages;
   }, [chatWindow, inChatWindow, liveChatMessages]);
 

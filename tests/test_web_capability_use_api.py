@@ -64,6 +64,86 @@ class TestWebCapabilityUseApi(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_slash_skill_dispatch_route_passes_hidden_dispatch_payload(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            with patch(
+                "cccc.ports.web.app.call_daemon",
+                return_value={
+                    "ok": True,
+                    "result": {
+                        "hidden": True,
+                        "command": "/using-superpowers",
+                        "capability_id": "skill:agent_self_proposed:using-superpowers",
+                    },
+                },
+            ) as daemon_mock:
+                resp = self._client().post(
+                    f"/api/v1/groups/{group_id}/slash_skill_dispatch",
+                    json={
+                        "task_text": "开始执行",
+                        "command": "/using-superpowers",
+                        "capability_id": "skill:agent_self_proposed:using-superpowers",
+                        "to": ["architect"],
+                        "priority": "attention",
+                        "reply_required": True,
+                        "client_id": "client-1",
+                        "reply_to": "evt-original",
+                        "quote_text": "原始请求",
+                    },
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool(body.get("ok")))
+            result = body.get("result") if isinstance(body.get("result"), dict) else {}
+            self.assertTrue(bool(result.get("hidden")))
+            self.assertEqual(str(result.get("command") or ""), "/using-superpowers")
+            self.assertEqual(str(result.get("capability_id") or ""), "skill:agent_self_proposed:using-superpowers")
+            req = daemon_mock.call_args.args[0] if daemon_mock.call_args else {}
+            self.assertEqual(str(req.get("op") or ""), "slash_skill_dispatch")
+            args = req.get("args") if isinstance(req.get("args"), dict) else {}
+            self.assertEqual(str(args.get("group_id") or ""), group_id)
+            self.assertEqual(str(args.get("by") or ""), "user")
+            self.assertEqual(str(args.get("task_text") or ""), "开始执行")
+            self.assertEqual(str(args.get("command") or ""), "/using-superpowers")
+            self.assertEqual(str(args.get("capability_id") or ""), "skill:agent_self_proposed:using-superpowers")
+            self.assertEqual(args.get("to"), ["architect"])
+            self.assertEqual(str(args.get("priority") or ""), "attention")
+            self.assertIs(args.get("reply_required"), True)
+            self.assertEqual(str(args.get("client_id") or ""), "client-1")
+            self.assertEqual(str(args.get("reply_to") or ""), "evt-original")
+            self.assertEqual(str(args.get("quote_text") or ""), "原始请求")
+        finally:
+            cleanup()
+
+    def test_slash_skill_dispatch_route_coerces_string_false_reply_required(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            with patch(
+                "cccc.ports.web.app.call_daemon",
+                return_value={"ok": True, "result": {"hidden": True}},
+            ) as daemon_mock:
+                resp = self._client().post(
+                    f"/api/v1/groups/{group_id}/slash_skill_dispatch",
+                    json={
+                        "task_text": "开始执行",
+                        "command": "/using-superpowers",
+                        "capability_id": "skill:agent_self_proposed:using-superpowers",
+                        "to": ["architect"],
+                        "reply_required": "false",
+                    },
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            req = daemon_mock.call_args.args[0] if daemon_mock.call_args else {}
+            args = req.get("args") if isinstance(req.get("args"), dict) else {}
+            self.assertIs(args.get("reply_required"), False)
+        finally:
+            cleanup()
+
     def test_capability_install_route_uses_install_lifecycle(self) -> None:
         _, cleanup = self._with_home()
         try:

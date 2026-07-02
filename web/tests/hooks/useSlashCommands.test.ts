@@ -59,6 +59,29 @@ describe("dispatchSlashMessageOptimistically", () => {
     );
   });
 
+  it("passes slash skill metadata without turning it into visible chat text", async () => {
+    const dispatchMessage = vi.fn(async () => true);
+
+    await expect(dispatchSlashMessageOptimistically({
+      dispatchText: "开始执行",
+      originalText: "/using-superpowers 开始执行",
+      command: "/using-superpowers",
+      capabilityId: "skill:agent_self_proposed:using-superpowers",
+      dispatchMessage,
+      clearComposer: vi.fn(),
+      restoreComposerText: vi.fn(),
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(dispatchMessage).toHaveBeenCalledWith(
+      "开始执行",
+      {
+        replyTarget: null,
+        command: "/using-superpowers",
+        capabilityId: "skill:agent_self_proposed:using-superpowers",
+      },
+    );
+  });
+
   it("restores the original slash text when dispatch fails", async () => {
     const calls: string[] = [];
 

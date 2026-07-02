@@ -14,18 +14,34 @@ import type { SlashDispatchMessageOptions } from "./useSlashCommands";
 export async function sendSlashSkillMessageRequest(args: {
   selectedGroupId: string;
   message: string;
+  command?: string;
+  capabilityId?: string;
   toTokens: string[];
   priority: "normal" | "attention";
   replyRequired: boolean;
   localId: string;
   replyTarget: ReplyTarget;
 }) {
-  if (args.replyTarget) {
-    return api.replyMessage(
+  const command = String(args.command || "").trim();
+  const capabilityId = String(args.capabilityId || "").trim();
+  if (!command || !capabilityId) {
+    if (args.replyTarget) {
+      return api.replyMessage(
+        args.selectedGroupId,
+        args.message,
+        args.toTokens,
+        args.replyTarget.eventId,
+        undefined,
+        args.priority,
+        args.replyRequired,
+        args.localId,
+        [],
+      );
+    }
+    return api.sendMessage(
       args.selectedGroupId,
       args.message,
       args.toTokens,
-      args.replyTarget.eventId,
       undefined,
       args.priority,
       args.replyRequired,
@@ -33,16 +49,19 @@ export async function sendSlashSkillMessageRequest(args: {
       [],
     );
   }
-
-  return api.sendMessage(
+  return api.dispatchSlashSkill(
     args.selectedGroupId,
-    args.message,
-    args.toTokens,
-    undefined,
-    args.priority,
-    args.replyRequired,
-    args.localId,
-    [],
+    {
+      taskText: args.message,
+      command,
+      capabilityId,
+      to: args.toTokens,
+      priority: args.priority,
+      replyRequired: args.replyRequired,
+      clientId: args.localId,
+      replyTo: args.replyTarget?.eventId || "",
+      quoteText: args.replyTarget?.text || "",
+    },
   );
 }
 
@@ -78,10 +97,14 @@ export function useSlashSkillDispatch(args: {
     onMessageSent,
     t,
   } = args;
+  void enqueueOutbox;
+  void removeOutbox;
 
   return useCallback(async (text: string, options?: SlashDispatchMessageOptions): Promise<boolean> => {
     const message = String(text || "").trim();
     if (!selectedGroupId || !message) return false;
+    const command = String(options?.command || "").trim();
+    const capabilityId = String(options?.capabilityId || "").trim();
     const replyTarget: ReplyTarget = options?.replyTarget || null;
     if (groupSendBlockedReason) {
       showError(getGroupSendBlockedMessage(groupSendBlockedReason, t));
@@ -90,31 +113,11 @@ export function useSlashSkillDispatch(args: {
 
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const prio = replyRequired ? "attention" : (priority || "normal");
-    const optimisticEvent: LedgerEvent = {
-      id: localId,
-      kind: "chat.message",
-      ts: new Date().toISOString(),
-      by: "user",
-      group_id: selectedGroupId,
-      data: {
-        text: message,
-        to: toTokens,
-        priority: prio,
-        reply_required: replyRequired,
-        client_id: localId,
-        reply_to: replyTarget?.eventId || null,
-        quote_text: replyTarget?.text || undefined,
-        refs: [],
-        format: "plain",
-        attachments: [],
-        _optimistic: true,
-      } as LedgerEvent["data"],
-    };
-    enqueueOutbox(selectedGroupId, localId, optimisticEvent);
-
     const resp = await sendSlashSkillMessageRequest({
       selectedGroupId,
       message,
+      command,
+      capabilityId,
       toTokens,
       priority: prio as "normal" | "attention",
       replyRequired,
@@ -122,7 +125,6 @@ export function useSlashSkillDispatch(args: {
       replyTarget,
     });
     if (!resp.ok) {
-      removeOutbox(selectedGroupId, localId);
       showError(formatSendMessageError({
         code: resp.error.code,
         message: resp.error.message,
@@ -140,11 +142,9 @@ export function useSlashSkillDispatch(args: {
     return true;
   }, [
     clearDraft,
-    enqueueOutbox,
     groupSendBlockedReason,
     onMessageSent,
     priority,
-    removeOutbox,
     replyRequired,
     selectedGroupId,
     setChatFilter,

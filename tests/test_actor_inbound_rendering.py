@@ -147,6 +147,31 @@ def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
     assert "trust_id: ptrust_1" not in text
 
 
+def test_actor_delivery_text_does_not_render_hidden_slash_control_refs() -> None:
+    text = build_actor_delivery_text(
+        text="[CCCC] INTERNAL CONTROL: CCCC capability skill dispatch",
+        priority="normal",
+        reply_required=False,
+        event_id="evt-1",
+        refs=[
+            {
+                "kind": "text",
+                "title": "slash_skill_dispatch",
+                "hidden": True,
+                "control_kind": "slash_skill_dispatch",
+                "command": "/using-superpowers",
+                "capability_id": "skill:agent_self_proposed:using-superpowers",
+                "task_text": "开始执行",
+            }
+        ],
+        attachments=[],
+    )
+
+    assert "[CCCC] INTERNAL CONTROL" in text
+    assert "[cccc] References:" not in text
+    assert "slash_skill_dispatch" not in text
+
+
 def test_group_bridge_route_ref_renderer_preserves_route_id_with_long_label() -> None:
     long_label = "Remote Product " + ("Very Long " * 12)
 

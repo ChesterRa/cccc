@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   replyMessage: vi.fn(),
+  dispatchSlashSkill: vi.fn(),
 }));
 
 vi.mock("../../src/services/api", () => apiMocks);
@@ -10,12 +11,47 @@ vi.mock("../../src/services/api", () => apiMocks);
 import { sendSlashSkillMessageRequest } from "../../src/hooks/useSlashSkillDispatch";
 
 describe("sendSlashSkillMessageRequest", () => {
-  it("uses the reply API when slash skill dispatch has a reply target", async () => {
-    apiMocks.replyMessage.mockResolvedValueOnce({ ok: true, result: {} });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends builtin slash commands through the normal message API", async () => {
+    apiMocks.sendMessage.mockResolvedValueOnce({ ok: true, result: {} });
 
     await expect(sendSlashSkillMessageRequest({
       selectedGroupId: "g1",
-      message: "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
+      message: "/install cccc",
+      command: "",
+      capabilityId: "",
+      toTokens: ["@all"],
+      priority: "normal",
+      replyRequired: false,
+      localId: "local-builtin",
+      replyTarget: null,
+    })).resolves.toEqual({ ok: true, result: {} });
+
+    expect(apiMocks.sendMessage).toHaveBeenCalledWith(
+      "g1",
+      "/install cccc",
+      ["@all"],
+      undefined,
+      "normal",
+      false,
+      "local-builtin",
+      [],
+    );
+    expect(apiMocks.dispatchSlashSkill).not.toHaveBeenCalled();
+    expect(apiMocks.replyMessage).not.toHaveBeenCalled();
+  });
+
+  it("uses the reply API when slash skill dispatch has a reply target", async () => {
+    apiMocks.dispatchSlashSkill.mockResolvedValueOnce({ ok: true, result: {} });
+
+    await expect(sendSlashSkillMessageRequest({
+      selectedGroupId: "g1",
+      message: "开始执行",
+      command: "/using-superpowers",
+      capabilityId: "skill:agent_self_proposed:using-superpowers",
       toTokens: ["@all"],
       priority: "attention",
       replyRequired: true,
@@ -27,26 +63,32 @@ describe("sendSlashSkillMessageRequest", () => {
       },
     })).resolves.toEqual({ ok: true, result: {} });
 
-    expect(apiMocks.replyMessage).toHaveBeenCalledWith(
+    expect(apiMocks.dispatchSlashSkill).toHaveBeenCalledWith(
       "g1",
-      "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
-      ["@all"],
-      "evt-original",
-      undefined,
-      "attention",
-      true,
-      "local-1",
-      [],
+      {
+        taskText: "开始执行",
+        command: "/using-superpowers",
+        capabilityId: "skill:agent_self_proposed:using-superpowers",
+        to: ["@all"],
+        priority: "attention",
+        replyRequired: true,
+        clientId: "local-1",
+        replyTo: "evt-original",
+        quoteText: "失败日志",
+      },
     );
+    expect(apiMocks.replyMessage).not.toHaveBeenCalled();
     expect(apiMocks.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("uses the normal send API when slash skill dispatch has no reply target", async () => {
-    apiMocks.sendMessage.mockResolvedValueOnce({ ok: true, result: {} });
+  it("uses the hidden slash skill dispatch API when there is no reply target", async () => {
+    apiMocks.dispatchSlashSkill.mockResolvedValueOnce({ ok: true, result: {} });
 
     await expect(sendSlashSkillMessageRequest({
       selectedGroupId: "g1",
-      message: "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
+      message: "开始执行",
+      command: "/using-superpowers",
+      capabilityId: "skill:agent_self_proposed:using-superpowers",
       toTokens: ["@all"],
       priority: "normal",
       replyRequired: false,
@@ -54,15 +96,21 @@ describe("sendSlashSkillMessageRequest", () => {
       replyTarget: null,
     })).resolves.toEqual({ ok: true, result: {} });
 
-    expect(apiMocks.sendMessage).toHaveBeenCalledWith(
+    expect(apiMocks.dispatchSlashSkill).toHaveBeenCalledWith(
       "g1",
-      "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
-      ["@all"],
-      undefined,
-      "normal",
-      false,
-      "local-2",
-      [],
+      {
+        taskText: "开始执行",
+        command: "/using-superpowers",
+        capabilityId: "skill:agent_self_proposed:using-superpowers",
+        to: ["@all"],
+        priority: "normal",
+        replyRequired: false,
+        clientId: "local-2",
+        replyTo: "",
+        quoteText: "",
+      },
     );
+    expect(apiMocks.sendMessage).not.toHaveBeenCalled();
+    expect(apiMocks.replyMessage).not.toHaveBeenCalled();
   });
 });

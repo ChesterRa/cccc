@@ -37,9 +37,11 @@ import {
   parseComposerRecipientTokens,
   pruneMissingMentionRecipientTokens,
   restoreFailedSendComposerState,
+  shouldShowInConversation,
   sortChatMessages,
   shouldLockChatToBottomForSend,
   shouldRestoreDetachedScrollSnapshot,
+  toVisibleConversationEvent,
 } from "../../src/hooks/useChatTab";
 import {
   useComposerStore,
@@ -112,6 +114,34 @@ function makeStreamingEvent({
 }
 
 describe("dedupeStreamingEvents", () => {
+  it("shows hidden slash skill dispatch events as the original slash command", () => {
+    const event = {
+      id: "slashskill-1",
+      kind: "chat.message",
+      by: "user",
+      data: {
+        text: "[CCCC] INTERNAL CONTROL",
+        to: ["architect"],
+        refs: [
+          {
+            kind: "text",
+            title: "slash_skill_dispatch",
+            hidden: true,
+            control_kind: "slash_skill_dispatch",
+            command: "/using-superpowers",
+            capability_id: "skill:agent_self_proposed:using-superpowers",
+            task_text: "开始执行",
+          },
+        ],
+      },
+    } as LedgerEvent;
+
+    expect(shouldShowInConversation(event)).toBe(true);
+    const visible = toVisibleConversationEvent(event);
+    expect((visible.data as { text?: string }).text).toBe("/using-superpowers 开始执行");
+    expect((visible.data as { refs?: unknown[] }).refs).toEqual([]);
+  });
+
   it("keeps distinct text-bearing stream ids for the same pending event", () => {
     const events = dedupeStreamingEvents([
       makeStreamingEvent({

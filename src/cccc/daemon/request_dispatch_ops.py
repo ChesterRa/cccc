@@ -23,6 +23,7 @@ from .ops.daemon_core_ops import try_handle_daemon_core_op
 from .ops.remote_access_ops import try_handle_remote_access_op
 from .ops.hermes_runtime_ops import try_handle_hermes_runtime_op
 from .messaging.chat_ops import try_handle_chat_op
+from .messaging.slash_skill_dispatch_ops import try_handle_slash_skill_dispatch_op
 from .messaging.system_notify_ops import try_handle_system_notify_op
 from .group.group_state_ops import try_handle_group_state_op
 from .group.group_lifecycle_ops import try_handle_group_lifecycle_op
@@ -418,6 +419,16 @@ def dispatch_request(
     )
     if chat_resp is not None:
         return chat_resp, False
+
+    slash_skill_resp = try_handle_slash_skill_dispatch_op(
+        op,
+        args,
+        coerce_bool=deps.coerce_bool_default_false,
+        effective_runner_kind=deps.effective_runner_kind,
+        auto_wake_recipients=deps.auto_wake_recipients,
+    )
+    if slash_skill_resp is not None:
+        return slash_skill_resp, False
 
     context_resp = try_handle_context_op(op, args)
     if context_resp is not None:

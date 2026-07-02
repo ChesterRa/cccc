@@ -19,6 +19,8 @@ export type OptimisticSlashDispatchResult = {
 
 export type SlashDispatchMessageOptions = {
   replyTarget?: ReplyTarget;
+  command?: string;
+  capabilityId?: string;
 };
 
 function summarizeCapabilityUseResult(result: unknown): string {
@@ -41,6 +43,8 @@ function summarizeCapabilityUseResult(result: unknown): string {
 export async function dispatchSlashMessageOptimistically(args: {
   dispatchText: string;
   originalText: string;
+  command?: string;
+  capabilityId?: string;
   replyTarget?: ReplyTarget;
   dispatchMessage: (text: string, options?: SlashDispatchMessageOptions) => Promise<boolean>;
   clearComposer: () => void;
@@ -49,7 +53,11 @@ export async function dispatchSlashMessageOptimistically(args: {
   const dispatchText = String(args.dispatchText || "").trim();
   if (!dispatchText) return { ok: false, dispatchText: "" };
   args.clearComposer();
-  const sent = await args.dispatchMessage(dispatchText, { replyTarget: args.replyTarget || null });
+  const sent = await args.dispatchMessage(dispatchText, {
+    replyTarget: args.replyTarget || null,
+    command: String(args.command || "").trim() || undefined,
+    capabilityId: String(args.capabilityId || "").trim() || undefined,
+  });
   if (!sent) {
     args.restoreComposerText(args.originalText);
   }
@@ -124,8 +132,10 @@ export function useSlashCommands(args: {
         });
         if (resolution.kind === "dispatch" && dispatchMessage) {
           const sent = await dispatchSlashMessageOptimistically({
-            dispatchText: resolution.dispatchText,
+            dispatchText: slashCommand.argsText,
             originalText: opts.text,
+            command: item.command,
+            capabilityId: item.capabilityId,
             replyTarget: opts.replyTarget || null,
             dispatchMessage,
             clearComposer,

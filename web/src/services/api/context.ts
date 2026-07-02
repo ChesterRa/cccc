@@ -543,6 +543,36 @@ export async function sendMessage(
   });
 }
 
+export async function dispatchSlashSkill(
+  groupId: string,
+  payload: {
+    taskText: string;
+    command: string;
+    capabilityId: string;
+    to: string[];
+    priority?: "normal" | "attention";
+    replyRequired?: boolean;
+    clientId?: string;
+    replyTo?: string;
+    quoteText?: string;
+  },
+) {
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/slash_skill_dispatch`, {
+    method: "POST",
+    body: JSON.stringify({
+      task_text: payload.taskText,
+      command: payload.command,
+      capability_id: payload.capabilityId,
+      to: payload.to || [],
+      priority: payload.priority || "normal",
+      reply_required: Boolean(payload.replyRequired),
+      client_id: payload.clientId || "",
+      reply_to: payload.replyTo || "",
+      quote_text: payload.quoteText || "",
+    }),
+  });
+}
+
 export async function trackedSendMessage(
   groupId: string,
   payload: {
