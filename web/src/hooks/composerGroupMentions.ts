@@ -219,25 +219,3 @@ export function resolveControlledComposerMentionContext({
   if (!best) return { scope: "selected", mentionTargetGroupId: "" };
   return { scope: "destination", mentionTargetGroupId: best.groupId };
 }
-
-export function extractControlledGroupMentionTargetActor({
-  text,
-  token,
-  agentTokens = [],
-}: {
-  text: string;
-  token: ComposerGroupMentionToken | null;
-  agentTokens?: ComposerAgentMentionToken[];
-}): string {
-  if (!token) return "";
-  const source = String(text || "");
-  const live = pruneComposerGroupMentionTokens({ text: source, tokens: [token] })[0] || null;
-  if (!live) return "";
-  const segEndNl = source.indexOf("\n", live.end);
-  const segEnd = segEndNl >= 0 ? segEndNl : source.length;
-  const liveAgents = pruneComposerAgentMentionTokens({ text: source, tokens: agentTokens });
-  const target = liveAgents
-    .filter((agent) => agent.scope === "destination" && agent.start >= live.end && agent.end <= segEnd)
-    .sort((a, b) => a.start - b.start)[0];
-  return target?.actorId || "";
-}

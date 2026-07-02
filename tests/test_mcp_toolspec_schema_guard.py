@@ -32,6 +32,9 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
     def test_agent_state_toolspec_describes_current_memo_fields(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_agent_state"), None)
         self.assertIsInstance(spec, dict)
+        desc = str(spec.get("description") or "") if isinstance(spec, dict) else ""
+        self.assertIn("post-write agent_state", desc)
+        self.assertIn("context_hygiene confirmation", desc)
         schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
         props = schema.get("properties") if isinstance(schema, dict) else {}
         self.assertIsInstance(props, dict)
@@ -40,7 +43,9 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         commitments = props.get("commitments") if isinstance(props, dict) else {}
         persona_notes = props.get("persona_notes") if isinstance(props, dict) else {}
         self.assertIn("Current memo", str(open_loops.get("description") or ""))
-        self.assertIn("Creed-derived warnings", str(open_loops.get("description") or ""))
+        self.assertIn("exit criteria", str(open_loops.get("description") or ""))
+        self.assertIn("concrete referent", str(open_loops.get("description") or ""))
+        self.assertNotIn("Creed-derived warnings", str(open_loops.get("description") or ""))
         self.assertIn("Promises", str(commitments.get("description") or ""))
         self.assertIn("not temporary task memos", str(persona_notes.get("description") or ""))
         self.assertNotIn("resume_hint", props)

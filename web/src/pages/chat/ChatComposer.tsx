@@ -128,7 +128,6 @@ export interface ChatComposerProps {
   setMentionKind: Dispatch<SetStateAction<ComposerMentionKind>>;
   setMentionActorScope: Dispatch<SetStateAction<"selected" | "destination">>;
   setMentionTargetGroupId: Dispatch<SetStateAction<string>>;
-  onAppendRecipientToken: (token: string, label?: string) => void;
   composerGroupMentionTokens: ComposerGroupMentionToken[];
   setComposerGroupMentionTokens: Dispatch<SetStateAction<ComposerGroupMentionToken[]>>;
   composerAgentMentionTokens: ComposerAgentMentionToken[];
@@ -183,7 +182,6 @@ export function ChatComposer({
   setMentionKind,
   setMentionActorScope,
   setMentionTargetGroupId,
-  onAppendRecipientToken,
   composerGroupMentionTokens,
   setComposerGroupMentionTokens,
   composerAgentMentionTokens,
@@ -792,12 +790,8 @@ export function ChatComposer({
           setComposerAgentMentionTokens((tokens) => pruneComposerAgentMentionTokens({ text: before, tokens }).concat([token]));
         }
       }
-      // Destination-scope `@` names a target-group agent for the delegation
-      // relay (extracted from text at send time) — it must NOT become a local
-      // recipient. Only local (selected-scope) mentions go into `to`.
-      if (mentionScope !== "destination" && !toTokens.includes(selected.value)) {
-        onAppendRecipientToken(selected.value, selected.label);
-      }
+      // @ mentions are text references/autocomplete only. Delivery routing is
+      // controlled by explicit recipient chips / the serialized `to` field.
       setShowMentionMenu(false);
       setMentionSelectedIndex(0);
       return;

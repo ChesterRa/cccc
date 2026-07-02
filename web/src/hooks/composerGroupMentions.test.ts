@@ -5,7 +5,6 @@ import {
   createComposerAgentMentionToken,
   createComposerGroupMentionToken,
   buildComposerGroupBridgeRouteRefs,
-  extractControlledGroupMentionTargetActor,
   resolveSelectedComposerGroupMentionTargets,
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
@@ -95,20 +94,6 @@ describe("composer group mention tokens", () => {
       atIndex: text.indexOf("@remote"),
       tokens: [selected],
     })).toEqual({ scope: "destination", mentionTargetGroupId: "self-agent" });
-  });
-
-  it("extracts target actor only from selected live agent tokens after a selected live group token", () => {
-    const text = "copied #Self Agent @wrong\nask #Self Agent @right";
-    const selected = createComposerGroupMentionToken({ groupId: "self-agent", token: "#Self Agent", start: text.lastIndexOf("#Self Agent") })!;
-    const target = createComposerAgentMentionToken({
-      actorId: "right",
-      token: "@right",
-      start: text.indexOf("@right"),
-      scope: "destination",
-    })!;
-    expect(extractControlledGroupMentionTargetActor({ text, token: selected, agentTokens: [target] })).toBe("right");
-    expect(extractControlledGroupMentionTargetActor({ text, token: selected, agentTokens: [] })).toBe("");
-    expect(extractControlledGroupMentionTargetActor({ text, token: null })).toBe("");
   });
 
   it("builds structured route refs for selected remote group labels", () => {

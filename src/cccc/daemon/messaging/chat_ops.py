@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
-import re
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -17,7 +16,7 @@ from ...contracts.v1 import (
     DaemonResponse,
     SUGGESTED_USER_MESSAGE_MAX_CHARS,
 )
-from ...kernel.actors import find_actor, list_actors, resolve_recipient_tokens
+from ...kernel.actors import find_actor, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.chat_idempotency import find_existing_reply_result
 from ...kernel.inbox import find_event_with_chat_ack, is_message_for_actor
@@ -373,20 +372,6 @@ def handle_send(
         resp = _error("invalid_recipient", str(e))
         return diag.finish_response(resp)
     diag.mark("resolve_recipients")
-
-    if not to:
-        mention_pattern = re.compile(r"@(\w[\w-]*)")
-        mentions = mention_pattern.findall(text)
-        if mentions:
-            actors = list_actors(group)
-            actor_ids = {str(actor.get("id") or "") for actor in actors if isinstance(actor, dict)}
-            valid_mentions = [m for m in mentions if m in actor_ids or m in ("all", "peers", "foreman")]
-            if valid_mentions:
-                mention_tokens = [f"@{m}" if m in ("all", "peers", "foreman") else m for m in valid_mentions]
-                try:
-                    to = resolve_recipient_tokens(group, mention_tokens)
-                except Exception:
-                    pass
 
     if not to and not to_explicitly_set and get_default_send_to(group.doc) == "foreman":
         to = ["@foreman"]

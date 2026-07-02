@@ -1232,6 +1232,22 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_body_mentions_do_not_change_empty_to_routing(self) -> None:
+        """Message-body @mentions are text references; empty to still uses the group default."""
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("send", {
+                "group_id": group_id,
+                "by": "user",
+                "to": [],
+                "text": "please ask @peer2 for a second opinion",
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            event = (resp.result or {}).get("event", {})
+            self.assertEqual(event.get("data", {}).get("to", []), ["@foreman"])
+        finally:
+            cleanup()
+
     def test_send_to_malformed_list_entries_falls_back_to_default(self) -> None:
         """T067 edge: malformed list entries should not become broadcast."""
         group_id, cleanup = self._setup_group_with_actors()

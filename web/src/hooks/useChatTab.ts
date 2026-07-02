@@ -852,41 +852,6 @@ export function buildComposerSendRecipientTokens({
   );
 }
 
-export function pruneMissingMentionRecipientTokens({
-  toText,
-  mentionRecipientTokens: previousMentionRecipientTokens,
-  liveAgentMentionTokens,
-  validRecipientSet,
-}: {
-  toText: string;
-  mentionRecipientTokens?: Set<string>;
-  liveAgentMentionTokens: ComposerAgentMentionToken[];
-  validRecipientSet: Set<string>;
-}): { toText: string; mentionRecipientTokens: Set<string> } {
-  const previousMentionTokens = previousMentionRecipientTokens || new Set<string>();
-  const mentionRecipientTokens = new Set(
-    (liveAgentMentionTokens || [])
-      .filter((token) => token.scope === "selected")
-      .map((token) => String(token.actorId || "").trim())
-      .filter((token) => token && validRecipientSet.has(token)),
-  );
-  if (mentionRecipientTokens.size === 0 && previousMentionTokens.size === 0) {
-    return { toText: String(toText || ""), mentionRecipientTokens: new Set() };
-  }
-
-  const nextTokens = parseComposerRecipientTokens(toText, validRecipientSet)
-    .filter((token) => !previousMentionTokens.has(token) || mentionRecipientTokens.has(token));
-  for (const token of mentionRecipientTokens) {
-    if (!nextTokens.includes(token)) {
-      nextTokens.push(token);
-    }
-  }
-  return {
-    toText: nextTokens.join(", "),
-    mentionRecipientTokens,
-  };
-}
-
 export function useChatTab({
   selectedGroupId,
   selectedGroupRunning,
@@ -977,7 +942,6 @@ export function useChatTab({
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
-  const mentionRecipientTokensRef = useRef<Set<string>>(new Set());
   const [composerGroupMentionTokens, setComposerGroupMentionTokens] = useState<ComposerGroupMentionToken[]>([]);
   const [composerAgentMentionTokens, setComposerAgentMentionTokens] = useState<ComposerAgentMentionToken[]>([]);
 
@@ -1103,7 +1067,7 @@ export function useChatTab({
     setSelectedRemoteGroupIds((current) => current.filter((groupId) => validRemoteIds.has(groupId)));
   }, [remoteRouteGroups]);
 
-  // Message-body mentions: @ selects current-route recipients; # selects the destination group.
+  // Message-body mentions are text helpers: @ autocompletes names/references, # adds delegation hints.
   const mentionSuggestions = useMemo(() => {
     const mentionActors = mentionKind === "agent" && mentionActorScope === "selected" ? actors : recipientActors;
     return buildComposerMentionSuggestions({
@@ -1397,21 +1361,9 @@ export function useChatTab({
   }, []);
 
   const clearRecipients = useCallback(() => {
-    mentionRecipientTokensRef.current = new Set();
-    setComposerAgentMentionTokens((tokens) => tokens.filter((token) => token.scope !== "selected"));
     setSelectedRemoteGroupIds([]);
     setToText("");
   }, [setToText]);
-
-  const appendRecipientToken = useCallback(
-    (token: string) => {
-      const normalized = String(token || "").trim();
-      if (!normalized) return;
-      mentionRecipientTokensRef.current.add(normalized);
-      setToText(toText ? toText + ", " + normalized : normalized);
-    },
-    [toText, setToText]
-  );
 
   const syncMentionRecipientsFromComposerText = useCallback(
     (textOrUpdater: string | ((prev: string) => string)) => {
@@ -1421,19 +1373,9 @@ export function useChatTab({
       if (liveAgentMentionTokens.length !== composerAgentMentionTokens.length) {
         setComposerAgentMentionTokens(liveAgentMentionTokens);
       }
-      const result = pruneMissingMentionRecipientTokens({
-        toText,
-        mentionRecipientTokens: mentionRecipientTokensRef.current,
-        liveAgentMentionTokens,
-        validRecipientSet,
-      });
-      mentionRecipientTokensRef.current = result.mentionRecipientTokens;
-      if (result.toText !== toText) {
-        setToText(result.toText);
-      }
       setComposerText(text);
     },
-    [composerAgentMentionTokens, composerText, setComposerText, setToText, toText, validRecipientSet],
+    [composerAgentMentionTokens, composerText, setComposerText],
   );
 
   const removeComposerFile = useCallback(
@@ -2041,7 +1983,6 @@ export function useChatTab({
     selectedRemoteGroupIds,
     toggleRemoteGroupRecipient,
     clearRecipients,
-    appendRecipientToken,
     priority,
     replyRequired,
     setPriority,

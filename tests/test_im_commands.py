@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from cccc.ports.im.commands import format_status
 
@@ -63,6 +64,13 @@ class TestImFormatStatus(unittest.TestCase):
         self.assertIn("Text: in yes / out yes", text)
         self.assertIn("Files: in partial / out yes", text)
         self.assertIn("Voice/audio no | Markdown partial", text)
+
+    def test_bridge_keeps_leading_targets_but_not_body_mentions(self) -> None:
+        source = Path("src/cccc/ports/im/bridge.py").read_text(encoding="utf-8")
+        self.assertIn("Parse recipients from leading args", source)
+        self.assertIn("head.startswith(\"@\")", source)
+        self.assertNotIn("try @mentions in the message text", source)
+        self.assertNotIn("mention_tokens", source)
 
 
 if __name__ == "__main__":

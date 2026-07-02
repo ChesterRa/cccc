@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from ....kernel.agent_state_hygiene import evaluate_agent_state_hygiene
 from ....kernel.actors import get_effective_role, list_actors
 from ....kernel.group import load_group
 from ....kernel.prompt_files import (
@@ -11,8 +13,9 @@ from ....kernel.prompt_files import (
     read_group_prompt_file,
     write_group_prompt_file,
 )
+from ....util.fs import read_json
 from ..task_types import default_task_type_id, normalize_task_type_id
-from ..common import MCPError, _call_daemon_or_raise
+from ..common import MCPError, _call_daemon_or_raise, _runtime_context
 from ..utils.help_markdown import parse_help_markdown, update_actor_help_note
 
 
@@ -325,6 +328,89 @@ def agent_state_get(*, group_id: str, actor_id: Optional[str] = None, include_wa
     return {"version": snapshot.get("version"), "agent_states": states}
 
 
+def _load_actor_mind_context_runtime(*, group_id: str, actor_id: str) -> Dict[str, Any]:
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid:
+        return {}
+    home = str(_runtime_context().home or "").strip()
+    if not home:
+        return {}
+    state = read_json(Path(home).expanduser() / "groups" / gid / "state" / "automation.json")
+    actors = state.get("actors") if isinstance(state.get("actors"), dict) else {}
+    actor_state = actors.get(aid)
+    return actor_state if isinstance(actor_state, dict) else {}
+
+
+def _find_agent_state(snapshot: Dict[str, Any], actor_id: str) -> Optional[Dict[str, Any]]:
+    states = snapshot.get("agent_states") if isinstance(snapshot.get("agent_states"), list) else []
+    target = str(actor_id or "").strip().casefold()
+    for item in states:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "").strip().casefold() == target:
+            return item
+    return None
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except Exception:
+        return default
+
+
+def _agent_state_hygiene_for_update_result(
+    *,
+    group_id: str,
+    actor_id: str,
+    agent_state: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    runtime_meta = _load_actor_mind_context_runtime(group_id=group_id, actor_id=actor_id)
+    hot = agent_state.get("hot") if isinstance(agent_state, dict) and isinstance(agent_state.get("hot"), dict) else {}
+    warm = agent_state.get("warm") if isinstance(agent_state, dict) and isinstance(agent_state.get("warm"), dict) else {}
+    return evaluate_agent_state_hygiene(
+        actor_id=actor_id,
+        hot=hot,
+        warm=warm,
+        updated_at=agent_state.get("updated_at") if isinstance(agent_state, dict) else None,
+        mind_touched_at=runtime_meta.get("mind_context_touched_at"),
+        hot_only_updates_since_mind_touch=_safe_int(runtime_meta.get("hot_only_updates_since_mind_touch")),
+        present=agent_state is not None,
+    )
+
+
+def _with_agent_state_update_confirmation(
+    *,
+    group_id: str,
+    actor_id: str,
+    sync_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    out = dict(sync_result or {})
+    try:
+        snapshot = context_get(group_id=group_id, include_archived=True)
+        agent_state = _find_agent_state(snapshot, actor_id)
+        out["agent_state"] = agent_state
+        out["context_hygiene"] = _agent_state_hygiene_for_update_result(
+            group_id=group_id,
+            actor_id=actor_id,
+            agent_state=agent_state,
+        )
+        if "version" not in out and isinstance(snapshot, dict):
+            out["version"] = snapshot.get("version")
+    except Exception as exc:
+        out["agent_state"] = None
+        out["context_hygiene"] = evaluate_agent_state_hygiene(
+            actor_id=actor_id,
+            hot={},
+            warm={},
+            updated_at=None,
+            present=False,
+        )
+        out["post_update_warning"] = f"agent_state confirmation failed: {exc}"
+    return out
+
+
 def agent_state_update(
     *,
     group_id: str,
@@ -359,7 +445,8 @@ def agent_state_update(
         op["open_loops"] = open_loops
     if commitments is not None:
         op["commitments"] = commitments
-    return context_sync(group_id=group_id, ops=[op], by=by)
+    result = context_sync(group_id=group_id, ops=[op], by=by)
+    return _with_agent_state_update_confirmation(group_id=group_id, actor_id=actor_id, sync_result=result)
 
 
 def agent_state_clear(*, group_id: str, actor_id: str, by: Optional[str] = None) -> Dict[str, Any]:

@@ -87,9 +87,9 @@ To add a second agent for collaboration:
 4. Start the agent
 
 Now you can:
-- Ask the coordinator: send a normal message, or use `@foreman`
-- Send to a specific agent: use `@assistant` or `@reviewer`
-- Broadcast only when needed: use `@all` for announcements or urgent shared constraints
+- Ask the coordinator: send a normal message, or select `@foreman` in the recipient controls
+- Send to a specific agent: select `assistant` or `reviewer` in the recipient controls
+- Broadcast only when needed: select `@all` in the recipient controls for announcements or urgent shared constraints
 - Track delegated work: use task-backed delegation when the task needs an owner, outcome, or evidence trail
 
 ## Using the Context Panel
@@ -110,7 +110,7 @@ Agents can read and update this shared context.
 | Switch groups | Click group in sidebar |
 | Agent terminal | Click agent tab |
 | Send message | Chat tab input |
-| @mention | Type `@` for autocomplete |
+| @mention | Type `@` for name autocomplete/text references; recipients are controlled separately |
 | Reply to message | Click reply icon |
 | Settings | Gear icon in header |
 | Theme | Click moon/sun icon |

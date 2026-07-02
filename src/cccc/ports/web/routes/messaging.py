@@ -291,7 +291,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
 
         # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
-        from ....kernel.actors import list_visible_actors, resolve_recipient_tokens
+        from ....kernel.actors import resolve_recipient_tokens
         from ....kernel.messaging import get_default_send_to
         try:
             canonical_to = resolve_recipient_tokens(group, to_list)
@@ -299,27 +299,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
         if to_list and not canonical_to:
             raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
-
-        raw_text = str(text or "").strip()
-        if not canonical_to and not to_list and raw_text:
-            import re
-            mention_pattern = re.compile(r"@(\w[\w-]*)")
-            mentions = mention_pattern.findall(raw_text)
-            if mentions:
-                actor_ids = {str(a.get("id") or "").strip() for a in list_visible_actors(group) if isinstance(a, dict)}
-                mention_tokens: list[str] = []
-                for m in mentions:
-                    if not m:
-                        continue
-                    if m in ("all", "peers", "foreman"):
-                        mention_tokens.append(f"@{m}")
-                    elif m in actor_ids:
-                        mention_tokens.append(m)
-                if mention_tokens:
-                    try:
-                        canonical_to = resolve_recipient_tokens(group, mention_tokens)
-                    except Exception:
-                        canonical_to = []
 
         if not canonical_to and not to_list and get_default_send_to(group.doc) == "foreman":
             canonical_to = ["@foreman"]

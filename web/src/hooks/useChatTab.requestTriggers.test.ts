@@ -23,6 +23,12 @@ describe("useChatTab request triggers", () => {
     expect(source).toContain("groups");
   });
 
+  it("does not promote selected @ mentions into recipient state", () => {
+    expect(source).not.toContain("appendRecipientToken");
+    expect(source).not.toContain("pruneMissingMentionRecipientTokens");
+    expect(source).toContain("Message-body mentions are text helpers");
+  });
+
   it("uses composer destination group state for route chips", () => {
     expect(source).toContain("destGroupId: composerStateSnapshot.destGroupId");
     expect(source).not.toContain("destGroupId: latestSelectedGroupId");

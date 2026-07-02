@@ -46,6 +46,7 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("Never lose the high ground; re-check the real objective, chosen path, and option to step back.", body)
         self.assertIn("Ask what you are serving: the real outcome, or the comfort of staying busy.", body)
         self.assertIn("Plans are bets; inspected reality outranks memory, reports, confidence.", body)
+        self.assertIn("Your widest judgment is at the start; write an exit criterion into open_loops before you grind.", body)
         self.assertIn("If exceptions grow, stop protecting sunk cost and reframe.", body)
         self.assertIn("A reply is not progress; after interruption, recover active work, open loops, commitments.", body)
         self.assertIn("Mechanisms must pay rent; add machinery only when it removes confusion.", body)
@@ -68,7 +69,9 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("Prefer silence over low-signal chatter.", body)
         self.assertIn("This user is not generic. Learn their bar and dislikes; let that shape your defaults.", body)
         self.assertIn("Use `open_loops` as current memo", body)
-        self.assertIn("Creed-derived warnings", body)
+        self.assertIn("tie each entry to a concrete referent", body)
+        self.assertIn("record its exit criterion in `open_loops`", body)
+        self.assertNotIn("Creed-derived warnings", body)
         self.assertIn("Use Creed to turn abstract failure modes into concrete `open_loops`", body)
         self.assertIn("Keep `persona_notes` durable; do not dump task memos or temporary creed pins there.", body)
         self.assertNotIn("resume_hint", body)
@@ -147,6 +150,28 @@ class TestPromptDefaults(unittest.TestCase):
         body = str(load_builtin_help_markdown() or "")
         self.assertIn("`standup` and `help_nudge` are coordination interrupts, not task switches", body)
         self.assertIn("Do not overwrite `active_task_id`, `focus`, or `next_action`", body)
+
+
+class TestForemanRoleHelpSection(unittest.TestCase):
+    def test_builtin_help_foreman_section_carries_stuck_report_lens(self) -> None:
+        from cccc.kernel.prompt_files import load_builtin_help_markdown
+        from cccc.ports.mcp.utils.help_markdown import parse_help_markdown
+
+        parsed = parse_help_markdown(str(load_builtin_help_markdown() or ""))
+        foreman = str(parsed.get("foreman") or "")
+        peer = str(parsed.get("peer") or "")
+        self.assertIn("repeated failures or a long-unchanged focus", foreman)
+        self.assertIn("question the objective and alternative paths before the details", foreman)
+        self.assertNotIn("repeated failures or a long-unchanged focus", peer)
+
+    def test_role_system_prompt_stays_role_agnostic(self) -> None:
+        import inspect
+
+        from cccc.kernel import system_prompt
+
+        source = inspect.getsource(system_prompt.render_role_system_prompt)
+        self.assertNotIn("Foreman lens", source)
+        self.assertNotIn("repeated failures", source)
 
 
 if __name__ == "__main__":

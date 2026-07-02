@@ -120,7 +120,7 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("disabled={actorChipDisabled}");
   });
 
-  it("uses selected # tokens for @ scope (bare or copied # keeps @ local)", () => {
+  it("uses selected # tokens for @ suggestions without changing recipients", () => {
     // Scope is decided by selected, live # tokens, not by scanning arbitrary
     // copied text that happens to contain a #group-looking substring.
     expect(composerSource).not.toContain('lastHashBeforeAt >= 0 ? "destination" : "selected"');
@@ -128,8 +128,9 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("resolveControlledComposerMentionContext({");
     expect(composerSource).toContain("setMentionActorScope(mentionCtx.scope)");
     expect(composerSource).toContain("setMentionTargetGroupId(mentionCtx.mentionTargetGroupId)");
-    // A destination-scope @ (target agent) must not be added to local recipients.
-    expect(composerSource).toContain('mentionScope !== "destination"');
+    // @ mentions are text references/autocomplete only; recipient chips own routing.
+    expect(composerSource).not.toContain("onAppendRecipientToken");
+    expect(composerSource).not.toContain("toTokens.includes(selected.value)");
   });
 
   it("resets stale mention state when no active mention trigger remains", () => {

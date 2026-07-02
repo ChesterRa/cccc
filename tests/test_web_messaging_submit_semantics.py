@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -78,6 +79,49 @@ class TestWebMessagingSubmitSemantics(unittest.TestCase):
             self.assertEqual(str(((body.get("error") or {}).get("code")) or ""), "event_not_found")
         finally:
             cleanup_mode()
+            cleanup_home()
+
+    def test_send_upload_body_mentions_are_not_promoted_to_recipients(self) -> None:
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup_home = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="web-upload-mentions", topic="")
+            add_actor(
+                group,
+                actor_id="peer1",
+                title="Peer 1",
+                runtime="codex",
+                runner="headless",
+            )
+            captured: dict[str, dict] = {}
+
+            def fake_call_daemon(req: dict) -> dict:
+                captured["req"] = req
+                return {"ok": True, "result": {"event": {"id": "evt_upload_1", "data": (req.get("args") or {})}}}
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+                client = self._client()
+                resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send_upload",
+                    data={
+                        "by": "user",
+                        "text": "please ask @peer1 for context",
+                        "to_json": "[]",
+                        "path": "",
+                    },
+                    files={"files": ("note.txt", BytesIO(b"hello"), "text/plain")},
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool(body.get("ok")))
+            args = (captured.get("req") or {}).get("args") or {}
+            self.assertEqual(args.get("to"), ["@foreman"])
+        finally:
             cleanup_home()
 
 

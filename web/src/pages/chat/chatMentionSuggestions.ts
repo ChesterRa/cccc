@@ -321,30 +321,6 @@ export function resolveComposerMentionContext({
   return { scope: "selected", mentionTargetGroupId: "" };
 }
 
-// Extract an explicit target-group agent: the first `@token` that appears after
-// a valid `#group` token within the same segment. Returns "" when there is no
-// such in-segment `@` (a bare `@`, or a `@` on a different line, is never a
-// target agent).
-export function extractSegmentTargetActor({
-  text,
-  selectedGroupId,
-  groups,
-}: {
-  text: string;
-  selectedGroupId: string;
-  groups: GroupMeta[];
-}): string {
-  const src = String(text || "");
-  const selected = String(selectedGroupId || "").trim();
-  const best = _latestValidHashInRange(src, 0, src.length, selected, groups);
-  if (!best) return "";
-  const segEndNl = src.indexOf("\n", best.end);
-  const segEnd = segEndNl >= 0 ? segEndNl : src.length;
-  const segment = src.slice(best.end, segEnd);
-  const match = segment.match(/(?:^|\s)@([^\s,，。@#]+)/);
-  return match ? match[1].trim() : "";
-}
-
 export function buildComposerMentionSuggestions({
   kind,
   filter,

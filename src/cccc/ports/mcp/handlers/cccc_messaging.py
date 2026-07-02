@@ -28,8 +28,8 @@ _FILENAME_MIME_FALLBACKS = {
 }
 POST_REPLY_RESUME_CHECKPOINT = (
     "Reply sent. If this interrupted longer work, refresh cccc_agent_state with "
-    "focus/next_action plus open_loops and commitments; then "
-    "resume the highest-value unfinished work."
+    "focus/next_action plus open_loops and commitments; check any exit criteria "
+    "in open_loops, then resume the highest-value unfinished work."
 )
 POST_SEND_TOOL_BOUNDARY = (
     "Message sent. If this answered an existing delivered message/event, "

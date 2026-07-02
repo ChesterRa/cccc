@@ -225,7 +225,6 @@ export function ChatTab({
     selectedRemoteGroupIds,
     toggleRemoteGroupRecipient,
     clearRecipients,
-    appendRecipientToken,
     priority,
     replyRequired,
     setPriority,
@@ -1015,7 +1014,6 @@ export function ChatTab({
             setMentionKind={setMentionKind}
             setMentionActorScope={setMentionActorScope}
             setMentionTargetGroupId={setMentionTargetGroupId}
-            onAppendRecipientToken={appendRecipientToken}
             slashCommands={slashCommands}
           />
         </>

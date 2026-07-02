@@ -4,7 +4,6 @@ import {
   buildComposerMentionSuggestions,
   buildGroupBridgeRouteGroups,
   getComposerGroupMentionInsertToken,
-  extractSegmentTargetActor,
   getComposerGroupRouteDestination,
   hasComposerGroupRouteToken,
   resolveComposerHashRouting,
@@ -40,26 +39,6 @@ describe("resolveComposerMentionContext", () => {
 
   it("a # on a previous line does not pollute @ on the next line", () => {
     expect(ctx("#self-agent first line\nsecond line @")).toEqual({ scope: "selected", mentionTargetGroupId: "" });
-  });
-});
-
-describe("extractSegmentTargetActor", () => {
-  const groups = [{ group_id: "self-agent", title: "Self Agent" }] as unknown as Parameters<
-    typeof extractSegmentTargetActor
-  >[0]["groups"];
-
-  it("extracts @target after a valid #group in the same segment", () => {
-    expect(extractSegmentTargetActor({ text: "#self-agent some text @target-agent", selectedGroupId: "g_local", groups })).toBe(
-      "target-agent",
-    );
-  });
-
-  it("returns empty for a bare @ with no #group", () => {
-    expect(extractSegmentTargetActor({ text: "@local-peer hello", selectedGroupId: "g_local", groups })).toBe("");
-  });
-
-  it("returns empty when @ is on a different line from the #group", () => {
-    expect(extractSegmentTargetActor({ text: "#self-agent line one\n@local-peer", selectedGroupId: "g_local", groups })).toBe("");
   });
 });
 
