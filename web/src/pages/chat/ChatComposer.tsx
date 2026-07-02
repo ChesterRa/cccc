@@ -1164,7 +1164,7 @@ export function ChatComposer({
               {typeof document !== "undefined" && visibleRecipientPopoverTarget && recipientPopoverStyle ? createPortal((
                 <div
                   className={classNames(
-                    "fixed z-[1000] rounded-lg border px-3 py-2 text-xs shadow-xl backdrop-blur-xl",
+                    "fixed pointer-events-none z-[1000] rounded-lg border px-3 py-2 text-xs shadow-xl backdrop-blur-xl",
                     isDark
                       ? "border-white/12 bg-[rgb(24,25,27)] text-slate-100"
                       : "border-black/10 bg-white text-gray-900",
@@ -1195,7 +1195,7 @@ export function ChatComposer({
                     <button
                       type="button"
                       className={classNames(
-                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
+                        "pointer-events-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
                         isDark ? "text-slate-300 hover:bg-white/[0.1] hover:text-white" : "text-gray-500 hover:bg-gray-100 hover:text-gray-950",
                       )}
                       onClick={() => {

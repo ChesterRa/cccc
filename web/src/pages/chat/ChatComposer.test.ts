@@ -196,4 +196,9 @@ describe("ChatComposer mention menu navigation", () => {
     expect(composerSource).toContain("setRecipientPopoverStyle({ top, left: 8, right: 8, transform })");
     expect(composerSource).not.toContain("const top = rect.bottom + 6");
   });
+
+  it("does not let recipient hover popovers block chip clicks", () => {
+    expect(composerSource).toContain("fixed pointer-events-none z-[1000]");
+    expect(composerSource).toContain("pointer-events-auto inline-flex h-6 w-6");
+  });
 });

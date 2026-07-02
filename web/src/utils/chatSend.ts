@@ -3,6 +3,14 @@ import type { Actor, LedgerEvent } from "../types";
 export type ChatTFunction = (key: string, options?: Record<string, unknown>) => string;
 export type GroupSendBlockedReason = "paused";
 
+export function shouldBlockLocalCrossGroupAttachments(input: {
+  attachmentCount: number;
+  targets: Array<{ isCrossGroup?: boolean; isRemote?: boolean }>;
+}): boolean {
+  if (input.attachmentCount <= 0) return false;
+  return input.targets.some((target) => Boolean(target.isCrossGroup) && !target.isRemote);
+}
+
 export function supportsChatStreamingPlaceholder(actor: Pick<Actor, "runtime" | "runner" | "runner_effective">): boolean {
   const runtime = String(actor.runtime || "").trim();
   if (!runtime) return false;

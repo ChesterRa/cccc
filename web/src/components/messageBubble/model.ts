@@ -3,6 +3,7 @@ import { getRecipientDisplayName } from "../../hooks/useActorDisplayName";
 
 export function buildToLabel({
     hasDestination,
+    dstTo,
     recipients,
     displayNameMap,
 }: {
@@ -14,7 +15,10 @@ export function buildToLabel({
     displayNameMap: Map<string, string>;
 }): string {
     if (hasDestination) {
-        return "";
+        if (!dstTo || dstTo.length === 0) return "";
+        return dstTo
+            .map((recipient) => getRecipientDisplayName(recipient, displayNameMap))
+            .join(", ");
     }
     if (!recipients || recipients.length === 0) return "@foreman";
     return recipients

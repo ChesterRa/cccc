@@ -1149,6 +1149,43 @@ describe("useGroupStore actors fetch policy", () => {
     expect(api.fetchLedgerStatuses).toHaveBeenCalledWith("g-demo", ["msg-old", "msg-live"]);
   });
 
+  it("projects live cross-group receipts onto source messages without appending receipts", async () => {
+    const source: LedgerEvent = {
+      id: "evt-src",
+      kind: "chat.message",
+      ts: "2026-03-25T09:00:00Z",
+      by: "user",
+      data: {
+        text: "relay ping",
+        dst_group_id: "g-remote",
+      },
+    };
+    useGroupStore.getState().setEvents([source], "g-demo");
+
+    useGroupStore.getState().appendEvent(
+      {
+        id: "evt-receipt",
+        kind: "chat.cross_group_receipt",
+        ts: "2026-03-25T09:00:01Z",
+        by: "system",
+        data: {
+          source_event_id: "evt-src",
+          dst_group_id: "g-remote",
+          remote_event_id: "evt-remote",
+        },
+      },
+      "g-demo"
+    );
+
+    const bucket = useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket?.events.map((event) => event.id)).toEqual(["evt-src"]);
+    expect(bucket?.events[0]?.data).toMatchObject({
+      text: "relay ping",
+      dst_group_id: "g-remote",
+      remote_event_id: "evt-remote",
+    });
+  });
+
   it("restores inactive-group messages from cache after the bucket is rebuilt", async () => {
     useGroupStore.setState({
       groups: [

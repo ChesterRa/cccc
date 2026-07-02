@@ -126,6 +126,7 @@ Default: `CCCC_HOME=~/.cccc`
 | `actor.activity` | Runtime activity/status snapshot |
 | `context.sync` | Context/control-plane sync event |
 | `chat.message` | Chat message |
+| `chat.cross_group_receipt` | Source-group receipt that links a cross-group send to its destination event |
 | `chat.stream` | Progressive stream chunk/update |
 | `chat.read` / `chat.ack` | Read and acknowledgement events |
 | `chat.reaction` | Chat reaction |

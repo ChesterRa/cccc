@@ -32,6 +32,7 @@ import {
   getGroupSendBlockedMessage,
   getGroupSendBlockedReason,
   isFormalChatMessageEvent,
+  shouldBlockLocalCrossGroupAttachments,
   supportsChatStreamingPlaceholder,
 } from "../utils/chatSend";
 import { copyTextToClipboard } from "../utils/copy";
@@ -1501,6 +1502,10 @@ export function useChatTab({
     }
 
     const replyTargetSnapshot = composerStateSnapshot.replyTarget;
+    const remoteReplyDstGroupId = String(replyTargetSnapshot?.remoteDstGroupId || "").trim();
+    const remoteReplyDstTo = Array.isArray(replyTargetSnapshot?.remoteDstTo)
+      ? replyTargetSnapshot.remoteDstTo.map((token) => String(token || "").trim()).filter(Boolean)
+      : [];
     const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
     const refsSnapshot: MessageRef[] = [
       ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
@@ -1607,7 +1612,7 @@ export function useChatTab({
     };
 
     // Local validations that must pass before clearing the composer
-    if (replyTargetSnapshot && sendsCrossGroup) {
+    if (replyTargetSnapshot && sendsCrossGroup && !remoteReplyDstGroupId) {
       showError("Cross-group send does not support replies.");
       setDestGroupId(selectedGroupId);
       return;
@@ -1617,8 +1622,10 @@ export function useChatTab({
       setDestGroupId(selectedGroupId);
       return;
     }
-    const localCrossGroupTargets = sendPlanTargets.filter((target) => target.isCrossGroup && !target.isRemote);
-    if (!replyTargetSnapshot && composerFilesSnapshot.length > 0 && localCrossGroupTargets.length > 0) {
+    if (shouldBlockLocalCrossGroupAttachments({
+      attachmentCount: composerFilesSnapshot.length,
+      targets: sendPlanTargets,
+    })) {
       showError("Local cross-group send does not support attachments yet. Use a remote Group Bridge target or send without attachments.");
       return;
     }
@@ -1663,7 +1670,25 @@ export function useChatTab({
     let successfulSendCount = 0;
     try {
       let resp: SendMessageResponse | undefined;
-      if (replyTargetSnapshot) {
+      if (replyTargetSnapshot && remoteReplyDstGroupId) {
+        const targetTo = remoteReplyDstTo.length > 0 ? remoteReplyDstTo : crossToTokensSnapshot;
+        resp = await api.sendCrossGroupMessage(
+          selectedGroupId,
+          remoteReplyDstGroupId,
+          txt,
+          targetTo.length > 0 ? targetTo : ["@foreman"],
+          prio,
+          replyRequiredSnapshot,
+          composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
+          {
+            replyTo: replyTargetSnapshot.eventId,
+            quoteText: replyTargetSnapshot.text,
+            clientId: localId,
+            remoteReplyToEventId: replyTargetSnapshot.remoteReplyToEventId || "",
+          },
+        );
+        if (resp.ok) successfulSendCount += 1;
+      } else if (replyTargetSnapshot) {
         resp = await api.replyMessage(
           selectedGroupId,
           txt,

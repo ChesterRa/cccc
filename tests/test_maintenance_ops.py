@@ -268,6 +268,268 @@ class TestMaintenanceOps(unittest.TestCase):
         self.assertEqual((resp.result or {}).get("remote_group_id"), "g_remote")
         self.assertNotIn("dst_event", resp.result or {})
 
+    def test_send_cross_group_remote_bridge_records_source_receipt_anchor(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        captured: dict[str, dict] = {}
+
+        def fake_dispatch(op: str, args: dict):
+            _ = op
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": "evt_src",
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_remote_send(args: dict):
+            captured["remote_send"] = args
+            return DaemonResponse(
+                ok=True,
+                result={"receipt": {"ok": True, "status": "sent", "remote_event_id": "evt_remote_target"}},
+            )
+
+        with patch.object(
+            maintenance_ops,
+            "load_group",
+            return_value=SimpleNamespace(group_id="g_src", ledger_path="/tmp/unused-ledger.jsonl"),
+        ), patch.object(
+            maintenance_ops,
+            "resolve_remote_group_route",
+            return_value=SimpleNamespace(remote_group_id="g_remote", registration_id="reg_remote"),
+        ), patch.object(maintenance_ops, "handle_remote_send", side_effect=fake_remote_send), patch.object(
+            maintenance_ops,
+            "project_remote_send_receipt",
+            return_value=True,
+        ) as project_mock:
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_remote",
+                    "by": "user",
+                    "text": "remote ping",
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        project_mock.assert_called_once()
+        projected = project_mock.call_args.args[0]
+        self.assertEqual(projected["src_group_id"], "g_src")
+        self.assertEqual(projected["source_event_id"], "evt_src")
+        self.assertEqual(projected["dst_group_id"], "g_remote")
+        self.assertEqual(projected["remote_event_id"], "evt_remote_target")
+        self.assertEqual(projected["registration_id"], "reg_remote")
+        self.assertEqual(projected["idempotency_key"], "webmsg_evt_src")
+        self.assertEqual(projected["status"], "sent")
+
+    def test_send_cross_group_remote_bridge_does_not_use_local_reply_as_remote_anchor(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        captured: dict[str, dict] = {}
+
+        def fake_dispatch(op: str, args: dict):
+            captured["dispatch"] = {"op": op, "args": args}
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": "evt_src_reply",
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_remote_send(args: dict):
+            captured["remote_send"] = args
+            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "delivered"}})
+
+        with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
+             patch.object(
+                 maintenance_ops,
+                 "resolve_remote_group_route",
+                 return_value=SimpleNamespace(
+                     remote_group_id="g_remote",
+                     registration_id="reg_remote",
+                 ),
+             ), \
+             patch.object(maintenance_ops, "handle_remote_send", side_effect=fake_remote_send):
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_remote",
+                    "by": "user",
+                    "text": "你好",
+                    "to": ["@foreman"],
+                    "reply_to": "evt-original",
+                    "quote_text": "原消息",
+                    "client_id": "local-1",
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        self.assertEqual(captured["dispatch"]["args"]["reply_to"], "evt-original")
+        self.assertEqual(captured["dispatch"]["args"]["quote_text"], "原消息")
+        self.assertEqual(captured["dispatch"]["args"]["client_id"], "local-1")
+        self.assertEqual(captured["dispatch"]["args"]["dst_group_id"], "g_remote")
+        self.assertEqual(captured["dispatch"]["args"]["dst_to"], ["@foreman"])
+        self.assertEqual(str(captured["remote_send"].get("reply_to_remote_event_id") or ""), "")
+        self.assertEqual(captured["remote_send"]["payload"]["to"], ["@foreman"])
+
+    def test_send_cross_group_remote_bridge_uses_explicit_remote_reply_anchor(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        captured: dict[str, dict] = {}
+
+        def fake_dispatch(op: str, args: dict):
+            captured["dispatch"] = {"op": op, "args": args}
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": "evt_src_reply",
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_remote_send(args: dict):
+            captured["remote_send"] = args
+            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "delivered"}})
+
+        with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
+             patch.object(
+                 maintenance_ops,
+                 "resolve_remote_group_route",
+                 return_value=SimpleNamespace(
+                     remote_group_id="g_remote",
+                     registration_id="reg_remote",
+                 ),
+             ), \
+             patch.object(maintenance_ops, "handle_remote_send", side_effect=fake_remote_send):
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_remote",
+                    "by": "user",
+                    "text": "你好",
+                    "to": ["@foreman"],
+                    "reply_to": "evt-local-source",
+                    "quote_text": "原消息",
+                    "client_id": "local-1",
+                    "remote_reply_to_event_id": "evt-remote-target",
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        self.assertEqual(captured["dispatch"]["args"]["reply_to"], "evt-local-source")
+        self.assertEqual(captured["remote_send"]["reply_to_remote_event_id"], "evt-remote-target")
+
+    def test_send_cross_group_uses_remote_reply_anchor_for_local_target_reply(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        dispatches = []
+
+        def fake_dispatch(op: str, args: dict):
+            dispatches.append({"op": op, "args": dict(args)})
+            event_id = "evt_src_reply" if len(dispatches) == 1 else "evt_dst_reply"
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": event_id,
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_load_group(group_id: str):
+            return SimpleNamespace(group_id=group_id)
+
+        with patch.object(maintenance_ops, "load_group", side_effect=fake_load_group), \
+             patch.object(maintenance_ops, "resolve_remote_group_route", return_value=None), \
+             patch.object(maintenance_ops, "resolve_recipient_tokens", return_value=["@foreman"]), \
+             patch.object(maintenance_ops, "_append_cross_group_receipt"):
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_dst",
+                    "by": "user",
+                    "text": "本地回复",
+                    "to": ["@foreman"],
+                    "reply_to": "evt-local-source",
+                    "remote_reply_to_event_id": "evt-remote-target",
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        self.assertEqual(len(dispatches), 2)
+        self.assertEqual(dispatches[0]["args"]["reply_to"], "evt-local-source")
+        self.assertEqual(dispatches[1]["args"]["reply_to"], "evt-remote-target")
+
+    def test_send_cross_group_does_not_use_source_reply_as_local_target_anchor(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        dispatches = []
+
+        def fake_dispatch(op: str, args: dict):
+            dispatches.append({"op": op, "args": dict(args)})
+            event_id = "evt_src_reply" if len(dispatches) == 1 else "evt_dst_reply"
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": event_id,
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        def fake_load_group(group_id: str):
+            return SimpleNamespace(group_id=group_id)
+
+        with patch.object(maintenance_ops, "load_group", side_effect=fake_load_group), \
+             patch.object(maintenance_ops, "resolve_remote_group_route", return_value=None), \
+             patch.object(maintenance_ops, "resolve_recipient_tokens", return_value=["@foreman"]), \
+             patch.object(maintenance_ops, "_append_cross_group_receipt"):
+            resp = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_dst",
+                    "by": "user",
+                    "text": "本地回复",
+                    "to": ["@foreman"],
+                    "reply_to": "evt-local-source",
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        self.assertEqual(len(dispatches), 2)
+        self.assertEqual(dispatches[0]["args"]["reply_to"], "evt-local-source")
+        self.assertNotIn("reply_to", dispatches[1]["args"])
+
     def test_send_cross_group_propagates_terminal_remote_failure(self) -> None:
         from cccc.contracts.v1 import DaemonResponse
         from cccc.daemon.ops import maintenance_ops
@@ -383,6 +645,58 @@ class TestMaintenanceOps(unittest.TestCase):
             self.assertTrue(relay.ok, getattr(relay, "error", None))
             dst_event = (relay.result or {}).get("dst_event") if isinstance(relay.result, dict) else {}
             self.assertEqual(((dst_event or {}).get("data") or {}).get("to"), ["@foreman"])
+        finally:
+            cleanup()
+
+    def test_send_cross_group_local_relay_records_source_receipt_anchor(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+            added, _ = self._call(
+                "actor_add",
+                {"group_id": dst_group_id, "actor_id": "dst-foreman", "runtime": "claude", "role": "foreman"},
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "relay ping",
+                    "to": ["@foreman"],
+                },
+            )
+            self.assertTrue(relay.ok, getattr(relay, "error", None))
+            src_event = (relay.result or {}).get("src_event") if isinstance(relay.result, dict) else {}
+            dst_event = (relay.result or {}).get("dst_event") if isinstance(relay.result, dict) else {}
+            src_event_id = str((src_event or {}).get("id") or "")
+            dst_event_id = str((dst_event or {}).get("id") or "")
+            self.assertTrue(src_event_id)
+            self.assertTrue(dst_event_id)
+
+            src_group = load_group(src_group_id)
+            self.assertIsNotNone(src_group)
+            assert src_group is not None
+            receipts = [ev for ev in iter_events(src_group.ledger_path) if ev.get("kind") == "chat.cross_group_receipt"]
+            self.assertEqual(len(receipts), 1)
+            receipt_data = receipts[0].get("data") or {}
+            self.assertEqual(receipt_data.get("source_event_id"), src_event_id)
+            self.assertEqual(receipt_data.get("dst_group_id"), dst_group_id)
+            self.assertEqual(receipt_data.get("dst_event_id"), dst_event_id)
+            self.assertEqual(receipt_data.get("status"), "sent")
         finally:
             cleanup()
 

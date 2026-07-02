@@ -35,7 +35,6 @@ import {
   dedupeStreamingEvents,
   mergeVisibleChatMessages,
   parseComposerRecipientTokens,
-  pruneMissingMentionRecipientTokens,
   restoreFailedSendComposerState,
   shouldShowInConversation,
   sortChatMessages,
@@ -407,56 +406,6 @@ describe("parseComposerRecipientTokens", () => {
       "@foreman",
       "peer-1",
     ]);
-  });
-});
-
-describe("pruneMissingMentionRecipientTokens", () => {
-  it("keeps mention-added recipients while the matching @ token remains in the composer", () => {
-    expect(pruneMissingMentionRecipientTokens({
-      toText: "peer-reviewer, @foreman",
-      mentionRecipientTokens: new Set(["peer-reviewer"]),
-      liveAgentMentionTokens: [{ actorId: "peer-reviewer", token: "@peer-reviewer", start: 2, end: 16, scope: "selected" }],
-      validRecipientSet: new Set(["peer-reviewer", "@foreman"]),
-    })).toEqual({
-      toText: "peer-reviewer, @foreman",
-      mentionRecipientTokens: new Set(["peer-reviewer"]),
-    });
-  });
-
-  it("keeps mention-added recipients when the composer shows the actor display name", () => {
-    expect(pruneMissingMentionRecipientTokens({
-      toText: "peer-reviewer",
-      mentionRecipientTokens: new Set(["peer-reviewer"]),
-      liveAgentMentionTokens: [{ actorId: "peer-reviewer", token: "@Code Reviewer", start: 2, end: 16, scope: "selected" }],
-      validRecipientSet: new Set(["peer-reviewer"]),
-    })).toEqual({
-      toText: "peer-reviewer",
-      mentionRecipientTokens: new Set(["peer-reviewer"]),
-    });
-  });
-
-  it("keeps built-in @ recipients while their composer token remains", () => {
-    expect(pruneMissingMentionRecipientTokens({
-      toText: "@foreman",
-      mentionRecipientTokens: new Set(["@foreman"]),
-      liveAgentMentionTokens: [{ actorId: "@foreman", token: "@foreman", start: 2, end: 10, scope: "selected" }],
-      validRecipientSet: new Set(["@foreman"]),
-    })).toEqual({
-      toText: "@foreman",
-      mentionRecipientTokens: new Set(["@foreman"]),
-    });
-  });
-
-  it("removes only mention-added recipients when their @ token is deleted from the composer", () => {
-    expect(pruneMissingMentionRecipientTokens({
-      toText: "peer-reviewer, @foreman",
-      mentionRecipientTokens: new Set(["peer-reviewer"]),
-      liveAgentMentionTokens: [],
-      validRecipientSet: new Set(["peer-reviewer", "@foreman"]),
-    })).toEqual({
-      toText: "@foreman",
-      mentionRecipientTokens: new Set<string>(),
-    });
   });
 });
 

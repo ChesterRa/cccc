@@ -517,6 +517,7 @@ class TestChatOps(unittest.TestCase):
             from cccc.contracts.v1.message import ChatMessageData
             from cccc.kernel.group_bridge.pairing import _save_store
             from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
             from cccc.kernel.ledger import append_event
 
             create, _ = self._call("group_create", {"title": "chat-group-bridge-session-reply", "topic": "", "by": "user"})
@@ -593,6 +594,102 @@ class TestChatOps(unittest.TestCase):
             self.assertTrue(str(captured[0].get("source_event_id") or "").strip())
             self.assertEqual(captured[0].get("reply_to_remote_event_id"), "remote-event-1")
             self.assertEqual(captured[0]["payload"]["text"], "reply via Group Bridge session")
+            self.assertEqual(captured[0]["payload"]["to"], ["@foreman"])
+            reply_events = [
+                event for event in iter_events(group.ledger_path)  # type: ignore[union-attr]
+                if (event.get("data") or {}).get("text") == "reply via Group Bridge session"
+            ]
+            self.assertEqual(len(reply_events), 1)
+            self.assertEqual((reply_events[0].get("data") or {}).get("to"), ["@foreman"])
+            self.assertEqual((reply_events[0].get("data") or {}).get("dst_to"), ["@foreman"])
+        finally:
+            cleanup()
+
+    def test_reply_to_group_bridge_message_records_remote_default_target(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.contracts.v1.message import ChatMessageData
+            from cccc.kernel.group_bridge.pairing import _save_store
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+            from cccc.kernel.ledger import append_event
+
+            create, _ = self._call("group_create", {"title": "chat-group-bridge-default-reply", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            _save_store(
+                {
+                    "invites": {},
+                    "requests": {},
+                    "outbounds": {},
+                    "trusts": {
+                        "ptrust_session": {
+                            "trust_id": "ptrust_session",
+                            "group_id": group_id,
+                            "remote_group_id": "g_remote",
+                            "remote_peer_id": "peer_remote",
+                            "registration_id": "reg_session",
+                            "transport": "group_bridge_session",
+                            "remote_endpoint": "http://remote.example:8848",
+                            "status": "active",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "updated_at": "2026-01-01T00:00:00Z",
+                        }
+                    },
+                }
+            )
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            inbound_event = append_event(
+                group.ledger_path,  # type: ignore[union-attr]
+                kind="chat.message",
+                group_id=group_id,
+                scope_key="",
+                by="group_bridge:peer_remote",
+                data=ChatMessageData(
+                    text="remote agent reply",
+                    to=["user"],
+                    source_platform="group_bridge_session",
+                    source_user_id="peer_remote",
+                    src_group_id="g_remote",
+                    src_event_id="remote-event-2",
+                    src_by="ad-creator-ai",
+                    remote_reply_to=["ad-creator-ai"],
+                ).model_dump(),
+            )
+
+            captured: list[dict] = []
+
+            def fake_remote_send(args):
+                captured.append(dict(args))
+                from cccc.contracts.v1.ipc import DaemonResponse
+
+                return DaemonResponse(ok=True, result={"receipt": {"status": "queued"}})
+
+            with patch("cccc.daemon.group_bridge.reply_relay.handle_remote_send", side_effect=fake_remote_send):
+                reply, _ = self._call(
+                    "reply",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "reply_to": str(inbound_event.get("id") or ""),
+                        "text": "reply to remote agent",
+                        "to": [],
+                    },
+                )
+
+            self.assertTrue(reply.ok, getattr(reply, "error", None))
+            self.assertEqual(captured[0]["payload"]["to"], ["ad-creator-ai"])
+            reply_events = [
+                event for event in iter_events(group.ledger_path)  # type: ignore[union-attr]
+                if (event.get("data") or {}).get("text") == "reply to remote agent"
+            ]
+            self.assertEqual(len(reply_events), 1)
+            self.assertEqual((reply_events[0].get("data") or {}).get("to"), ["user"])
+            self.assertEqual((reply_events[0].get("data") or {}).get("dst_to"), ["ad-creator-ai"])
         finally:
             cleanup()
 

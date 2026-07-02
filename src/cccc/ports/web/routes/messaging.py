@@ -131,6 +131,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "to": list(req.to),
                     "priority": req.priority,
                     "reply_required": _normalize_reply_required(req.reply_required),
+                    "reply_to": req.reply_to,
+                    "quote_text": req.quote_text,
+                    "client_id": _normalize_client_id(req.client_id),
+                    "remote_reply_to_event_id": req.remote_reply_to_event_id,
                     "attachments": list(req.attachments),
                 },
             }
@@ -146,6 +150,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         to_json: str = Form("[]"),
         priority: str = Form("normal"),
         reply_required: str = Form("false"),
+        reply_to: str = Form(""),
+        quote_text: str = Form(""),
+        client_id: str = Form(""),
+        remote_reply_to_event_id: str = Form(""),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         """Send uploaded attachments to a trusted remote Group Bridge target."""
@@ -182,6 +190,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "to": to_list,
                     "priority": _normalize_priority(priority),
                     "reply_required": _normalize_reply_required(reply_required),
+                    "reply_to": str(reply_to or "").strip(),
+                    "quote_text": str(quote_text or "").strip(),
+                    "client_id": _normalize_client_id(client_id),
+                    "remote_reply_to_event_id": str(remote_reply_to_event_id or "").strip(),
                     "attachments": attachments,
                 },
             }

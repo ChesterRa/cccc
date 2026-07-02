@@ -102,6 +102,19 @@ def default_group_bridge_reply_recipients(original_data: Dict[str, Any]) -> list
     return _reply_recipients_from_source_by(str(original_data.get("src_by") or "").strip())
 
 
+def group_bridge_reply_return_recipients(
+    *,
+    original_data: Dict[str, Any],
+    fallback: list[str],
+    fallback_was_explicit: bool = False,
+) -> list[str]:
+    return _reply_return_recipients(
+        original_data=original_data,
+        fallback=fallback,
+        fallback_was_explicit=fallback_was_explicit,
+    )
+
+
 def _reply_recipients_from_source_by(source_by: str) -> list[str]:
     sender = str(source_by or "").strip()
     if not sender:

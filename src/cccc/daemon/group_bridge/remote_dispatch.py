@@ -21,6 +21,7 @@ from ...contracts.v1.group_bridge import RemoteSendPayload
 from ...kernel.group_bridge.pairing import get_local_identity
 from ...kernel.group_bridge import receipts, registration
 from ...util.time import parse_utc_iso, utc_now_iso
+from .cross_group_receipt_projection import project_remote_send_receipt
 from .transports.base import (
     RemoteMessageEnvelope,
     RemoteSendTransport,
@@ -89,6 +90,7 @@ def deliver_enqueued(
     """
     existing = receipts.get_receipt(registration_id, idempotency_key, home=home)
     if existing and str(existing.get("status") or "") in _TERMINAL:
+        project_remote_send_receipt(existing, home=home)
         return existing
 
     reg = registration.get_registration(registration_id, home=home)
@@ -139,7 +141,7 @@ def deliver_enqueued(
         error = {"code": result.error_code, "message": result.error_message, "retriable": result.retriable, "transport": result.transport}
         if result.retriable:
             status = "retrying"
-    return _finalize(
+    updated = _finalize(
         registration_id,
         idempotency_key,
         home,
@@ -150,6 +152,8 @@ def deliver_enqueued(
         error=error,
         attempted_at=started_at,
     )
+    project_remote_send_receipt(updated, home=home)
+    return updated
 
 
 def retry_remote_send_for_peer(

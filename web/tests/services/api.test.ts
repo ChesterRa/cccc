@@ -1003,6 +1003,74 @@ describe("api.message refs", () => {
     );
   });
 
+  it("preserves reply metadata on cross-group source sends", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { src_event: { id: "src-1" } } }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.sendCrossGroupMessage("g-src", "g-dst", "你好", ["@foreman"], "normal", false, undefined, {
+      replyTo: "evt-original",
+      quoteText: "原消息",
+      clientId: "local-1",
+      remoteReplyToEventId: "evt-remote-original",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-src/send_cross_group",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          text: "你好",
+          by: "user",
+          dst_group_id: "g-dst",
+          to: ["@foreman"],
+          priority: "normal",
+          reply_required: false,
+          reply_to: "evt-original",
+          quote_text: "原消息",
+          client_id: "local-1",
+          remote_reply_to_event_id: "evt-remote-original",
+        }),
+      }),
+    );
+  });
+
+  it("preserves remote reply metadata on cross-group upload sends", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { src_event: { id: "src-1" } } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const file = new File(["image"], "shot.png", { type: "image/png" });
+    await api.sendCrossGroupMessage("g-src", "g-dst", "你好", ["@foreman"], "attention", true, [file], {
+      replyTo: "evt-local-source",
+      quoteText: "原消息",
+      clientId: "local-1",
+      remoteReplyToEventId: "evt-remote-original",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-src/send_cross_group_upload",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    const body = fetchMock.mock.calls[0]?.[1]?.body;
+    expect(body).toBeInstanceOf(FormData);
+    const form = body as FormData;
+    expect(form.get("reply_to")).toBe("evt-local-source");
+    expect(form.get("quote_text")).toBe("原消息");
+    expect(form.get("client_id")).toBe("local-1");
+    expect(form.get("remote_reply_to_event_id")).toBe("evt-remote-original");
+    expect(form.get("reply_required")).toBe("true");
+    expect(form.get("priority")).toBe("attention");
+  });
+
   it("sends tracked delegation payloads through the daemon endpoint", async () => {
     fetchMock.mockResolvedValue({
       status: 200,

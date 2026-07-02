@@ -22,6 +22,22 @@ class _CountingTransport:
         return self._result
 
 
+class _SequenceTransport:
+    transport = "registry_hub"
+    capabilities = frozenset()
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls = 0
+
+    def deliver(self, envelope):
+        _ = envelope
+        self.calls += 1
+        if self._results:
+            return self._results.pop(0)
+        raise AssertionError("no more remote send results")
+
+
 class TestGroupBridgeDaemonOps(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
@@ -38,11 +54,11 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         return Path(td), cleanup
 
-    def _registration(self, *, credential_ref: str = ""):
+    def _registration(self, *, group_id: str = "g_local", credential_ref: str = ""):
         from cccc.kernel.group_bridge.registration import upsert_registration
 
         return upsert_registration(
-            "g_local",
+            group_id,
             "https://peer.example/",
             transport="registry_hub",
             remote_group_id="g_remote",
@@ -338,6 +354,89 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             assert missing is not None
             self.assertTrue(missing.ok)
             self.assertIsNone(missing.result["receipt"])
+        finally:
+            cleanup()
+
+    def test_remote_outbox_retry_success_projects_cross_group_receipt(self) -> None:
+        from cccc.daemon.group_bridge.ops import handle_remote_send
+        from cccc.daemon.group_bridge.remote_outbox_worker import sweep_remote_outbox
+        from cccc.daemon.group_bridge.transports.base import sent_result, transient_result
+        from cccc.kernel.group import create_group
+        from cccc.kernel.group_bridge.receipts import update_receipt
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="remote-retry-source", topic="")
+            reg = self._registration(group_id=group.group_id)
+            source_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "remote ping", "dst_group_id": "g_remote"},
+            )
+            source_event_id = str(source_event.get("id") or "")
+            fake = _SequenceTransport([
+                transient_result("offline", "peer offline", transport="registry_hub"),
+                sent_result("evt_remote_retry", transport="registry_hub"),
+            ])
+
+            first = handle_remote_send(
+                {
+                    "group_id": group.group_id,
+                    "by": "user",
+                    "registration_id": reg["registration_id"],
+                    "idempotency_key": "k-retry",
+                    "source_event_id": source_event_id,
+                    "payload": {"text": "remote ping", "to": ["@foreman"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            self.assertEqual(first.result["receipt"]["status"], "retrying")
+            self.assertFalse([
+                ev for ev in iter_events(group.ledger_path)
+                if ev.get("kind") == "chat.cross_group_receipt"
+            ])
+
+            update_receipt(reg["registration_id"], "k-retry", next_attempt_at="")
+            sweep = sweep_remote_outbox(transport_factory=lambda _name: fake)
+            self.assertEqual(sweep["sent"], 1)
+
+            receipts = [
+                ev for ev in iter_events(group.ledger_path)
+                if ev.get("kind") == "chat.cross_group_receipt"
+            ]
+            self.assertEqual(len(receipts), 1)
+            data = receipts[0].get("data") or {}
+            self.assertEqual(data.get("source_event_id"), source_event_id)
+            self.assertEqual(data.get("dst_group_id"), "g_remote")
+            self.assertEqual(data.get("remote_event_id"), "evt_remote_retry")
+            self.assertEqual(data.get("registration_id"), reg["registration_id"])
+            self.assertEqual(data.get("idempotency_key"), "k-retry")
+            self.assertEqual(data.get("status"), "sent")
+
+            replay = handle_remote_send(
+                {
+                    "group_id": group.group_id,
+                    "by": "user",
+                    "registration_id": reg["registration_id"],
+                    "idempotency_key": "k-retry",
+                    "source_event_id": source_event_id,
+                    "payload": {"text": "remote ping changed", "to": ["@foreman"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertTrue(replay.ok, getattr(replay, "error", None))
+            receipts_after_replay = [
+                ev for ev in iter_events(group.ledger_path)
+                if ev.get("kind") == "chat.cross_group_receipt"
+            ]
+            self.assertEqual(len(receipts_after_replay), 1)
         finally:
             cleanup()
 

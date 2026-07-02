@@ -6,10 +6,12 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from uuid import uuid4
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ..group_bridge.cross_group_receipt_projection import project_remote_send_receipt
 from ..group_bridge.ops import handle_remote_send
 from ..group_bridge.route_lookup import resolve_remote_group_route
 from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
+from ...kernel.ledger import append_event
 from ...kernel.ledger_retention import compact as compact_ledger
 from ...kernel.ledger_retention import snapshot as snapshot_ledger
 from ...kernel.permissions import require_group_permission
@@ -25,6 +27,44 @@ from ...util.conv import coerce_bool
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _append_cross_group_receipt(
+    *,
+    src_group: Any,
+    source_event_id: str,
+    dst_group_id: str,
+    dst_event_id: str = "",
+    remote_event_id: str = "",
+    registration_id: str = "",
+    idempotency_key: str = "",
+    status: str = "",
+) -> None:
+    source_event_id = str(source_event_id or "").strip()
+    dst_group_id = str(dst_group_id or "").strip()
+    dst_event_id = str(dst_event_id or "").strip()
+    remote_event_id = str(remote_event_id or "").strip()
+    if not source_event_id or not dst_group_id or not (dst_event_id or remote_event_id):
+        return
+    ledger_path = getattr(src_group, "ledger_path", None)
+    if ledger_path is None:
+        return
+    append_event(
+        ledger_path,
+        kind="chat.cross_group_receipt",
+        group_id=str(getattr(src_group, "group_id", "") or "").strip() or dst_group_id,
+        scope_key="",
+        by="system",
+        data={
+            "source_event_id": source_event_id,
+            "dst_group_id": dst_group_id,
+            "dst_event_id": dst_event_id,
+            "remote_event_id": remote_event_id,
+            "registration_id": str(registration_id or "").strip(),
+            "idempotency_key": str(idempotency_key or "").strip(),
+            "status": str(status or "").strip(),
+        },
+    )
 
 
 def handle_term_resize(args: Dict[str, Any]) -> DaemonResponse:
@@ -99,6 +139,10 @@ def handle_send_cross_group(
     by = str(args.get("by") or "user").strip() or "user"
     priority = str(args.get("priority") or "normal").strip() or "normal"
     reply_required = coerce_bool(args.get("reply_required"), default=False)
+    reply_to = str(args.get("reply_to") or "").strip()
+    quote_text = str(args.get("quote_text") or "").strip()
+    client_id = str(args.get("client_id") or "").strip()
+    remote_reply_to_event_id = str(args.get("remote_reply_to_event_id") or "").strip()
     to_raw = args.get("to")
     dst_to_tokens: list[str] = []
     if isinstance(to_raw, list):
@@ -139,6 +183,9 @@ def handle_send_cross_group(
                 "attachments": attachments,
                 "priority": priority,
                 "reply_required": reply_required,
+                "reply_to": reply_to,
+                "quote_text": quote_text,
+                "client_id": client_id,
                 "dst_group_id": dst_group_id,
                 "dst_to": dst_to_tokens,
             },
@@ -156,6 +203,7 @@ def handle_send_cross_group(
                 "registration_id": remote_route.registration_id,
                 "idempotency_key": idempotency_key,
                 "source_event_id": src_event_id,
+                "reply_to_remote_event_id": remote_reply_to_event_id,
                 "payload": {
                     "text": text,
                     "to": dst_to_tokens,
@@ -181,6 +229,15 @@ def handle_send_cross_group(
                     "receipt_status": "failed",
                 },
             )
+        if isinstance(receipt, dict):
+            project_remote_send_receipt({
+                **receipt,
+                "src_group_id": src_group_id,
+                "source_event_id": src_event_id,
+                "registration_id": remote_route.registration_id,
+                "idempotency_key": idempotency_key,
+                "dst_group_id": remote_route.remote_group_id,
+            })
         return DaemonResponse(
             ok=True,
             result={
@@ -213,6 +270,9 @@ def handle_send_cross_group(
             "to": ["user"],
             "priority": priority,
             "reply_required": reply_required,
+            "reply_to": reply_to,
+            "quote_text": quote_text,
+            "client_id": client_id,
             "dst_group_id": dst_group_id,
             "dst_to": dst_to_canon,
         },
@@ -225,23 +285,34 @@ def handle_send_cross_group(
     if not src_event_id:
         return _error("send_failed", "missing source event id")
 
-    dst_resp, _ = dispatch_send(
-        "send",
-        {
-            "group_id": dst_group_id,
-            "text": text,
-            "by": by,
-            "to": dst_to_canon,
-            "priority": priority,
-            "reply_required": reply_required,
-            "src_group_id": src_group_id,
-            "src_event_id": src_event_id,
-        },
-    )
+    dst_send_args = {
+        "group_id": dst_group_id,
+        "text": text,
+        "by": by,
+        "to": dst_to_canon,
+        "priority": priority,
+        "reply_required": reply_required,
+        "src_group_id": src_group_id,
+        "src_event_id": src_event_id,
+    }
+    if remote_reply_to_event_id:
+        dst_send_args["reply_to"] = remote_reply_to_event_id
+        dst_send_args["quote_text"] = quote_text
+    dst_resp, _ = dispatch_send("send", dst_send_args)
     if not dst_resp.ok:
         return dst_resp
 
-    return DaemonResponse(ok=True, result={"src_event": src_event, "dst_event": dst_resp.result.get("event")})
+    dst_event = dst_resp.result.get("event")
+    dst_event_id = str((dst_event or {}).get("id") or "").strip() if isinstance(dst_event, dict) else ""
+    _append_cross_group_receipt(
+        src_group=src_group,
+        source_event_id=src_event_id,
+        dst_group_id=dst_group_id,
+        dst_event_id=dst_event_id,
+        status="sent",
+    )
+
+    return DaemonResponse(ok=True, result={"src_event": src_event, "dst_event": dst_event})
 
 
 def try_handle_maintenance_op(

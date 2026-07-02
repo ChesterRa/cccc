@@ -19,7 +19,7 @@ function stringDataValue(event: LedgerEvent, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function projectCrossGroupReceipts(events: LedgerEvent[]): LedgerEvent[] {
+export function projectCrossGroupReceipts(events: LedgerEvent[]): LedgerEvent[] {
   const receipts = events.filter((event) => String(event?.kind || "") === CROSS_GROUP_RECEIPT_KIND);
   if (receipts.length === 0) return events;
 

@@ -53,9 +53,18 @@ export function buildReplyComposerState(
   const originalTo = Array.isArray(data?.to)
     ? data.to.map((token: string) => String(token || "").trim()).filter(Boolean)
     : [];
+  const remoteDstGroupId = typeof data?.dst_group_id === "string" ? String(data.dst_group_id || "").trim() : "";
+  const remoteDstTo = Array.isArray(data?.dst_to)
+    ? data.dst_to.map((token: string) => String(token || "").trim()).filter(Boolean)
+    : [];
+  const remoteReplyToEventId =
+    (typeof data?.dst_event_id === "string" ? String(data.dst_event_id || "").trim() : "")
+    || (typeof data?.remote_event_id === "string" ? String(data.remote_event_id || "").trim() : "");
   const policy = groupSettings?.default_send_to || "foreman";
   const defaultTo =
-    isGroupBridgeMessage
+    remoteDstGroupId
+      ? (remoteDstTo.length > 0 ? remoteDstTo : ["@foreman"])
+      : isGroupBridgeMessage
       ? []
       : authorIsActor
       ? [by]
@@ -64,14 +73,20 @@ export function buildReplyComposerState(
         : policy === "foreman"
           ? ["@foreman"]
           : [];
+  const replyBy = by === "user" && defaultTo.length > 0 ? defaultTo.join(", ") : String(event.by || "unknown");
 
   return {
-    destGroupId: String(selectedGroupId || "").trim(),
+    destGroupId: remoteDstGroupId || String(selectedGroupId || "").trim(),
     toText: defaultTo.join(", "),
     replyTarget: {
       eventId: replyEventId,
-      by: String(event.by || "unknown"),
+      by: replyBy,
       text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
+      ...(remoteDstGroupId ? {
+        remoteDstGroupId,
+        remoteDstTo: defaultTo,
+        ...(remoteReplyToEventId ? { remoteReplyToEventId } : {}),
+      } : {}),
     },
   };
 }

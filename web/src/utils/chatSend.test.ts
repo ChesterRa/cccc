@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getGroupSendBlockedReason } from "./chatSend";
+import { getGroupSendBlockedReason, shouldBlockLocalCrossGroupAttachments } from "./chatSend";
 
 describe("getGroupSendBlockedReason", () => {
   it("does not block active groups with no running actors", () => {
@@ -22,5 +22,21 @@ describe("getGroupSendBlockedReason", () => {
       runtimeRunning: false,
       actorCount: 1,
     })).toBeNull();
+  });
+});
+
+describe("shouldBlockLocalCrossGroupAttachments", () => {
+  it("blocks attachment sends to local cross-group targets even when replying", () => {
+    expect(shouldBlockLocalCrossGroupAttachments({
+      attachmentCount: 1,
+      targets: [{ isCrossGroup: true, isRemote: false }],
+    })).toBe(true);
+  });
+
+  it("allows attachment sends when all cross-group targets are remote", () => {
+    expect(shouldBlockLocalCrossGroupAttachments({
+      attachmentCount: 1,
+      targets: [{ isCrossGroup: true, isRemote: true }],
+    })).toBe(false);
   });
 });

@@ -46,6 +46,7 @@ EventKind = Literal[
     "chat.ack",
     "chat.read",
     "chat.reaction",
+    "chat.cross_group_receipt",
     "system.notify",
     "system.notify_ack",
     "assistant.settings_update",
@@ -218,6 +219,20 @@ class ChatAckData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ChatCrossGroupReceiptData(BaseModel):
+    """Append-only link from a local source message to its delivered target event."""
+
+    source_event_id: str
+    dst_group_id: str
+    dst_event_id: str = ""
+    remote_event_id: str = ""
+    registration_id: str = ""
+    idempotency_key: str = ""
+    status: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class PresentationPublishData(BaseModel):
     slot_id: str
     title: str
@@ -275,6 +290,7 @@ _KIND_TO_MODEL = {
     "chat.ack": ChatAckData,
     "chat.read": ChatReadData,
     "chat.reaction": ChatReactionData,
+    "chat.cross_group_receipt": ChatCrossGroupReceiptData,
     "system.notify": SystemNotifyData,
     "system.notify_ack": NotifyAckData,
     "assistant.settings_update": AssistantSettingsUpdateData,

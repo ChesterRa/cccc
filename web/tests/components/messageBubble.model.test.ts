@@ -9,7 +9,7 @@ import {
 } from "../../src/components/messageBubble/model";
 
 describe("messageBubble model", () => {
-  it("hides the generic recipient label for cross-group source records", () => {
+  it("shows remote recipients for cross-group source records", () => {
     expect(buildToLabel({
       hasDestination: true,
       dstGroupId: "g-2",
@@ -17,7 +17,7 @@ describe("messageBubble model", () => {
       groupLabelById: { "g-2": "第二组" },
       recipients: ["ignored"],
       displayNameMap: new Map([["alice", "Alice"]]),
-    })).toBe("");
+    })).toBe("@foreman, Alice");
   });
 
   it("builds recipient label from display names for local messages", () => {

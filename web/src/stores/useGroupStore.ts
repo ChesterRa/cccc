@@ -61,6 +61,7 @@ import {
   upsertStreamingTextPatch,
 } from "./groupStreamingReducers";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
+import { projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
 
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) return String(value);
@@ -278,7 +279,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       if (event.id && bucket.events.some((e) => e.id === event.id)) return state;
-      const nextEvents = bucket.events.concat([event]);
+      const nextEvents = projectCrossGroupReceipts(bucket.events.concat([event]));
       const patch: Partial<GroupChatBucket> = {
         events: nextEvents.length > MAX_UI_EVENTS ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS) : nextEvents,
       };

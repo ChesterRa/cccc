@@ -55,7 +55,7 @@ describe("useChatTab request triggers", () => {
   });
 
   it("allows attachment sends to remote group chips while blocking local cross-group attachments", () => {
-    expect(source).toContain("const localCrossGroupTargets = sendPlanTargets.filter((target) => target.isCrossGroup && !target.isRemote);");
+    expect(source).toContain("shouldBlockLocalCrossGroupAttachments({");
     expect(source).toContain("Local cross-group send does not support attachments yet.");
     expect(source).toContain("composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined");
     expect(source).not.toContain("Cross-group send does not support attachments yet.");
