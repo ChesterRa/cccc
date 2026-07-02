@@ -6,6 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.30] — 2026-07-03
+
+### Added
+- **Slash skill commands can now dispatch as hidden agent turns**, letting users invoke active CCCC skills from the Web composer while keeping the agent-facing execution prompt out of the visible chat transcript.
+- **Cross-group messages now carry receipt anchors for better reply continuity**, so replies from the source group can thread back to the remote message when CCCC has a recorded destination event.
+
+### Changed
+- **NotebookLM-backed workspaces and MCP setup are more robust**, with a refreshed vendored NotebookLM provider, stronger auth/session handling, better artifact/source/research support, and clearer MCP setup behavior.
+- **Group Copy packaging is easier to use from Web and daemon clients**, including file-backed upload/preview flows and stricter package-size and input validation.
+- **The Feishu IM bridge has been split into focused adapter modules**, making message, attachment, webhook, reaction, identity, and websocket behavior easier to test and maintain.
+- **`@` in the Web composer is now treated as name completion only**. Message routing follows the explicit recipient/group controls instead of silently changing delivery just because a name was mentioned in the text.
+
+### Fixed
+- **Web chat scrolling and group switching are more stable**, including virtualized history anchoring, scroll restore, stale request handling, and actor/context refresh behavior.
+- **Agent state updates return clearer confirmation after writes**, while preserving runtime-home isolation and guarding malformed hygiene metadata.
+- **Cross-group send, slash skill dispatch, and remote receipt projection are idempotent across retries**, preventing duplicate hidden turns, duplicate target-group messages, and duplicate cross-group receipt anchors.
+
+### Tests
+- Added and updated coverage for NotebookLM provider scaffolding, MCP setup, Feishu adapter modules, Group Copy flows, Web chat scrolling, request routing, agent state confirmation, slash skill dispatch, cross-group reply routing, receipt hydration, and retry idempotency.
+
+## [0.4.29] — 2026-06-24
+
+### Added
+- **Group Bridge became a first-class collaboration surface**, allowing trusted CCCC groups to exchange explicit cross-group messages, send attachments, and grant remote Messages, Read, or Full access.
+- **Remote MCP tools are available for trusted groups**, including repository/context inspection for Read access and repository mutation or command execution for Full access.
+- **The runtime catalog expanded** with first-class entries for Devin CLI, Kiro CLI, GitHub Copilot CLI, Antigravity CLI, Kilo Code CLI, and Cursor CLI.
+
+### Changed
+- **The Web UI treats remote groups as explicit recipients**, with clearer remote-group identifiers, improved composer recipient behavior, and a reorganized Group Bridge settings surface.
+- **MCP guidance and repository search were tightened** so agents receive clearer send/reply guidance and more precise local or remote repository inspection tools.
+- **Group Bridge and runtime documentation were promoted in the public docs**, including clearer Messages / Read / Full access-level explanations.
+
+### Fixed
+- **IM bridge and Web runtime behavior received a broad reliability pass**, including DingTalk media/reaction handling, bridge subprocess environment cleanup, stream-close handling, and cache invalidation after writes.
+- **Cross-group send failures are surfaced as failures instead of successful sends**, making remote delivery state easier to trust.
+
+### Tests
+- Added and updated coverage for Group Bridge pairing, routing, remote delivery, remote MCP access, attachment transfer, reply relay behavior, runtime setup, repository search, IM bridge lifecycle, Web cache invalidation, and composer recipient behavior.
+
 ## [0.4.28] — 2026-06-18
 
 ### Changed
