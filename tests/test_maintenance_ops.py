@@ -700,6 +700,71 @@ class TestMaintenanceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_cross_group_local_relay_is_idempotent_for_same_client_id(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+            added, _ = self._call(
+                "actor_add",
+                {"group_id": dst_group_id, "actor_id": "dst-foreman", "runtime": "claude", "role": "foreman"},
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            args = {
+                "group_id": src_group_id,
+                "dst_group_id": dst_group_id,
+                "by": "user",
+                "text": "relay ping",
+                "to": ["@foreman"],
+                "client_id": "relay-once",
+            }
+            first, _ = self._call("send_cross_group", args)
+            second, _ = self._call("send_cross_group", args)
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            self.assertTrue(second.ok, getattr(second, "error", None))
+
+            first_src = ((first.result or {}).get("src_event") or {}) if isinstance(first.result, dict) else {}
+            second_src = ((second.result or {}).get("src_event") or {}) if isinstance(second.result, dict) else {}
+            first_dst = ((first.result or {}).get("dst_event") or {}) if isinstance(first.result, dict) else {}
+            second_dst = ((second.result or {}).get("dst_event") or {}) if isinstance(second.result, dict) else {}
+            src_event_id = str(first_src.get("id") or "").strip()
+            dst_event_id = str(first_dst.get("id") or "").strip()
+            self.assertTrue(src_event_id)
+            self.assertTrue(dst_event_id)
+            self.assertEqual(str(second_src.get("id") or "").strip(), src_event_id)
+            self.assertEqual(str(second_dst.get("id") or "").strip(), dst_event_id)
+
+            src_group = load_group(src_group_id)
+            dst_group = load_group(dst_group_id)
+            self.assertIsNotNone(src_group)
+            self.assertIsNotNone(dst_group)
+            assert src_group is not None
+            assert dst_group is not None
+            src_messages = [ev for ev in iter_events(src_group.ledger_path) if ev.get("kind") == "chat.message"]
+            dst_messages = [ev for ev in iter_events(dst_group.ledger_path) if ev.get("kind") == "chat.message"]
+            receipts = [ev for ev in iter_events(src_group.ledger_path) if ev.get("kind") == "chat.cross_group_receipt"]
+            self.assertEqual(len(src_messages), 1)
+            self.assertEqual(len(dst_messages), 1)
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(((receipts[0].get("data") or {}).get("dst_event_id")), dst_event_id)
+            self.assertEqual(
+                ((dst_messages[0].get("data") or {}).get("client_id")),
+                f"cross_group:{src_event_id}:{dst_group_id}",
+            )
+        finally:
+            cleanup()
+
     def test_ledger_snapshot_and_compact(self) -> None:
         _, cleanup = self._with_home()
         try:

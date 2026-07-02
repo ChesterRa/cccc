@@ -11,6 +11,7 @@ from ..group_bridge.ops import handle_remote_send
 from ..group_bridge.route_lookup import resolve_remote_group_route
 from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
+from ...kernel.inbox import iter_events
 from ...kernel.ledger import append_event
 from ...kernel.ledger_retention import compact as compact_ledger
 from ...kernel.ledger_retention import snapshot as snapshot_ledger
@@ -27,6 +28,40 @@ from ...util.conv import coerce_bool
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _cross_group_target_client_id(*, source_event_id: str, dst_group_id: str) -> str:
+    source_event_id = str(source_event_id or "").strip()
+    dst_group_id = str(dst_group_id or "").strip()
+    if not source_event_id or not dst_group_id:
+        return ""
+    return f"cross_group:{source_event_id}:{dst_group_id}"
+
+
+def _has_cross_group_receipt(
+    *,
+    src_group: Any,
+    source_event_id: str,
+    dst_group_id: str,
+    dst_event_id: str = "",
+    remote_event_id: str = "",
+) -> bool:
+    ledger_path = getattr(src_group, "ledger_path", None)
+    if ledger_path is None:
+        return False
+    for event in iter_events(ledger_path):
+        if str(event.get("kind") or "").strip() != "chat.cross_group_receipt":
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if str(data.get("source_event_id") or "").strip() != source_event_id:
+            continue
+        if str(data.get("dst_group_id") or "").strip() != dst_group_id:
+            continue
+        if dst_event_id and str(data.get("dst_event_id") or "").strip() == dst_event_id:
+            return True
+        if remote_event_id and str(data.get("remote_event_id") or "").strip() == remote_event_id:
+            return True
+    return False
 
 
 def _append_cross_group_receipt(
@@ -48,6 +83,14 @@ def _append_cross_group_receipt(
         return
     ledger_path = getattr(src_group, "ledger_path", None)
     if ledger_path is None:
+        return
+    if _has_cross_group_receipt(
+        src_group=src_group,
+        source_event_id=source_event_id,
+        dst_group_id=dst_group_id,
+        dst_event_id=dst_event_id,
+        remote_event_id=remote_event_id,
+    ):
         return
     append_event(
         ledger_path,
@@ -292,6 +335,7 @@ def handle_send_cross_group(
         "to": dst_to_canon,
         "priority": priority,
         "reply_required": reply_required,
+        "client_id": _cross_group_target_client_id(source_event_id=src_event_id, dst_group_id=dst_group_id),
         "src_group_id": src_group_id,
         "src_event_id": src_event_id,
     }

@@ -74,6 +74,78 @@ class TestWebLedgerTailApi(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_ledger_chat_views_hydrate_cross_group_receipt_anchor(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            self.assertTrue(src_create.ok, getattr(src_create, "error", None))
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(src_group_id)
+
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            self.assertTrue(dst_create.ok, getattr(dst_create, "error", None))
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(dst_group_id)
+            added, _ = self._call(
+                "actor_add",
+                {"group_id": dst_group_id, "actor_id": "dst-foreman", "runtime": "claude", "role": "foreman"},
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            relay, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "relay ping",
+                    "to": ["@foreman"],
+                },
+            )
+            self.assertTrue(relay.ok, getattr(relay, "error", None))
+            src_event = ((relay.result or {}).get("src_event") or {}) if isinstance(relay.result, dict) else {}
+            dst_event = ((relay.result or {}).get("dst_event") or {}) if isinstance(relay.result, dict) else {}
+            src_event_id = str(src_event.get("id") or "").strip()
+            dst_event_id = str(dst_event.get("id") or "").strip()
+            self.assertTrue(src_event_id)
+            self.assertTrue(dst_event_id)
+
+            later, _ = self._call(
+                "send",
+                {"group_id": src_group_id, "by": "user", "to": ["user"], "text": "later"},
+            )
+            self.assertTrue(later.ok, getattr(later, "error", None))
+            later_event = ((later.result or {}).get("event") or {}) if isinstance(later.result, dict) else {}
+            later_event_id = str(later_event.get("id") or "").strip()
+            self.assertTrue(later_event_id)
+
+            with self._client() as client:
+                responses = [
+                    client.get(f"/api/v1/groups/{src_group_id}/ledger/tail?kind=chat&limit=10"),
+                    client.get(
+                        f"/api/v1/groups/{src_group_id}/ledger/search?kind=chat&before={later_event_id}&limit=10"
+                    ),
+                    client.get(
+                        f"/api/v1/groups/{src_group_id}/ledger/window?kind=chat&center={src_event_id}&before=0&after=0"
+                    ),
+                ]
+
+            for resp in responses:
+                self.assertEqual(resp.status_code, 200)
+                body = resp.json()
+                self.assertTrue(bool(body.get("ok")), body)
+                result = body.get("result") or {}
+                events = result.get("events") or []
+                self.assertEqual(int(result.get("count") or 0), len(events))
+                self.assertTrue(all(str(event.get("kind") or "") == "chat.message" for event in events))
+                source_message = next((event for event in events if str(event.get("id") or "") == src_event_id), None)
+                self.assertIsNotNone(source_message)
+                data = (source_message or {}).get("data") or {}
+                self.assertEqual(data.get("dst_group_id"), dst_group_id)
+                self.assertEqual(data.get("dst_event_id"), dst_event_id)
+        finally:
+            cleanup()
+
     def test_ledger_tail_accepts_limit_alias(self) -> None:
         _, cleanup = self._with_home()
         try:

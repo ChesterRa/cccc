@@ -1,6 +1,6 @@
 import type { Actor, GroupContext, GroupDoc, LedgerEvent } from "../types";
 import * as api from "../services/api";
-import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
+import { mergeLedgerEvents, projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
 import {
   beginContextRequest,
   beginGroupRequestEpoch,
@@ -99,6 +99,12 @@ function delayCachedTailRefresh<T>(
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function projectFetchedChatEvents(events: LedgerEvent[]): LedgerEvent[] {
+  return projectCrossGroupReceipts(filterUiEvents(events || [])).filter(
+    (event) => event && event.kind === "chat.message",
+  );
 }
 
 export function createGroupStoreAsyncActions(
@@ -574,7 +580,7 @@ export function createGroupStoreAsyncActions(
           patch.groupDoc = buildShellGroupDoc(gid, get().groups, null);
         }
         if (tail.ok) {
-          patch.events = filterUiEvents(tail.result.events || []);
+          patch.events = projectCrossGroupReceipts(filterUiEvents(tail.result.events || []));
           patch.hasMoreHistory = !!tail.result.has_more;
         }
         if (actorsResp.ok) {
@@ -603,9 +609,7 @@ export function createGroupStoreAsyncActions(
       try {
         const resp = await api.fetchOlderMessages(gid, String(firstEvent.id), 50);
         if (resp.ok) {
-          const olderChatEvents = (resp.result.events || []).filter(
-            (event) => event && event.kind === "chat.message",
-          );
+          const olderChatEvents = projectFetchedChatEvents(resp.result.events || []);
           const currentBucket = getGroupChatBucket(get().chatByGroup, gid);
           const existingIds = new Set(currentBucket.events.map((event) => event.id).filter(Boolean));
           const uniqueNew = olderChatEvents.filter((event) => event.id && !existingIds.has(event.id));
@@ -653,7 +657,7 @@ export function createGroupStoreAsyncActions(
           return;
         }
 
-        const events = (resp.result.events || []).filter((event) => event && event.kind === "chat.message");
+        const events = projectFetchedChatEvents(resp.result.events || []);
         set((state) => buildChatBucketPatch(state, gid, {
           chatWindow: {
             groupId: gid,

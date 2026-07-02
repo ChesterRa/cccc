@@ -1186,6 +1186,114 @@ describe("useGroupStore actors fetch policy", () => {
     });
   });
 
+  it("loadMoreHistory projects cross-group receipts before prepending older messages", async () => {
+    useGroupStore.setState({
+      selectedGroupId: "g-demo",
+      chatByGroup: {
+        "g-demo": {
+          events: [
+            {
+              id: "msg-new",
+              kind: "chat.message",
+              ts: "2026-03-25T09:01:00Z",
+              by: "peer-1",
+              data: { text: "latest" },
+            },
+          ],
+          chatWindow: null,
+          hasMoreHistory: true,
+          hasLoadedTail: true,
+          isLoadingHistory: false,
+          isChatWindowLoading: false,
+        },
+      },
+    });
+    vi.mocked(api.fetchOlderMessages).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        events: [
+          {
+            id: "evt-src",
+            kind: "chat.message",
+            ts: "2026-03-25T09:00:00Z",
+            by: "user",
+            data: { text: "relay ping", dst_group_id: "g-remote" },
+          },
+          {
+            id: "evt-receipt",
+            kind: "chat.cross_group_receipt",
+            ts: "2026-03-25T09:00:01Z",
+            by: "system",
+            data: {
+              source_event_id: "evt-src",
+              dst_group_id: "g-remote",
+              dst_event_id: "evt-dst",
+              remote_event_id: "evt-remote",
+            },
+          },
+        ],
+        has_more: false,
+        count: 2,
+      },
+    } as Awaited<ReturnType<typeof api.fetchOlderMessages>>);
+
+    await useGroupStore.getState().loadMoreHistory("g-demo");
+
+    const bucket = useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket?.events.map((event) => event.id)).toEqual(["evt-src", "msg-new"]);
+    expect(bucket?.events[0]?.data).toMatchObject({
+      text: "relay ping",
+      dst_group_id: "g-remote",
+      dst_event_id: "evt-dst",
+      remote_event_id: "evt-remote",
+    });
+    expect(bucket?.events.some((event) => event.kind === "chat.cross_group_receipt")).toBe(false);
+  });
+
+  it("openChatWindow projects cross-group receipts before storing window events", async () => {
+    vi.mocked(api.fetchMessageWindow).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        center_id: "evt-src",
+        center_index: 0,
+        events: [
+          {
+            id: "evt-src",
+            kind: "chat.message",
+            ts: "2026-03-25T09:00:00Z",
+            by: "user",
+            data: { text: "relay ping", dst_group_id: "g-remote" },
+          },
+          {
+            id: "evt-receipt",
+            kind: "chat.cross_group_receipt",
+            ts: "2026-03-25T09:00:01Z",
+            by: "system",
+            data: {
+              source_event_id: "evt-src",
+              dst_group_id: "g-remote",
+              dst_event_id: "evt-dst",
+              remote_event_id: "evt-remote",
+            },
+          },
+        ],
+        has_more_before: false,
+        has_more_after: false,
+      },
+    } as Awaited<ReturnType<typeof api.fetchMessageWindow>>);
+
+    await useGroupStore.getState().openChatWindow("g-demo", "evt-src");
+
+    const bucket = useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket?.chatWindow?.events.map((event) => event.id)).toEqual(["evt-src"]);
+    expect(bucket?.chatWindow?.events[0]?.data).toMatchObject({
+      text: "relay ping",
+      dst_group_id: "g-remote",
+      dst_event_id: "evt-dst",
+      remote_event_id: "evt-remote",
+    });
+  });
+
   it("restores inactive-group messages from cache after the bucket is rebuilt", async () => {
     useGroupStore.setState({
       groups: [

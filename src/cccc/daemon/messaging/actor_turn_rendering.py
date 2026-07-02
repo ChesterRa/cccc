@@ -48,12 +48,15 @@ def render_group_bridge_route_ref(ref: dict[str, Any]) -> list[str]:
     return [f"- Group Bridge route {label} (remote_group_id={remote_group_id})"]
 
 
+SLASH_SKILL_CONTROL_KIND = "slash_skill_dispatch"
+
+
 def is_hidden_slash_control_ref(ref: dict[str, Any]) -> bool:
     if ref.get("hidden") is not True:
         return False
     return (
-        str(ref.get("control_kind") or "").strip() == "slash_skill_dispatch"
-        or str(ref.get("title") or "").strip() == "slash_skill_dispatch"
+        str(ref.get("control_kind") or "").strip() == SLASH_SKILL_CONTROL_KIND
+        or str(ref.get("title") or "").strip() == SLASH_SKILL_CONTROL_KIND
     )
 
 

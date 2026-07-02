@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import yaml
 
 from ...kernel.group import Group, load_group
+from ...kernel.group_bridge.receipts import get_receipt, update_receipt
 from ...kernel.group_bridge.registration import get_registration
 from ...kernel.inbox import iter_events
 from ...kernel.ledger import append_event
@@ -42,6 +43,13 @@ def _project_remote_send_receipt(receipt: Dict[str, Any], *, home: Optional[Path
     dst_group_id = str((reg or {}).get("remote_group_id") or source.get("dst_group_id") or "").strip()
     if not dst_group_id:
         return False
+
+    # A projected marker is the O(1) fast path. Older receipt-store entries do
+    # not have it, so unmarked receipts must still fall back to the ledger scan.
+    stored = get_receipt(registration_id, idempotency_key, home=home)
+    if isinstance(stored, dict) and stored.get("projected") is True:
+        return False
+
     src_group = _load_group(src_group_id, home=home)
     if src_group is None:
         return False
@@ -51,6 +59,8 @@ def _project_remote_send_receipt(receipt: Dict[str, Any], *, home: Optional[Path
         idempotency_key=idempotency_key,
         remote_event_id=remote_event_id,
     ):
+        if stored is not None:
+            update_receipt(registration_id, idempotency_key, home=home, projected=True)
         return False
 
     append_event(
@@ -69,6 +79,8 @@ def _project_remote_send_receipt(receipt: Dict[str, Any], *, home: Optional[Path
             "status": status,
         },
     )
+    if stored is not None:
+        update_receipt(registration_id, idempotency_key, home=home, projected=True)
     return True
 
 
@@ -99,6 +111,7 @@ def _has_projected_receipt(
     idempotency_key: str,
     remote_event_id: str,
 ) -> bool:
+    """Ledger-scan fallback for receipts that have no store record (synthetic/legacy)."""
     for event in iter_events(src_group.ledger_path):
         if str(event.get("kind") or "").strip() != "chat.cross_group_receipt":
             continue

@@ -91,7 +91,7 @@ class TestSlashSkillDispatch(unittest.TestCase):
             self.assertIn("CCCC capability skill", text)
             self.assertIn("skill:agent_self_proposed:using-superpowers", text)
             self.assertIn("/using-superpowers", text)
-            self.assertIn("先调用 `cccc_help`", text)
+            self.assertIn("run `cccc_help` first", text)
             self.assertIn("开始执行", text)
 
             ledger_path = Path(os.environ["CCCC_HOME"]) / "groups" / group_id / "ledger.jsonl"
@@ -117,5 +117,65 @@ class TestSlashSkillDispatch(unittest.TestCase):
             self.assertIsNotNone(group)
             unread = unread_messages(group, actor_id="architect", limit=10, kind_filter="all")
             self.assertEqual([str(item.get("id") or "") for item in unread if isinstance(item, dict)], [str(hidden_event.get("id") or "")])
+        finally:
+            cleanup()
+
+    def test_replays_existing_dispatch_for_same_client_id(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            created, _ = self._call("group_create", {"title": "slash-skill-idem", "topic": "", "by": "user"})
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            group_id = str((created.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "architect",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            deliveries: list[dict] = []
+
+            def capture_delivery(**kwargs):
+                deliveries.append(kwargs)
+
+            dispatch_args = {
+                "group_id": group_id,
+                "by": "user",
+                "to": ["architect"],
+                "task_text": "run once",
+                "command": "/using-superpowers",
+                "capability_id": "skill:agent_self_proposed:using-superpowers",
+                "client_id": "client-retry-1",
+            }
+            with patch("cccc.daemon.messaging.slash_skill_dispatch_ops.deliver_chat_message", side_effect=capture_delivery):
+                first, _ = self._call("slash_skill_dispatch", dispatch_args)
+                second, _ = self._call("slash_skill_dispatch", dict(dispatch_args))
+
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            first_result = first.result or {}
+            second_result = second.result or {}
+            self.assertNotIn("replayed", first_result)
+            self.assertTrue(bool(second_result.get("replayed")))
+            self.assertEqual(str(second_result.get("event_id") or ""), str(first_result.get("event_id") or ""))
+            self.assertTrue(str(second_result.get("event_id") or ""))
+
+            self.assertEqual(len(deliveries), 1)
+
+            ledger_path = Path(os.environ["CCCC_HOME"]) / "groups" / group_id / "ledger.jsonl"
+            chat_events = [
+                json.loads(line)
+                for line in ledger_path.read_text(encoding="utf-8").splitlines()
+                if str(json.loads(line).get("kind") or "") == "chat.message"
+            ]
+            self.assertEqual(len(chat_events), 1)
         finally:
             cleanup()

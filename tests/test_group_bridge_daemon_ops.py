@@ -440,6 +440,139 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_cross_group_receipt_projection_marks_store_and_skips_ledger_scan(self) -> None:
+        from cccc.daemon.group_bridge import cross_group_receipt_projection as projection
+        from cccc.daemon.group_bridge.ops import handle_remote_send
+        from cccc.daemon.group_bridge.transports.base import sent_result
+        from cccc.kernel.group import create_group
+        from cccc.kernel.group_bridge.receipts import get_receipt
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="receipt-fastpath", topic="")
+            reg = self._registration(group_id=group.group_id)
+            source_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "remote ping", "dst_group_id": "g_remote"},
+            )
+            source_event_id = str(source_event.get("id") or "")
+            fake = _SequenceTransport([sent_result("evt_remote_fast", transport="registry_hub")])
+
+            sent = handle_remote_send(
+                {
+                    "group_id": group.group_id,
+                    "by": "user",
+                    "registration_id": reg["registration_id"],
+                    "idempotency_key": "k-fast",
+                    "source_event_id": source_event_id,
+                    "payload": {"text": "remote ping", "to": ["@foreman"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            self.assertEqual(sent.result["receipt"]["status"], "sent")
+
+            stored = get_receipt(reg["registration_id"], "k-fast")
+            self.assertIsInstance(stored, dict)
+            self.assertTrue(stored.get("projected"))
+            receipts = [
+                ev for ev in iter_events(group.ledger_path)
+                if ev.get("kind") == "chat.cross_group_receipt"
+            ]
+            self.assertEqual(len(receipts), 1)
+
+            with patch.object(
+                projection,
+                "iter_events",
+                side_effect=AssertionError("projection must not scan the ledger when the receipt store is authoritative"),
+            ):
+                replayed = projection.project_remote_send_receipt(
+                    {
+                        **stored,
+                        "src_group_id": group.group_id,
+                        "source_event_id": source_event_id,
+                    }
+                )
+            self.assertFalse(replayed)
+            receipts_after = [
+                ev for ev in iter_events(group.ledger_path)
+                if ev.get("kind") == "chat.cross_group_receipt"
+            ]
+            self.assertEqual(len(receipts_after), 1)
+        finally:
+            cleanup()
+
+    def test_cross_group_receipt_projection_migrates_unmarked_store_without_duplicate(self) -> None:
+        from cccc.daemon.group_bridge import cross_group_receipt_projection as projection
+        from cccc.kernel.group import create_group
+        from cccc.kernel.group_bridge.receipts import get_receipt, record_receipt
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="receipt-migration", topic="")
+            reg = self._registration(group_id=group.group_id)
+            source_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "remote ping", "dst_group_id": "g_remote"},
+            )
+            source_event_id = str(source_event.get("id") or "")
+            receipt = {
+                "ok": True,
+                "status": "sent",
+                "registration_id": reg["registration_id"],
+                "idempotency_key": "k-legacy",
+                "remote_event_id": "evt_remote_legacy",
+                "src_group_id": group.group_id,
+                "source_event_id": source_event_id,
+            }
+            stored, created = record_receipt(reg["registration_id"], "k-legacy", receipt)
+            self.assertTrue(created)
+            self.assertNotIn("projected", stored)
+            append_event(
+                group.ledger_path,
+                kind="chat.cross_group_receipt",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data={
+                    "source_event_id": source_event_id,
+                    "dst_group_id": "g_remote",
+                    "dst_event_id": "",
+                    "remote_event_id": "evt_remote_legacy",
+                    "registration_id": reg["registration_id"],
+                    "idempotency_key": "k-legacy",
+                    "status": "sent",
+                },
+            )
+
+            replayed = projection.project_remote_send_receipt(receipt)
+
+            self.assertFalse(replayed)
+            receipts = [
+                ev for ev in iter_events(group.ledger_path)
+                if ev.get("kind") == "chat.cross_group_receipt"
+            ]
+            self.assertEqual(len(receipts), 1)
+            migrated = get_receipt(reg["registration_id"], "k-legacy")
+            self.assertIsInstance(migrated, dict)
+            self.assertTrue((migrated or {}).get("projected"))
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

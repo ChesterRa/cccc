@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import resolve_recipient_tokens
+from ...kernel.chat_idempotency import find_existing_reply_result
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.messaging import targets_any_agent
-from ...util.time import utc_now_iso
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
-from .actor_turn_rendering import build_actor_headless_delivery_text
+from .actor_turn_rendering import SLASH_SKILL_CONTROL_KIND, build_actor_headless_delivery_text
 from .chat_delivery_ops import deliver_chat_message
 from .delivery import append_mcp_reply_reminder
 
@@ -45,8 +44,9 @@ def _render_hidden_skill_turn(*, task_text: str, command: str, capability_id: st
             f"skill_command: {command}",
             f"capability_id: {capability_id}",
             (
-                "Procedure: 先调用 `cccc_help` 刷新 Active Skills (Runtime)，必要时调用 "
-                "`cccc_capability_state` 核对 active_capsule_skills；然后按该 CCCC skill 的 runtime rules 执行用户任务。"
+                "Procedure: run `cccc_help` first to refresh Active Skills (Runtime); if needed, check "
+                "`cccc_capability_state` to confirm active_capsule_skills; then execute the user task "
+                "per that CCCC skill's runtime rules."
             ),
             f"User task:\n{task_text}",
         ]
@@ -96,42 +96,49 @@ def handle_slash_skill_dispatch(
     if not targets_any_agent(effective_to):
         return _error("no_agent_recipients", "slash skill dispatch requires at least one actor recipient")
 
+    if client_id:
+        existing = find_existing_reply_result(group, client_id=client_id, by=by)
+        if existing is not None:
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "hidden": True,
+                    "delivered": True,
+                    "replayed": True,
+                    "event_id": str(existing.get("event_id") or ""),
+                    "command": command,
+                    "capability_id": capability_id,
+                    "to": effective_to,
+                },
+            )
+
     woken = auto_wake_recipients(group, effective_to, by)
-    event_id = f"slashskill-{uuid.uuid4().hex}"
-    event_ts = utc_now_iso()
     delivery_text = _render_hidden_skill_turn(
         task_text=task_text,
         command=command,
         capability_id=capability_id,
     )
-    event = {
-        "id": event_id,
-        "kind": "chat.message",
-        "group_id": group.group_id,
-        "ts": event_ts,
-        "by": by,
-        "data": {
-            "client_id": client_id,
-            "text": delivery_text,
-            "format": "plain",
-            "priority": priority,
-            "reply_required": reply_required,
-            "reply_to": reply_to or None,
-            "quote_text": quote_text or None,
-            "to": effective_to,
-            "refs": [
-                {
-                    "kind": "text",
-                    "title": "slash_skill_dispatch",
-                    "hidden": True,
-                    "control_kind": "slash_skill_dispatch",
-                    "command": command,
-                    "capability_id": capability_id,
-                    "task_text": task_text,
-                }
-            ],
-            "attachments": [],
-        },
+    event_data = {
+        "client_id": client_id,
+        "text": delivery_text,
+        "format": "plain",
+        "priority": priority,
+        "reply_required": reply_required,
+        "reply_to": reply_to or None,
+        "quote_text": quote_text or None,
+        "to": effective_to,
+        "refs": [
+            {
+                "kind": "text",
+                "title": SLASH_SKILL_CONTROL_KIND,
+                "hidden": True,
+                "control_kind": SLASH_SKILL_CONTROL_KIND,
+                "command": command,
+                "capability_id": capability_id,
+                "task_text": task_text,
+            }
+        ],
+        "attachments": [],
     }
     event = append_event(
         group.ledger_path,
@@ -139,7 +146,7 @@ def handle_slash_skill_dispatch(
         group_id=group.group_id,
         scope_key=str(group.doc.get("active_scope_key") or "").strip(),
         by=by,
-        data=event["data"],
+        data=event_data,
     )
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()

@@ -1172,6 +1172,72 @@ def _apply_ledger_event_statuses(events: list[dict[str, Any]], status_by_event_i
             ev["_web_model_delivery_status"] = payload["web_model_delivery_status"]
 
 
+def _hydrate_cross_group_receipts_for_chat_events(group: Any, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    source_ids: set[str] = set()
+    for event in events:
+        if not isinstance(event, dict) or str(event.get("kind") or "").strip() != "chat.message":
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if not str(data.get("dst_group_id") or "").strip():
+            continue
+        if str(data.get("dst_event_id") or "").strip() and str(data.get("remote_event_id") or "").strip():
+            continue
+        event_id = str(event.get("id") or "").strip()
+        if event_id:
+            source_ids.add(event_id)
+    if not source_ids:
+        return events
+
+    ledger_path = getattr(group, "ledger_path", None)
+    if ledger_path is None:
+        return events
+
+    anchors_by_source_id: dict[str, dict[str, str]] = {}
+    try:
+        from ....kernel.inbox import iter_events
+
+        for event in iter_events(ledger_path):
+            if str(event.get("kind") or "").strip() != "chat.cross_group_receipt":
+                continue
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            source_event_id = str(data.get("source_event_id") or "").strip()
+            if source_event_id not in source_ids:
+                continue
+            dst_event_id = str(data.get("dst_event_id") or "").strip()
+            remote_event_id = str(data.get("remote_event_id") or "").strip()
+            if not (dst_event_id or remote_event_id):
+                continue
+            anchor = anchors_by_source_id.setdefault(source_event_id, {})
+            if dst_event_id:
+                anchor["dst_event_id"] = dst_event_id
+            if remote_event_id:
+                anchor["remote_event_id"] = remote_event_id
+    except Exception:
+        return events
+
+    if not anchors_by_source_id:
+        return events
+
+    hydrated: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict) or str(event.get("kind") or "").strip() != "chat.message":
+            hydrated.append(event)
+            continue
+        anchor = anchors_by_source_id.get(str(event.get("id") or "").strip())
+        if not anchor:
+            hydrated.append(event)
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        hydrated.append({
+            **event,
+            "data": {
+                **data,
+                **anchor,
+            },
+        })
+    return hydrated
+
+
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     # --- global router (user/admin scope, per-route guard where needed) ---
     global_router = APIRouter(prefix="/api/v1")
@@ -3565,6 +3631,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     after_id="",
                     limit=effective_limit,
                 )
+                if kind_filter == "chat":
+                    events = _hydrate_cross_group_receipts_for_chat_events(group, events)
             else:
                 raw_lines = read_last_lines(group.ledger_path, effective_limit)
                 events = []
@@ -3641,6 +3709,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 after_id=after,
                 limit=clamped_limit,
             )
+            if kind_filter == "chat":
+                events = _hydrate_cross_group_receipts_for_chat_events(group, events)
 
             if with_read_status or with_ack_status or with_obligation_status:
                 _apply_ledger_event_statuses(
@@ -3715,6 +3785,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             )
 
             events = [*before_events, center_event, *after_events]
+            if kind_filter == "chat":
+                events = _hydrate_cross_group_receipts_for_chat_events(group, events)
 
             if with_read_status or with_ack_status or with_obligation_status:
                 _apply_ledger_event_statuses(
